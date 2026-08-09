@@ -3,11 +3,13 @@
 import asyncio
 import time
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Optional
 from uuid import UUID
 
+import structlog
 from aiokafka import AIOKafkaConsumer
-from fastapi import APIRouter, Depends, HTTPException, Response
+from fastapi import APIRouter, Depends, HTTPException, Response, status
+from pydantic import BaseModel, ConfigDict
 from prometheus_client import (
     CONTENT_TYPE_LATEST,
     Counter,
@@ -21,8 +23,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import settings
 from app.api.auth import get_current_active_user
 from app.db.database import engine, get_db
+from app.middleware.tenant_isolation import get_tenant_db
 from app.db.models import Alarm, Asset, User
 from app.middleware.rbac import require_admin
+
+logger = structlog.get_logger()
 
 router = APIRouter()
 
@@ -95,22 +100,62 @@ async def _check_message_broker() -> tuple[str, dict[str, Any]]:
         await consumer.stop()
 
 
+def _as_datetime(value: Any) -> Optional[datetime]:
+    """Normalise a driver's idea of a timestamp into a `datetime`.
+
+    `SELECT MAX(time)` is not typed by SQLAlchemy here — it comes back from a raw `text()`
+    query, so the value is whatever the DBAPI hands over. asyncpg builds a `datetime`;
+    aiosqlite returns the **raw string**, because SQLite has no timestamp type and the
+    column-type converters only fire for columns it can name.
+
+    The consequence was visible rather than theoretical: on the documented local dev path
+    (`DATABASE_URL=sqlite+aiosqlite:///dev.db`, which is what `make seed-demo` sets up) the
+    readiness report showed
+
+        "ingestion": "error: 'str' object has no attribute 'isoformat'"
+
+    so a developer's first look at System Health was a subsystem in error, for a database
+    that was working perfectly. Returning None for anything unparseable keeps the existing
+    "no_data_yet" branch as the fallback — the one outcome that is never a false alarm.
+    """
+    if value is None or isinstance(value, datetime):
+        return value
+    if isinstance(value, str):
+        try:
+            # SQLite writes 'YYYY-MM-DD HH:MM:SS[.ffffff]'; fromisoformat accepts the
+            # space separator, and on 3.11+ the trailing 'Z' form too.
+            return datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError:
+            return None
+    return None
+
+
 async def _check_ingestion(db: AsyncSession) -> tuple[str, dict[str, Any]]:
-    """Verify telemetry has been ingested recently (when data exists)."""
+    """Verify telemetry has been ingested recently (when data exists).
+
+    READS `telemetry` ONLY, and deliberately no longer `MAX(assets.last_seen)`.
+
+    This runs from the PUBLIC readiness probe, which has no authenticated user and so
+    no tenant context. `assets` is FORCE ROW LEVEL SECURITY, so that query returned
+    NULL for a NOBYPASSRLS role no matter how much data existed — and the report then
+    published `latest_asset_seen_at: null`, which reads as "no asset has ever been
+    seen". That is a different and false statement from "this figure is not obtainable
+    here", and a monitoring endpoint is the worst place to blur the two.
+
+    `telemetry` has no policy and was already the primary signal
+    (`latest = latest_telemetry or latest_asset_seen`), so removing the asset read
+    changes no verdict: it only stops reporting a field that could never be populated.
+    A per-tenant asset figure belongs on a tenant-scoped endpoint, where a caller and
+    therefore a GUC exists.
+    """
     try:
-        result = await db.execute(select(func.max(Asset.last_seen)))
-        latest_asset_seen = result.scalar()
-
         result = await db.execute(text("SELECT MAX(time) FROM telemetry"))
-        latest_telemetry = result.scalar()
+        latest_telemetry = _as_datetime(result.scalar())
 
-        latest = latest_telemetry or latest_asset_seen
+        latest = latest_telemetry
         details: dict[str, Any] = {
             "latest_telemetry_at": (
                 latest_telemetry.isoformat() if latest_telemetry else None
-            ),
-            "latest_asset_seen_at": (
-                latest_asset_seen.isoformat() if latest_asset_seen else None
             ),
         }
 
@@ -274,25 +319,200 @@ async def _run_health_checks(db: AsyncSession) -> dict[str, Any]:
     }
 
 
+def _public_status(status: str) -> str:
+    """Collapse a component status to something safe for an anonymous caller.
+
+    THE DISCLOSURE THIS CLOSES. `_check_message_broker` returns strings like
+    `"error: KafkaConnectionError: Unable to bootstrap from [('redpanda', 29092, ...)]"`,
+    and the public probes returned them verbatim — leaking the internal broker hostname,
+    its port and the technology to anybody who can reach the endpoint unauthenticated.
+
+    That contradicted the design already stated one function below: `/health/detailed` is
+    auth-gated precisely because "the per-component report (broker/redis/ingestion state,
+    connection error strings) is recon-useful". The gating was right; the same strings
+    simply escaped through the probes.
+
+    A probe consumer needs the STATUS, not the reason. Kubernetes reads the code, and an
+    operator reads the logs or `/health/detailed`, which still carry the full text — this
+    withholds nothing from anyone entitled to it. Statuses that are already coarse
+    ("ok", "skipped", "degraded") pass through unchanged; anything carrying a payload
+    collapses to its first word.
+    """
+    if not status:
+        return status
+    head = status.split(":", 1)[0].strip()
+    return head or "error"
+
+
+def _public_checks(checks: dict[str, Any]) -> dict[str, Any]:
+    return {name: _public_status(value) for name, value in checks.items()}
+
+
 def _raise_if_not_ready(report: dict[str, Any]) -> None:
     if report["status"] != "ready":
+        # `details` is dropped and `checks` collapsed: this response is public. The
+        # full report stays available on /health/detailed, which requires a user.
         raise HTTPException(
             status_code=503,
             detail={
                 "status": report["status"],
-                "checks": report["checks"],
-                "details": report["details"],
+                "checks": _public_checks(report["checks"]),
             },
         )
 
 
-@router.get("/health/live")
+# ==================== Response models ====================
+#
+# WHAT THE PROBES ACTUALLY READ, checked before declaring any of this.
+# `infrastructure/k8s/base/backend-deployment.yaml` wires all three probes as `httpGet`:
+# liveness and startup to `/health` (served outside this module), readiness to
+# `/health/ready`. An httpGet probe reads the STATUS CODE and nothing else — kubelet never
+# parses the body — so no field named here can break a rollout by being absent.
+#
+# The hazard runs the other way, and it is worse than the usual one. A response model that
+# REJECTS a payload turns a 200 into a 500, and on `/health/ready` a 500 is a failed
+# readiness probe: three of those and the pod is pulled out of the Service on a backend that
+# is perfectly healthy. So every field below is typed against what the checkers can actually
+# produce, and the two shapes that vary are left open rather than pinned:
+#
+#   * `/health/db|redis|kafka` return `{"status": ..., **details}`, and `details` belongs to
+#     the CHECKER — `{"reason": "rate_limit_disabled"}`, `{"url": ...}`,
+#     `{"source": ..., "broker": ...}`, or `{}`. Each model documents the keys its own
+#     checker emits today and sets `extra="allow"`, so a key added to a checker tomorrow
+#     reaches the caller instead of being silently filtered out of the response.
+#   * `/health/detailed`'s `details` and `/admin/system/status`'s `data_pipeline` are the
+#     per-component payloads, likewise checker-owned. Declared as open objects.
+#
+# The auth split is preserved as-is: these models describe what each route already sends,
+# and `_public_status` still collapses error text on the public ones. Nothing here widens
+# what an anonymous caller can see.
+
+
+class ProbeOut(BaseModel):
+    """`/health/live` and `/health/startup` — two fixed literals, no I/O behind either."""
+
+    status: str
+    service: str
+
+
+class ReadinessOut(BaseModel):
+    """The 200 path only. The not-ready path raises `HTTPException(503)`, whose body is the
+    handler's `detail` and is not filtered through this model."""
+
+    status: str
+    #: Component name -> status, already collapsed by `_public_status`. This response is
+    #: PUBLIC; the uncollapsed text stays on `/health/detailed`, which requires a user.
+    checks: dict[str, str]
+
+
+class DetailedHealthOut(BaseModel):
+    """Auth-gated, so this one carries the full per-component detail."""
+
+    status: str
+    checks: dict[str, str]
+    #: Per-component payloads, each owned by its checker. Left open on purpose — a fixed
+    #: model here would delete whatever a checker starts reporting.
+    details: dict[str, Any]
+    checked_at: str
+
+
+class SystemMetricsOut(BaseModel):
+    """`available: False` with three nulls is the real answer when psutil is not installed —
+    the page prints "—" for each, which is why they are nullable rather than zeroed."""
+
+    available: bool
+    cpu_percent: float | None = None
+    memory_percent: float | None = None
+    disk_percent: float | None = None
+
+
+class DatabaseHealthOut(BaseModel):
+    """`_check_database` returns no details today; `extra="allow"` so it may."""
+
+    model_config = ConfigDict(extra="allow")
+
+    status: str
+
+
+class RedisHealthOut(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    status: str
+    #: `rate_limit_disabled` — a skipped check, which is not a failing one.
+    reason: str | None = None
+    #: Host and port only; `_check_redis` splits the credentials off at the `@`.
+    url: str | None = None
+
+
+class KafkaHealthOut(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    status: str
+    #: `websocket_manager` (the live consumer) or `ephemeral_probe` (one opened to answer
+    #: this call). Which one answered changes what a failure means.
+    source: str | None = None
+    broker: str | None = None
+
+
+class MaintenanceModeOut(BaseModel):
+    asset_id: str
+    #: The word, not the boolean: `"enabled"` / `"disabled"`.
+    maintenance_mode: str
+    message: str
+
+
+class VacuumTriggered(BaseModel):
+    message: str
+    status: str
+    note: str
+
+
+class SystemStatusServices(BaseModel):
+    #: `"healthy"`, unconditionally — the process answering the request is by definition up.
+    backend: str
+    #: The RAW check statuses, error text and all. This route is admin-gated, which is what
+    #: makes that acceptable here and not on the public probes.
+    database: str
+    redis: str
+    message_broker: str
+    ingestion: str
+
+
+class SystemStatusStorage(BaseModel):
+    #: `pg_database_size(current_database())`. `None` if the row could not be read.
+    database_size_bytes: int | None = None
+    #: The CALLER'S organisation, not the platform — `assets` is FORCE ROW LEVEL SECURITY
+    #: and this handler runs on a tenant session.
+    active_assets: int
+
+
+class SystemStatusAlerts(BaseModel):
+    """Every severity present at 0 rather than omitted: the handler fills all four from a
+    GROUP BY that only returns the severities that occur."""
+
+    critical: int
+    high: int
+    medium: int
+    low: int
+
+
+class SystemStatusOut(BaseModel):
+    services: SystemStatusServices
+    #: `_check_ingestion`'s details verbatim — `latest_telemetry_at`, and `age_seconds` or
+    #: `note` depending on whether any telemetry exists. Checker-owned, left open.
+    data_pipeline: dict[str, Any]
+    storage: SystemStatusStorage
+    alerts: SystemStatusAlerts
+    checked_at: str
+
+
+@router.get("/health/live", response_model=ProbeOut)
 async def liveness_probe():
     """Kubernetes Liveness Probe - Is the process running?"""
     return {"status": "alive", "service": "opsgrid-backend"}
 
 
-@router.get("/health/ready")
+@router.get("/health/ready", response_model=ReadinessOut)
 async def readiness_probe(db: AsyncSession = Depends(get_db)):
     """Kubernetes Readiness Probe - Can the pod accept traffic?"""
     now = time.time()
@@ -300,9 +520,19 @@ async def readiness_probe(db: AsyncSession = Depends(get_db)):
         if _health_cache["status"] == "ready":
             return {
                 "status": "ready",
-                "checks": _health_cache.get("checks", {}),
+                "checks": _public_checks(_health_cache.get("checks", {})),
             }
-        raise HTTPException(status_code=503, detail="Service not ready")
+        # Same shape as the uncached path below. This used to be a bare
+        # "Service not ready" string, so the probe's response shape depended on whether
+        # the cache had expired — an operator hitting it twice got two different
+        # answers, and the second told them nothing about WHICH component was down.
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "status": _health_cache["status"],
+                "checks": _public_checks(_health_cache.get("checks", {})),
+            },
+        )
 
     report = await _run_health_checks(db)
     _health_cache.update(
@@ -313,16 +543,16 @@ async def readiness_probe(db: AsyncSession = Depends(get_db)):
         }
     )
     _raise_if_not_ready(report)
-    return {"status": report["status"], "checks": report["checks"]}
+    return {"status": report["status"], "checks": _public_checks(report["checks"])}
 
 
-@router.get("/health/startup")
+@router.get("/health/startup", response_model=ProbeOut)
 async def startup_probe():
     """Kubernetes Startup Probe - Is the application fully started?"""
     return {"status": "started", "service": "opsgrid-backend"}
 
 
-@router.get("/health/detailed")
+@router.get("/health/detailed", response_model=DetailedHealthOut)
 async def detailed_health(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
@@ -349,8 +579,13 @@ async def detailed_health(
     return report
 
 
-@router.get("/health/system")
-@router.get("/api/v1/health/system")
+# Explicit, distinct operation_ids (FS-215). These endpoints are exposed at
+# BOTH an unprefixed path (for probes that predate the /api/v1 convention) and
+# the versioned one. Stacked decorators on one function make FastAPI derive the
+# same operationId for both, which collides in the generated SDK and warns at
+# import. The paths stay as they are; only the ids are disambiguated.
+@router.get("/health/system", operation_id="health_system_metrics_unversioned", response_model=SystemMetricsOut)
+@router.get("/api/v1/health/system", operation_id="health_system_metrics_v1", response_model=SystemMetricsOut)
 async def system_metrics(current_user=Depends(get_current_active_user)):
     """Real host resource utilization (psutil) for the admin SystemHealth page.
 
@@ -359,47 +594,67 @@ async def system_metrics(current_user=Depends(get_current_active_user)):
     previous call, which suits the page's 15s polling; interval>0 would sleep
     ON the event loop.
     """
+    unavailable = {"available": False, "cpu_percent": None, "memory_percent": None,
+                   "disk_percent": None}
     try:
         import psutil
     except Exception:
-        return {"available": False, "cpu_percent": None, "memory_percent": None,
-                "disk_percent": None}
-    return {
-        "available": True,
-        "cpu_percent": psutil.cpu_percent(interval=None),
-        "memory_percent": psutil.virtual_memory().percent,
-        "disk_percent": psutil.disk_usage("/").percent,
-    }
+        return unavailable
+
+    # FS-540 hardening. The `try` covered only the IMPORT; the three calls below were
+    # unguarded. psutil raises under a restrictive seccomp profile or when /proc is not
+    # mounted — both ordinary in a hardened container — and the result was a 500 on an
+    # admin page whose whole design is to say "unavailable" gracefully. `available: False`
+    # already exists for exactly this answer, so the fix is to reach it.
+    #
+    # The plan filed this endpoint as "returns 200 with nulls on any failure —
+    # indistinguishable from a working probe with no data". That premise is wrong: the
+    # `available` flag distinguishes them, the response model documents why the three are
+    # nullable, and `AdminPages.tsx:535` renders "Host metrics unavailable" off it. The
+    # unguarded calls were the only real gap.
+    try:
+        return {
+            "available": True,
+            "cpu_percent": psutil.cpu_percent(interval=None),
+            "memory_percent": psutil.virtual_memory().percent,
+            "disk_percent": psutil.disk_usage("/").percent,
+        }
+    except Exception as exc:  # noqa: BLE001 — see above
+        logger.warning("system_metrics_unavailable", error=str(exc))
+        return unavailable
 
 
-@router.get("/health/db")
-@router.get("/api/v1/health/db")
+@router.get("/health/db", operation_id="health_health_database_unversioned", response_model=DatabaseHealthOut)
+@router.get("/api/v1/health/db", operation_id="health_health_database_v1", response_model=DatabaseHealthOut)
 async def health_database(db: AsyncSession = Depends(get_db)):
     """Database connectivity check."""
     status, details = await _check_database(db)
     if not _component_is_healthy(status):
-        raise HTTPException(status_code=503, detail={"status": status, **details})
-    return {"status": status, **details}
+        # Public route: the status only. `details` carries connection error text.
+        raise HTTPException(status_code=503, detail={"status": _public_status(status)})
+    return {"status": _public_status(status), **details}
 
 
-@router.get("/health/redis")
-@router.get("/api/v1/health/redis")
+@router.get("/health/redis", operation_id="health_health_redis_unversioned", response_model=RedisHealthOut)
+@router.get("/api/v1/health/redis", operation_id="health_health_redis_v1", response_model=RedisHealthOut)
 async def health_redis():
     """Redis connectivity check (required when rate limiting is enabled)."""
     status, details = await _check_redis()
     if not _component_is_healthy(status):
-        raise HTTPException(status_code=503, detail={"status": status, **details})
-    return {"status": status, **details}
+        # Public route: the status only. `details` carries connection error text.
+        raise HTTPException(status_code=503, detail={"status": _public_status(status)})
+    return {"status": _public_status(status), **details}
 
 
-@router.get("/health/kafka")
-@router.get("/api/v1/health/kafka")
+@router.get("/health/kafka", operation_id="health_health_kafka_unversioned", response_model=KafkaHealthOut)
+@router.get("/api/v1/health/kafka", operation_id="health_health_kafka_v1", response_model=KafkaHealthOut)
 async def health_kafka():
     """Message broker (Redpanda/Kafka) connectivity check."""
     status, details = await _check_message_broker()
     if not _component_is_healthy(status):
-        raise HTTPException(status_code=503, detail={"status": status, **details})
-    return {"status": status, **details}
+        # Public route: the status only. `details` carries connection error text.
+        raise HTTPException(status_code=503, detail={"status": _public_status(status)})
+    return {"status": _public_status(status), **details}
 
 
 # Prometheus metrics endpoint
@@ -452,14 +707,27 @@ ALERTS_ACTIVE = Gauge(
 )
 
 
-@router.get("/metrics")
+# CONTENT_TYPE_LATEST is Prometheus's exposition format
+# ("text/plain; version=0.0.4; charset=utf-8"), not JSON. Declaring it keeps the
+# OpenAPI document honest about what a scraper actually receives.
+@router.get("/metrics", responses={200: {"content": {"text/plain": {}}}})
 async def metrics():
     """Prometheus metrics endpoint"""
     return Response(content=generate_latest(), media_type=CONTENT_TYPE_LATEST)
 
 
 async def _vacuum_telemetry() -> None:
-    async with engine.connect() as connection:
+    # RESOLVED AT CALL TIME, from the module that owns it. This used the `engine` captured by
+    # `from app.db.database import ...` at import, and the test harness rebinds that name PER
+    # MODULE — so `app.api.health`'s copy was the placeholder, and the endpoint answered
+    # `role "placeholder" does not exist` to any test that reached it. Rule 45, and the same
+    # correction `core.tenant.tenant_session` needed for the same reason.
+    #
+    # Production has one engine, so this was never a live defect. It made the endpoint
+    # untestable, which is how it stayed unreached until a write-surface walk found it.
+    from app.db import database as _database
+
+    async with _database.engine.connect() as connection:
         autocommit_connection = await connection.execution_options(
             isolation_level="AUTOCOMMIT"
         )
@@ -468,39 +736,91 @@ async def _vacuum_telemetry() -> None:
         )
 
 
-# Manual override endpoints for on-site engineers
-@router.post("/admin/collectors/{collector_id}/restart", dependencies=[Depends(require_admin)])
-async def restart_collector(
-    collector_id: str,
-    current_user: User = Depends(get_current_active_user),
-):
-    """Manual override: Restart a collector plugin"""
-    return {
-        "message": f"Restart signal sent to collector {collector_id}",
-        "status": "pending",
-        "timestamp": "2026-01-15T10:30:00Z",
-    }
+# REMOVED 2026-08-01 (FS-352): POST /admin/collectors/{collector_id}/restart.
+#
+# The whole handler was a `return`. It answered
+#   {"message": "Restart signal sent to collector …", "status": "pending",
+#    "timestamp": "2026-01-15T10:30:00Z"}
+# — past tense about a signal no code sent, with a hardcoded timestamp — and nothing
+# anywhere restarted anything.
+#
+# WHY REMOVED RATHER THAN IMPLEMENTED. A restart would have to reach the device, and the
+# edge agent registers exactly one command handler: `agent_update`, bound by
+# `OTAUpdateExecutor.register` (`edge-agent/opsgrid_agent/ota/executor.py:68`), which
+# `main.py:68,209` constructs and registers. Submitting a `restart_collector` command would
+# queue something nothing consumes — the same lie moved one layer down, and harder to see.
+# Adding the handler is Hridyansh's lane.
+#
+# CORRECTED 2026-08-07 (FS-505). This note previously said "exactly two … `agent_update` and
+# `model_update`". `ModelUpdateExecutor.register` does bind `model_update`
+# (`ota/model_executor.py:68-70`), but nothing ever constructs that class, so `register()` is
+# never called and the agent answers `unknown_action` — which also means every model rollout
+# `rollout_orchestrator.py:297` dispatches fails against working hardware. The decision above
+# was right; the premise under it was half true. `tests/test_dispatched_commands_have_a_handler.py`
+# now pairs the two sides so neither the claim nor the gap can drift again.
+#
+# WHY REMOVED RATHER THAN 501. A 501 is a 5xx, and the contract gate counts any 5xx as a
+# ServerError, so an honest "not implemented" would have made conformance worse than the
+# dishonest 200 did.
+#
+# NOTHING CALLED IT. `assetsApi.restartCollector` existed in the frontend with zero call
+# sites and is removed with it; the Collectors page renders `/api/v1/edge/fleet` and has no
+# restart control. (Earlier notes in this repo — including the response_model burn-down doc
+# — said "the UI calls it and an operator gets a 200 and no restart". That was wrong: the
+# client function existed, no component invoked it. Corrected where it appears.)
+#
+# To bring it back: register a handler in the edge agent, then submit through
+# `command_executor.submit_command(command_type="system", action_id="restart_collector")`
+# exactly as `POST /commands/asset/{asset_id}/emergency-stop` does.
 
 
-@router.post("/admin/assets/{asset_id}/maintenance", dependencies=[Depends(require_admin)])
+@router.post("/admin/assets/{asset_id}/maintenance", dependencies=[Depends(require_admin)],
+             response_model=MaintenanceModeOut)
 async def set_maintenance_mode(
     asset_id: UUID,
     enabled: bool = True,
     current_user: User = Depends(get_current_active_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_tenant_db),
 ):
     """Manual override: Set asset to maintenance mode (blocks game-theoretic commands)"""
-    await db.execute(
+    # SCOPED TO THE CALLER'S ORGANISATION, and the rowcount is checked.
+    #
+    # The session is `get_tenant_db`, not `get_db`. `assets` is FORCE ROW LEVEL SECURITY,
+    # so without the `app.current_org_id` GUC the policy hides every row and the UPDATE
+    # matches nothing — an explicit `organization_id` predicate cannot rescue a row RLS
+    # has already removed. Adding the predicate first and testing it was what made that
+    # obvious: the caller's OWN asset came back 404.
+    #
+    # This updated `assets` by id alone. Two separate reasons it could touch nothing: the
+    # asset might belong to another tenant, and `assets` is FORCE ROW LEVEL SECURITY
+    # while this handler runs on `get_db`, which sets no `app.current_org_id`. Under RLS
+    # an INSERT is rejected loudly and an UPDATE is FILTERED — it succeeds having matched
+    # no rows — so the endpoint returned 200 and told the operator "Game-theoretic engine
+    # commands are blocked" for a write that never happened.
+    #
+    # The explicit organisation predicate does the scoping rather than relying on a GUC
+    # this session does not set, and the rowcount turns a silent miss into a 404.
+    result = await db.execute(
         text(
             """
             UPDATE assets
             SET maintenance_mode = :enabled,
                 updated_at = NOW()
             WHERE id = :asset_id
+              AND organization_id = :org
             """
         ),
-        {"enabled": enabled, "asset_id": str(asset_id)},
+        {
+            "enabled": enabled,
+            "asset_id": str(asset_id),
+            "org": str(current_user.organization_id),
+        },
     )
+    if result.rowcount == 0:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Asset not found in your organization.",
+        )
     await db.commit()
 
     mode = "enabled" if enabled else "disabled"
@@ -511,7 +831,8 @@ async def set_maintenance_mode(
     }
 
 
-@router.post("/admin/database/vacuum", dependencies=[Depends(require_admin)])
+@router.post("/admin/database/vacuum", dependencies=[Depends(require_admin)],
+             response_model=VacuumTriggered)
 async def trigger_database_vacuum(
     current_user: User = Depends(get_current_active_user),
 ):
@@ -525,12 +846,32 @@ async def trigger_database_vacuum(
     }
 
 
-@router.get("/admin/system/status", dependencies=[Depends(require_admin)])
+@router.get("/admin/system/status", dependencies=[Depends(require_admin)],
+            response_model=SystemStatusOut)
 async def get_system_status(
     current_user: User = Depends(get_current_active_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_tenant_db),
 ):
-    """Get comprehensive system status for engineers (live queries, not placeholders)."""
+    """Comprehensive system status for engineers (live queries, not placeholders).
+
+    THE ONE TENANT-SCOPED ENDPOINT IN THIS FILE, and the reason the rest are not.
+
+    `health.py` is deliberately mixed: `/health/live`, `/health/ready` and
+    `/health/startup` are UNAUTHENTICATED probes, so they cannot use `get_tenant_db`
+    (which resolves a tenant from an authenticated user) and must read only tables
+    without a policy. They do — see `_check_ingestion`, which had to drop an
+    `assets.last_seen` read for exactly that reason.
+
+    This handler is different: it is admin-gated and has a user. On `get_db` it set no
+    tenant GUC, so `assets` and `alarms` — both FORCE ROW LEVEL SECURITY — returned
+    **zero** no matter how much existed. An engineer's system-status page reported
+    `active_assets: 0` and no alarms on a running platform, which reads as an idle
+    system rather than a broken query.
+
+    The counts are now the caller's organisation. Platform-wide totals across tenants
+    would need the super-admin role that does not exist yet — the same one
+    `data_retention` and the audit log's cross-org view are blocked on.
+    """
     health = await _run_health_checks(db)
 
     active_assets = (
@@ -548,11 +889,23 @@ async def get_system_status(
     ).all()
     alerts = {severity: count for severity, count in alarm_rows}
 
-    db_size_row = (
-        await db.execute(
-            text("SELECT pg_database_size(current_database()) AS size_bytes")
-        )
-    ).mappings().first()
+    # POSTGRES-ONLY, AND GUARDED RATHER THAN ASSUMED. `pg_database_size` and
+    # `current_database` do not exist on SQLite, so on the documented local dev path
+    # (`make seed-demo` writes `dev.db`) this raised `no such function:
+    # current_database` and took the WHOLE endpoint down with it — the admin System
+    # Status page 500'd over one optional figure that the model already declares
+    # optional. Found by an endpoint sweep on 2026-08-01.
+    #
+    # `None` here means exactly what the field says it means: the size could not be
+    # read. That is the honest answer for a backend with no such function, and it is
+    # a strictly better one than reporting a number this database cannot produce.
+    db_size_row = None
+    if db.bind is not None and db.bind.dialect.name == "postgresql":
+        db_size_row = (
+            await db.execute(
+                text("SELECT pg_database_size(current_database()) AS size_bytes")
+            )
+        ).mappings().first()
 
     return {
         "services": {

@@ -1,0 +1,15 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# Staging CloudNativePG stack (FS-509).
+#
+# `database-ha/` hardcodes `namespace: omniusgrid`; the staging deploy applied it
+# with `-n omniusgrid-staging`, which kubectl rejects and which failed the step
+# under `set -euo pipefail`. Both environments now go through an overlay that
+# declares its namespace, so the lint (FS-521) holds them to the same rule
+# rather than only noticing the one that is wrong.
+
+resources:
+  - ../../../database-ha
+
+namespace: omniusgrid-staging

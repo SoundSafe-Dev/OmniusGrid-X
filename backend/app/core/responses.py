@@ -82,17 +82,78 @@ class ErrorEnvelope(BaseModel):
     }
 
 
+#: The media type ``app.core.errors`` actually sets on every error response.
+#: Kept as one constant so the declaration below cannot drift from the code that
+#: builds the response.
+PROBLEM_JSON = "application/problem+json"
+
+
 def _resp(description: str) -> Dict[str, Any]:
-    return {"model": ErrorEnvelope, "description": description}
+    """Document one error status.
+
+    ``content`` is explicit because FastAPI defaults an additional response's media
+    type to ``application/json``, while every error here is emitted as
+    ``application/problem+json`` (RFC 9457) by ``app.core.errors._envelope``. FS-80
+    documented the status codes and inherited that default, so the schema said
+    ``application/json`` for responses the API has never sent — the OpenAPI document
+    that the generated TypeScript SDK is built from was wrong for every 4xx/5xx on
+    every route. The contract suite reported it 304 times, once per operation; it is
+    one defect, not 304.
+    """
+    return {
+        "model": ErrorEnvelope,
+        "description": description,
+        # The $ref is spelled out rather than left empty: FastAPI attaches the model's
+        # schema to the DEFAULT media type only, so without this the problem+json entry
+        # would be declared but schema-less, and response bodies for every error would
+        # go unvalidated — the content-type check would pass while checking nothing.
+        # `model` stays so ErrorEnvelope keeps its place in components/schemas; the
+        # application/json entry FastAPI adds alongside is harmless, since the checks
+        # ask whether what was RECEIVED is documented.
+        "content": {
+            PROBLEM_JSON: {"schema": {"$ref": "#/components/schemas/ErrorEnvelope"}}
+        },
+    }
 
 
 # Attached at the include_router mount in app.main so every route documents the
 # error contract it already returns via app.core.errors.
 common_responses: Dict[int | str, Dict[str, Any]] = {
+    # 400 and 405 are here because they arise from the SHARED machinery on any route,
+    # not from a handler choosing to raise them:
+    #   * 400 — app.core.errors maps `bad_request`, and Starlette raises it when a
+    #     request body cannot be parsed. Observed on 26 operations, with real messages
+    #     ("There was an error parsing the body", "Email already registered"), while
+    #     no route declared it.
+    #   * 405 — Starlette's router raises it for any path reached with a method it does
+    #     not serve, which is every route.
+    #
+    # NOT added here, deliberately: 409 and 503. Both are in the envelope's status
+    # table, but a handler raises 409 only where a conflict is possible and 503 comes
+    # from the dependency checks in the health routers. Declaring them on all ~450
+    # operations would document responses most of them cannot produce, and an OpenAPI
+    # document that over-promises misleads the generated SDK exactly as much as one
+    # that under-promises. They belong on the routes that raise them.
+    400: _resp("The request was malformed or could not be parsed."),
     401: _resp("Missing or invalid authentication credentials."),
     403: _resp("Authenticated but not permitted to access this resource."),
     404: _resp("The requested resource does not exist."),
+    405: _resp("The HTTP method is not supported for this resource."),
     422: _resp("Request validation failed."),
     429: _resp("Rate limit exceeded."),
     500: _resp("Unexpected server error."),
+}
+
+
+#: For routers that report a dependency's availability and therefore really can return
+#: 503. Eleven modules raise it (health, rag, sso, exports, erp_integrations,
+#: feature_flags, model_monitoring, query_performance, compliance_reports,
+#: edge_enroll, bulk_operations); the other ~58 cannot, and declaring it on them would
+#: tell the generated SDK to handle a response those routes never send.
+#:
+#: Grep for `status_code=503` before adding a router here — the point of a separate
+#: mapping is that membership means something.
+unavailable_responses: Dict[int | str, Dict[str, Any]] = {
+    **common_responses,
+    503: _resp("A dependency this endpoint reports on is unavailable."),
 }

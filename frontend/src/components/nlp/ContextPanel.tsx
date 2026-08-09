@@ -12,6 +12,10 @@ interface ContextPanelProps {
 export const ContextPanel: React.FC<ContextPanelProps> = ({ className = '' }) => {
   const [userContext, setUserContext] = useState<UserContext | null>(null);
   const [isLoading, setIsLoading] = useState(false);
+  // A failed load used to be swallowed by the catch below, leaving `goals` empty and the
+  // panel reporting "No active goals" — a statement about the user, from a request that
+  // never arrived.
+  const [error, setError] = useState<string | null>(null);
   const [showManageModal, setShowManageModal] = useState(false);
 
   useEffect(() => {
@@ -20,11 +24,13 @@ export const ContextPanel: React.FC<ContextPanelProps> = ({ className = '' }) =>
 
   const loadUserContext = async () => {
     setIsLoading(true);
+    setError(null);
     try {
       const context = await userContextApi.getUserContext();
       setUserContext(context);
-    } catch (error) {
-      console.error('Failed to load user context:', error);
+    } catch (err) {
+      console.error('Failed to load user context:', err);
+      setError('Could not load your context.');
     } finally {
       setIsLoading(false);
     }
@@ -45,6 +51,8 @@ export const ContextPanel: React.FC<ContextPanelProps> = ({ className = '' }) =>
           <div className="flex items-center justify-center py-4">
             <Loader2 className="w-4 h-4 animate-spin text-opsgrid-text-secondary" />
           </div>
+        ) : error ? (
+          <p className="text-xs text-status-alarm">{error}</p>
         ) : userContext ? (
           <div className="space-y-2 mb-4">
             <div className="flex items-center gap-2">
@@ -89,6 +97,8 @@ export const ContextPanel: React.FC<ContextPanelProps> = ({ className = '' }) =>
           <div className="flex items-center justify-center py-4">
             <Loader2 className="w-4 h-4 animate-spin text-opsgrid-text-secondary" />
           </div>
+        ) : error ? (
+          <p className="text-xs text-status-alarm">Goals unavailable.</p>
         ) : goals.length === 0 ? (
           <p className="text-xs text-opsgrid-text-secondary">No active goals</p>
         ) : (

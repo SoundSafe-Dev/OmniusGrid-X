@@ -4,7 +4,7 @@ Seed demo Kanban tasks for development/demo purposes
 
 import asyncio
 import sys
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -32,7 +32,7 @@ DEMO_TASKS = [
         "priority": "high",
         "column_type": "triage",
         "estimated_effort_minutes": 120,
-        "due_date": datetime.utcnow() + timedelta(days=3),
+        "due_date": datetime.now(timezone.utc) + timedelta(days=3),
         "tags": ["maintenance", "cnc", "preventive"]
     },
     {
@@ -78,7 +78,7 @@ DEMO_TASKS = [
         "priority": "high",
         "column_type": "review",
         "estimated_effort_minutes": 90,
-        "due_date": datetime.utcnow() + timedelta(hours=4),
+        "due_date": datetime.now(timezone.utc) + timedelta(hours=4),
         "tags": ["changeover", "line-1", "product-b"]
     },
     {
@@ -232,7 +232,7 @@ async def seed_demo_tasks():
                 status="completed" if column_type == "done" else "in_progress" if column_type == "in_progress" else "ready",
                 assigned_to="00000000-0000-0000-0000-000000000001",  # Assign to dev user
                 assigned_by="00000000-0000-0000-0000-000000000001",
-                assigned_at=datetime.utcnow() - timedelta(hours=i),
+                assigned_at=datetime.now(timezone.utc) - timedelta(hours=i),
                 estimated_effort_minutes=task_data.get("estimated_effort_minutes"),
                 due_date=task_data.get("due_date"),
                 tags=task_data.get("tags", []),
@@ -242,12 +242,12 @@ async def seed_demo_tasks():
                 completion_actions={},
                 approval_status="approved",
                 created_by="00000000-0000-0000-0000-000000000001",
-                created_at=datetime.utcnow() - timedelta(hours=i)  # Stagger creation times
+                created_at=datetime.now(timezone.utc) - timedelta(hours=i)  # Stagger creation times
             )
             
             # Set completion data for done tasks
             if column_type == "done":
-                task.completed_at = datetime.utcnow() - timedelta(hours=i)
+                task.completed_at = datetime.now(timezone.utc) - timedelta(hours=i)
                 task.completed_by = "00000000-0000-0000-0000-000000000001"
                 task.progress_percent = 100
                 task.actual_end = task.completed_at

@@ -45,7 +45,8 @@ class SensorCaptureConfigTest(unittest.TestCase):
         entry = _entries("audio")[0]
         cfg = {**entry["config"], "source": "simulate", "asset_id": entry["asset_id"]}
         collector = AudioFeatureCollector(cfg)
-        samples = collector._capture()
+        samples, synthetic = collector._capture()
+        self.assertTrue(synthetic, "simulate mode must report itself as synthetic")
         features = extract_audio_features(samples, collector.sample_rate)
         self.assertIn("audio_rms", features)
         self.assertIn("audio_peak_hz", features)
@@ -57,7 +58,8 @@ class SensorCaptureConfigTest(unittest.TestCase):
         cfg = {**entry["config"], "source": "simulate", "asset_id": entry["asset_id"]}
         cfg.pop("stream_url", None)
         collector = VideoFrameCollector(cfg)
-        frame = collector._grab_frame()
+        frame, synthetic = collector._grab_frame()
+        self.assertTrue(synthetic, "simulate mode must report itself as synthetic")
         self.assertIsNotNone(frame)
         metrics = extract_frame_metrics(frame, None)
         self.assertIn("frame_brightness", metrics)

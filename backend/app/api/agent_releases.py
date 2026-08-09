@@ -2,12 +2,24 @@
 
 
 import base64
+import re
 import uuid
 from datetime import datetime
+from pathlib import PurePath
 from typing import Literal
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from fastapi import (
+    APIRouter,
+    Depends,
+    File,
+    Form,
+    HTTPException,
+    Query,
+    Request,
+    UploadFile,
+    status,
+)
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import select, text
@@ -15,14 +27,18 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import get_current_active_user
+from app.core.config import settings
 from app.core.tenant import get_tenant_db, get_tenant_org_id
 from app.db.database import AsyncSessionLocal
 from app.db.models import AgentRelease, User
 from app.middleware.rate_limit import rate_limit
 from app.middleware.rbac import require_admin
+from app.services.agent_artifact import AgentArtifactError, validate_agent_wheel
 from app.services.agent_release_storage import (
     absolute_bundle_path,
+    delete_release_artifact,
     issue_release_bundle_url,
+    store_agent_wheel,
     store_config_bundle,
 )
 from app.utils.signed_urls import (
@@ -54,6 +70,11 @@ class AgentReleaseResponse(BaseModel):
     image_tag: str | None
     artifact_type: str = "config"
     model_name: str | None = None
+    artifact_format: str | None = None
+    artifact_filename: str | None = None
+    artifact_size_bytes: int | None = None
+    package_name: str | None = None
+    minimum_bootstrap_version: str | None = None
     checksum_sha256: str
     signature_ed25519: str
     signing_key_id: str
@@ -63,6 +84,7 @@ class AgentReleaseResponse(BaseModel):
     created_at: datetime | None
     updated_at: datetime | None
     bundle_url: str | None = None
+    artifact_url: str | None = None
 
 
 def _decode_bundle(payload: AgentReleaseCreate) -> bytes:
@@ -89,6 +111,11 @@ def _release_response(
         image_tag=release.image_tag,
         artifact_type=release.artifact_type,
         model_name=release.model_name,
+        artifact_format=release.artifact_format,
+        artifact_filename=release.artifact_filename,
+        artifact_size_bytes=release.artifact_size_bytes,
+        package_name=release.package_name,
+        minimum_bootstrap_version=release.minimum_bootstrap_version,
         checksum_sha256=release.checksum_sha256,
         signature_ed25519=release.signature_ed25519,
         signing_key_id=release.signing_key_id,
@@ -98,6 +125,7 @@ def _release_response(
         created_at=release.created_at,
         updated_at=release.updated_at,
         bundle_url=bundle_url,
+        artifact_url=bundle_url,
     )
 
 
@@ -137,6 +165,7 @@ async def create_release(
         await db.execute(
             select(AgentRelease.id).where(
                 AgentRelease.organization_id == org_id,
+                AgentRelease.artifact_type == "config",
                 AgentRelease.version == payload.version,
                 AgentRelease.channel == payload.channel,
             )
@@ -153,6 +182,7 @@ async def create_release(
     release = AgentRelease(
         id=release_id,
         organization_id=org_id,
+        artifact_type="config",
         version=payload.version,
         channel=payload.channel,
         image_tag=payload.image_tag,
@@ -176,17 +206,133 @@ async def create_release(
     return _release_response(release, include_url=True)
 
 
+@router.post(
+    "/releases/agent",
+    response_model=AgentReleaseResponse,
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(require_admin)],
+)
+@rate_limit("10/hour")
+async def create_agent_release(
+    request: Request,
+    artifact: UploadFile = File(...),
+    version: str = Form(..., min_length=1, max_length=100),
+    channel: str = Form("stable", min_length=1, max_length=50),
+    release_notes: str | None = Form(None, max_length=20_000),
+    minimum_bootstrap_version: str | None = Form(None, max_length=100),
+    current_user: User = Depends(get_current_active_user),
+    org_id: UUID = Depends(get_tenant_org_id),
+    db: AsyncSession = Depends(get_tenant_db),
+):
+    """Create a signed, bounded, pure-Python edge-agent wheel release."""
+    filename = artifact.filename or ""
+    if (
+        not filename
+        or filename != PurePath(filename).name
+        or "\\" in filename
+    ):
+        raise HTTPException(status_code=400, detail="Invalid agent wheel filename")
+    if minimum_bootstrap_version and not re.fullmatch(
+        r"v?\d+(?:\.\d+){0,3}",
+        minimum_bootstrap_version.strip(),
+    ):
+        raise HTTPException(
+            status_code=400,
+            detail="minimum_bootstrap_version must be a numeric version",
+        )
+
+    max_bytes = max(1, settings.OTA_AGENT_ARTIFACT_MAX_BYTES)
+    try:
+        artifact_bytes = await artifact.read(max_bytes + 1)
+    finally:
+        await artifact.close()
+    if len(artifact_bytes) > max_bytes:
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail="Agent wheel exceeds the configured upload limit",
+        )
+
+    try:
+        wheel = validate_agent_wheel(
+            artifact_bytes,
+            filename=filename,
+            expected_version=version,
+            max_uncompressed_bytes=max(
+                1,
+                settings.OTA_AGENT_ARTIFACT_MAX_UNCOMPRESSED_BYTES,
+            ),
+        )
+    except AgentArtifactError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    existing = (
+        await db.execute(
+            select(AgentRelease.id).where(
+                AgentRelease.organization_id == org_id,
+                AgentRelease.artifact_type == "agent",
+                AgentRelease.version == version,
+                AgentRelease.channel == channel,
+            )
+        )
+    ).scalar_one_or_none()
+    if existing is not None:
+        raise HTTPException(
+            status_code=409,
+            detail="Agent release version already exists for this channel",
+        )
+
+    release_id = uuid.uuid4()
+    stored = store_agent_wheel(org_id, release_id, artifact_bytes)
+    release = AgentRelease(
+        id=release_id,
+        organization_id=org_id,
+        version=version,
+        channel=channel,
+        image_tag=None,
+        artifact_type="agent",
+        artifact_format="wheel",
+        artifact_filename=wheel.filename,
+        artifact_size_bytes=stored.size_bytes,
+        package_name=wheel.package_name,
+        minimum_bootstrap_version=minimum_bootstrap_version or None,
+        bundle_storage_key=stored.storage_key,
+        checksum_sha256=stored.checksum_sha256,
+        signature_ed25519=stored.signature_ed25519,
+        signing_key_id=stored.signing_key_id,
+        release_notes=release_notes,
+        status="draft",
+        created_by=current_user.id,
+    )
+    db.add(release)
+    try:
+        await db.commit()
+    except IntegrityError as exc:
+        await db.rollback()
+        delete_release_artifact(stored.storage_key)
+        raise HTTPException(
+            status_code=409,
+            detail="Agent release version already exists for this channel",
+        ) from exc
+    await db.refresh(release)
+    return _release_response(release, include_url=True)
+
+
 @router.get("/releases", response_model=list[AgentReleaseResponse])
 @rate_limit("100/minute")
 async def list_releases(
     request: Request,
     status_filter: str | None = Query(None, alias="status"),
+    artifact_type: str | None = Query(None),
     org_id: UUID = Depends(get_tenant_org_id),
     db: AsyncSession = Depends(get_tenant_db),
 ):
     query = select(AgentRelease).where(AgentRelease.organization_id == org_id)
     if status_filter:
         query = query.where(AgentRelease.status == status_filter)
+    if artifact_type:
+        if artifact_type not in {"config", "model", "agent"}:
+            raise HTTPException(status_code=400, detail="Invalid artifact_type")
+        query = query.where(AgentRelease.artifact_type == artifact_type)
     query = query.order_by(AgentRelease.created_at.desc())
     releases = (await db.execute(query)).scalars().all()
     return [_release_response(release) for release in releases]
@@ -236,7 +382,12 @@ async def yank_release(
     return _release_response(release)
 
 
-@public_router.get("/releases/{release_id}/bundle")
+@public_router.get(
+    "/releases/{release_id}/bundle",
+    # A FileResponse of the release artifact. The schema promised JSON, which is what an
+    # edge agent generating a client from it would have tried to parse a firmware bundle as.
+    responses={200: {"content": {"application/octet-stream": {}}}},
+)
 @rate_limit("30/minute")
 async def download_release_bundle(request: Request, release_id: UUID, token: str):
     try:
@@ -266,10 +417,16 @@ async def download_release_bundle(request: Request, release_id: UUID, token: str
         path = absolute_bundle_path(release.bundle_storage_key)
         if not path.exists():
             raise HTTPException(status_code=410, detail="Release bundle is unavailable")
+        filename = release.artifact_filename or f"{release.version}.bundle"
+        media_type = (
+            "application/zip"
+            if release.artifact_type == "agent"
+            else "application/octet-stream"
+        )
         response = FileResponse(
             path,
-            media_type="application/octet-stream",
-            filename=f"{release.version}.bundle",
+            media_type=media_type,
+            filename=filename,
         )
         response.headers["Cache-Control"] = "private, no-store"
         response.headers["X-Content-Type-Options"] = "nosniff"

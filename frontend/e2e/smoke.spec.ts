@@ -1,7 +1,19 @@
 import { test, expect } from '@playwright/test'
 
-// E2E smoke suite (task 2): the critical path renders without crashing. The app
-// runs in mock mode (USE_MOCK) so these pass without a live backend.
+// E2E smoke suite (task 2): the critical path renders without crashing.
+//
+// NOTE: the app does NOT run in mock mode here — this comment used to claim it
+// did. `npm run dev` sets no VITE_USE_MOCK and src/api/mockMode.ts defaults it
+// OFF, so Playwright has always driven the REAL API client. These tests pass
+// without a backend only because they assert unauthenticated rendering and a
+// redirect, neither of which needs one. The authenticated journey that does need
+// a backend lives in authenticated.spec.ts.
+
+// LOGGED OUT, deliberately (FS-452). The suite now authenticates once in a setup project
+// and every spec inherits that state — but these three assert what an UNAUTHENTICATED
+// visitor sees, so inheriting a session would make the redirect test assert the opposite of
+// its name and pass for the wrong reason.
+test.use({ storageState: { cookies: [], origins: [] } })
 
 test('login page renders', async ({ page }) => {
   await page.goto('/login')

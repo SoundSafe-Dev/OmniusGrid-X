@@ -344,6 +344,7 @@ async def test_dev_registration_forces_operator_role(
 ):
     import app.api.auth as auth_api
 
+    monkeypatch.setattr(auth_api.settings, "ALLOW_OPEN_REGISTRATION", True)
     monkeypatch.setattr(
         auth_api,
         "get_password_hash",
@@ -382,7 +383,6 @@ async def test_admin_maintenance_routes_require_admin(
     )
     asset_id = uuid4()
     routes = [
-        ("POST", "/admin/collectors/collector-1/restart"),
         ("POST", f"/admin/assets/{asset_id}/maintenance"),
         ("POST", "/admin/database/vacuum"),
         ("GET", "/admin/system/status"),
@@ -402,7 +402,8 @@ async def test_admin_maintenance_routes_require_admin(
 
 @pytest.mark.asyncio
 async def test_admin_routes_preserve_public_health_endpoints(client_a, app):
-    restart = await client_a.post("/admin/collectors/collector-1/restart")
+    # `/admin/collectors/{id}/restart` was probed here too; removed with the endpoint in
+    # FS-352 (it restarted nothing and nothing called it).
     invalid_asset = await client_a.post(
         "/admin/assets/not-a-uuid/maintenance"
     )
@@ -413,7 +414,6 @@ async def test_admin_routes_preserve_public_health_endpoints(client_a, app):
         startup = await anonymous.get("/health/startup")
         metrics = await anonymous.get("/metrics")
 
-    assert restart.status_code == 200
     assert invalid_asset.status_code == 422
     assert live.status_code == 200
     assert startup.status_code == 200
@@ -433,16 +433,20 @@ async def test_maintenance_update_uses_bound_parameters():
         async def execute(self, statement, parameters):
             self.statement = statement
             self.parameters = parameters
+            # The handler now checks `rowcount`: an UPDATE under RLS succeeds having
+            # matched nothing, so "did it commit" was never the question.
+            return SimpleNamespace(rowcount=1)
 
         async def commit(self):
             self.committed = True
 
     asset_id = uuid4()
+    org_id = uuid4()
     session = FakeSession()
     response = await health_api.set_maintenance_mode(
         asset_id=asset_id,
         enabled=True,
-        current_user=SimpleNamespace(id=uuid4(), role="admin"),
+        current_user=SimpleNamespace(id=uuid4(), role="admin", organization_id=org_id),
         db=session,
     )
 
@@ -452,7 +456,11 @@ async def test_maintenance_update_uses_bound_parameters():
     assert session.parameters == {
         "enabled": True,
         "asset_id": str(asset_id),
+        # The write is scoped to the caller's own organisation — it used to update by
+        # id alone, so an asset id from another tenant was a valid target.
+        "org": str(org_id),
     }
+    assert ":org" in sql
     assert session.committed is True
     assert response["asset_id"] == str(asset_id)
 

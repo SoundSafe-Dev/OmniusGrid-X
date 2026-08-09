@@ -23,6 +23,58 @@ import { USE_MOCK } from './mockMode';
 registerTransform('/api/v1/transportation', { inAliases: TRANSPORT_ALIASES, outAliases: TRANSPORT_OUT_ALIASES });
 registerTransform('/api/v1/geotab');
 
+/** `DriverHOSOut` in `app/api/transportation.py`, after the casing seam (FS-395).
+ *
+ *  THE THREE LISTS ARE SEPARATE ON PURPOSE and the backend says why: "`missing_data` is not
+ *  `violations`. A driver with no medical certificate on file has not broken a rule; nobody
+ *  knows whether they have." `isCompliant` requires BOTH lists empty; `assessable` reports
+ *  the second alone, so a consumer can render "unknown" instead of "clear".
+ *
+ *  Every hour is nullable, and the distinction is the whole point: NULL means the driver has
+ *  not reported, 0 means out of hours. Collapsing them is the defect this codebase has found
+ *  on HOS three separate times. */
+export interface DriverHOS {
+  driverId: string;
+  isCompliant: boolean;
+  assessable: boolean;
+  missingData: string[];
+  violations: string[];
+  warnings: string[];
+  hoursSummary: {
+    driveHoursToday: number | null;
+    onDutyHoursToday: number | null;
+    cycleHours: number | null;
+    driveHoursRemaining: number | null;
+    onDutyHoursRemaining: number | null;
+    cycleHoursRemaining: number | null;
+  };
+}
+
+/** `ShipmentCostsOut` in `app/api/transportation.py`, after the casing seam (FS-397).
+ *
+ *  The money lives on NESTED charge objects, not on scalars: `linehaul.amount` and
+ *  `fuelSurcharge.amount`. The client used to declare five flat numbers, none of which the
+ *  endpoint sends. */
+export interface ShipmentCosts {
+  shipmentId: string;
+  linehaul: {
+    amount: number;
+    rateBasis: string;
+    mileageCharge: number;
+    weightCharge: number;
+  };
+  /** NOT ALWAYS A MEASUREMENT — `FuelSurchargeCharge` records that without a contract
+   *  surcharge table the engine falls back to a computed estimate, so `rateBasis` is
+   *  carried rather than flattened away. */
+  fuelSurcharge: {
+    amount: number;
+    rateBasis: string;
+  };
+  totalCost: number;
+  distanceMiles: number | null;
+  weightLbs: number | null;
+}
+
 const MOCK_DELAY = 500;
 
 const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
@@ -40,8 +92,6 @@ const mockCarriers: Carrier[] = [
     insuranceExpiry: new Date(Date.now() + 90 * 86400000).toISOString(),
     operatingAuthority: 'active',
     safetyRating: 'satisfactory',
-    contactEmail: 'dispatch@swifttrans.com',
-    contactPhone: '+1-555-1000',
     isActive: true,
     complianceScore: 98,
     onTimePerformance: 94,
@@ -59,8 +109,6 @@ const mockCarriers: Carrier[] = [
     insuranceExpiry: new Date(Date.now() + 120 * 86400000).toISOString(),
     operatingAuthority: 'active',
     safetyRating: 'satisfactory',
-    contactEmail: 'ops@schneider.com',
-    contactPhone: '+1-555-1001',
     isActive: true,
     complianceScore: 96,
     onTimePerformance: 92,
@@ -77,8 +125,6 @@ const mockCarriers: Carrier[] = [
     insuranceExpiry: new Date(Date.now() + 60 * 86400000).toISOString(),
     operatingAuthority: 'active',
     safetyRating: 'conditional',
-    contactEmail: 'fleet@jbhunt.com',
-    contactPhone: '+1-555-1002',
     isActive: true,
     complianceScore: 85,
     onTimePerformance: 88,
@@ -105,8 +151,7 @@ const mockDrivers: Driver[] = [
     hosDriveHoursRemaining: 6,
     hosDutyHoursRemaining: 9,
     currentVehicleId: 'vehicle-1',
-    currentShipmentId: 'shipment-1',
-    geoTabDeviceId: 'gt-device-001',
+    eldDeviceId: 'eld-device-001',
     isActive: true,
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
@@ -128,14 +173,7 @@ const mockDrivers: Driver[] = [
     hosDriveHoursRemaining: 3,
     hosDutyHoursRemaining: 5,
     currentVehicleId: 'vehicle-2',
-    currentShipmentId: 'shipment-2',
-    geoTabDeviceId: 'gt-device-002',
-    lastLocation: {
-      latitude: 39.7392,
-      longitude: -104.9903,
-      speed: 65,
-      timestamp: new Date().toISOString(),
-    },
+    eldDeviceId: 'eld-device-002',
     isActive: true,
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
@@ -155,7 +193,7 @@ const mockDrivers: Driver[] = [
     hosCycleHoursUsed: 60,
     hosDriveHoursRemaining: 0,
     hosDutyHoursRemaining: 0,
-    geoTabDeviceId: 'gt-device-003',
+    eldDeviceId: 'eld-device-003',
     isActive: true,
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
@@ -180,8 +218,7 @@ const mockVehicles: Vehicle[] = [
     inspectionDue: new Date(Date.now() + 30 * 86400000).toISOString(),
     isActive: true,
     currentDriverId: 'driver-1',
-    currentShipmentId: 'shipment-1',
-    geoTabDeviceId: 'gt-device-001',
+    geotabDeviceId: 'gt-device-001',
     odometer: 125000,
     fuelLevel: 75,
     engineHours: 4500,
@@ -205,9 +242,8 @@ const mockVehicles: Vehicle[] = [
     inspectionDue: new Date(Date.now() + 15 * 86400000).toISOString(),
     isActive: true,
     currentDriverId: 'driver-2',
-    currentShipmentId: 'shipment-2',
-    geoTabDeviceId: 'gt-device-002',
-    currentLocation: {
+    geotabDeviceId: 'gt-device-002',
+    lastLocation: {
       latitude: 39.7392,
       longitude: -104.9903,
       speed: 65,
@@ -235,7 +271,7 @@ const mockVehicles: Vehicle[] = [
     registrationExpiry: new Date(Date.now() + 100 * 86400000).toISOString(),
     inspectionDue: new Date(Date.now() + 5 * 86400000).toISOString(),
     isActive: true,
-    geoTabDeviceId: 'gt-device-003',
+    geotabDeviceId: 'gt-device-003',
     odometer: 145000,
     fuelLevel: 90,
     engineHours: 5800,
@@ -252,7 +288,6 @@ const mockShipments: Shipment[] = [
     carrierName: 'Swift Transportation',
     driverId: 'driver-1',
     driverName: 'John Smith',
-    vehicleId: 'vehicle-1',
     trailerId: 'trailer-1',
     status: 'in_transit',
     origin: {
@@ -274,8 +309,6 @@ const mockShipments: Shipment[] = [
     scheduledPickup: new Date(Date.now() - 24 * 3600000).toISOString(),
     actualPickup: new Date(Date.now() - 24 * 3600000).toISOString(),
     scheduledDelivery: new Date(Date.now() + 12 * 3600000).toISOString(),
-    estimatedDelivery: new Date(Date.now() + 10 * 3600000).toISOString(),
-    freightDescription: 'Electronics - Consumer Goods',
     weight: 25000,
     pieces: 500,
     palletCount: 20,
@@ -284,8 +317,6 @@ const mockShipments: Shipment[] = [
     bolNumber: 'BOL-2024-001',
     proNumber: 'PRO-987654',
     freightCharge: 2850.00,
-    detentionRate: 50,
-    geoTabTripId: 'trip-001',
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
   },
@@ -296,7 +327,6 @@ const mockShipments: Shipment[] = [
     carrierName: 'Schneider National',
     driverId: 'driver-2',
     driverName: 'Maria Garcia',
-    vehicleId: 'vehicle-2',
     trailerId: 'trailer-2',
     status: 'in_transit',
     origin: {
@@ -318,8 +348,6 @@ const mockShipments: Shipment[] = [
     scheduledPickup: new Date(Date.now() - 12 * 3600000).toISOString(),
     actualPickup: new Date(Date.now() - 12 * 3600000).toISOString(),
     scheduledDelivery: new Date(Date.now() + 6 * 3600000).toISOString(),
-    estimatedDelivery: new Date(Date.now() + 5 * 3600000).toISOString(),
-    freightDescription: 'Frozen Foods - Reefer Required',
     weight: 35000,
     pieces: 800,
     palletCount: 32,
@@ -329,14 +357,6 @@ const mockShipments: Shipment[] = [
     bolNumber: 'BOL-2024-002',
     proNumber: 'PRO-987655',
     freightCharge: 3200.00,
-    detentionRate: 65,
-    currentLocation: {
-      latitude: 39.7392,
-      longitude: -104.9903,
-      speed: 65,
-      timestamp: new Date().toISOString(),
-    },
-    geoTabTripId: 'trip-002',
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
   },
@@ -364,13 +384,11 @@ const mockShipments: Shipment[] = [
     },
     scheduledPickup: new Date(Date.now() + 24 * 3600000).toISOString(),
     scheduledDelivery: new Date(Date.now() + 72 * 3600000).toISOString(),
-    freightDescription: 'Steel Components - Flatbed',
     weight: 42000,
     pieces: 150,
     hazmat: false,
     poNumber: 'PO-78236',
     freightCharge: 4500.00,
-    detentionRate: 75,
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
   },
@@ -379,7 +397,7 @@ const mockShipments: Shipment[] = [
 const mockRoutes: Route[] = [
   {
     id: 'route-1',
-    name: 'Chicago to LA - I-80 West',
+    routeName: 'Chicago to LA - I-80 West',
     origin: {
       name: 'Main Distribution Center',
       address: '1000 Warehouse Blvd',
@@ -396,11 +414,18 @@ const mockRoutes: Route[] = [
       zipCode: '90021',
       country: 'USA',
     },
-    distance: 3200,
-    estimatedDuration: 2160,
-    averageSpeed: 88,
-    tollCosts: 250,
-    fuelCosts: 800,
+    // MILES AND HOURS, matching the wire (FS-439). This read `distance: 3200` and
+    // `estimatedDuration: 2160` — Chicago to LA in KILOMETRES and MINUTES, because the type
+    // said km and minutes while the server sends `total_distance_miles` and
+    // `estimated_duration_hours`. The mock agreed with the type and both disagreed with the
+    // server, so development would have shown a plausible route and production a different
+    // one by a factor of 1.6.
+    totalDistanceMiles: 2015,
+    estimatedDurationHours: 30,
+    tollCostEstimate: 250,
+    fuelCostEstimate: 800,
+    optimizationCriteria: 'balanced',
+    isActive: true,
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
   },
@@ -415,8 +440,6 @@ const mockRoutes: Route[] = [
 // devLogin/login); read it here and pass it as a snake_case param, matching the
 // existing `carrier_id` convention. Returns undefined if unknown (call behaves
 // as before).
-const orgId = (): string | undefined =>
-  (typeof localStorage !== 'undefined' && localStorage.getItem('organizationId')) || undefined;
 
 export const transportationApi = {
   // Carriers
@@ -431,7 +454,7 @@ export const transportationApi = {
         hasMore: false,
       };
     }
-    const response = await api.get<Carrier[]>('/api/v1/transportation/carriers', { params: { organization_id: orgId() } });
+    const response = await api.get<Carrier[]>('/api/v1/transportation/carriers');
     const items = response.data;
     return {
       items,
@@ -481,7 +504,7 @@ export const transportationApi = {
         hasMore: false,
       };
     }
-    const response = await api.get<Driver[]>('/api/v1/transportation/drivers', { params: { carrier_id: carrierId, organization_id: orgId() } });
+    const response = await api.get<Driver[]>('/api/v1/transportation/drivers', { params: { carrier_id: carrierId } });
     const items = response.data;
     return {
       items,
@@ -503,25 +526,52 @@ export const transportationApi = {
     return response.data;
   },
 
-  getDriverHOS: async (id: string): Promise<{ 
-    driveHoursRemaining: number; 
-    dutyHoursRemaining: number; 
-    cycleHoursUsed: number;
-    currentStatus: string;
-    violations: string[];
-  }> => {
+  /** `GET /api/v1/transportation/drivers/{id}/hos` — hours of service (FS-395).
+   *
+   *  THE DECLARED SHAPE WAS NOT THE ENDPOINT'S. It said
+   *  `{driveHoursRemaining, dutyHoursRemaining, cycleHoursUsed, currentStatus, violations}`
+   *  and returned `response.data` unchanged; only `violations` is a top-level field on the
+   *  wire. `DriverHOSOut` sends `driver_id`, `is_compliant`, `assessable`, `missing_data`,
+   *  `violations`, `warnings` and a nested `hours_summary`, so four of those five names
+   *  resolved to `undefined` on the real path. Nothing consumes this method yet, which is
+   *  why it never showed — it is a trap for the first caller, the FS-367 shape.
+   *
+   *  THE FIELDS IT OMITTED ARE THE SAFETY-CRITICAL ONES. `assessable` and `missingData`
+   *  exist because "no violations" and "nobody could tell" are different facts, and the
+   *  backend is explicit about it: *"A driver with no medical certificate on file has not
+   *  broken a rule; nobody knows whether they have."* A type that declares only
+   *  `violations` makes the second unrenderable, so the first caller would paint an
+   *  unassessable driver as clear. Measured against the seeded fleet: `assessable: false`,
+   *  `missing_data: ["No medical certificate on file"]`.
+   *
+   *  The hours are nullable by design — NULL means the driver has not reported, and 0 means
+   *  out of hours. The previous mock used `|| 0`, collapsing those two into "out of hours",
+   *  which is the shape `apiClientsDoNotDefaultResponses` records a warning against. */
+  getDriverHOS: async (id: string): Promise<DriverHOS> => {
     if (USE_MOCK) {
       await delay(MOCK_DELAY);
       const driver = mockDrivers.find(d => d.id === id);
+      const reported = driver?.hosDriveHoursRemaining ?? null;
       return {
-        driveHoursRemaining: driver?.hosDriveHoursRemaining || 0,
-        dutyHoursRemaining: driver?.hosDutyHoursRemaining || 0,
-        cycleHoursUsed: driver?.hosCycleHoursUsed || 0,
-        currentStatus: driver?.currentHosStatus || 'off_duty',
-        violations: driver?.hosDriveHoursRemaining === 0 ? ['Drive limit exceeded'] : [],
+        driverId: id,
+        // Unassessable when the fixture has no driver, mirroring the server: it is not a
+        // clean bill, it is an absence of one.
+        assessable: driver !== undefined,
+        isCompliant: driver !== undefined && reported !== 0,
+        missingData: driver === undefined ? ['Driver not found'] : [],
+        violations: reported === 0 ? ['Drive limit exceeded'] : [],
+        warnings: [],
+        hoursSummary: {
+          driveHoursToday: null,
+          onDutyHoursToday: null,
+          cycleHours: driver?.hosCycleHoursUsed ?? null,
+          driveHoursRemaining: reported,
+          onDutyHoursRemaining: driver?.hosDutyHoursRemaining ?? null,
+          cycleHoursRemaining: null,
+        },
       };
     }
-    const response = await api.get(`/api/v1/transportation/drivers/${id}/hos`);
+    const response = await api.get<DriverHOS>(`/api/v1/transportation/drivers/${id}/hos`);
     return response.data;
   },
 
@@ -556,16 +606,6 @@ export const transportationApi = {
     };
   },
 
-  getVehicle: async (id: string): Promise<Vehicle> => {
-    if (USE_MOCK) {
-      await delay(MOCK_DELAY);
-      const vehicle = mockVehicles.find(v => v.id === id);
-      if (!vehicle) throw new Error('Vehicle not found');
-      return vehicle;
-    }
-    const response = await api.get<Vehicle>(`/api/v1/transportation/vehicles/${id}`);
-    return response.data;
-  },
 
   // Shipments
   getShipments: async (filters?: ShipmentFilters): Promise<PaginatedResponse<Shipment>> => {
@@ -589,7 +629,7 @@ export const transportationApi = {
     const response = await api.get<{
       items: Shipment[];
       meta: { total: number; skip: number; limit: number; has_more?: boolean; hasMore?: boolean };
-    }>('/api/v1/transportation/shipments', { params: { ...(filters ?? {}), organization_id: orgId() } });
+    }>('/api/v1/transportation/shipments', { params: { ...(filters ?? {}) } });
     const { items, meta } = response.data;
     return {
       items,
@@ -629,31 +669,38 @@ export const transportationApi = {
     return response.data;
   },
 
-  dispatchShipment: async (id: string, driverId: string, vehicleId: string): Promise<Shipment> => {
+  /**
+   * Dispatch a shipment to a driver and a TRAILER (FS-420).
+   *
+   * It used to take a `vehicleId` and post `{ driver_id, vehicle_id }`. Two things were
+   * wrong and each alone was fatal: the server declared its two ids as bare parameters,
+   * which FastAPI reads as QUERY parameters, so every call returned 422 — the feature had
+   * never worked once in real mode. And `Shipment.trailer_id` is a foreign key to
+   * `yard_trailers`; there is no vehicle column on a shipment, so a vehicle id could not
+   * have been stored even if the call had been well-formed.
+   */
+  dispatchShipment: async (id: string, driverId: string, trailerId: string): Promise<Shipment> => {
     if (USE_MOCK) {
       await delay(MOCK_DELAY);
       const shipment = mockShipments.find(s => s.id === id);
       const driver = mockDrivers.find(d => d.id === driverId);
-      const vehicle = mockVehicles.find(v => v.id === vehicleId);
       if (!shipment) throw new Error('Shipment not found');
       shipment.status = 'dispatched';
       shipment.driverId = driverId;
       shipment.driverName = driver ? `${driver.firstName} ${driver.lastName}` : undefined;
-      shipment.vehicleId = vehicleId;
+      // TRAILER, matching the column the real endpoint writes. This used to set
+      // `shipment.vehicleId` and mutate the vehicle and driver besides — associations the
+      // real dispatch does not make. That is what let a feature which returned 422 on every
+      // real call look implemented: the mock was modelling a different operation.
+      shipment.trailerId = trailerId;
       shipment.updatedAt = new Date().toISOString();
       if (driver) {
         driver.currentShipmentId = id;
-        driver.currentVehicleId = vehicleId;
         driver.updatedAt = new Date().toISOString();
-      }
-      if (vehicle) {
-        vehicle.currentDriverId = driverId;
-        vehicle.currentShipmentId = id;
-        vehicle.updatedAt = new Date().toISOString();
       }
       return shipment;
     }
-    const response = await api.post<Shipment>(`/api/v1/transportation/shipments/${id}/dispatch`, { driver_id: driverId, vehicle_id: vehicleId });
+    const response = await api.post<Shipment>(`/api/v1/transportation/shipments/${id}/dispatch`, { driver_id: driverId, trailer_id: trailerId });
     return response.data;
   },
 
@@ -675,23 +722,37 @@ export const transportationApi = {
     return response.data;
   },
 
-  getShipmentCosts: async (id: string): Promise<{ freight: number; fuel: number; accessorials: number; detention: number; total: number }> => {
+  /** `GET /api/v1/transportation/shipments/{id}/costs` (FS-397).
+   *
+   *  NONE OF THE FIVE DECLARED FIELDS WERE ON THE WIRE. This said
+   *  `{freight, fuel, accessorials, detention, total}` and returned `response.data`
+   *  unchanged; `ShipmentCostsOut` sends `shipment_id`, `linehaul`, `fuel_surcharge`,
+   *  `total_cost`, `distance_miles` and `weight_lbs`. The two money figures are nested
+   *  objects, not scalars — `linehaul.amount` and `fuel_surcharge.amount` — so every line of
+   *  the modal's Cost Breakdown called `.toFixed(2)` on `undefined`.
+   *
+   *  `accessorials` and `detention` are not billed by this endpoint at all, and the mock
+   *  computed both, so the breakdown looked complete in development.
+   *
+   *  The fuel surcharge is NOT always a measurement — `FuelSurchargeCharge` says so — which
+   *  is why `rateBasis` and the two fuel prices are carried through rather than flattened to
+   *  a number. */
+  getShipmentCosts: async (id: string): Promise<ShipmentCosts> => {
     if (USE_MOCK) {
       await delay(MOCK_DELAY);
       const shipment = mockShipments.find(s => s.id === id);
       const freight = shipment?.freightCharge || 0;
       const fuel = freight * 0.15;
-      const accessorials = 0;
-      const detention = (shipment?.detentionHours || 0) * (shipment?.detentionRate || 0);
       return {
-        freight,
-        fuel,
-        accessorials,
-        detention,
-        total: freight + fuel + accessorials + detention,
+        shipmentId: id,
+        linehaul: { amount: freight, rateBasis: 'per_mile', mileageCharge: freight, weightCharge: 0 },
+        fuelSurcharge: { amount: fuel, rateBasis: 'per_mile' },
+        totalCost: freight + fuel,
+        distanceMiles: null,
+        weightLbs: null,
       };
     }
-    const response = await api.get(`/api/v1/transportation/shipments/${id}/costs`);
+    const response = await api.get<ShipmentCosts>(`/api/v1/transportation/shipments/${id}/costs`);
     return response.data;
   },
 
@@ -706,26 +767,75 @@ export const transportationApi = {
   },
 
   // Analytics
-  getDeliveryEfficiency: async (): Promise<{ 
-    onTimeRate: number; 
-    avgTransitTime: number; 
-    totalDeliveries: number;
-    lateDeliveries: number;
+  /** Delivery-efficiency tiles on the TMS page (FS-394).
+   *
+   *  THIS TYPE DESCRIBED A PAYLOAD THAT HAS NEVER EXISTED, and the backend had already
+   *  written it down. `DeliveryEfficiencyOut` in `fleet_logistics.py` says:
+   *
+   *      `transportation.ts` types this call as `{ onTimeRate, avgTransitTime,
+   *      totalDeliveries, lateDeliveries }` and three of those four names have never been
+   *      on the wire … Recorded in the burn-down doc rather than silently reconciled.
+   *
+   *  It was right not to fix it from that side — the schema would then have agreed with the
+   *  type and disagreed with the payload. This is the side that was wrong.
+   *
+   *  MEASURED ON THE RUNNING PAGE before the fix: "Average Transit Time" rendered as bare
+   *  `h` and "Deliveries Today" was blank, because `avgTransitTime` and `totalDeliveries`
+   *  are `undefined` and React renders that as nothing. `lateDeliveries` is not sent at all,
+   *  so the "N late" line could never appear.
+   *
+   *  AND THE TILE THAT DID RENDER WAS WRONG BY 100×. `onTimeRate` is a RATIO 0..1 on the
+   *  wire (`round(on_time / delivered, 4)`); the page printed `.toFixed(1)` with a `%` sign,
+   *  so a genuine 33.3% on-time rate displayed as **0.3%** — and the tile's `>= 90` green
+   *  threshold could never fire, because the value cannot exceed 1. The mock computed a
+   *  percentage for the same field, which is why it looked right in development.
+   *
+   *  Returned as `onTimeRatePct` so the unit is in the name and this cannot recur silently.
+   *  The mock now derives the same shape from the same arithmetic. */
+  getDeliveryEfficiency: async (): Promise<{
+    onTimeRatePct: number | null;
+    avgTransitHours: number | null;
+    deliveredToday: number | null;
+    totalDelivered: number | null;
   }> => {
     if (USE_MOCK) {
       await delay(MOCK_DELAY);
       const delivered = mockShipments.filter(s => s.status === 'delivered');
       const onTime = delivered.filter(s => !s.actualDelivery || new Date(s.actualDelivery) <= new Date(s.scheduledDelivery)).length;
+      const today = new Date().toDateString();
       return {
-        onTimeRate: delivered.length > 0 ? (onTime / delivered.length) * 100 : 0,
-        avgTransitTime: 36,
-        totalDeliveries: delivered.length,
-        lateDeliveries: delivered.length - onTime,
+        onTimeRatePct: delivered.length > 0 ? (onTime / delivered.length) * 100 : 100,
+        avgTransitHours: 36,
+        deliveredToday: delivered.filter(
+          s => s.actualDelivery && new Date(s.actualDelivery).toDateString() === today,
+        ).length,
+        totalDelivered: delivered.length,
       };
     }
     // /api/v1/logistics is legacy-camel (never-registered); data arrives camelCase.
-    const response = await api.get('/api/v1/logistics/delivery-efficiency');
-    return response.data;
+    const response = await api.get<{
+      onTimeRate: number; avgTransitHours: number; deliveredToday: number; totalDelivered: number;
+    }>('/api/v1/logistics/delivery-efficiency');
+    const wire = response.data;
+    // NULL, NOT A DEFAULT, when a figure is absent — and `apiClientsDoNotDefaultResponses`
+    // was right to reject the first version of this, which used `?? 0` and `?? 1`.
+    //
+    // `?? 1` on the ratio would have rendered **100% on time** whenever the payload was
+    // unusable: a green all-clear generated by the absence of the data that decides it,
+    // which is the class this repo has already found on HOS hours twice and on
+    // `activeViolations`. The endpoint's own 1.0 means something different — it computed
+    // over zero deliveries — and only it is entitled to say that.
+    //
+    // All four are required fields on `DeliveryEfficiencyOut`, so null here means the
+    // response was malformed, and the page renders an em dash rather than a number.
+    const num = (v: unknown): number | null => (typeof v === 'number' ? v : null);
+    const ratio = num(wire?.onTimeRate);
+    return {
+      onTimeRatePct: ratio === null ? null : ratio * 100,
+      avgTransitHours: num(wire?.avgTransitHours),
+      deliveredToday: num(wire?.deliveredToday),
+      totalDelivered: num(wire?.totalDelivered),
+    };
   },
 
   getComplianceSummary: async (): Promise<{
@@ -733,6 +843,12 @@ export const transportationApi = {
     ctpatCertified: number;
     activeViolations: number;
     safetyAlerts: number;
+    /** How many drivers the violation count was actually computed over, and how many had not
+     *  reported the hours it needs. `activeViolations: 0` means something different depending
+     *  on which of those is which — the tile paints zero GREEN, and a fleet where nobody had
+     *  reported used to get that green. Optional: an older backend sends neither. */
+    driversAssessed?: number;
+    driversUnassessable?: number;
   }> => {
     if (USE_MOCK) {
       await delay(MOCK_DELAY);
@@ -741,6 +857,8 @@ export const transportationApi = {
         ctpatCertified: mockCarriers.filter(c => c.ctpatCertified).length,
         activeViolations: 2,
         safetyAlerts: 1,
+        driversAssessed: mockDrivers.length,
+        driversUnassessable: 0,
       };
     }
     const response = await api.get('/api/v1/logistics/compliance/summary');
@@ -749,6 +867,28 @@ export const transportationApi = {
 };
 
 // GeoTab Integration API
+/** What `/geotab/fleet/summary` actually reports. Every field optional because a
+ *  deployment with no telematics configured sends none of them, and a blank tile is
+ *  honest where a zero would claim a measurement. */
+export interface FleetSummary {
+  /** NAMED AFTER THE WIRE, not after a nicer word. The endpoint counts DEVICES, and
+   *  calling them `totalVehicles` was part of what made the original mismatch invisible —
+   *  the shape read plausibly while sharing no field name with any response. One name per
+   *  concept means no adapter to drift, and nothing for the wire-vocabulary sweep to
+   *  report as unsourced. */
+  totalDevices?: number;
+  activeDevices?: number;
+  totalDrivers?: number;
+  driversOnDuty?: number;
+  driversDriving?: number;
+  exceptionsToday?: number;
+  totalMilesToday?: number;
+  averageFuelEfficiency?: number;
+  /** True when the figures come from the simulator rather than a device. */
+  simulated?: boolean;
+  dataSourceWarning?: string | null;
+}
+
 export const geoTabApi = {
   // Devices
   getDevices: async (): Promise<GeoTabDevice[]> => {
@@ -789,7 +929,6 @@ export const geoTabApi = {
           id: 'trip-001',
           deviceId,
           driverId: 'driver-1',
-          vehicleId: 'vehicle-1',
           startTime: from,
           endTime: to,
           distance: 3200,
@@ -814,8 +953,8 @@ export const geoTabApi = {
     if (USE_MOCK) {
       await delay(MOCK_DELAY);
       return [
-        { id: 'diag-1', deviceId, diagnosticCode: 'P0101', name: 'Mass Air Flow Sensor', source: 'OBDII', timestamp: new Date().toISOString(), isActive: false },
-        { id: 'diag-2', deviceId, diagnosticCode: 'Seatbelt', name: 'Seatbelt Violation', source: 'Safety', value: 'Unbuckled', timestamp: new Date().toISOString(), isActive: true },
+        { id: 'diag-1', deviceId, name: 'Mass Air Flow Sensor', source: 'OBDII', timestamp: new Date().toISOString(), isActive: false },
+        { id: 'diag-2', deviceId, name: 'Seatbelt Violation', source: 'Safety', value: 'Unbuckled', timestamp: new Date().toISOString(), isActive: true },
       ];
     }
     const response = await api.get<any>(`/api/v1/geotab/devices/${deviceId}/diagnostics`);
@@ -827,10 +966,14 @@ export const geoTabApi = {
     return codes.map((code, i) => ({
       id: `${deviceId}-dtc-${i}`,
       deviceId,
-      diagnosticCode: code,
       name: code,
       source: 'OBDII',
-      timestamp: d?.lastSeen ?? new Date().toISOString(),
+      // NOT `?? new Date()`. A device that has never reported would have had every fault
+      // code stamped with the CURRENT time — "this fault occurred just now" — which is the
+      // most confident thing the row could say and the one thing nobody knows. `lastSeen` is
+      // already an approximation (a heartbeat's time standing in for a fault's), and
+      // approximating an approximation with `now()` is where it stops being one.
+      timestamp: d?.lastSeen ?? null,
       isActive: true,
     }));
   },
@@ -844,7 +987,6 @@ export const geoTabApi = {
           id: 'exc-1',
           deviceId: 'gt-device-001',
           ruleName: 'Speeding > 10mph over',
-          ruleType: 'Speeding',
           startTime: new Date(Date.now() - 2 * 3600000).toISOString(),
           endTime: new Date(Date.now() - 1.9 * 3600000).toISOString(),
           duration: 6,
@@ -861,29 +1003,58 @@ export const geoTabApi = {
     return (response.data?.exceptions ?? response.data) as GeoTabException[];
   },
 
-  // Fleet Summary from GeoTab
-  getFleetSummary: async (): Promise<{
-    totalVehicles: number;
-    vehiclesMoving: number;
-    vehiclesIdle: number;
-    vehiclesOffline: number;
-    avgSpeed: number;
-    totalDistanceToday: number;
-    fuelConsumedToday: number;
-  }> => {
+  /**
+   * Fleet summary from GeoTab.
+   *
+   * THE DECLARED SHAPE AND THE WIRE HAD NOTHING IN COMMON. This promised
+   * `totalVehicles / vehiclesMoving / vehiclesIdle / vehiclesOffline / avgSpeed /
+   * totalDistanceToday / fuelConsumedToday` and returned `response.data` untouched;
+   * `/geotab/fleet/summary` sends `total_devices / active_devices / total_drivers /
+   * drivers_on_duty / drivers_driving / exceptions_today / hos_violations_today /
+   * average_fuel_efficiency / total_miles_today`. Not one field overlapped, so every
+   * figure on the "Fleet Status (GeoTab Live)" card was `undefined` — rendering blanks
+   * next to bare units, " mph" and " mi".
+   *
+   * Mapped to the counterparts that genuinely exist. `avgSpeed` and `fuelConsumedToday`
+   * have none — the server reports fuel EFFICIENCY, which is a different quantity — so
+   * they are absent rather than zero, and the card omits those tiles.
+   *
+   * AND THE PAYLOAD SAYS IT IS SIMULATED. Every GeoTab response carries
+   * `simulated: true`, `data_source: 'geotab_simulator'` and a warning that the figures
+   * are "not valid for DOT/ELD compliance reporting" — added server-side precisely so a
+   * consumer could tell. Nothing read it, and the card's heading said "Live". It is
+   * carried through here so the UI can stop claiming that.
+   */
+  getFleetSummary: async (): Promise<FleetSummary> => {
     if (USE_MOCK) {
       await delay(MOCK_DELAY);
       return {
-        totalVehicles: 3,
-        vehiclesMoving: 2,
-        vehiclesIdle: 1,
-        vehiclesOffline: 0,
-        avgSpeed: 58,
-        totalDistanceToday: 1250,
-        fuelConsumedToday: 375,
+        totalDevices: 3,
+        activeDevices: 2,
+        totalDrivers: 4,
+        driversOnDuty: 2,
+        driversDriving: 1,
+        exceptionsToday: 3,
+        totalMilesToday: 1250,
+        averageFuelEfficiency: 7.4,
+        simulated: true,
       };
     }
-    const response = await api.get('/api/v1/geotab/fleet/summary', { params: { organization_id: orgId() } });
-    return response.data;
+    const response = await api.get<Record<string, any>>('/api/v1/geotab/fleet/summary');
+    const d = response.data ?? {};
+    // `/api/v1/geotab` is not registered on the casing seam, so these arrive snake_case.
+    // The camelCase fallbacks cover a deployment that registers the prefix later.
+    return {
+      totalDevices: d.total_devices ?? d.totalDevices,
+      activeDevices: d.active_devices ?? d.activeDevices,
+      totalDrivers: d.total_drivers ?? d.totalDrivers,
+      driversOnDuty: d.drivers_on_duty ?? d.driversOnDuty,
+      driversDriving: d.drivers_driving ?? d.driversDriving,
+      exceptionsToday: d.exceptions_today ?? d.exceptionsToday,
+      totalMilesToday: d.total_miles_today ?? d.totalMilesToday,
+      averageFuelEfficiency: d.average_fuel_efficiency ?? d.averageFuelEfficiency,
+      simulated: Boolean(d.simulated),
+      dataSourceWarning: d.warning ?? null,
+    };
   },
 };

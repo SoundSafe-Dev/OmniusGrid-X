@@ -21,11 +21,12 @@ Config:
 """
 
 from typing import Dict, Any, Optional, List
-from datetime import datetime
+from datetime import datetime, timezone
 import asyncio
 import structlog
 
 from .base import BaseCollector
+from ..resilience import ReconnectPolicy
 
 logger = structlog.get_logger()
 
@@ -44,6 +45,14 @@ class BACnetCollector(BaseCollector):
 
     def __init__(self, config: Dict[str, Any]):
         super().__init__(config)
+        # Reconnect discipline, from the ONE policy (FS-473). FS-472 gave five collectors
+        # a backoff and a breaker by copying the same four constants into each, which made
+        # sixteen occurrences across eight files of a number `modbus` documents as a
+        # first-pass guess. `ReconnectPolicy` owns them now, and `reconnect:` in this
+        # collector's config overrides them per site without editing this file.
+        self._backoff, self._breaker = ReconnectPolicy.from_config(config).instruments(
+            f"bacnet:{config.get('asset_id')}"
+        )
         self.device_id = config.get("device_id")
         self.ip_address = config.get("ip_address")
         self.port = config.get("port", 47808)
@@ -136,8 +145,23 @@ class BACnetCollector(BaseCollector):
     async def _poll_loop(self) -> None:
         """Poll BACnet objects at configured intervals."""
         while self._running:
+            # The breaker is checked BEFORE the attempt (FS-472): once it opens, the
+            # loop waits out the cooldown instead of hammering a device that has
+            # already refused five times.
+            if not self._breaker.allow():
+                wait = self._breaker.time_until_retry()
+                logger.info(
+                    "bacnet_circuit_open", asset_id=self.asset_id, wait_seconds=wait
+                )
+                await asyncio.sleep(wait)
+                continue
+
             try:
                 await self._collect()
+                # A clean poll resets the curve, so a brief blip does not leave the
+                # next outage starting from a 60-second delay.
+                self._backoff.reset()
+                self._breaker.record_success()
             except Exception as exc:
                 logger.error(
                     "bacnet_poll_error",
@@ -146,6 +170,15 @@ class BACnetCollector(BaseCollector):
                     error=str(exc),
                 )
                 await self._disconnect()
+                self._breaker.record_failure()
+                delay = self._backoff.next_delay()
+                logger.info(
+                    "bacnet_reconnect_backoff",
+                    asset_id=self.asset_id,
+                    delay_seconds=delay,
+                )
+                await asyncio.sleep(delay)
+                continue
 
             await asyncio.sleep(self.poll_interval)
 
@@ -201,7 +234,11 @@ class BACnetCollector(BaseCollector):
     def _normalize_data(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         """Normalize BACnet object data to the standard telemetry envelope."""
         return {
-            "timestamp_edge": datetime.now().isoformat(),
+            # AWARE UTC (FS-461). This was a bare `datetime.now()`, i.e. LOCAL naive.
+            # `telemetry.time` is `timestamptz`, and a naive stamp lands there as
+            # though it were UTC — so every reading from a device outside UTC was
+            # stored wrong by exactly that device's offset.
+            "timestamp_edge": datetime.now(timezone.utc).isoformat(),
             "asset_id": self.asset_id,
             "topic": "telemetry",
             "collector_type": "bacnet",

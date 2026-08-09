@@ -5,6 +5,8 @@ safe entry points for the frontend SSO flow and status checks.
 """
 
 from fastapi import APIRouter, Depends, HTTPException, status
+from typing import List, Optional
+
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -26,7 +28,49 @@ class SSOCallbackRequest(BaseModel):
     access_token: str
 
 
-@router.get("/status")
+class SSOStatus(BaseModel):
+    """Unauthenticated: it tells a login page whether to offer the SSO button.
+
+    Every field is derived from configuration and none is a secret — `issuer` and
+    `client_id` are values the browser must know to start the flow, and both are `None`
+    rather than empty strings when unset, so "not configured" is distinguishable from
+    "configured with a blank".
+    """
+
+    enabled: bool
+    configured: bool
+    issuer: Optional[str] = None
+    client_id: Optional[str] = None
+
+
+class SSOUser(BaseModel):
+    id: str
+    email: Optional[str] = None
+    full_name: Optional[str] = None
+    role: Optional[str] = None
+    #: `None` for a user not yet attached to an organization.
+    organization_id: Optional[str] = None
+
+
+class SSOMe(SSOUser):
+    sso_enabled: bool
+
+
+class SSOLoginResult(BaseModel):
+    """The local user, plus the claims that decided the provisioning.
+
+    `sso_roles` and `sso_groups` come off the verified Keycloak token, not the database —
+    they are what the IdP asserted on this login, which is a different fact from the local
+    `role` above and worth being able to compare.
+    """
+
+    user: SSOUser
+    sso_roles: List[str]
+    sso_groups: List[str]
+    token_type: str
+
+
+@router.get("/status", response_model=SSOStatus)
 async def sso_status():
     """Report whether Keycloak SSO is enabled and minimally configured."""
     return {
@@ -41,7 +85,7 @@ async def sso_status():
     }
 
 
-@router.get("/me")
+@router.get("/me", response_model=SSOMe)
 async def sso_me(current_user: User = Depends(get_current_active_user)):
     """Current user profile (works with local JWT, dev-token, or Keycloak bearer)."""
     return {
@@ -56,7 +100,7 @@ async def sso_me(current_user: User = Depends(get_current_active_user)):
     }
 
 
-@router.post("/login/callback")
+@router.post("/login/callback", response_model=SSOLoginResult)
 async def sso_login_callback(
     payload: SSOCallbackRequest,
     db: AsyncSession = Depends(get_db),

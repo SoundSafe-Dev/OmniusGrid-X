@@ -16,6 +16,7 @@ import pytest
 
 pytest.importorskip("testcontainers")
 
+from tests._lane_failures import GET_FAILURES  # noqa: E402
 from tests.route_walk import http_paths  # noqa: E402
 
 # Paths that legitimately depend on infrastructure this harness doesn't run.
@@ -34,22 +35,16 @@ SKIP_EXACT = {
 # starts passing also fails, so the list cannot quietly rot.
 #
 # Do not add to this list to make your own change go green.
-KNOWN_LANE_FAILURES = {
-    "/api/v1/kanban/board": "HARSH — RLS violation writing default board on read",
-    "/api/v1/kanban/metrics": "HARSH — same default-board write path",
-    "/api/v1/kanban/workload": "HARSH — same default-board write path",
-    "/api/v1/kanban/rules/premade": (
-        "HARSH — premade template ids ('template-001') are not uuids and the "
-        "payload omits org_id/is_active/target_board_id vs its response_model"
-    ),
-    "/api/v1/nlp/correlation/intake/{intake_id}": (
-        "HARSH — select() given the IntakeItem class rather than a column"
-    ),
-    "/api/v1/rag/documents": (
-        "htreinen — reaches SeaweedFS at seaweedfs:8333; should degrade to 503 "
-        "when the object store is absent instead of surfacing a connection error"
-    ),
-}
+#
+# MOVED TO `tests/_lane_failures.py` (FS-363), which adds an owner, a precise fix and an
+# EXPIRY to each entry. The list was already asserted both ways and so could not rot — but
+# an entry with a reason and no date is a decision nobody has to make again, which is what
+# `test_ci_quarantine_expires.py` exists to prevent for CI's `--ignore` flags. Shared with
+# the write walk so one root cause is recorded once rather than twice.
+#
+# `test_lane_failures_expire.py` enforces the dates and needs no database, because an
+# expiry that only fires when Docker is available is an expiry that does not fire.
+KNOWN_LANE_FAILURES = {path: entry.reason for path, entry in GET_FAILURES.items()}
 
 
 def _probe_path(path: str, fill: str) -> str:

@@ -1,0 +1,176 @@
+# promtool unit tests for the opsgrid_security and opsgrid_realtime groups.
+# Run from infra/prometheus/:
+#   promtool test rules tests/security_alerts_test.yml
+#
+# The rules under test are RATIOS, and the negative cases matter more than the
+# positive one: an alert that fires when it should is easy to write, one that stays
+# quiet when it should is what makes it trustworthy enough to page on. So the
+# healthy-but-busy cases below (clean closes and successful logins vastly
+# outnumbering failures) are the point of this file.
+#
+# ON clamp_min, honestly: mutation-testing showed that REMOVING it does not fail
+# any test here, and it cannot. In both expressions the numerator is a subset of
+# the denominator, so a positive numerator implies a positive denominator and true
+# divide-by-zero is unreachable. The only case clamp_min changes is a fully idle
+# system, where the ratio is 0/0 = NaN — and NaN does not fire, exactly like the
+# clamped 0 does not fire. It is therefore DEFENSIVE, not load-bearing: it keeps
+# NaN out of the expression for anyone graphing it, and guards a future edit that
+# narrows the denominator. The idle test below asserts silence on an idle system,
+# which is worth having; it does not, and cannot, prove clamp_min earns its place.
+rule_files:
+  - ../alerts.yml
+
+evaluation_interval: 1m
+
+tests:
+  # ---------------------------------------------------------------------------
+  # AuthBruteForceSuspected — sustained failure RATE above 5/s.
+  # ---------------------------------------------------------------------------
+  - interval: 1m
+    input_series:
+      # 600 failures/minute = 10/s, comfortably over the threshold.
+      - series: 'opsgrid_auth_attempts_total{outcome="failure",reason="bad_credentials"}'
+        values: '0+600x20'
+    alert_rule_test:
+      - eval_time: 3m
+        alertname: AuthBruteForceSuspected
+        exp_alerts: []          # still inside `for: 5m`
+      - eval_time: 8m
+        alertname: AuthBruteForceSuspected
+        exp_alerts:
+          - exp_labels:
+              severity: high
+              team: security
+            exp_annotations:
+              summary: "Sustained authentication failures"
+              description: "More than 5 failed logins per second over 5 minutes. The metric is deliberately not labelled by user or IP (that would let an enumeration attack create unbounded series), so identify the source from the access logs or the audit trail."
+              runbook_url: "https://github.com/SoundSafe-Dev/OmniusGrid-X/blob/main/docs/runbooks/error-triage.md"
+
+  # A trickle of failures — someone mistyping a password — must not page.
+  - interval: 1m
+    input_series:
+      - series: 'opsgrid_auth_attempts_total{outcome="failure",reason="bad_credentials"}'
+        values: '0+6x20'        # 0.1/s
+    alert_rule_test:
+      - eval_time: 15m
+        alertname: AuthBruteForceSuspected
+        exp_alerts: []
+
+  # ---------------------------------------------------------------------------
+  # AuthFailureRatioHigh — over half of attempts failing.
+  # ---------------------------------------------------------------------------
+  - interval: 1m
+    input_series:
+      - series: 'opsgrid_auth_attempts_total{outcome="failure",reason="bad_credentials"}'
+        values: '0+90x25'
+      - series: 'opsgrid_auth_attempts_total{outcome="success",reason="none"}'
+        values: '0+10x25'
+    alert_rule_test:
+      - eval_time: 22m
+        alertname: AuthFailureRatioHigh
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              team: platform
+            exp_annotations:
+              summary: "Over half of login attempts are failing"
+              description: "The failure RATIO exceeds 50% for 10 minutes. On a quiet deployment a broken auth path produces a low absolute failure rate, so the ratio is what surfaces it. Check the SSO signing keys, the auth limiter's Redis, and recent auth deploys."
+              runbook_url: "https://github.com/SoundSafe-Dev/OmniusGrid-X/blob/main/docs/runbooks/error-triage.md"
+
+  # A HEALTHY busy system: mostly successes. The ratio must stay quiet even though
+  # the absolute number of failures is far higher than in the trickle case above.
+  - interval: 1m
+    input_series:
+      - series: 'opsgrid_auth_attempts_total{outcome="failure",reason="bad_credentials"}'
+        values: '0+5x25'
+      - series: 'opsgrid_auth_attempts_total{outcome="success",reason="none"}'
+        values: '0+500x25'
+    alert_rule_test:
+      - eval_time: 22m
+        alertname: AuthFailureRatioHigh
+        exp_alerts: []
+
+  # ---------------------------------------------------------------------------
+  # WebSocketDropRateHigh — over a quarter of closes abnormal.
+  # ---------------------------------------------------------------------------
+  - interval: 1m
+    input_series:
+      - series: 'opsgrid_websocket_events_total{event="disconnect_error"}'
+        values: '0+40x25'
+      - series: 'opsgrid_websocket_events_total{event="disconnect_clean"}'
+        values: '0+60x25'
+    alert_rule_test:
+      - eval_time: 22m
+        alertname: WebSocketDropRateHigh
+        exp_alerts:
+          - exp_labels:
+              severity: high
+              team: platform
+            exp_annotations:
+              summary: "Over a quarter of WebSocket closes are abnormal"
+              description: "More than 25% of WebSocket disconnects over 10 minutes ended in an error rather than a clean client close. Live telemetry, alarm and PackML updates are degrading. Check backend logs for websocket_closed_with_error and the ingress idle timeout."
+              runbook_url: "https://github.com/SoundSafe-Dev/OmniusGrid-X/blob/main/docs/runbooks/subsystems.md"
+
+  # Normal churn: clients closing cleanly as people navigate away. A handful of
+  # error closes in that stream is not an incident.
+  - interval: 1m
+    input_series:
+      - series: 'opsgrid_websocket_events_total{event="disconnect_error"}'
+        values: '0+5x25'
+      - series: 'opsgrid_websocket_events_total{event="disconnect_clean"}'
+        values: '0+300x25'
+    alert_rule_test:
+      - eval_time: 22m
+        alertname: WebSocketDropRateHigh
+        exp_alerts: []
+
+  # ---------------------------------------------------------------------------
+  # Idle system: both ratio alerts must stay silent. (This does NOT verify
+  # clamp_min — see the note at the top of this file.)
+  # ---------------------------------------------------------------------------
+  - interval: 1m
+    input_series:
+      - series: 'opsgrid_auth_attempts_total{outcome="failure",reason="bad_credentials"}'
+        values: '0x25'
+      - series: 'opsgrid_websocket_events_total{event="disconnect_error"}'
+        values: '0x25'
+      - series: 'opsgrid_websocket_events_total{event="disconnect_clean"}'
+        values: '0x25'
+    alert_rule_test:
+      - eval_time: 22m
+        alertname: AuthFailureRatioHigh
+        exp_alerts: []
+      - eval_time: 22m
+        alertname: WebSocketDropRateHigh
+        exp_alerts: []
+
+  # ---------------------------------------------------------------------------
+  # EdgeAgentCertExpiryApproaching — the 14-day scheduling window.
+  # ---------------------------------------------------------------------------
+  - interval: 1m
+    input_series:
+      # 10 days of validity: inside 14d, outside the 2d emergency window.
+      - series: 'edge_agent_cert_expiry_seconds{agent_id="agent-7"}'
+        values: '864000x70'
+    alert_rule_test:
+      - eval_time: 65m
+        alertname: EdgeAgentCertExpiryApproaching
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              team: edge
+              agent_id: agent-7
+            exp_annotations:
+              summary: "Edge agent certificate expires within 14 days"
+              description: "Agent agent-7 has under 14 days of certificate validity. Rotate now; at under 2 days EdgeAgentCertExpiringSoon escalates this to high."
+              runbook_url: "https://github.com/SoundSafe-Dev/OmniusGrid-X/blob/main/scripts/certificate-rotation.sh"
+
+  # A freshly rotated certificate must not page.
+  - interval: 1m
+    input_series:
+      - series: 'edge_agent_cert_expiry_seconds{agent_id="agent-8"}'
+        values: '7776000x70'    # 90 days
+    alert_rule_test:
+      - eval_time: 65m
+        alertname: EdgeAgentCertExpiryApproaching
+        exp_alerts: []

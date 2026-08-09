@@ -2,7 +2,7 @@ import { FC, Fragment, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { BarChart3, TrendingUp, Clock, ChevronDown, ChevronRight } from 'lucide-react'
 import { dashboardApi } from '../api'
-import { Tooltip, TooltipTrigger, TooltipContent } from '../components/ui'
+import { Button, Tooltip, TooltipTrigger, TooltipContent } from '../components/ui'
 import { ExportButton } from '../components/common'
 import { useAuth } from '../hooks/useAuth'
 
@@ -11,7 +11,7 @@ const OEE: FC = () => {
   // Clicking a row expands an inline OEE breakdown for that asset (the row
   // tooltip has always promised this; the handler was never wired).
   const [expandedId, setExpandedId] = useState<string | null>(null)
-  const { data: fleetOEE, isLoading } = useQuery({
+  const { data: fleetOEE, isLoading, isError, refetch } = useQuery({
     queryKey: ['fleet-oee'],
     queryFn: () => dashboardApi.getFleetOEE(),
   })
@@ -29,6 +29,24 @@ const OEE: FC = () => {
     return (
       <div className="flex items-center justify-center h-64">
         <div className="text-opsgrid-text-secondary">Loading...</div>
+      </div>
+    )
+  }
+
+  // A FAILED FLEET LOAD SAID NOTHING AT ALL. There was no error branch, and on failure
+  // `fleetOEE` is undefined — so `fleetOEE?.assets?.length === 0` is false, the empty
+  // state below does not render either, and the page showed an OEE table with no rows
+  // and no explanation. Silently empty is worse than wrongly labelled: there is nothing
+  // for the reader to disbelieve.
+  if (isError) {
+    return (
+      <div className="flex flex-col items-center justify-center h-64 gap-3" role="alert">
+        <p className="text-status-alarm">
+          Couldn’t load fleet OEE — this is a loading failure, not an idle fleet.
+        </p>
+        <Button variant="secondary" onClick={() => refetch()}>
+          Retry
+        </Button>
       </div>
     )
   }
@@ -77,7 +95,9 @@ const OEE: FC = () => {
                 <p className="text-opsgrid-text-secondary">Availability</p>
               </div>
               <p className="text-3xl font-bold">
-                {((fleetOEE?.fleetAverageAvailability || 0) * 100).toFixed(1)}%
+                {fleetOEE?.fleetAverageAvailability == null
+                  ? '—'
+                  : `${(fleetOEE.fleetAverageAvailability * 100).toFixed(1)}%`}
               </p>
               <p className="text-sm text-opsgrid-text-secondary mt-1">
                 Time equipment was available to run
@@ -113,7 +133,9 @@ const OEE: FC = () => {
                 <p className="text-opsgrid-text-secondary">Fleet Availability</p>
               </div>
               <p className="text-3xl font-bold">
-                {((fleetOEE?.fleetAverageAvailability || 0) * 100).toFixed(1)}%
+                {fleetOEE?.fleetAverageAvailability == null
+                  ? '—'
+                  : `${(fleetOEE.fleetAverageAvailability * 100).toFixed(1)}%`}
               </p>
               <p className="text-sm text-opsgrid-text-secondary mt-1">
                 Run time ÷ planned time — not full OEE
@@ -163,7 +185,10 @@ const OEE: FC = () => {
               </tr>
             </thead>
             <tbody className="divide-y divide-opsgrid-border">
-              {fleetOEE?.assets?.map((asset: any) => {
+              {/* NOT `(asset: any)`. The `FleetOEE` type already described these rows
+                  correctly — four fields, no `oee` — and the `any` is the only reason
+                  `asset.oee` compiled at all. Typed, the compiler rejects it. */}
+              {fleetOEE?.assets?.map((asset) => {
                 const isExpanded = expandedId === asset.assetId
                 const toggle = () => setExpandedId(isExpanded ? null : asset.assetId)
                 return (
@@ -215,34 +240,38 @@ const OEE: FC = () => {
                     </TooltipTrigger>
                     <TooltipContent>Availability: {(asset.availability * 100).toFixed(1)}%</TooltipContent>
                   </Tooltip>
+                  {/* THIS ENDPOINT DOES NOT COMPUTE OEE (FS-399). `/dashboard/fleet/oee`
+                      returns `{assetId, assetName, availability, availabilityOnly}` and
+                      sets `availabilityOnly: true` to say so explicitly. `asset.oee` was
+                      never on the wire, so this rendered `NaN%` — and the ternaries below
+                      it, comparing `undefined > 0.8`, fell through to their last branch.
+                      Three-factor OEE comes from `/dashboard/assets/{id}/oee`, as the
+                      `FleetOEE` type's own docstring says. */}
                   <Tooltip>
                     <TooltipTrigger asChild>
                       <td className="p-4 text-center">
-                        <span
-                          className={`font-semibold ${
-                            asset.oee > 0.8
-                              ? 'text-status-running'
-                              : asset.oee > 0.5
-                              ? 'text-packml-held'
-                              : 'text-status-alarm'
-                          }`}
-                        >
-                          {(asset.oee * 100).toFixed(1)}%
-                        </span>
+                        <span className="font-semibold text-opsgrid-text-secondary">—</span>
                       </td>
                     </TooltipTrigger>
                     <TooltipContent>
-                      {asset.oee > 0.8 ? 'Excellent performance' : asset.oee > 0.5 ? 'Good performance' : 'Needs improvement'}
+                      Not computed by the fleet endpoint — it reports availability only.
+                      Expand the row for this asset&apos;s three-factor OEE.
                     </TooltipContent>
                   </Tooltip>
                   <Tooltip>
                     <TooltipTrigger asChild>
                       <td className="p-4 text-right">
+                        {/* DRIVEN BY AVAILABILITY, WHICH IS WHAT THIS ENDPOINT MEASURES.
+                            It read `asset.oee`, so every comparison was against `undefined`
+                            and every asset in the fleet got the red alarm dot and the word
+                            "Critical" — a fleet-wide fault verdict manufactured from a
+                            field nobody sends. Same shape as the geofence-alert ternary
+                            that made every alert read "Violation". */}
                         <span
                           className={`inline-block w-3 h-3 rounded-full ${
-                            asset.oee > 0.8
+                            asset.availability > 0.8
                               ? 'bg-status-running'
-                              : asset.oee > 0.5
+                              : asset.availability > 0.5
                               ? 'bg-packml-held'
                               : 'bg-status-alarm'
                           }`}
@@ -250,7 +279,12 @@ const OEE: FC = () => {
                       </td>
                     </TooltipTrigger>
                     <TooltipContent>
-                      {asset.oee > 0.8 ? 'Running well' : asset.oee > 0.5 ? 'Needs attention' : 'Critical'}
+                      {asset.availability > 0.8
+                        ? 'Available'
+                        : asset.availability > 0.5
+                        ? 'Reduced availability'
+                        : 'Little or no run time'}
+                      {' '}(availability only — this endpoint does not compute OEE)
                     </TooltipContent>
                   </Tooltip>
                 </tr>
@@ -294,11 +328,59 @@ const OEEDetailPanel: FC<{ assetId: string; assetName: string }> = ({ assetId, a
   }
 
   const pct = (v: number) => `${((v ?? 0) * 100).toFixed(1)}%`
-  const factors: Array<{ label: string; value: number; hint: string }> = [
-    { label: 'Availability', value: data.availability, hint: 'Uptime vs planned time' },
-    { label: 'Performance', value: data.performance, hint: 'Speed vs ideal cycle time' },
-    { label: 'Quality', value: data.quality, hint: 'Good units vs total' },
-    { label: 'OEE', value: data.oee, hint: 'Availability × Performance × Quality' },
+
+  // A factor the server could not measure comes back as 1.0 — the neutral multiplier
+  // for the OEE product, which is the correct arithmetic and the wrong thing to print.
+  // "100%" reads as a perfect score; this is the absence of a measurement. The server
+  // has flagged the difference since FS-234 and nothing read the flags, so an asset
+  // with no part counters displayed flawless quality.
+  //
+  // Absent flags are treated as measured: older responses predate them, and defaulting
+  // the other way would put "—" on every asset in a deployment that is fine.
+  const qualityMeasured = data.qualityMeasured !== false
+  const performanceMeasured = data.performanceMeasured !== false
+  // OEE is Availability × Performance × Quality, so it inherits any stand-in: with
+  // either factor unmeasured the product is an upper bound, not a result.
+  const oeeIsBounded = !qualityMeasured || !performanceMeasured
+
+  const factors: Array<{
+    label: string
+    value: number
+    hint: string
+    measured: boolean
+  }> = [
+    {
+      label: 'Availability',
+      value: data.availability,
+      hint: 'Uptime vs planned time',
+      measured: true,
+    },
+    {
+      label: 'Performance',
+      value: data.performance,
+      hint: performanceMeasured
+        ? 'Speed vs ideal cycle time'
+        : 'No ideal cycle time recorded for this asset',
+      measured: performanceMeasured,
+    },
+    {
+      label: 'Quality',
+      value: data.quality,
+      hint: qualityMeasured
+        ? `Good units vs total${
+            data.totalParts ? ` (${data.goodParts ?? 0}/${data.totalParts})` : ''
+          }`
+        : 'No part counters reporting for this asset',
+      measured: qualityMeasured,
+    },
+    {
+      label: oeeIsBounded ? 'OEE (upper bound)' : 'OEE',
+      value: data.oee,
+      hint: oeeIsBounded
+        ? 'Unmeasured factors count as 100%, so the real figure is lower'
+        : 'Availability × Performance × Quality',
+      measured: true,
+    },
   ]
 
   const states = Object.entries(data.stateDurations ?? {})
@@ -316,7 +398,14 @@ const OEEDetailPanel: FC<{ assetId: string; assetName: string }> = ({ assetId, a
         {factors.map((f) => (
           <div key={f.label} className="rounded-lg border border-opsgrid-border p-3">
             <p className="text-xs text-opsgrid-text-secondary">{f.label}</p>
-            <p className="text-2xl font-semibold">{pct(f.value)}</p>
+            <p
+              className={`text-2xl font-semibold ${
+                f.measured ? '' : 'text-opsgrid-text-secondary'
+              }`}
+              title={f.measured ? undefined : 'Not measured'}
+            >
+              {f.measured ? pct(f.value) : '—'}
+            </p>
             <p className="text-xs text-opsgrid-text-secondary mt-1">{f.hint}</p>
           </div>
         ))}

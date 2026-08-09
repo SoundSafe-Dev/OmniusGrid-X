@@ -8,15 +8,12 @@ Connector for Infor using ION API:
 """
 
 from typing import Dict, Any, Optional, List
-from datetime import datetime, timezone
 import structlog
 import aiohttp
 
 from app.services.erp_connector_base import (
     ERPConnectorBase,
     ERPConfig,
-    ERPType,
-    AuthType
 )
 
 logger = structlog.get_logger()
@@ -29,6 +26,13 @@ class InforConnector(ERPConnectorBase):
     Connects to Infor via ION API to fetch
     financial data, supply chain data, and HR data.
     """
+
+    #: Infor ION event subscriptions are configured in ION Desk / the ION API
+    #: portal, not created by POSTing to `{api_url}/webhooks`.
+    EVENT_SUBSCRIPTION_MECHANISM = (
+        "Infor ION event subscriptions are configured in ION Desk / the ION API "
+        "portal, not through the data API. Poll with fetch_data meanwhile."
+    )
     
     def __init__(self, config: ERPConfig, organization_id: str, integration_id: str):
         super().__init__(config, organization_id, integration_id)
@@ -47,24 +51,115 @@ class InforConnector(ERPConnectorBase):
             app_name=self.app_name
         )
     
-    async def authenticate(self) -> str:
-        """
-        Authenticate with Infor using OAuth2.
-        
-        Returns:
-            str: Access token
-        """
-        auth_config = self.config.auth_config
-        
-        # OAuth2 authentication
-        # In production, this would use OAuth2 flow
-        access_token = auth_config.get("access_token")
-        
-        logger.info(
-            "infor_authentication_success"
+    def _http_session(self) -> aiohttp.ClientSession:
+        """One session factory, so timeouts are configured in a single place."""
+        return aiohttp.ClientSession(
+            timeout=aiohttp.ClientTimeout(total=self.config.timeout)
         )
-        
-        return access_token
+
+    def _token_endpoint(self) -> str:
+        """ION's OAuth2 token URL.
+
+        Infor issues a `.ionapi` credentials document per service account; its `pu`
+        (portal URL) and `ot` (OAuth token path) fields compose the token endpoint.
+        `token_url` may be supplied directly for deployments that do not hand the
+        raw document to the integration.
+        """
+        auth = self.config.auth_config
+        explicit = auth.get("token_url")
+        if explicit:
+            return explicit
+
+        portal = (auth.get("pu") or auth.get("portal_url") or "").rstrip("/")
+        token_path = (auth.get("ot") or auth.get("oauth_token_path") or "").lstrip("/")
+        if portal and token_path:
+            return f"{portal}/{token_path}"
+
+        raise ValueError(
+            "Infor ION OAuth2 needs a token endpoint: supply `token_url`, or the "
+            "`pu` and `ot` fields from the service account's .ionapi document."
+        )
+
+    async def authenticate(self) -> str:
+        """Obtain an ION access token via OAuth2.
+
+        WHAT THIS REPLACES. The previous implementation read a static
+        `access_token` out of config and returned it, under a comment saying "In
+        production, this would use OAuth2 flow". ION tokens are short-lived, so a
+        pre-shared one works until it expires and then every request 401s with no
+        refresh path and nothing pointing at the cause.
+
+        Supports both grants ION issues for service accounts:
+          * `password` — the .ionapi document's `saak`/`sask` service-account keys,
+            which is what ION generates by default;
+          * `client_credentials` — where the tenant has been configured for it.
+        """
+        auth = self.config.auth_config
+
+        client_id = auth.get("ci") or auth.get("client_id")
+        client_secret = auth.get("cs") or auth.get("client_secret")
+        if not (client_id and client_secret):
+            raise ValueError(
+                "Infor ION OAuth2 needs client credentials: `ci`/`cs` from the "
+                ".ionapi document, or client_id/client_secret. A pre-shared "
+                "`access_token` is not supported — it cannot be refreshed, so it "
+                "fails silently once it expires."
+            )
+
+        saak = auth.get("saak") or auth.get("service_account_key")
+        sask = auth.get("sask") or auth.get("service_account_secret")
+
+        form = {"client_id": client_id, "client_secret": client_secret}
+        if saak and sask:
+            # ION's default service-account grant.
+            form.update({"grant_type": "password", "username": saak, "password": sask})
+            grant = "password"
+        else:
+            form["grant_type"] = "client_credentials"
+            grant = "client_credentials"
+        if auth.get("scope"):
+            form["scope"] = auth["scope"]
+
+        token_url = self._token_endpoint()
+
+        async def _token():
+            async with self._http_session() as session:
+                async with session.post(
+                    token_url,
+                    data=form,
+                    headers={"Content-Type": "application/x-www-form-urlencoded"},
+                ) as response:
+                    body = await response.text()
+                    if response.status != 200:
+                        raise Exception(
+                            f"Infor ION token request failed: {response.status} - {body}"
+                        )
+                    import json as _json
+                    return _json.loads(body)
+
+        payload = await self.execute_with_retry(_token)
+
+        token = payload.get("access_token")
+        if not token:
+            raise ValueError(
+                f"Infor ION token response has no access_token: {sorted(payload)}"
+            )
+
+        # Cache against ION's OWN lifetime rather than the base class's old
+        # hardcoded hour.
+        expires_in = payload.get("expires_in")
+        try:
+            expires_in = float(expires_in) if expires_in is not None else None
+        except (TypeError, ValueError):
+            expires_in = None
+        self._set_token(token, expires_in)
+
+        logger.info(
+            "infor_authentication_success",
+            grant_type=grant,
+            expires_in=expires_in,
+        )
+        return token
     
     async def fetch_data(
         self,
@@ -126,85 +221,18 @@ class InforConnector(ERPConnectorBase):
         
         return results
     
-    async def subscribe_to_events(self, event_types: List[str]) -> bool:
-        """
-        Subscribe to Infor events via ION webhooks.
-        
-        Args:
-            event_types: List of event types to subscribe to
-            
-        Returns:
-            bool: Success status
-        """
-        # Infor uses ION webhooks for event subscriptions
-        webhook_url = self.config.configuration.get("webhook_url")
-        if not webhook_url:
-            logger.warning("infor_webhook_not_configured")
-            return False
-        
-        token = await self.get_auth_token()
-        
-        # Register webhook for each event type
-        for event_type in event_types:
-            subscription_url = f"{self.api_url}/webhooks"
-            
-            subscription_data = {
-                "name": f"OmniusGrid_{event_type}",
-                "url": webhook_url,
-                "event_type": event_type
-            }
-            
-            async def _subscribe():
-                headers = {
-                    "Authorization": f"Bearer {token}",
-                    "Content-Type": "application/json",
-                    "Infor-Tenant-ID": self.tenant_id
-                }
-                
-                async with aiohttp.ClientSession() as session:
-                    async with session.post(
-                        subscription_url,
-                        headers=headers,
-                        json=subscription_data
-                    ) as response:
-                        if response.status not in [200, 201]:
-                            error_text = await response.text()
-                            raise Exception(f"Infor webhook subscription error: {response.status} - {error_text}")
-            
-            await self.execute_with_retry(_subscribe)
-        
-        logger.info(
-            "infor_event_subscriptions_created",
-            event_types=event_types
-        )
-        
-        return True
-    
+
     async def health_check(self) -> Dict[str, Any]:
+        """Health check that distinguishes a broken connection from a
+        missing module. See ERPConnectorBase.probe_health.
+
+        The probe entity 'invoice' is business-module dependent, so a tenant
+        without it is reported DEGRADED rather than unhealthy — previously any
+        exception here mapped to unhealthy, so a working integration on a
+        tenant that had not licensed that module looked like an outage.
         """
-        Perform health check on Infor connection.
-        
-        Returns:
-            Dict with health status and details
-        """
-        try:
-            # Try to fetch a small amount of data
-            results = await self.fetch_data("invoice", limit=1)
-            
-            return {
-                "status": "healthy",
-                "message": "Infor connection successful",
-                "tenant_id": self.tenant_id,
-                "checked_at": datetime.now(timezone.utc).isoformat()
-            }
-        except Exception as e:
-            return {
-                "status": "unhealthy",
-                "message": str(e),
-                "tenant_id": self.tenant_id,
-                "checked_at": datetime.now(timezone.utc).isoformat()
-            }
-    
+        return await self.probe_health('invoice', details={"tenant_id": self.tenant_id})
+
     def _build_filter_string(self, filters: Dict[str, Any]) -> str:
         """
         Build Infor OData filter string.

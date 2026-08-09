@@ -8,15 +8,19 @@ field mappings, and sync operations.
 from typing import List, Dict, Any, Optional
 from uuid import UUID
 from datetime import datetime, timezone
-from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Response
 from sqlalchemy.ext.asyncio import AsyncSession
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 import structlog
 
+from sqlalchemy.exc import IntegrityError
+
 from app.core.tenant import get_tenant_db
+from app.services.erp_sync_correlation import correlate_synced_records
 # NOTE (FS-56, for HARSH's review): ERP routes now use get_tenant_db — 020's
 # RLS policies were rewritten onto the canonical app.current_org_id GUC, and a
 # session that never sets it would read zero rows under any non-owner DB role.
+from app.core.pagination import mark_truncated
 from app.db.database import get_db  # noqa: F401 - kept for any non-tenant use
 from app.api.auth import get_current_active_user
 from app.db.models import User, IntegrationConfiguration, ERPDataMapping, ERPSyncStatus, ERPEntity
@@ -68,19 +72,37 @@ class ERPIntegrationUpdate(BaseModel):
 
 
 class ERPIntegrationResponse(BaseModel):
-    """Response with ERP integration details"""
+    """Response with ERP integration details.
+
+    OPTIONALITY HERE MIRRORS THE COLUMNS, deliberately.
+
+    `sync_schedule` and `erp_type` are `nullable=True` on
+    `integration_configurations`, and `sync_frequency_minutes` has only a
+    Python-side default — so a row written by anything other than the create
+    endpoint (the demo seeder, a migration, a direct insert, a fixture) can hold
+    NULL in all three.
+
+    They were declared non-optional here, which meant such a row could not be
+    serialised at all: pydantic raised inside the handler and FastAPI returned a
+    500. Not for one endpoint but for FOUR — create, list, get and update all build
+    this model — so a single NULL made the integration unreadable AND uneditable,
+    with a 500 that names a validation error rather than the data.
+
+    A response model must never be stricter than the columns behind it. Asserted by
+    tests/test_erp_response_schema.py.
+    """
     id: str
     integration_name: str
-    erp_type: str
-    erp_version: Optional[str]
+    erp_type: Optional[str] = None
+    erp_version: Optional[str] = None
     auth_type: str
     base_url: str
     is_active: bool
-    sync_schedule: str
-    sync_frequency_minutes: int
-    last_successful_sync: Optional[datetime]
-    created_at: datetime
-    updated_at: datetime
+    sync_schedule: Optional[str] = None
+    sync_frequency_minutes: Optional[int] = None
+    last_successful_sync: Optional[datetime] = None
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
 
 
 class FieldMappingCreate(BaseModel):
@@ -118,19 +140,166 @@ class FieldMappingResponse(BaseModel):
 
 
 class SyncStatusResponse(BaseModel):
-    """Response with sync status"""
+    """Response with sync status.
+
+    Same rule as ERPIntegrationResponse: optionality mirrors the columns.
+    `records_synced` and `records_failed` carry a Python-side `default=0`, which does
+    NOT apply to rows written by anything but the ORM — a migration backfill or a raw
+    INSERT leaves them NULL, and a required `int` here turns that row into a 500 from
+    the sync-status endpoint. `updated_at` is likewise not `nullable=False`.
+
+    Found by tests/test_erp_response_schema.py, which was written for the identical
+    defect in ERPIntegrationResponse and then found this one on its first run.
+    """
     id: str
     entity_type: str
-    last_sync_at: Optional[datetime]
-    last_sync_status: Optional[str]
-    records_synced: int
-    records_failed: int
-    sync_duration_seconds: Optional[float]
-    next_sync_at: Optional[datetime]
-    updated_at: datetime
+    last_sync_at: Optional[datetime] = None
+    last_sync_status: Optional[str] = None
+    records_synced: Optional[int] = None
+    records_failed: Optional[int] = None
+    sync_duration_seconds: Optional[float] = None
+    next_sync_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+
+    #: FS-562. Whether a correlation route existed for this vendor/entity on the last
+    #: sync, and why not when there was none. The server has always known this — it was
+    #: returned by the sync POST and then discarded, while the page an operator watches
+    #: polls THIS endpoint. Without it, an empty correlations list means either "analysed,
+    #: nothing found" or "never analysed", and those are opposite answers.
+    #:
+    #: Three states, not two: `None` is a sync that recorded no correlation attempt, which
+    #: is every row written before the column existed.
+    correlation_routed: Optional[bool] = None
+    correlation_reason: Optional[str] = None
+
+
+class MessageResponse(BaseModel):
+    """The two deletes. Both answer with a sentence and nothing else."""
+
+    message: str
+
+
+class ConnectionTestResult(BaseModel):
+    """`POST /{id}/test`. `details` is the CONNECTOR'S `health_check()` payload verbatim
+    and stays open — every vendor connector reports something different there, which is
+    exactly why `interpret_health` exists to reduce it to a status."""
+
+    status: str
+    message: str
+    details: Dict[str, Any] = Field(default_factory=dict)
+    integration_id: str
+    tested_at: str
+
+
+class SyncTriggered(BaseModel):
+    """`POST /{id}/sync`. The sync itself runs as a background task, so this reports what
+    was QUEUED — `entity_types` is the resolved list, which is either the caller's single
+    `entity_type` or the distinct source entities of the field mappings."""
+
+    status: str
+    message: str
+    integration_id: str
+    entity_types: List[str]
+    triggered_at: str
+
+
+class WebhookConfig(BaseModel):
+    """`GET /{id}/webhook-config` — `describe_scheme()` plus three keys the handler adds.
+
+    `extra="allow"` because the first six belong to `app.services.erp_webhook_auth`, not
+    to this route. A field that service starts reporting must reach the operator: this
+    endpoint exists precisely because the webhook route answers a deliberately
+    uninformative 401, so a key silently filtered out here has nowhere else to surface.
+
+    Never carries the secret itself — `secret_configured` is a bool by design.
+    """
+
+    model_config = ConfigDict(extra="allow")
+
+    erp_type: Optional[str] = None
+    auth_mode: str
+    signature_header: str
+    signature_encoding: str
+    secret_configured: bool
+    signs: str
+    endpoint_path: str
+    #: `secret_configured`, restated as the question an operator is actually asking.
+    ready: bool
+    next_step: str
+
+
+class ERPEntityOut(BaseModel):
+    id: str
+    entity_type: str
+    entity_id: str
+    source_system: str
+    #: The connector's record, stored verbatim in a JSON column. Open by definition —
+    #: its shape is the vendor's, and pinning it would filter whatever SAP sends next.
+    entity_data: Dict[str, Any] = Field(default_factory=dict)
+    updated_at: Optional[str] = None
+
+
+class ERPEventOut(BaseModel):
+    id: str
+    event_type: str
+    event_id: str
+    source_system: str
+    entity_type: str
+    entity_id: Optional[str] = None
+    processing_status: Optional[str] = None
+    created_at: Optional[str] = None
+
+
+class ERPCorrelationOut(BaseModel):
+    id: str
+    correlation_type: str
+    erp_event_id: Optional[str] = None
+    sensor_event_id: Optional[str] = None
+    #: `erp_correlations.correlation_score` is NUMERIC. The handler already casts it to
+    #: `float`, which is the reason this one is not the `HistorianPolicyOut.ingestion_priority`
+    #: bug over again — a Decimal reaching a `str` field is what that was.
+    correlation_score: Optional[float] = None
+    created_at: Optional[str] = None
 
 
 # ==================== Endpoints ====================
+
+WEBHOOK_SECRET_UNIQUE_INDEX = "uq_erp_integration_webhook_secret"
+
+
+def _webhook_secret_collision(exc: Exception) -> bool:
+    """Is this IntegrityError the shared-webhook-secret constraint?
+
+    Matched on the index name so an unrelated constraint violation is not
+    mis-reported as a secret collision -- that would send someone chasing the wrong
+    problem entirely.
+    """
+    return WEBHOOK_SECRET_UNIQUE_INDEX in str(getattr(exc, "orig", exc))
+
+
+def _webhook_secret_conflict() -> HTTPException:
+    """409 for a webhook secret already in use.
+
+    Says nothing about WHICH integration or organisation holds it. The collision is
+    detected by a unique index precisely because the requesting session cannot see
+    another tenant's rows under RLS, and the response must not undo that: confirming
+    "some other tenant uses this secret" is itself a disclosure.
+
+    The rule is not arbitrary. The inbound webhook path carries only the erp_type, so
+    the tenant is resolved by whichever integration's secret verifies the request
+    bytes. Two integrations sharing a secret means both verify and attribution becomes
+    whichever was tried first -- one tenant's events filed against another's records.
+    """
+    return HTTPException(
+        status_code=409,
+        detail=(
+            "That webhook secret is already in use. Each ERP integration needs its "
+            "own: inbound webhooks are attributed to the integration whose secret "
+            "verifies the request, so a shared secret makes attribution ambiguous. "
+            "Generate a distinct value (e.g. `openssl rand -hex 32`)."
+        ),
+    )
+
 
 @router.post("", response_model=ERPIntegrationResponse)
 async def create_integration(
@@ -194,7 +363,13 @@ async def create_integration(
     integration.sync_frequency_minutes = request.sync_frequency_minutes
     
     db.add(integration)
-    await db.commit()
+    try:
+        await db.commit()
+    except IntegrityError as exc:
+        await db.rollback()
+        if _webhook_secret_collision(exc):
+            raise _webhook_secret_conflict()
+        raise
     
     logger.info(
         "erp_integration_created",
@@ -328,8 +503,23 @@ async def update_integration(
     if request.is_active is not None:
         integration.is_active = request.is_active
     
-    # Update configuration
-    config = integration.configuration
+    # Update configuration.
+    #
+    # `dict(...)` IS LOAD-BEARING. This read `integration.configuration` directly,
+    # mutated that dict in place, and assigned the same object back. SQLAlchemy
+    # detects changes to a JSON column by identity, so re-assigning the identical
+    # object left the attribute clean and **no UPDATE was emitted for this column at
+    # all** -- while the endpoint returned 200 and logged `erp_integration_updated`.
+    #
+    # Every PUT therefore silently discarded auth_config, rate_limit, timeout,
+    # webhook_secret and ip_whitelist. An operator rotating a webhook secret or
+    # correcting ERP credentials saw success and got nothing. Found by a test that
+    # expected a 409 on a colliding secret update and got a 200 because the write
+    # never happened.
+    #
+    # Copying makes the assignment a genuinely new object, which marks the attribute
+    # dirty. (`flag_modified` would also work; a copy is harder to remove by accident.)
+    config = dict(integration.configuration or {})
     if request.auth_config:
         config["auth_config"] = request.auth_config
     if request.rate_limit:
@@ -343,8 +533,14 @@ async def update_integration(
     
     integration.configuration = config
     integration.updated_at = datetime.now(timezone.utc)
-    
-    await db.commit()
+
+    try:
+        await db.commit()
+    except IntegrityError as exc:
+        await db.rollback()
+        if _webhook_secret_collision(exc):
+            raise _webhook_secret_conflict()
+        raise
     
     logger.info(
         "erp_integration_updated",
@@ -367,7 +563,7 @@ async def update_integration(
     )
 
 
-@router.delete("/{integration_id}")
+@router.delete("/{integration_id}", response_model=MessageResponse)
 async def delete_integration(
     integration_id: UUID,
     db: AsyncSession = Depends(get_tenant_db),
@@ -402,7 +598,7 @@ async def delete_integration(
     return {"message": "Integration deleted successfully"}
 
 
-@router.post("/{integration_id}/test")
+@router.post("/{integration_id}/test", response_model=ConnectionTestResult)
 async def test_connection(
     integration_id: UUID,
     db: AsyncSession = Depends(get_tenant_db),
@@ -459,7 +655,7 @@ async def test_connection(
     }
 
 
-@router.post("/{integration_id}/sync")
+@router.post("/{integration_id}/sync", response_model=SyncTriggered)
 async def trigger_sync(
     integration_id: UUID,
     background_tasks: BackgroundTasks,
@@ -536,6 +732,23 @@ def extract_entity_id(record: Dict[str, Any], index: int) -> str:
     return f"row-{index}"
 
 
+async def _set_tenant_guc(db, organization_id: str) -> None:
+    """Set `app.current_org_id` for a session that has no request behind it.
+
+    Silently a no-op on non-Postgres dialects (the SQLite offline demo path), where
+    RLS does not exist -- which is also why a green isolation suite on SQLite proves
+    nothing about this.
+    """
+    from sqlalchemy import text
+
+    if db.bind is None or db.bind.dialect.name != "postgresql":
+        return
+    await db.execute(
+        text("SELECT set_config('app.current_org_id', :org_id, true)"),
+        {"org_id": str(organization_id)},
+    )
+
+
 async def run_erp_sync(integration_id: str, organization_id: str, entity_types: List[str]) -> Dict[str, Any]:
     """Fetch each entity type via the connector, upsert erp_entities, and record
     per-entity sync status. Runs in its own DB session (background task)."""
@@ -544,6 +757,23 @@ async def run_erp_sync(integration_id: str, organization_id: str, entity_types: 
 
     summary: Dict[str, Any] = {}
     async with AsyncSessionLocal() as db:
+        # THE TENANT GUC. Every erp_* table carries
+        #   FOR ALL USING (organization_id = NULLIF(current_setting(
+        #       'app.current_org_id', true), '')::uuid)
+        # and Postgres applies a FOR ALL policy's USING clause as the WITH CHECK for
+        # INSERT when none is given. With the GUC unset that predicate is NULL, so
+        # every insert in this function is rejected.
+        #
+        # It appeared to work only because no ERP table has FORCE ROW LEVEL SECURITY
+        # and the dev connection owns them -- owners bypass RLS. On any deployment
+        # where the app connects as a non-owner role, this background sync wrote
+        # nothing while reporting success.
+        #
+        # The HTTP routes above get this from `get_tenant_db`; a background task has
+        # no request to derive it from, so it is set explicitly here. `true` scopes
+        # it to the transaction, matching exports.py and compliance_reports.py.
+        await _set_tenant_guc(db, organization_id)
+
         integration = (
             await db.execute(
                 _select(IntegrationConfiguration).where(IntegrationConfiguration.id == integration_id)
@@ -560,6 +790,7 @@ async def run_erp_sync(integration_id: str, organization_id: str, entity_types: 
 
         source_system = str(integration.erp_type or "erp")
         any_success = False
+        correlation_summary: Dict[str, Any] = {}
         for etype in entity_types:
             started = datetime.now(timezone.utc)
             synced = failed = 0
@@ -588,6 +819,25 @@ async def run_erp_sync(integration_id: str, organization_id: str, entity_types: 
                         existing.updated_at = datetime.now(timezone.utc)
                     synced += 1
                 any_success = True
+
+                # Correlate what was just fetched. Previously only the SAP WEBHOOK
+                # path produced correlations, so a polled sync filled erp_entities
+                # and left erp_correlations empty -- and /correlations/recent read a
+                # table nothing in this path ever wrote.
+                #
+                # Never allowed to fail the sync: the entities are already useful
+                # without it. But the outcome is recorded rather than assumed, and an
+                # unrouted erp_type/entity_type is reported as skipped instead of
+                # being analysed with another vendor's field mapping.
+                correlation = await correlate_synced_records(
+                    db,
+                    organization_id=organization_id,
+                    integration_id=integration_id,
+                    erp_type=source_system,
+                    entity_type=etype,
+                    records=records,
+                )
+                correlation_summary[etype] = correlation
             except Exception as exc:
                 status, failed = "failed", 1
                 logger.error("erp_sync_entity_failed", entity_type=etype, error=str(exc))
@@ -611,7 +861,20 @@ async def run_erp_sync(integration_id: str, organization_id: str, entity_types: 
             sync_row.records_synced = synced
             sync_row.records_failed = failed
             sync_row.sync_duration_seconds = int(duration)
-            summary[etype] = {"status": status, "records_synced": synced, "records_failed": failed}
+            # FS-562. The outcome reached the POST response and stopped there, while the
+            # UI polls sync-status. Persisted so a reload does not turn "no analyzer for
+            # this vendor" back into "no anomalies found".
+            if etype in correlation_summary:
+                sync_row.correlation_routed = correlation_summary[etype].get("routed")
+                sync_row.correlation_reason = correlation_summary[etype].get("reason")
+            entry = {"status": status, "records_synced": synced, "records_failed": failed}
+            # Surface the correlation outcome rather than leaving it in the logs.
+            # An operator looking at a sync that produced no correlations needs to
+            # tell "nothing anomalous was found" from "this vendor has no correlation
+            # rules yet" -- the counts and `reason` distinguish them.
+            if etype in correlation_summary:
+                entry["correlation"] = correlation_summary[etype]
+            summary[etype] = entry
 
         if any_success:
             integration.last_successful_sync = datetime.now(timezone.utc)
@@ -623,6 +886,59 @@ async def run_erp_sync(integration_id: str, organization_id: str, entity_types: 
     return summary
 
 
+@router.get("/{integration_id}/webhook-config", response_model=WebhookConfig)
+async def get_webhook_config(
+    integration_id: UUID,
+    db: AsyncSession = Depends(get_tenant_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    """What this integration expects an inbound webhook to look like.
+
+    WHY THIS ENDPOINT EXISTS. The webhook route answers a deliberately uninformative
+    401: telling an unauthenticated caller *why* verification failed would let them
+    discover whether an integration exists, which scheme it uses and whether a secret
+    is set. Correct, and it leaves the operator wiring up a vendor with nothing to
+    debug.
+
+    So the same information is available here, to an AUTHENTICATED user of the owning
+    tenant. It reports the URL to register with the vendor, the header the credential
+    must arrive in, the scheme, and whether a secret is configured at all -- which is
+    the single most common reason a webhook 401s.
+
+    Never returns the secret itself.
+    """
+    from sqlalchemy import select
+
+    from app.services.erp_webhook_auth import describe_scheme
+
+    integration = (
+        await db.execute(
+            select(IntegrationConfiguration).where(
+                IntegrationConfiguration.id == integration_id,
+                IntegrationConfiguration.organization_id == current_user.organization_id,
+            )
+        )
+    ).scalar_one_or_none()
+    if not integration:
+        raise HTTPException(status_code=404, detail="Integration not found")
+
+    scheme = describe_scheme(integration.erp_type, integration.configuration)
+    scheme["endpoint_path"] = f"/api/v1/erp/webhooks/{integration.erp_type}"
+    scheme["ready"] = bool(scheme["secret_configured"])
+    if not scheme["secret_configured"]:
+        scheme["next_step"] = (
+            "Set configuration.webhook_secret on this integration. Until then every "
+            "inbound webhook is rejected -- deliberately, because an integration "
+            "without a secret would otherwise accept unauthenticated writes."
+        )
+    else:
+        scheme["next_step"] = (
+            f"Register {scheme['endpoint_path']} with the vendor and have it send the "
+            f"credential in the {scheme['signature_header']!r} header."
+        )
+    return scheme
+
+
 @router.get("/{integration_id}/sync-status", response_model=List[SyncStatusResponse])
 async def get_sync_status(
     integration_id: UUID,
@@ -631,9 +947,29 @@ async def get_sync_status(
 ):
     """
     Get sync status for ERP integration.
+
+    An empty list here meant two different things: this integration has never synced, or there
+    is no such integration for you. The first is the operator's answer to "did the sync run?";
+    the second is a wrong id or another tenant's. Same response, opposite implications — so the
+    integration is resolved first and an unknown one is a 404, leaving `[]` with exactly one
+    meaning: it exists, it is yours, and it has not synced.
+
+    404 rather than 403 for another tenant's id, matching the rest of this file: distinguishing
+    them would confirm the id exists.
     """
     from sqlalchemy import select
-    
+
+    integration = (
+        await db.execute(
+            select(IntegrationConfiguration.id).where(
+                IntegrationConfiguration.id == integration_id,
+                IntegrationConfiguration.organization_id == current_user.organization_id,
+            )
+        )
+    ).scalar_one_or_none()
+    if integration is None:
+        raise HTTPException(status_code=404, detail="Integration not found")
+
     result = await db.execute(
         select(ERPSyncStatus).where(
             ERPSyncStatus.integration_id == integration_id,
@@ -650,7 +986,14 @@ async def get_sync_status(
             last_sync_status=status.last_sync_status,
             records_synced=status.records_synced,
             records_failed=status.records_failed,
-            sync_duration_seconds=float(status.sync_duration_seconds) if status.sync_duration_seconds else None,
+            # `is not None`, not truthiness: a sync that finished in under a second stores
+            # 0 and reported "duration not recorded", which is the answer for a sync that
+            # never ran.
+            sync_duration_seconds=(
+                float(status.sync_duration_seconds)
+                if status.sync_duration_seconds is not None
+                else None
+            ),
             next_sync_at=status.next_sync_at,
             updated_at=status.updated_at
         )
@@ -814,7 +1157,7 @@ async def update_field_mapping(
     )
 
 
-@router.delete("/{integration_id}/mappings/{mapping_id}")
+@router.delete("/{integration_id}/mappings/{mapping_id}", response_model=MessageResponse)
 async def delete_field_mapping(
     integration_id: UUID,
     mapping_id: UUID,
@@ -853,15 +1196,47 @@ async def delete_field_mapping(
 
 # ==================== ERP data surfaces (ERP hub page) ====================
 
-@router.get("/{integration_id}/entities")
+#: Upper bounds for the hub's list endpoints. Declared on the query parameter itself so
+#: FastAPI rejects an over-limit request with 422 instead of silently returning a
+#: different number than was asked for.
+MAX_ENTITIES_PAGE = 1000
+MAX_EVENTS_PAGE = 500
+
+
+def _mark_truncated(response: Response, rows: list, limit: int) -> list:
+    """Trim to `limit` and say so when there was more.
+
+    THE DEFECT THIS FIXES. These endpoints returned exactly `limit` rows and nothing
+    else, so **a full page was indistinguishable from the complete set**. The ERP hub
+    passes no limit at all, so a tenant with 5,000 entities saw the first 200 presented
+    as everything -- the same silent-truncation shape that bit three ERP connectors,
+    this time on our own API.
+
+    Callers fetch `limit + 1`; if the extra row came back there is more to see. That
+    costs one row rather than a COUNT over the whole table.
+
+    The signal is a HEADER, not an envelope, because the body is a bare array that the
+    frontend already consumes -- changing its shape would break every caller to fix a
+    problem they could then no longer see.
+    """
+    # Delegates rather than repeating the two header writes: `/api/v1/rul` needed the
+    # same signal, and two copies of a convention drift the moment one is edited.
+    return mark_truncated(response, rows, limit)
+
+
+@router.get("/{integration_id}/entities", response_model=List[ERPEntityOut])
 async def list_erp_entities(
     integration_id: UUID,
+    response: Response,
     entity_type: Optional[str] = None,
-    limit: int = 200,
+    limit: int = Query(200, ge=1, le=MAX_ENTITIES_PAGE),
     db: AsyncSession = Depends(get_tenant_db),
     current_user: User = Depends(get_current_active_user),
 ):
-    """Synced ERP business objects (erp_entities) for the hub's Entities tab."""
+    """Synced ERP business objects (erp_entities) for the hub's Entities tab.
+
+    Sets `X-Result-Truncated` so a full page is distinguishable from the whole set.
+    """
     from sqlalchemy import select
 
     query = select(ERPEntity).where(
@@ -871,7 +1246,11 @@ async def list_erp_entities(
     )
     if entity_type:
         query = query.where(ERPEntity.entity_type == entity_type)
-    rows = (await db.execute(query.order_by(ERPEntity.updated_at.desc()).limit(min(limit, 1000)))).scalars().all()
+    # limit + 1: the extra row is how we know there is more, without a COUNT.
+    fetched = (await db.execute(
+        query.order_by(ERPEntity.updated_at.desc()).limit(limit + 1)
+    )).scalars().all()
+    rows = _mark_truncated(response, fetched, limit)
     return [{
         "id": str(e.id),
         "entity_type": e.entity_type,
@@ -882,11 +1261,12 @@ async def list_erp_entities(
     } for e in rows]
 
 
-@router.get("/{integration_id}/events")
+@router.get("/{integration_id}/events", response_model=List[ERPEventOut])
 async def list_erp_events(
     integration_id: UUID,
+    response: Response,
     status: Optional[str] = None,
-    limit: int = 100,
+    limit: int = Query(100, ge=1, le=MAX_EVENTS_PAGE),
     db: AsyncSession = Depends(get_tenant_db),
     current_user: User = Depends(get_current_active_user),
 ):
@@ -900,7 +1280,10 @@ async def list_erp_events(
     )
     if status:
         query = query.where(ERPIntegrationEvent.processing_status == status)
-    rows = (await db.execute(query.order_by(ERPIntegrationEvent.created_at.desc()).limit(min(limit, 500)))).scalars().all()
+    fetched = (await db.execute(
+        query.order_by(ERPIntegrationEvent.created_at.desc()).limit(limit + 1)
+    )).scalars().all()
+    rows = _mark_truncated(response, fetched, limit)
     return [{
         "id": str(ev.id),
         "event_type": ev.event_type,
@@ -913,21 +1296,26 @@ async def list_erp_events(
     } for ev in rows]
 
 
-@router.get("/correlations/recent")
+@router.get("/correlations/recent", response_model=List[ERPCorrelationOut])
 async def list_erp_correlations(
-    limit: int = 100,
+    response: Response,
+    limit: int = Query(100, ge=1, le=MAX_EVENTS_PAGE),
     db: AsyncSession = Depends(get_tenant_db),
     current_user: User = Depends(get_current_active_user),
 ):
-    """ERP<->sensor correlations recorded in erp_correlations (AI tab)."""
+    """ERP<->sensor correlations recorded in erp_correlations (AI tab).
+
+    Sets `X-Result-Truncated` so a full page is distinguishable from the whole set.
+    """
     from sqlalchemy import select
     from app.db.models import ERPCorrelation
 
     rows = (await db.execute(
         select(ERPCorrelation)
         .where(ERPCorrelation.organization_id == current_user.organization_id)
-        .order_by(ERPCorrelation.created_at.desc()).limit(min(limit, 500))
+        .order_by(ERPCorrelation.created_at.desc()).limit(limit + 1)
     )).scalars().all()
+    rows = _mark_truncated(response, rows, limit)
     return [{
         "id": str(c.id),
         "correlation_type": c.correlation_type,

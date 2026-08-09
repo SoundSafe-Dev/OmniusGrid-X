@@ -5,6 +5,8 @@ from typing import Dict, Any, Optional
 from dataclasses import dataclass
 import structlog
 
+from . import metrics
+
 logger = structlog.get_logger()
 
 
@@ -27,6 +29,18 @@ class PackMLState(str, Enum):
     CLEARING = "Clearing"
     STOPPING = "Stopping"
     STOPPED = "Stopped"
+
+    #: NOT a PackML state. A vendor state this mapper does not understand (FS-462).
+    #:
+    #: Unmapped states used to become `IDLE`, which is in AVAILABILITY_LOSS_STATES — so a
+    #: machine reporting a string outside its asset type's mapping was recorded as DOWN
+    #: while it ran at full rate. `create_mapper_for_asset_type("3d_printer")` has
+    #: "printing" and not "running"; the CNC map has the reverse. One wrong `asset_type`
+    #: in a config, or one vendor firmware update, is all it takes.
+    #:
+    #: Deliberately in NEITHER category set, which revives `get_state_category`'s
+    #: "unknown" branch — dead code until now, because every member was categorised.
+    UNDEFINED = "Undefined"
 
 
 # OEE-relevant state categories
@@ -60,16 +74,22 @@ class PackMLStateMapper:
     - Vendor-agnostic process behavior mapping
     """
     
-    def __init__(self, mappings: Optional[Dict[str, str]] = None):
+    def __init__(self, mappings: Optional[Dict[str, str]] = None,
+                 asset_type: str = "generic"):
         """
         Initialize mapper with state mappings.
         
         Args:
             mappings: Dict mapping vendor states to PackML states
                      e.g., {"printing": "Execute", "heating": "Starting"}
+            asset_type: which default map this came from. Carried only so the unmapped
+                     counter can be labelled by it (FS-462) — a BOUNDED label, unlike the
+                     vendor state itself, which is arbitrary text off a PLC and would put
+                     unbounded cardinality into Prometheus.
         """
         self._mappings: Dict[str, PackMLState] = {}
         self._unknown_states: set = set()
+        self.asset_type = asset_type
         
         if mappings:
             self.load_mappings(mappings)
@@ -103,7 +123,9 @@ class PackMLStateMapper:
             PackMLState enum value
         """
         if not vendor_state:
-            return PackMLState.IDLE
+            # No state reported is not "the machine is idle" (FS-462) — it is no
+            # information about the machine at all.
+            return PackMLState.UNDEFINED
         
         # Normalize input
         normalized = vendor_state.lower().strip()
@@ -112,17 +134,23 @@ class PackMLStateMapper:
         if normalized in self._mappings:
             return self._mappings[normalized]
         
+        # COUNTED EVERY TIME, not just the first (FS-462). The warning below fires once
+        # per distinct string, on a device that by construction may not be able to ship
+        # logs — so the single line recording a permanently mis-measured machine could be
+        # the only evidence, and it could be lost. The counter is the durable half.
+        metrics.record_packml_unmapped(self.asset_type)
+        
         # Track unknown states
         if normalized not in self._unknown_states:
             self._unknown_states.add(normalized)
             logger.warning(
                 "unknown_vendor_state",
                 vendor_state=vendor_state,
-                defaulting_to=PackMLState.IDLE
+                asset_type=self.asset_type,
+                mapped_to=PackMLState.UNDEFINED.value,
             )
         
-        # Default to Idle with warning
-        return PackMLState.IDLE
+        return PackMLState.UNDEFINED
     
     def is_productive(self, state: PackMLState) -> bool:
         """Check if state counts as productive time for OEE"""
@@ -248,4 +276,4 @@ def create_mapper_for_asset_type(asset_type: str, custom_mappings: Optional[Dict
     if custom_mappings:
         base_mappings.update(custom_mappings)
     
-    return PackMLStateMapper(base_mappings)
+    return PackMLStateMapper(base_mappings, asset_type=asset_type)

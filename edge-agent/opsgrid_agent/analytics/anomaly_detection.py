@@ -1,7 +1,7 @@
 """Local Anomaly Detection Module for Edge Agent"""
 
 from typing import Dict, Any, List, Optional
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from collections import deque
 import statistics
 import structlog
@@ -134,7 +134,7 @@ class AnomalyDetector:
         Returns:
             List of recent anomalies
         """
-        cutoff = datetime.now() - timedelta(hours=hours)
+        cutoff = datetime.now(timezone.utc) - timedelta(hours=hours)
         
         return [
             anomaly for anomaly in self.anomalies

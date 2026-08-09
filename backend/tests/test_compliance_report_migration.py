@@ -219,19 +219,25 @@ def test_tenant_a_cannot_read_or_mutate_tenant_b_jobs(
 
     org_a = seeded_orgs["org_a_id"]
     org_b = seeded_orgs["org_b_id"]
-    job_b = uuid4()
+    job_a, job_b = uuid4(), uuid4()
 
     admin = psycopg2.connect(admin_sync_url)
     admin.autocommit = True
     try:
         with admin.cursor() as cur:
-            cur.execute(
+            # A job for EACH tenant. Org A's is the positive control: without it, every
+            # assertion below is satisfied by a policy that hides the table from
+            # everyone, which is precisely the failure mode this project has already
+            # shipped twice (audit_logs and data_processing_records returned zero rows
+            # to their own owners for months). "B's row is invisible" and "no row is
+            # visible" are different facts, and only one of them is isolation.
+            cur.executemany(
                 """
                 INSERT INTO compliance_report_jobs
                 (id, organization_id, framework, format)
                 VALUES (%s, %s, 'soc2', 'pdf');
                 """,
-                (str(job_b), str(org_b)),
+                [(str(job_a), str(org_a)), (str(job_b), str(org_b))],
             )
     finally:
         admin.close()
@@ -243,6 +249,14 @@ def test_tenant_a_cannot_read_or_mutate_tenant_b_jobs(
             cur.execute(
                 "SELECT set_config('app.current_org_id', %s, false);",
                 (str(org_a),),
+            )
+            cur.execute(
+                "SELECT count(*) FROM compliance_report_jobs WHERE id = %s;",
+                (str(job_a),),
+            )
+            assert cur.fetchone()[0] == 1, (
+                "org A cannot see its OWN job — the policy is hiding the table from "
+                "everyone, and every isolation assertion below would pass anyway"
             )
             cur.execute(
                 "SELECT count(*) FROM compliance_report_jobs WHERE id = %s;",
@@ -263,6 +277,16 @@ def test_tenant_a_cannot_read_or_mutate_tenant_b_jobs(
                 (str(job_b),),
             )
             assert cur.rowcount == 0
+            # ... and A can delete its own, which proves the DELETE above was refused by
+            # the policy rather than by the row simply not existing.
+            cur.execute(
+                "DELETE FROM compliance_report_jobs WHERE id = %s;",
+                (str(job_a),),
+            )
+            assert cur.rowcount == 1, (
+                "org A cannot delete its own job either; the zero above says nothing "
+                "about isolation"
+            )
     finally:
         conn.close()
 

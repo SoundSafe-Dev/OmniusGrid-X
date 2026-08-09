@@ -7,6 +7,30 @@ Service for extracting and storing SAP data:
 - Inventory data (warehouse management)
 - Vendor master data (supplier relationship)
 - Work order data (maintenance domain)
+
+SUPERSEDED — NOT WIRED, AND DELIBERATELY SO.
+
+Nothing calls this module. The supported ERP ingestion path is
+`app.api.erp_integrations.run_erp_sync`, which is what the API, the background sync and
+the CI harnesses all use.
+
+The two differ in a way that matters, so this is not merely a duplicate:
+
+    this module      fetches, NORMALISES, and stores the normalised record
+    run_erp_sync     fetches and stores the RAW vendor record, then transforms at
+                     analysis time via erp_sync_correlation.CORRELATION_ROUTES
+
+Storing raw is the approach that survived: it is lossless, so a vendor field nobody
+mapped yet is still there when someone needs it, and the transform can be corrected
+after the fact. Three field names in the Dynamics invoice transformer were wrong; with
+raw storage that was a code fix, with normalised storage it would have been a re-sync.
+
+Wiring this back would create a SECOND ingestion path writing the same table in a
+different shape — worse than either alone. If you want what it offers, add the entity to
+`run_erp_sync` and register a route, rather than starting this.
+
+Kept rather than deleted because the per-entity fetch methods it calls are real and its
+structure is sound; it is superseded, not broken.
 """
 
 from typing import Dict, Any, Optional, List

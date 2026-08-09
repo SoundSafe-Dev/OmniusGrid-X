@@ -103,6 +103,7 @@ class AudioFeatureCollector(BaseCollector):
     # Defaults to a synthetic source -> BaseCollector enforces explicit config
     # under EDGE_REQUIRE_EXPLICIT_SOURCES (no silent demo tones).
     has_synthetic_default = True
+    known_sources = ("device", "simulate")
 
     def __init__(self, config: Dict[str, Any]):
         super().__init__(config)
@@ -135,26 +136,37 @@ class AudioFeatureCollector(BaseCollector):
                 pass
         logger.info("audio_collector_stopped", asset_id=self.asset_id)
 
-    def _capture(self) -> "np.ndarray":
-        """Blocking capture of one frame (runs in a worker thread)."""
+    def _capture(self) -> "tuple[np.ndarray, bool]":
+        """Blocking capture of one frame (runs in a worker thread).
+
+        Returns (samples, synthetic). The flag is the CAPTURE's own account of what it
+        did, so the provenance stamp downstream cannot disagree with it (FS-457).
+        """
         if self.source == "device":
             frames = int(self.sample_rate * self.frame_seconds)
             recording = _sounddevice.rec(  # type: ignore[union-attr]
                 frames, samplerate=self.sample_rate, channels=1, dtype="float32"
             )
             _sounddevice.wait()  # type: ignore[union-attr]
-            return recording.reshape(-1)
-        return synthesize_frame(self.sample_rate, self.frame_seconds,
-                                self.simulate_freq_hz, self._tick)
+            return recording.reshape(-1), False
+        return (synthesize_frame(self.sample_rate, self.frame_seconds,
+                                 self.simulate_freq_hz, self._tick), True)
 
     async def _poll_loop(self) -> None:
         while self._running:
             try:
-                samples = await asyncio.to_thread(self._capture)
+                samples, synthetic = await asyncio.to_thread(self._capture)
                 features = extract_audio_features(samples, self.sample_rate)
-                if self.source == "simulate":
-                    # Stamp synthetic data so it can never masquerade as a
-                    # real microphone downstream.
+                if synthetic:
+                    # Stamp synthetic data so it can never masquerade as a real
+                    # microphone downstream.
+                    #
+                    # THE STAMP COMES FROM `_capture`, not from re-reading `self.source`
+                    # here (FS-457). It used to be `if self.source == "simulate"`, while
+                    # `_capture` synthesized whenever the source was not "device" — two
+                    # conditions that are not complements. Any other value, including a
+                    # typo like "mic" or "alsa", produced synthetic audio with NO stamp,
+                    # which is the one outcome the stamp exists to prevent.
                     features["simulated"] = True
                 self._tick += 1
                 await self.emit({

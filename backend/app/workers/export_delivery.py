@@ -30,8 +30,14 @@ def _health_port():
 
 async def _load_job(job_id: UUID, org_id: UUID):
     async with AsyncSessionLocal() as session:
+        # TRANSACTION-LOCAL (true), not session-scoped. With `false` the value stays
+        # on the connection after this session closes and it returns to the pool, so
+        # whatever picks that connection up next inherits a stale tenant unless it sets
+        # its own. Every operation here does set one, but that is a property of today's
+        # code rather than of the mechanism. Both functions do all their work in a
+        # single transaction, so `true` costs nothing and removes the footgun.
         await session.execute(
-            text("SELECT set_config('app.current_org_id', :org, false)"),
+            text("SELECT set_config('app.current_org_id', :org, true)"),
             {"org": str(org_id)},
         )
         job = (
@@ -85,8 +91,14 @@ async def _finish_job(
     error: str | None = None,
 ) -> None:
     async with AsyncSessionLocal() as session:
+        # TRANSACTION-LOCAL (true), not session-scoped. With `false` the value stays
+        # on the connection after this session closes and it returns to the pool, so
+        # whatever picks that connection up next inherits a stale tenant unless it sets
+        # its own. Every operation here does set one, but that is a property of today's
+        # code rather than of the mechanism. Both functions do all their work in a
+        # single transaction, so `true` costs nothing and removes the footgun.
         await session.execute(
-            text("SELECT set_config('app.current_org_id', :org, false)"),
+            text("SELECT set_config('app.current_org_id', :org, true)"),
             {"org": str(org_id)},
         )
         job = (

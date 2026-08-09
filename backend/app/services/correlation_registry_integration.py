@@ -6,6 +6,7 @@ and Kanban task management system to automatically create tasks, registry items,
 and correlations based on AI analysis results.
 """
 
+import re
 from typing import List, Dict, Any, Optional, Tuple
 from uuid import UUID
 from datetime import datetime, timedelta, timezone
@@ -460,6 +461,91 @@ class CorrelationRegistryIntegration:
     def __init__(self):
         self._initialized = False
     
+    def _fillable_domains(self) -> set:
+        """Domains something in this service can actually put an item into (FS-467).
+
+        DERIVED FROM THE CODE, not listed. Reading the extractor's own source and the
+        default-items table means giving a domain keywords is the only step needed to have
+        its registry created — a hand-maintained list here would be a second place to
+        remember, and the count it produced would drift from the behaviour it describes.
+
+        Exactly the method `test_correlation_registry_integration.py` uses to assert the
+        figure, which is deliberate: the guard and the code should be reading the same
+        thing, or the guard is checking its own copy.
+        """
+        import inspect
+        import re
+
+        pattern = r'"([A-Z_]+)":\s*\['
+        extractable = set(
+            re.findall(pattern, inspect.getsource(self._extract_domains_from_analysis))
+        )
+        with_defaults = set(
+            re.findall(pattern, inspect.getsource(self._get_default_items_for_domain))
+        )
+        return (extractable | with_defaults) & set(DOMAIN_REGISTRY_MAPPING)
+
+    async def _ensure_registry(
+        self,
+        organization_id: UUID,
+        domain_name: str,
+        db: AsyncSession,
+        created_by: UUID,
+    ) -> Optional[ActionableRegistry]:
+        """Find the registry for a domain, creating it if absent (FS-467).
+
+        Extracted so the two paths that need a registry cannot disagree about whether one
+        exists — `initialize_registries_for_organization` used to be the only creator, and
+        `_create_registry_item_from_analysis` said "Get or create registry for domain" in a
+        comment above code that only got, and returned None when it found nothing. An item
+        derived from a real analysis was dropped, silently, because a row was missing.
+
+        That mattered little while every domain was pre-created. It matters now: the
+        initializer only creates registries something can fill, so on-demand creation is
+        what keeps a newly-extractable domain from losing its first items.
+        """
+        registry_config = DOMAIN_REGISTRY_MAPPING.get(domain_name)
+        if not registry_config:
+            return None
+
+        result = await db.execute(
+            select(ActionableRegistry).where(
+                and_(
+                    ActionableRegistry.organization_id == organization_id,
+                    ActionableRegistry.registry_name == registry_config["registry_name"],
+                )
+            )
+        )
+        existing = result.scalar_one_or_none()
+        if existing:
+            return existing
+
+        registry = ActionableRegistry(
+            organization_id=organization_id,
+            registry_name=registry_config["registry_name"],
+            registry_type=registry_config["registry_type"],
+            registry_category=registry_config["registry_category"],
+            description=f"Operational registry for {domain_name} domain",
+            is_active=True,
+            is_compliance=registry_config["registry_type"] == "compliance",
+            frequency=registry_config["frequency"],
+            priority_level=registry_config["priority_level"],
+            created_by=created_by,
+            meta_data={
+                "domain": domain_name,
+                "compliance_standards": registry_config["compliance_standards"],
+            },
+        )
+        db.add(registry)
+        await db.commit()
+        await db.refresh(registry)
+        logger.info(
+            "registry_created_on_demand",
+            organization_id=str(organization_id),
+            domain=domain_name,
+        )
+        return registry
+
     async def initialize_registries_for_organization(
         self,
         organization_id: UUID,
@@ -467,7 +553,28 @@ class CorrelationRegistryIntegration:
         created_by: UUID
     ) -> Dict[str, UUID]:
         """
-        Initialize registries for all 47 operational domains for an organization.
+        Initialize registries for the mapped domains something can actually fill.
+
+        NOT ALL 46 (FS-467). `DOMAIN_REGISTRY_MAPPING` has 46 domains, and of those only
+        8 can be returned by `_extract_domains_from_analysis` — so only 8 can ever receive
+        an item derived from a correlation analysis, and 5 of those 8 also get default
+        items. **The other 38 were created empty and stayed empty**, which on a compliance
+        screen reads as 38 programmes not started rather than 38 that cannot be started.
+        A different fact, and the more alarming one.
+
+        Of the two ways to close that — write extractor keywords and default items for 38
+        speculative domains, or stop creating registries nothing can populate — the second
+        is the honest one. Keywords for `INNOVATION_RD` or `KNOWLEDGE_MANAGEMENT` would be
+        product scope invented to satisfy a count.
+
+        THE SET IS DERIVED, NOT LISTED. `_fillable_domains()` reads the extractor and the
+        default-items table, so giving a domain keywords is all it takes to have its
+        registry created — no second place to remember. And `_ensure_registry` creates one
+        on demand if an analysis ever names a domain outside the set, so narrowing this
+        cannot lose an item.
+
+        Existing registries are untouched: the lookup below returns them, so an
+        organisation initialised before this change keeps its 46.
         
         Args:
             organization_id: Organization UUID
@@ -480,8 +587,25 @@ class CorrelationRegistryIntegration:
         logger.info("initializing_registries_for_organization", organization_id=str(organization_id))
         
         registry_ids = {}
+        fillable = self._fillable_domains()
         
         for domain_name, registry_config in DOMAIN_REGISTRY_MAPPING.items():
+            # Skip only domains that have NEVER had a registry here. An existing one is
+            # still returned below, so this narrows creation without orphaning anything.
+            if domain_name not in fillable:
+                result = await db.execute(
+                    select(ActionableRegistry).where(
+                        and_(
+                            ActionableRegistry.organization_id == organization_id,
+                            ActionableRegistry.registry_name
+                            == registry_config["registry_name"],
+                        )
+                    )
+                )
+                already = result.scalar_one_or_none()
+                if already is not None:
+                    registry_ids[domain_name] = already.id
+                continue
             # Check if registry already exists
             result = await db.execute(
                 select(ActionableRegistry).where(
@@ -822,9 +946,28 @@ class CorrelationRegistryIntegration:
             "SYSTEM_INFRASTRUCTURE": ["network", "database", "latency", "infrastructure", "availability", "error rate"]
         }
         
+        # WHOLE WORDS, not substrings (FS-444).
+        #
+        # This was `keyword in analysis_lower`, and the short keywords are inside ordinary
+        # words this domain uses constantly:
+        #
+        #   "Line CAPAcity was reduced by 12%"      -> QUALITY_CONTROL   (capa)
+        #   "The valve was ISOlated for servicing"  -> COMPLIANCE_REGISTRIES (iso)
+        #   "Throughput is exCELLent"               -> PRODUCTION_OEE    (cell)
+        #   "Two orders were canCELLed"             -> PRODUCTION_OEE    (cell)
+        #
+        # `capa` is Corrective And Preventive Action and `iso` is the standards body, so a
+        # routine note about capacity opened a formal quality item and a valve isolation
+        # opened an ISO compliance item. Not cosmetic: `process_correlation_analysis` creates
+        # a registry item AND a Kanban task per detected domain, so someone is assigned work
+        # in a domain the analysis never mentioned — and the analysis text is quoted into the
+        # item, which makes the mismatch look like a judgement rather than a string bug.
         analysis_lower = analysis_text.lower()
         for domain, keywords in domain_keywords.items():
-            if any(keyword in analysis_lower for keyword in keywords):
+            if any(
+                re.search(rf"\b{re.escape(keyword)}\b", analysis_lower)
+                for keyword in keywords
+            ):
                 domains.append(domain)
         
         return domains
@@ -840,22 +983,19 @@ class CorrelationRegistryIntegration:
     ) -> Optional[UUID]:
         """Create a registry item from correlation analysis"""
         
-        # Get or create registry for domain
-        registry_config = DOMAIN_REGISTRY_MAPPING.get(domain)
-        if not registry_config:
-            return None
-        
-        result = await db.execute(
-            select(ActionableRegistry).where(
-                and_(
-                    ActionableRegistry.organization_id == organization_id,
-                    ActionableRegistry.registry_name == registry_config["registry_name"]
-                )
+        # GET OR CREATE, which this comment claimed and the code did not (FS-467). It
+        # looked the registry up and returned None when it found nothing, so an item
+        # derived from a real analysis was dropped because a row was missing — silently,
+        # since the caller cannot tell "no registry" from "nothing to record".
+        registry = await self._ensure_registry(organization_id, domain, db, created_by)
+        if registry is None:
+            # Only reachable for a domain outside DOMAIN_REGISTRY_MAPPING, which is a
+            # mapping gap rather than a missing row, and worth saying so.
+            logger.warning(
+                "registry_item_dropped_unmapped_domain",
+                organization_id=str(organization_id),
+                domain=domain,
             )
-        )
-        registry = result.scalar_one_or_none()
-        
-        if not registry:
             return None
         
         # Determine severity from risk score
@@ -1044,21 +1184,86 @@ class CorrelationRegistryIntegration:
         db: AsyncSession,
         created_by: UUID
     ) -> Optional[str]:
-        """Create an alert notification"""
-        
-        # This would integrate with the notification/alerting system
-        # For now, log the alert
-        alert_data = {
-            "analysis": analysis,
-            "risk_score": risk_score,
-            "recommended_actions": recommended_actions,
-            "created_at": datetime.now(timezone.utc).isoformat(),
-            "severity": "critical" if risk_score > 75 else "high"
+        """Dispatch a correlation alert through the notification service.
+
+        THIS LOGGED AND RETURNED AN INVENTED IDENTIFIER (FS-351). The body was
+        `# This would integrate with the notification/alerting system / # For now, log the
+        alert`, a `logger.warning`, and then
+
+            return f"alert-{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}"
+
+        That id went into `result["alerts"]`, which `process_correlation_analysis` returns
+        — so a caller received a list of alert references for alerts that did not exist,
+        on a path that classifies `severity: "critical"` above a risk score of 75. Worse
+        than a silent no-op: it reported success with an identifier, which is the shape
+        `test_reporting_honesty.py` exists to catch.
+
+        The notification service was already there. `notification_service.dispatch` loads
+        the tenant's subscription rules, delivers to the configured channels, records the
+        deliveries, and reports failed ones into error-triage.
+
+        DELIVERY FAILURE MUST NOT LOSE THE CORRELATION. The analysis and its correlations
+        are already committed by the time this runs, so an exception here would discard
+        completed work over an undeliverable email. It is caught and surfaced the same way
+        `rul.py` handles its own dispatch failures — and, unlike before, the return value
+        then says no alert exists rather than inventing a reference to one.
+        """
+        event = {
+            "event_type": "correlation_alert",
+            "severity": "critical" if risk_score > 75 else "high",
+            "domain": "correlation",
+            "organization_id": str(organization_id),
+            "title": f"Correlation risk score {risk_score:.0f}",
+            "message": analysis,
+            "metadata": {
+                "risk_score": risk_score,
+                "recommended_actions": recommended_actions,
+            },
         }
-        
-        logger.warning("correlation_alert_notification", alert_data=alert_data)
-        
-        return f"alert-{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}"
+
+        try:
+            from app.services.notifications import notification_service
+
+            deliveries = await notification_service.dispatch(
+                event, organization_id=str(organization_id)
+            )
+        except Exception as exc:  # the correlation is already committed; keep it
+            logger.warning(
+                "correlation_alert_dispatch_failed",
+                organization_id=str(organization_id),
+                risk_score=risk_score,
+                error=str(exc),
+            )
+            from app.services.error_tracker import error_tracker
+
+            await error_tracker.report_subsystem_error(
+                exc,
+                subsystem="correlation",
+                operation="alert.dispatch",
+                organization_id=str(organization_id),
+            )
+            return None
+
+        # `dispatch` returns [] when the tenant has no matching subscription — that is a
+        # legitimate outcome and NOT an alert. Returning an id for it would put the old
+        # lie back in a quieter form.
+        if not deliveries:
+            logger.info(
+                "correlation_alert_no_subscribers",
+                organization_id=str(organization_id),
+                risk_score=risk_score,
+            )
+            return None
+
+        delivered = [d for d in deliveries if d.get("delivered")]
+        logger.info(
+            "correlation_alert_dispatched",
+            organization_id=str(organization_id),
+            risk_score=risk_score,
+            channels=len(deliveries),
+            delivered=len(delivered),
+        )
+        return event["event_type"] if delivered else None
 
 
 # Global instance

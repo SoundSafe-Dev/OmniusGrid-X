@@ -5,6 +5,7 @@
  */
 
 import { api } from './client';
+import { toListResult, type ListResult } from './listResult';
 import { USE_MOCK } from './mockMode';
 import * as nlpMocks from './mocks/nlpMocks';
 
@@ -77,6 +78,19 @@ export interface SessionChatResponse {
   actions?: Record<string, any>[];
   follow_up_questions?: string[];
   timestamp: string;
+  // PROVENANCE. The backend marks output it did not genuinely infer: the correlation
+  // engine substitutes a heuristic when the model or its LoRA adapter is not loaded
+  // (the deliberate state today), and the chat handler's exception path returns a reply
+  // that is not an analysis at all. Both set `simulated: true` with a reason.
+  //
+  // These fields were absent from this type, so the whole provenance chain died here —
+  // the server was careful to say "do not trust this as an inference" and TypeScript
+  // dropped the sentence. Nothing downstream could label it because nothing downstream
+  // could see it.
+  simulated?: boolean;
+  simulation_reason?: string | null;
+  confidence?: number | null;
+  model_version?: string | null;
 }
 
 export interface SessionMessage {
@@ -90,6 +104,9 @@ export interface SessionMessage {
   actions?: Record<string, any>[];
   follow_up_questions?: string[];
   timestamp: string;
+  /** See SessionChatResponse — carried onto the rendered message so the UI can label it. */
+  simulated?: boolean;
+  simulation_reason?: string | null;
 }
 
 // ==================== API Functions ====================
@@ -294,6 +311,10 @@ export async function sessionChat(sessionId: string, request: SessionChatRequest
       actions: assistant.actions,
       follow_up_questions: assistant.follow_up_questions,
       timestamp: assistant.timestamp,
+      // The mock branch IS simulated, by definition. Returning `false` here would make
+      // the demo the one place that claims a real inference with the most certainty.
+      simulated: true,
+      simulation_reason: 'mock mode: no backend was contacted',
     };
   }
   const response = await api.post<SessionChatResponse>(
@@ -307,14 +328,25 @@ export async function sessionChat(sessionId: string, request: SessionChatRequest
 /**
  * Get messages in a session
  */
-export async function getSessionMessages(sessionId: string, limit: number = 100, offset: number = 0): Promise<SessionMessage[]> {
+export async function getSessionMessages(
+  sessionId: string,
+  limit: number = 100,
+  offset: number = 0,
+): Promise<ListResult<SessionMessage>> {
   if (USE_MOCK) {
-    return nlpMocks.mockSessionMessages[sessionId] ?? [];
+    // Mock mode returns the whole fixture, which IS the complete set — `truncated: false`
+    // is a fact here rather than a default (FS-459).
+    const items = nlpMocks.mockSessionMessages[sessionId] ?? [];
+    return { items, truncated: false, limit: items.length };
   }
-  const response = await api.get<SessionMessage[]>(`/api/v1/nlp/sessions/${sessionId}/messages`, {
-    params: { limit, offset }
-  });
-  return response.data;
+  // ListResult, not a bare array (FS-459). The endpoint caps at `limit` and orders
+  // OLDEST FIRST, so truncation removes the most recent messages from a conversation —
+  // the pane would show the start of a session and silently omit what was just said.
+  return toListResult(
+    await api.get<SessionMessage[]>(`/api/v1/nlp/sessions/${sessionId}/messages`, {
+      params: { limit, offset },
+    }),
+  );
 }
 
 /**
@@ -331,11 +363,18 @@ export async function generateSessionTitle(sessionId: string): Promise<AnalysisS
 /**
  * Get full chat history across all sessions
  */
-export async function getChatHistory(limit: number = 100, offset: number = 0, sessionId?: string): Promise<SessionMessage[]> {
+export async function getChatHistory(
+  limit: number = 100,
+  offset: number = 0,
+  sessionId?: string,
+): Promise<ListResult<SessionMessage>> {
   if (USE_MOCK) {
-    return sessionId
+    // Mock mode returns the whole fixture, which IS the complete set — `truncated: false`
+    // is a fact here rather than a default (FS-459).
+    const items = sessionId
       ? nlpMocks.mockSessionMessages[sessionId] ?? []
       : Object.values(nlpMocks.mockSessionMessages).flat();
+    return { items, truncated: false, limit: items.length };
   }
   const params: any = {
     limit: limit.toString(),
@@ -346,8 +385,9 @@ export async function getChatHistory(limit: number = 100, offset: number = 0, se
     params.session_id = sessionId;
   }
 
-  const response = await api.get<SessionMessage[]>('/api/v1/nlp/sessions/chat/history', { params });
-  return response.data;
+  return toListResult(
+    await api.get<SessionMessage[]>('/api/v1/nlp/sessions/chat/history', { params }),
+  );
 }
 
 /**
@@ -358,10 +398,13 @@ export async function searchChatHistory(
   limit: number = 50,
   offset: number = 0,
   sessionId?: string
-): Promise<SessionMessage[]> {
+): Promise<ListResult<SessionMessage>> {
   if (USE_MOCK) {
     const all = await getChatHistory(limit, offset, sessionId);
-    return all.filter((m) => m.content.toLowerCase().includes(query.toLowerCase()));
+    const items = all.items.filter((m) =>
+      m.content.toLowerCase().includes(query.toLowerCase()),
+    );
+    return { items, truncated: false, limit: items.length };
   }
   const params: any = {
     q: query,
@@ -373,8 +416,12 @@ export async function searchChatHistory(
     params.session_id = sessionId;
   }
 
-  const response = await api.get<SessionMessage[]>('/api/v1/nlp/sessions/chat/search', { params });
-  return response.data;
+  // Search is the sharpest of the three: a capped result set means matches EXIST that
+  // the user was not shown, and a search box that quietly omits hits is worse than one
+  // that finds nothing — the user concludes the thing is not there (FS-459).
+  return toListResult(
+    await api.get<SessionMessage[]>('/api/v1/nlp/sessions/chat/search', { params }),
+  );
 }
 
 /**

@@ -29,6 +29,7 @@ _REGISTRY: Dict[ERPType, tuple] = {
     ERPType.ODOO: ("app.services.erp_connectors.odoo_connector", "OdooConnector"),
     ERPType.INFOR: ("app.services.erp_connectors.infor_connector", "InforConnector"),
     ERPType.EPICOR: ("app.services.erp_connectors.epicor_connector", "EpicorConnector"),
+    ERPType.INTUIT: ("app.services.erp_connectors.intuit_connector", "IntuitConnector"),
 }
 
 

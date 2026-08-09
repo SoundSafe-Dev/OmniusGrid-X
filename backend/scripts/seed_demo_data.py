@@ -36,7 +36,7 @@ import os
 import uuid as _uuid
 import random
 import sys
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -44,7 +44,17 @@ if not os.environ.get("DATABASE_URL"):
     default_db = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "dev.db")
     os.environ["DATABASE_URL"] = f"sqlite+aiosqlite:///{default_db}"
 
-NOW = datetime.utcnow()
+# AWARE, not `datetime.utcnow()`. That returns a NAIVE datetime, and writing a naive value
+# into a `timestamptz` column shifts it by the CLIENT's UTC offset — measured here as +5h on
+# a UTC-5 machine against a database whose own timezone is UTC. The relative gaps between
+# seeded rows survive, so the data looks plausible; only the anchor moves. That silently broke
+# the demo's detention scenario — TRL-4482 is seeded at 6 hours of dwell to sit past the free
+# window, and it arrived as 1 hour, so `/yard/detention-alerts` returned an empty list and the
+# seed's own verifier failed. On a UTC developer machine the bug is invisible.
+#
+# Same family as FS-391 and FS-400, which were naive datetimes crashing detention and carrier
+# compliance. This one does not crash; it just makes every relative timestamp wrong.
+NOW = datetime.now(timezone.utc)
 RNG = random.Random(42)
 
 # ---- fixed ids (re-run replaces) ---------------------------------------------
@@ -66,6 +76,31 @@ A_CAMERA = "33333333-0000-4000-8000-000000000004"
 A_CONVEYOR = "33333333-0000-4000-8000-000000000005"
 
 ERP_INT = "44444444-0000-4000-8000-000000000001"
+
+
+def _webhook_secret(integration_id: str) -> str:
+    """A distinct, deterministic webhook secret per seeded integration.
+
+    IT WAS THE LITERAL "demo-secret", which is two problems in one string.
+
+    Migration 049 puts a UNIQUE index on `configuration->>'webhook_secret'`, because the
+    receiver identifies an integration BY its secret — it verifies the request's exact bytes
+    against every candidate, so two integrations sharing a secret makes the sender ambiguous.
+    One seeded integration never collides; a second one, or a second demo organisation, is
+    rejected by the index with a constraint error rather than a useful message.
+
+    And a fixed secret committed to the repository is a signing key anybody can read: a demo
+    deployment would accept a forged webhook from anyone who has cloned this.
+
+    DETERMINISTIC, not random. The seeder is re-runnable — it deletes the integration before
+    inserting it — and `--verify` checks the result in the same process, but a demo operator
+    wiring up a real sender needs the secret to survive a re-seed. Derived from the
+    integration id, so it is stable per integration and distinct between them.
+    """
+    import hashlib
+
+    digest = hashlib.sha256(f"omniusgrid-demo-webhook:{integration_id}".encode()).hexdigest()
+    return f"demo-{digest[:32]}"
 
 CARRIER_A = "55555555-0000-4000-8000-000000000001"  # Great Lakes Freight
 CARRIER_B = "55555555-0000-4000-8000-000000000002"  # Prairie Express
@@ -175,13 +210,15 @@ def camera_at(t: datetime, appointment_hours) -> tuple:
 
 async def main(verify: bool = False) -> int:
     from sqlalchemy import delete, select
-    from app.db.database import AsyncSessionLocal, init_db
+    from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+    from sqlalchemy.pool import NullPool
+    from app.db.database import AsyncSessionLocal, engine, get_async_db_url, init_db
     from app.db.models import (
-        Alarm, AnalysisSession, Asset, AssetType, Carrier, DockAppointment,
+        Alarm, AlarmRule, AnalysisSession, Asset, AssetType, Carrier, DockAppointment,
         DockDoor, Driver, DriverWaitTime, ERPCorrelation, ERPDataMapping,
         ERPEntity, ERPIntegrationEvent, ERPSyncStatus, GeoTabDiagnostic,
         GeoTabException, GeoTabTrip, IntegrationConfiguration,
-        Organization, Route, SessionDataSource, Shipment, Telemetry, User,
+        Organization, Route, SessionDataSource, SessionMessage, Shipment, Telemetry, User,
         Workcell, YardTrailer,
     )
     from app.db.logistics_models import (
@@ -201,27 +238,56 @@ async def main(verify: bool = False) -> int:
     await init_db()
     print(f"Seeding demo data into {os.environ['DATABASE_URL']}")
 
-    async with AsyncSessionLocal() as db:
-        # Best-effort: relax FK-trigger ordering for this bulk load. autoflush is
-        # off and several tables reference parents via a bare ForeignKey column
-        # with no ORM relationship() (so the unit-of-work can't order the
-        # inserts) — and yard's DockDoor<->YardTrailer is a genuine FK cycle.
-        # On the real (migration-built) schema this either isn't needed or the
-        # role can't set it; failure is harmless, so we swallow it.
+    # FK-TRIGGER RELAXATION FOR THE BULK LOAD, AND WHY IT NEEDS ITS OWN ENGINE.
+    #
+    # 62 of the 69 FK-carrying models declare a bare ForeignKey COLUMN and no
+    # relationship(), and SQLAlchemy's unit of work builds its insert ordering from
+    # relationships — so for most of this file it cannot order a parent before its child.
+    # `session_replication_role = replica` sidesteps that for the load.
+    #
+    # THE PREVIOUS VERSION SET IT AND THEN COMMITTED ON THE NEXT LINE, which returns the
+    # connection to the pool and resets the setting: measured `replica` immediately after
+    # the SET and `origin` immediately after the commit. So the protection was gone before
+    # a single row was written, and the seed died on a foreign key against a fresh
+    # database — the path docs/DEMO.md tells operators to run.
+    #
+    # Passing it as an asyncpg *startup parameter* fixes that properly: it becomes the
+    # session default, so it survives every commit and every connection recycle rather
+    # than lasting until the next one.
+    bulk_engine = None
+    session_factory = AsyncSessionLocal
+    if engine.dialect.name == "postgresql":
+        bulk_engine = create_async_engine(
+            get_async_db_url(),
+            connect_args={"server_settings": {"session_replication_role": "replica"}},
+            poolclass=NullPool,
+        )
+        session_factory = async_sessionmaker(
+            bulk_engine, class_=AsyncSession, expire_on_commit=False, autoflush=False
+        )
+
+    async with session_factory() as db:
         from sqlalchemy import text as _sql_text
         _pg = db.bind.dialect.name == "postgresql"
         if _pg:
-            try:
-                await db.execute(_sql_text("SET session_replication_role = replica"))
-                await db.commit()
-            except Exception:
-                await db.rollback()
-                _pg = False
+            # VERIFIED, NOT ASSUMED. The old code swallowed the failure as "harmless"; it
+            # was not — it turned an ordering problem into an unexplained FK violation far
+            # from its cause. A role that cannot set this gets told so here.
+            actual = (await db.execute(_sql_text("SHOW session_replication_role"))).scalar()
+            if actual != "replica":
+                raise SystemExit(
+                    "cannot seed: this database role could not set "
+                    "session_replication_role=replica (it reports "
+                    f"{actual!r}), and without it the load fails on a foreign key because "
+                    "most models carry FK columns with no ORM relationship for the unit of "
+                    "work to order by. Seed as a superuser, or grant the role that setting."
+                )
 
         # ---- wipe previous demo rows (surgical: fixed ids / org scope) -------
         asset_ids = [A_CNC, A_VIB, A_AUDIO, A_CAMERA, A_CONVEYOR]
         await db.execute(delete(Telemetry).where(Telemetry.asset_id.in_(asset_ids)))
         await db.execute(delete(Alarm).where(Alarm.asset_id.in_(asset_ids)))
+        await db.execute(delete(SessionMessage).where(SessionMessage.session_id == SESSION_ID))
         await db.execute(delete(SessionDataSource).where(SessionDataSource.session_id == SESSION_ID))
         await db.execute(delete(AnalysisSession).where(AnalysisSession.id == SESSION_ID))
         for model, col in [
@@ -358,12 +424,12 @@ async def main(verify: bool = False) -> int:
         print(f"  telemetry: {rows} rows across 5 assets")
 
         # Vibration alarm at the spike; cleared when the WO completed.
-        db.add(Alarm(asset_id=A_VIB, alarm_code="VIB_HIGH", severity="high",
+        db.add(Alarm(asset_id=A_VIB, organization_id=ORG, alarm_code="VIB_HIGH", severity="high",
                      message="Spindle vibration exceeded ISO zone C (7.1 mm/s)",
                      occurred_at=days_ago(ALARM_D), cleared_at=days_ago(FIXED_D),
                      is_active=False, is_acknowledged=True, acknowledged_by=USER,
                      acknowledged_at=days_ago(1.9)))
-        db.add(Alarm(asset_id=A_AUDIO, alarm_code="ACOUSTIC_ANOMALY", severity="medium",
+        db.add(Alarm(asset_id=A_AUDIO, organization_id=ORG, alarm_code="ACOUSTIC_ANOMALY", severity="medium",
                      message="High-frequency band energy trending up (bearing-wear signature)",
                      occurred_at=days_ago(3.5), is_active=False, is_acknowledged=True,
                      acknowledged_by=USER, acknowledged_at=days_ago(3.4)))
@@ -397,22 +463,59 @@ async def main(verify: bool = False) -> int:
         ]
         for aid, code, sev, msg, h_ago, active, acked, cleared_h in recent_alarms:
             db.add(Alarm(
-                asset_id=aid, alarm_code=code, severity=sev, message=msg,
+                asset_id=aid, organization_id=ORG, alarm_code=code, severity=sev, message=msg,
                 occurred_at=NOW - timedelta(hours=h_ago), is_active=active,
                 is_acknowledged=acked,
                 acknowledged_by=USER if acked else None,
                 acknowledged_at=(NOW - timedelta(hours=h_ago - 0.2)) if acked else None,
                 cleared_at=(NOW - timedelta(hours=cleared_h)) if cleared_h is not None else None))
 
+        # ---- ALARM RULES ------------------------------------------------------
+        # Seeded so the Alarm Rules page is not empty in the demo, and so the
+        # thresholds visibly correspond to the alarms above rather than looking
+        # like unrelated sample data. One instant rule, one with a duration +
+        # hysteresis, one disabled — the three shapes the page renders differently.
+        db.add(AlarmRule(
+            organization_id=ORG, name="Spindle temperature critical",
+            description="Bearing temperature above the ISO limit",
+            metric_name="temperature", comparator="gt", threshold=75.0,
+            duration_seconds=300, hysteresis=2.0,
+            severity="critical", alarm_code="SPINDLE_TEMP_HIGH",
+            message_template="Spindle temperature {value}C exceeds {threshold}C",
+            asset_id=A_CNC, is_enabled=True, created_by=USER))
+        db.add(AlarmRule(
+            organization_id=ORG, name="Coolant reservoir low",
+            description="Refill before the next long run",
+            metric_name="coolant_level", comparator="lt", threshold=20.0,
+            duration_seconds=0, hysteresis=1.0,
+            severity="medium", alarm_code="COOLANT_LOW",
+            asset_id=A_CNC, is_enabled=True, created_by=USER))
+        db.add(AlarmRule(
+            organization_id=ORG, name="Conveyor load sustained high",
+            description="Disabled while the drive is being re-tuned",
+            metric_name="load", comparator="gte", threshold=90.0,
+            duration_seconds=600, hysteresis=5.0,
+            severity="high", alarm_code="CONVEYOR_LOAD_HIGH",
+            asset_id=A_CONVEYOR, is_enabled=False, created_by=USER))
+
         # ---- SIMULATED FULLY-SYNCED ERP INTEGRATION ---------------------------
         db.add(IntegrationConfiguration(
             id=ERP_INT, organization_id=ORG, integration_type="erp",
             integration_name="SAP S/4HANA — Plant CHI-01",
             configuration={"erp_type": "sap", "auth_type": "oauth2",
+                           # Which systems of record this ERP actually serves (FS-405). Without
+                           # it every shop-floor event and every activated insight falls to the
+                           # analog path, so the demo showed "needs a person" for all seven
+                           # targets and never once showed an integrated one — understating a
+                           # deployment the seed describes as fully synced. Purchasing is left
+                           # out ON PURPOSE: a shop whose purchasing runs on a phone call is
+                           # the realistic case, and it is the half of the ledger worth seeing.
+                           "serves_systems": ["inventory", "accounting", "production",
+                                              "quality", "scheduling", "maintenance"],
                            "base_url": "https://sap.demo.omniusgrid.local",
                            "auth_config": {"client_id": "omnius-demo"},
                            "rate_limit": {"requests_per_minute": 60, "burst_limit": 10},
-                           "timeout": 30, "webhook_secret": "demo-secret",
+                           "timeout": 30, "webhook_secret": _webhook_secret(ERP_INT),
                            "client": "100", "service_path": "/sap/opu/odata/sap"},
             authentication={"client_id": "omnius-demo"}, is_active=True,
             health_status="success", last_health_check=NOW - timedelta(minutes=12),
@@ -526,6 +629,13 @@ async def main(verify: bool = False) -> int:
                        operating_authority="contract", scac="PREX"))
 
         db.add(YardTrailer(id=TRAILER_DWELL, organization_id=ORG, trailer_number="TRL-4482",
+                           # DRIVER LINKED (FS-448). The yard panel wraps its whole driver
+                           # section in `{trailer.driverName && …}`, so a demo with no
+                           # driver on any trailer never renders it — the block is invisible
+                           # in the product demo AND its e2e assertion skips rather than
+                           # runs. This trailer is the detention case, which is exactly when
+                           # someone needs the number to call.
+                           driver_id=DRIVER_1,
                            carrier_id=CARRIER_A, trailer_type="dry_van", status="yard",
                            yard_location="Zone A-04", seal_number="SL-88121",
                            check_in_at=NOW - timedelta(hours=6),  # 4h past free time -> detention
@@ -533,6 +643,7 @@ async def main(verify: bool = False) -> int:
                            license_plate="IL TRL4482", detention_cost=200.0, detention_risk="high",
                            meta_data={"po_number": "PO-10018", "contents": "6061 aluminum billet"}))
         db.add(YardTrailer(id=TRAILER_DOCKED, organization_id=ORG, trailer_number="TRL-7731",
+                           driver_id=DRIVER_2,
                            carrier_id=CARRIER_A, trailer_type="reefer", status="docked",
                            dock_door_id=DOOR_IDS[2], seal_number="SL-88907",
                            check_in_at=NOW - timedelta(hours=1.2),
@@ -571,18 +682,21 @@ async def main(verify: bool = False) -> int:
         # migration 042 — HOS remaining = 11 - drive_today / 14 - on_duty_today
         db.add(Driver(id=DRIVER_1, organization_id=ORG, carrier_id=CARRIER_A, first_name="Maria",
                       last_name="Santos", license_number="IL-D449-2210", license_state="IL",
+                      phone="+1-312-555-0148", email="m.santos@primeexpress.test",
                       cdl_class="A", hos_drive_hours_today=10.6, hos_on_duty_hours_today=12.9,
                       hos_cycle_hours=61.0, current_hos_status="driving", is_active=True,
                       endorsements=["hazmat", "tanker"], license_expiry=NOW + timedelta(days=365),
                       hos_drive_hours_remaining=11 - 10.6, hos_duty_hours_remaining=14 - 12.9))
         db.add(Driver(id=DRIVER_2, organization_id=ORG, carrier_id=CARRIER_A, first_name="Dwayne",
                       last_name="Carter", license_number="IL-D101-8837", license_state="IL",
+                      phone="+1-312-555-0172", email="d.carter@primeexpress.test",
                       cdl_class="A", hos_drive_hours_today=3.2, hos_on_duty_hours_today=5.0,
                       hos_cycle_hours=28.5, current_hos_status="on_duty", is_active=True,
                       endorsements=["hazmat"], license_expiry=NOW + timedelta(days=420),
                       hos_drive_hours_remaining=11 - 3.2, hos_duty_hours_remaining=14 - 5.0))
         db.add(Driver(id=DRIVER_3, organization_id=ORG, carrier_id=CARRIER_B, first_name="Priya",
                       last_name="Natarajan", license_number="WI-D778-1204", license_state="WI",
+                      phone="+1-414-555-0193", email="p.natarajan@midwest.test",
                       cdl_class="A", hos_drive_hours_today=0.0, hos_on_duty_hours_today=1.5,
                       hos_cycle_hours=44.0, current_hos_status="off_duty", is_active=True,
                       medical_cert_expires=NOW + timedelta(days=18),
@@ -915,7 +1029,10 @@ async def main(verify: bool = False) -> int:
             # ---- Done ----------------------------------------------------------
             (TASK_IDS[15], "Replace spindle bearing — CNC Mill #1 (WO-77105)",
              "maintenance_cm", "critical", "completed", "done", A_CNC,
-             {"work_order_id": "WO-77105", "progress_percent": 100,
+             # `work_order_id` is a native uuid column (migrations 003/004); "WO-77105" is a
+             # human work-order NUMBER and asyncpg rejects it outright. The number belongs in
+             # custom_fields, which is where a business reference with no typed home goes.
+             {"custom_fields": {"work_order_ref": "WO-77105"}, "progress_percent": 100,
               "approval_status": "approved", "approved_by": USER,
               "approved_at": days_ago(FIXED_D + 1),
               "completed_by": USER, "completed_at": days_ago(FIXED_D),
@@ -1195,11 +1312,75 @@ async def main(verify: bool = False) -> int:
             provider = {"erp": erp_provider, "asset_telemetry": asset_telemetry_provider,
                         "yard": yard_provider}[source_type]
             result = await provider(db, ORG, params)
+            # `source_id` is the id of the row this source came FROM, and a platform-wide
+            # source like the yard has no such row. Falling back to the source_type string
+            # put "yard" in a column every consumer reads as a uuid: `AddDataSourceRequest`
+            # and `DataSourceResponse` both declare `Optional[UUID]`, so the API itself
+            # cannot produce this — the seed was the only writer that did, and it made
+            # GET /nlp/sessions/{id}/data 500 on the documented demo session. The panel on
+            # the Correlation AI page failed to load every time it was opened.
+            source_row_id = params.get("asset_id") or params.get("integration_id")
             db.add(SessionDataSource(session_id=SESSION_ID, source_type=source_type,
-                                     source_id=str(params.get("asset_id") or params.get("integration_id") or source_type),
+                                     source_id=str(source_row_id) if source_row_id else None,
                                      file_name=result.file_name, data_type="spreadsheet",
                                      processed_data=result.to_processed_data(),
                                      meta_data={"platform_source": True, "source_type": source_type}))
+
+        # ---- a transcript, so the session demonstrates the thing it is named after -----
+        #
+        # The session had THREE DATA SOURCES AND NO CONVERSATION. So the Correlation AI page
+        # opened on its empty state ("Ask anything about your data") and the actionable-insight
+        # controls — the whole activation path, FS-406 — never appeared on the documented demo.
+        # A demo of an analysis session with no analysis in it.
+        #
+        # THESE ARE RECORDED, NOT INFERRED, AND SAY SO IN THE TEXT. The correlation model is
+        # not plugged in, so nothing here came from one. The label is in the message content
+        # rather than only in a field because `SessionMessageResponse` carries no provenance
+        # field at all — the live chat reply has `simulated`, and re-reading the transcript
+        # loses it (see the delivery log; analysis_sessions.py is another lane). A caveat that
+        # only exists in a field the transcript endpoint does not send is not a caveat.
+        _RECORDED = "[Recorded example — not a live model inference.] "
+        db.add(SessionMessage(
+            session_id=SESSION_ID, role="user",
+            content="Spindle vibration on CNC Mill #1 has been climbing for two weeks and "
+                    "WO-77105 is still open. What should we do before Friday's run?",
+            timestamp=NOW - timedelta(minutes=42),
+        ))
+        db.add(SessionMessage(
+            session_id=SESSION_ID, role="assistant",
+            content=(
+                _RECORDED
+                + "Vibration RMS on the CNC spindle has risen from 1.1 to 7.4 mm/s over 14 "
+                  "days, and the trend crosses the alarm threshold in about 6 days. WO-77105 "
+                  "(bearing replacement) is open against the same asset, and TRL-4482 is "
+                  "holding the replacement billet in Zone A-04 accruing detention.\n\n"
+                  "The three are the same problem: the bearing has not been changed because "
+                  "the part is still on a trailer nobody has unloaded."
+            ),
+            risk_score=78,
+            domains=["MAINTENANCE", "PRODUCTION_OEE", "LOGISTICS_FLEET"],
+            # The shape `CorrelationAIPane` renders, and the shape `ActionableInsight` posts
+            # to /api/v1/insights/activations: a title it can activate, plus the domain that
+            # decides which systems of record the activation has to reach.
+            actions=[
+                {"title": "Schedule preventive maintenance on the spindle bearing",
+                 "description": "WO-77105 is open; book the window before Friday's run.",
+                 "domain": "MAINTENANCE", "priority": "high"},
+                {"title": "Unload TRL-4482 and release the aluminium billet",
+                 "description": "Trailer is past free time and accruing detention.",
+                 "domain": "WAREHOUSE_MANAGEMENT", "priority": "high"},
+                {"title": "Adjust the production schedule around the maintenance window",
+                 "description": "Friday's run needs re-sequencing if the mill is down.",
+                 "domain": "PRODUCTION_OEE", "priority": "medium"},
+            ],
+            analysis={
+                "simulated": True,
+                "simulation_reason": "seeded demo transcript; the correlation model is not "
+                                     "loaded in this deployment",
+                "predicted_root_cause": "Bearing degradation blocked by an undelivered part",
+            },
+            timestamp=NOW - timedelta(minutes=41),
+        ))
         await db.commit()
 
         # ---- summary -----------------------------------------------------------
@@ -1221,13 +1402,12 @@ async def main(verify: bool = False) -> int:
         print("  seeded:", ", ".join(f"{k}={v}" for k, v in counts.items()))
         print(f"  analysis session ready: 'Demo: Spindle failure investigation' ({SESSION_ID})")
 
-        # restore normal FK-trigger enforcement on this connection
-        if _pg:
-            try:
-                await db.execute(_sql_text("SET session_replication_role = origin"))
-                await db.commit()
-            except Exception:
-                await db.rollback()
+    # The relaxation lived on a dedicated engine, so disposing it is what restores normal
+    # FK enforcement — and it must actually happen. Resetting the GUC on one connection, as
+    # this used to do, left every OTHER pooled connection carrying `replica` as its session
+    # default, because it is a startup parameter now rather than a runtime SET.
+    if bulk_engine is not None:
+        await bulk_engine.dispose()
 
     if not verify:
         print("\nDone. Run the API against this data:")
@@ -1281,6 +1461,11 @@ def run_verify() -> int:
         r = client.get(f"/api/v1/assets/{A_AUDIO}/sensor-feeds", headers=AUTH)
         check("audio sensor feeds discoverable", r.status_code == 200 and
               "audio_band_high" in r.json().get("metrics", []), r.text[:150])
+
+        # Every panel the demo session opens must load. This one 500'd for as long as the
+        # seed existed, because it wrote a non-uuid into `source_id`.
+        r = client.get(f"/api/v1/nlp/sessions/{SESSION_ID}/data", headers=AUTH)
+        check("session data-sources panel loads", r.status_code == 200, r.text[:150])
 
         r = client.get("/api/v1/yard/detention-alerts", headers=AUTH)
         alerts = r.json() if r.status_code == 200 else []

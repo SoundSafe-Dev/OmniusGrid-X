@@ -1,4 +1,4 @@
-import { FC, useState, useEffect } from 'react';
+import { FC, forwardRef, type HTMLAttributes, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import {
   Truck,
@@ -22,8 +22,21 @@ import {
   DockDoor,
   TrailerFilters
 } from '../../types';
-import { Tooltip, TooltipTrigger, TooltipContent } from '../../components/ui';
+import { Button, Tooltip, TooltipTrigger, TooltipContent } from '../../components/ui';
 import { YardMapPanel } from '../../components/yard/YardMapPanel';
+
+// A DOCKED TRAILER HAS NO `yardLocation`, so the Location column fell through to
+// `assignedDoorId` and printed a raw uuid — "88888888-0000-4000-8000-000000000003" — in a
+// column an operator reads to find where a trailer physically is. Resolve through the door
+// list, which the page already loads for the Dock Doors tab.
+//
+// Never falls back to the id: an unresolvable door is a data problem, and printing the uuid
+// tells the operator nothing they can act on.
+const doorLabel = (doorId: string | null | undefined, doors: DockDoor[]) => {
+  if (!doorId) return null;
+  const door = doors.find((d) => d.id === doorId);
+  return door ? `Door ${door.doorNumber}` : 'Door (unknown)';
+};
 
 const YARD_QUERY_KEY = 'yard';
 
@@ -35,17 +48,35 @@ export const YardManagement: FC = () => {
   const [showCheckIn, setShowCheckIn] = useState(false);
   const [activeTab, setActiveTab] = useState<'trailers' | 'map' | 'doors' | 'appointments' | 'detention'>('trailers');
 
-  const { data: trailersData, isLoading: trailersLoading, refetch: refetchTrailers } = useQuery({
+  const {
+    data: trailersData,
+    isLoading: trailersLoading,
+    isError: trailersError,
+    refetch: refetchTrailers,
+  } = useQuery({
     queryKey: [YARD_QUERY_KEY, 'trailers', filters],
     queryFn: () => yardApi.getTrailers(filters),
   });
 
-  const { data: doorsData, isLoading: doorsLoading } = useQuery({
+  const {
+    data: doorsData,
+    isLoading: doorsLoading,
+    // The trailers and appointments tabs both distinguish a failed load from an empty one.
+    // This tab did not (FS-482): a failure rendered the same blank grid as a yard with no
+    // doors configured, and a blank grid is read as a fact about the dock, not about the
+    // request. Same file, same class, one tab short.
+    isError: doorsError,
+    refetch: refetchDoors,
+  } = useQuery({
     queryKey: [YARD_QUERY_KEY, 'doors'],
     queryFn: () => yardApi.getDockDoors(),
   });
 
-  const { data: appointmentsData, isLoading: appointmentsLoading } = useQuery({
+  const {
+    data: appointmentsData,
+    isLoading: appointmentsLoading,
+    isError: appointmentsError,
+  } = useQuery({
     queryKey: [YARD_QUERY_KEY, 'appointments'],
     queryFn: () => yardApi.getAppointments(),
   });
@@ -127,10 +158,19 @@ export const YardManagement: FC = () => {
     }
   };
 
-  const formatDuration = (minutes?: number) => {
-    if (!minutes) return 'N/A';
+  const formatDuration = (minutes?: number | null) => {
+    // `null` is "not measured" and `0` is a real, measured zero (FS-465). The old
+    // `if (!minutes)` collapsed them, so a yard whose dwell could not be computed and a
+    // yard where every trailer had just arrived rendered the same string.
+    if (minutes === null || minutes === undefined) return 'N/A';
+    if (minutes === 0) return '0m';
     const hours = Math.floor(minutes / 60);
-    const mins = minutes % 60;
+    // ROUNDED. `minutes % 60` on a float from the detention calculator rendered
+    // "4h 11.300000000000011m excess" on the detention banner — a floating-point artifact
+    // shown to an operator next to a dollar figure they are expected to act on. Nothing
+    // automated caught it: the text was present, the page had no errors, and the number was
+    // even approximately right.
+    const mins = Math.round(minutes % 60);
     return hours > 0 ? `${hours}h ${mins}m` : `${mins}m`;
   };
 
@@ -253,6 +293,19 @@ export const YardManagement: FC = () => {
             <p className="text-sm text-opsgrid-text-secondary">
               Average dwell time: {formatDuration(dwellTimes.avgDwellTime)} (Target: 120 min)
             </p>
+            {/* Say how many trailers this figure could not include (FS-465). A trailer
+                with no recorded check-in has an unknown dwell, so it is absent from both
+                the average and the exceeding-target count above — and the count is what
+                this banner exists to report. Silence would make the yard look better than
+                it is by exactly the number of trailers nobody can age. */}
+            {dwellTimes.trailersUnmeasured > 0 && (
+              <p className="text-sm text-opsgrid-text-secondary">
+                {dwellTimes.trailersUnmeasured} trailer
+                {dwellTimes.trailersUnmeasured === 1 ? ' has' : 's have'} no recorded
+                check-in and {dwellTimes.trailersUnmeasured === 1 ? 'is' : 'are'} not
+                counted above.
+              </p>
+            )}
           </div>
         </div>
       )}
@@ -265,21 +318,33 @@ export const YardManagement: FC = () => {
             Detention Alerts ({alerts.length})
           </h3>
           <div className="space-y-2">
+            {/* EVERY FIELD READ HERE USED TO BE UNDEFINED. The row showed the trailer id
+                above a bare " • ", then "$" with no number and "N/A excess" — on a banner
+                that only appears when a trailer is actually costing money. The numbers were
+                being sent under the endpoint's names; the carrier, the yard location and the
+                plate were not being sent at all and are real columns.
+
+                Keyed on `trailerId`, not `alert.id`: the alert is computed rather than
+                stored, so there is no id, and every row shared `key={undefined}`. */}
             {alerts.map(alert => (
-              <div key={alert.id} className="flex items-center justify-between bg-opsgrid-bg rounded-lg p-3">
+              <div key={alert.trailerId} className="flex items-center justify-between bg-opsgrid-bg rounded-lg p-3">
                 <div className="flex items-center gap-3">
                   <Truck className="w-4 h-4 text-opsgrid-text-secondary" />
                   <div>
-                    <p className="font-medium">{alert.trailerLicensePlate || alert.trailerId}</p>
+                    <p className="font-medium">{alert.licensePlate || alert.trailerNumber}</p>
                     <p className="text-sm text-opsgrid-text-secondary">
-                      {alert.carrierName} • {alert.location}
+                      {[alert.carrierName, alert.yardLocation].filter(Boolean).join(' • ') || '—'}
                     </p>
                   </div>
                 </div>
                 <div className="text-right">
-                  <p className="font-medium text-red-500">${alert.estimatedCost}</p>
+                  <p className="font-medium text-red-500">
+                    ${alert.currentCharge.toLocaleString()}
+                  </p>
                   <p className="text-sm text-opsgrid-text-secondary">
-                    {formatDuration(alert.excessMinutes)} excess
+                    {alert.status === 'detention'
+                      ? `${formatDuration(alert.detentionMinutes)} excess`
+                      : `${formatDuration(alert.freeMinutes - alert.elapsedMinutes)} of free time left`}
                   </p>
                 </div>
               </div>
@@ -353,6 +418,19 @@ export const YardManagement: FC = () => {
         <div className="bg-opsgrid-panel border border-opsgrid-border rounded-lg overflow-hidden">
           {trailersLoading ? (
             <div className="p-8 text-center text-opsgrid-text-secondary">Loading trailers...</div>
+          ) : trailersError ? (
+            /* A FAILED REQUEST IS NOT AN EMPTY YARD. There was no error branch here, so
+               a failure fell through to the empty state and rendered "No trailers found"
+               — which a yard manager reads as an operational fact and acts on. The two
+               have to say different things. */
+            <div className="p-8 text-center space-y-3" role="alert">
+              <p className="text-status-alarm">
+                Couldn’t load trailers — this is a loading failure, not an empty yard.
+              </p>
+              <Button variant="secondary" onClick={() => refetchTrailers()}>
+                Retry
+              </Button>
+            </div>
           ) : trailers.length === 0 ? (
             <div className="p-8 text-center text-opsgrid-text-secondary">No trailers found</div>
           ) : (
@@ -393,7 +471,7 @@ export const YardManagement: FC = () => {
                       </td>
                       <td className="px-4 py-3 text-sm">{trailer.carrierName}</td>
                       <td className="px-4 py-3 text-sm">
-                        {trailer.yardLocation || trailer.assignedDoorId || '-'}
+                        {trailer.yardLocation || doorLabel(trailer.assignedDoorId, doors) || '-'}
                       </td>
                       <td className="px-4 py-3 text-sm">
                         {trailer.checkedInAt && (
@@ -408,8 +486,13 @@ export const YardManagement: FC = () => {
                           ${trailer.detentionCost}
                         </div>
                       </td>
+                      {/* A "Contents" column printed `contents || '-'` — a dash on every
+                          row, under a heading promising something `yard_trailers` has never
+                          recorded. It records what the trailer IS: type, seal, weight,
+                          temperature setpoint. The seal number is the identifying detail
+                          that exists, so the column shows that. */}
                       <td className="px-4 py-3 text-sm text-opsgrid-text-secondary truncate max-w-xs">
-                        {trailer.contents || '-'}
+                        {trailer.sealNumber || '-'}
                       </td>
                     </tr>
                   ))}
@@ -430,6 +513,19 @@ export const YardManagement: FC = () => {
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
           {doorsLoading ? (
             <div className="col-span-full p-8 text-center text-opsgrid-text-secondary">Loading doors...</div>
+          ) : doorsError ? (
+            <div className="col-span-full p-8 text-center space-y-3" role="alert">
+              <p className="text-status-alarm">
+                Couldn’t load dock doors — this is a loading failure, not an empty dock.
+              </p>
+              <Button variant="secondary" onClick={() => refetchDoors()}>
+                Retry
+              </Button>
+            </div>
+          ) : doors.length === 0 ? (
+            <div className="col-span-full p-8 text-center text-opsgrid-text-secondary">
+              No dock doors are configured.
+            </div>
           ) : doors.map(door => (
             <div 
               key={door.id}
@@ -442,15 +538,23 @@ export const YardManagement: FC = () => {
                 <h3 className="font-semibold">{door.doorNumber}</h3>
                 <span className={`w-3 h-3 rounded-full ${getDoorStatusColor(door.status)}`} />
               </div>
-              <p className="text-sm text-opsgrid-text-secondary mb-2">{door.workcellName}</p>
+              {/* `door.workcellName` was here, rendering an empty line: `dock_doors` has no
+                  workcell relationship, so no endpoint could have filled it. The door type
+                  is what the row actually knows about itself. */}
+              <p className="text-sm text-opsgrid-text-secondary mb-2">{door.doorType ?? '—'}</p>
               <p className="text-sm capitalize">{door.status?.replace('_', ' ')}</p>
               {door.currentTrailerId && (
                 <div className="mt-3 pt-3 border-t border-opsgrid-border">
                   <p className="text-sm font-medium">Occupied by:</p>
                   <p className="text-sm text-opsgrid-text-secondary">{door.trailerLicensePlate}</p>
-                  {door.estimatedReleaseAt && (
-                    <p className="text-xs text-opsgrid-text-secondary mt-1">
-                      Release: {new Date(door.estimatedReleaseAt).toLocaleTimeString()}
+                  {/* WAS `door.estimatedReleaseAt`, rendered as "Release: HH:MM" — a
+                      prediction no column produces, so the line never appeared. The door
+                      knows when it was last occupied, which is a different and true thing;
+                      mapping one onto the other would be the `currentMileage` defect again,
+                      the right number under the wrong label. */}
+                  {door.lastOccupiedAt && (
+                    <p className="text-xs text-opsgrid-text-secondary">
+                      Last occupied: {new Date(door.lastOccupiedAt).toLocaleTimeString()}
                     </p>
                   )}
                 </div>
@@ -464,6 +568,16 @@ export const YardManagement: FC = () => {
         <div className="bg-opsgrid-panel border border-opsgrid-border rounded-lg overflow-hidden">
           {appointmentsLoading ? (
             <div className="p-8 text-center text-opsgrid-text-secondary">Loading appointments...</div>
+          ) : appointmentsError ? (
+            /* Same distinction as the trailer list above: a dock with no appointments is
+               a schedule an operator plans around; a failed request that looks identical
+               is not. Fixing only the trailers tab left this one, which is why the sweep
+               that found it counts queries against handlers per file. */
+            <div className="p-8 text-center" role="alert">
+              <p className="text-status-alarm">
+                Couldn’t load appointments — this is a loading failure, not an empty schedule.
+              </p>
+            </div>
           ) : appointments.length === 0 ? (
             <div className="p-8 text-center text-opsgrid-text-secondary">No appointments found</div>
           ) : (
@@ -639,22 +753,25 @@ const CheckInModal: FC<{ onClose: () => void; onCheckedIn: () => void }> = ({ on
           <button onClick={onClose} aria-label="Close" className="text-opsgrid-text-secondary hover:text-opsgrid-text">✕</button>
         </div>
         <div>
-          <label className="block text-sm text-opsgrid-text-secondary mb-1">Trailer ID</label>
+          <label htmlFor="yardmanagement-trailer-id" className="block text-sm text-opsgrid-text-secondary mb-1">Trailer ID</label>
           <input
+              id="yardmanagement-trailer-id"
             className="w-full px-3 py-2 bg-opsgrid-bg border border-opsgrid-border rounded-lg text-sm focus:outline-none"
             value={trailerId} onChange={(e) => setTrailerId(e.target.value)} placeholder="TRL-1042"
           />
         </div>
         <div>
-          <label className="block text-sm text-opsgrid-text-secondary mb-1">Carrier</label>
+          <label htmlFor="yardmanagement-carrier" className="block text-sm text-opsgrid-text-secondary mb-1">Carrier</label>
           <input
+              id="yardmanagement-carrier"
             className="w-full px-3 py-2 bg-opsgrid-bg border border-opsgrid-border rounded-lg text-sm focus:outline-none"
             value={carrierName} onChange={(e) => setCarrierName(e.target.value)} placeholder="Carrier name"
           />
         </div>
         <div>
-          <label className="block text-sm text-opsgrid-text-secondary mb-1">Type</label>
+          <label htmlFor="yardmanagement-type" className="block text-sm text-opsgrid-text-secondary mb-1">Type</label>
           <select
+              id="yardmanagement-type"
             className="w-full px-3 py-2 bg-opsgrid-bg border border-opsgrid-border rounded-lg text-sm focus:outline-none"
             value={trailerType} onChange={(e) => setTrailerType(e.target.value as YardTrailer['trailerType'])}
           >
@@ -681,13 +798,15 @@ const CheckInModal: FC<{ onClose: () => void; onCheckedIn: () => void }> = ({ on
 };
 
 // Components
-const StatCard: FC<{ label: string; value: string | number; icon: any; color?: string }> = ({ 
-  label, 
-  value, 
-  icon: Icon, 
-  color = 'text-opsgrid-text' 
-}) => (
-  <div className="bg-opsgrid-panel border border-opsgrid-border rounded-lg p-3">
+// forwardRef AND `...rest` — see the note on the identical component in
+// TransportationManagement.tsx. These sit inside `<TooltipTrigger asChild>`, and a plain
+// function component drops the ref and the event handlers Radix's Slot merges in, leaving
+// the tooltips dead rather than merely warning.
+const StatCard = forwardRef<
+  HTMLDivElement,
+  { label: string; value: string | number; icon: any; color?: string } & HTMLAttributes<HTMLDivElement>
+>(({ label, value, icon: Icon, color = 'text-opsgrid-text', ...rest }, ref) => (
+  <div ref={ref} {...rest} className="bg-opsgrid-panel border border-opsgrid-border rounded-lg p-3">
     <div className="flex items-center justify-between">
       <div>
         <p className="text-xs text-opsgrid-text-secondary">{label}</p>
@@ -696,7 +815,8 @@ const StatCard: FC<{ label: string; value: string | number; icon: any; color?: s
       <Icon className={`w-5 h-5 ${color}`} />
     </div>
   </div>
-);
+));
+StatCard.displayName = 'StatCard';
 
 const TrailerDetailModal: FC<{
   trailer: YardTrailer;
@@ -704,7 +824,6 @@ const TrailerDetailModal: FC<{
   onClose: () => void;
   onChanged: () => void;
 }> = ({ trailer, doors, onClose, onChanged }) => {
-  const [location, setLocation] = useState<any>(null);
   const [assignDoorId, setAssignDoorId] = useState('');
   const [busy, setBusy] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
@@ -722,13 +841,6 @@ const TrailerDetailModal: FC<{
       setBusy(null);
     }
   };
-
-  useEffect(() => {
-    // Fetch real-time location if in transit
-    if (trailer.status === 'in_transit' && trailer.lastLocation) {
-      setLocation(trailer.lastLocation);
-    }
-  }, [trailer]);
 
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
@@ -761,50 +873,31 @@ const TrailerDetailModal: FC<{
             </div>
             <div>
               <p className="text-sm text-opsgrid-text-secondary">Current Location</p>
-              <p className="font-medium">{trailer.yardLocation || trailer.assignedDoorId || 'In Transit'}</p>
+              <p className="font-medium">
+                {trailer.yardLocation || doorLabel(trailer.assignedDoorId, doors) || 'In Transit'}
+              </p>
             </div>
           </div>
 
-          {location && (
-            <div className="bg-opsgrid-bg rounded-lg p-4">
-              <div className="flex items-center gap-2 mb-2">
-                <MapPin className="w-4 h-4 text-opsgrid-primary" />
-                <h4 className="font-medium">Current GPS Location (GeoTab)</h4>
-              </div>
-              <div className="grid grid-cols-3 gap-4 text-sm">
-                <div>
-                  <p className="text-opsgrid-text-secondary">Latitude</p>
-                  <p>{location.latitude.toFixed(4)}</p>
-                </div>
-                <div>
-                  <p className="text-opsgrid-text-secondary">Longitude</p>
-                  <p>{location.longitude.toFixed(4)}</p>
-                </div>
-                <div>
-                  <p className="text-opsgrid-text-secondary">Speed</p>
-                  <p>{location.speed?.toFixed(0) || 0} mph</p>
-                </div>
-              </div>
-              <p className="text-xs text-opsgrid-text-secondary mt-2">
-                Last updated: {new Date(location.timestamp).toLocaleString()}
-              </p>
-            </div>
-          )}
+          {/* A "Current GPS Location (GeoTab)" card sat here — latitude, longitude, speed
+              and a last-updated time — behind `location`, a piece of state set by exactly one
+              effect: `if (trailer.status === 'in_transit' && trailer.lastLocation)`.
+              `yard_trailers` has no position column; the name was credited to the type by
+              `vehicles.last_location`, a different table, so the condition was never true and
+              the card never rendered. The heading was the most specific claim in it: GeoTab
+              is not the source of a trailer's position, because nothing is. */}
 
           <div className="grid grid-cols-2 gap-4">
-            <div>
-              <p className="text-sm text-opsgrid-text-secondary">PO Number</p>
-              <p className="font-medium">{trailer.poNumber || '-'}</p>
-            </div>
+            {/* A "PO Number" field sat beside this one, reading `poNumber || '-'`. No such
+                column exists on `yard_trailers`; a purchase order belongs to a shipment. */}
             <div>
               <p className="text-sm text-opsgrid-text-secondary">Seal Number</p>
               <p className="font-medium">{trailer.sealNumber || '-'}</p>
             </div>
-          </div>
-
-          <div>
-            <p className="text-sm text-opsgrid-text-secondary">Contents</p>
-            <p className="font-medium">{trailer.contents || '-'}</p>
+            <div>
+              <p className="text-sm text-opsgrid-text-secondary">Yard Location</p>
+              <p className="font-medium">{trailer.yardLocation || '-'}</p>
+            </div>
           </div>
 
           {trailer.driverName && (

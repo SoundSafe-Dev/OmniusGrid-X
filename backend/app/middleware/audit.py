@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import insert, select, text
 import structlog
 
+from app.core.http_metrics import AUDIT_WRITE_FAILURES
 from app.db.database import AsyncSessionLocal
 
 logger = structlog.get_logger()
@@ -179,22 +180,23 @@ class AuditLoggingMiddleware(BaseHTTPMiddleware):
         return resource_type, resource_id
     
     async def _get_request_body(self, request: Request) -> Optional[Dict]:
-        """Get request body if available"""
-        try:
-            # Note: This requires the body to not have been consumed yet
-            # In practice, you'd need to use a custom request wrapper
-            return None
-        except Exception:
-            return None
-    
+        """Always None — request bodies are not captured (FS-536).
+
+        NOT A STUB THAT MIGHT WORK. Reading the body here consumes the stream before the
+        route handler sees it, so capturing it needs a wrapper this middleware does not
+        have. Until that exists the honest return is None, and `details` on the audit row
+        carries no payload.
+
+        The `try`/`except Exception` that used to wrap this `return None` was theatre: the
+        body cannot raise, so the handler could never fire, and its presence implied an
+        attempt that was not being made. A reader looking for why bodies are missing found
+        a function that appeared to try and fail.
+        """
+        return None
+
     async def _get_response_body(self, response: Response) -> Optional[Dict]:
-        """Get response body if available"""
-        try:
-            # Note: This requires the response body to not have been consumed yet
-            # In practice, you'd need to use a custom response wrapper
-            return None
-        except Exception:
-            return None
+        """Always None — response bodies are not captured. See `_get_request_body`."""
+        return None
     
     async def _log_audit_entry(
         self,
@@ -253,10 +255,18 @@ class AuditLoggingMiddleware(BaseHTTPMiddleware):
                     user_id=user_id,
                 )
         except Exception as e:
-            # Log error but don't fail the request
+            # Log error but don't fail the request — and COUNT it (FS-536).
+            #
+            # Continuing is right: an audit write must not fail a user's request. But "do
+            # not fail the request" and "do not tell anyone" are separate decisions, and
+            # only the first had been made. `db/models.py:1561-1567` records what that cost
+            # — an INET/VARCHAR mismatch made every insert fail, this handler swallowed it,
+            # and "the audit trail has been silently empty on real deployments while every
+            # write appeared to succeed". The mismatch was fixed; the invisibility was not.
             logger.error(
                 "audit_log_failed",
                 error=str(e),
                 action=audit_data["action"],
                 user_id=user_id,
             )
+            AUDIT_WRITE_FAILURES.labels(action=audit_data.get("action", "unknown")).inc()

@@ -29,23 +29,37 @@ const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 // what MaintenancePanel reads. Map backend keys -> the component shape with safe
 // defaults so nothing calls .toLocaleString()/.length on undefined. Mock data
 // already matches the TS types and is left untouched.
-const adaptSchedule = (s: any): MaintenanceSchedule => ({
-  ...s,
-  // component reads currentMileage.toLocaleString(); backend only has dueMileage
-  currentMileage: s?.currentMileage ?? s?.dueMileage ?? 0,
-  priority: (s?.priority ?? 'medium') as MaintenanceSchedule['priority'],
-});
+/**
+ * NOTHING IS INVENTED HERE ANY MORE. This adapter used to fill two fields the wire did
+ * not carry:
+ *
+ *   `currentMileage: s?.currentMileage ?? s?.dueMileage ?? 0` — the backend has no such
+ *   column. It stores `due_odometer_miles`, the odometer reading at which the service
+ *   falls due. The panel printed it as "Mileage: 128,500", which a technician reads as
+ *   where the vehicle IS, not where it has to be serviced — and with neither value
+ *   present it printed "Mileage: 0", a vehicle with no miles on it.
+ *
+ *   `priority: s?.priority ?? 'medium'` — the column did not exist until migration 054,
+ *   so EVERY schedule rendered as 'medium', which is not even a member of the declared
+ *   union ('low' | 'normal' | 'high' | 'urgent'). Whatever the operator selected on the
+ *   form was discarded by the handler and overwritten by this default on the way back.
+ *
+ * The wire now carries `priority`, and `currentMileage` has been removed from the type
+ * rather than manufactured — a schedule knows when service is DUE; it does not know the
+ * vehicle's present odometer.
+ */
+const adaptSchedule = (s: any): MaintenanceSchedule => ({ ...s });
 
+// Down to the one field that is genuinely client-side. `issueDescription` and `reportedDate`
+// were renames performed here — real data (`title`, `openedAt`) under names no endpoint sends —
+// and `partsUsed: [] ` defaulted an array for a table that has no parts. Renaming the type to
+// match the wire removed the need for all of it; what is left derives `vehicleNumber`, which
+// the serializer really does not send.
 const adaptRepairOrder = (o: any): RepairOrder => ({
   ...o,
-  estimatedCost: o?.estimatedCost ?? o?.cost ?? 0,
-  issueDescription: o?.issueDescription ?? o?.title ?? '',
-  reportedDate: o?.reportedDate ?? o?.openedAt ?? '',
-  partsUsed: o?.partsUsed ?? [],
-  workOrderNumber:
-    o?.workOrderNumber ?? (typeof o?.id === 'string' ? o.id.slice(0, 8) : ''),
+  cost: o?.cost,
+  description: o?.description ?? null,
   vehicleNumber: o?.vehicleNumber ?? o?.vehicleId ?? '',
-  priority: (o?.priority ?? 'medium') as RepairOrder['priority'],
 });
 
 export const maintenanceApi = {
@@ -158,13 +172,14 @@ export const maintenanceApi = {
   createRepairOrder: async (order: Partial<RepairOrder>): Promise<RepairOrder> => {
     if (USE_MOCK) {
       await delay(MOCK_DELAY);
+      // The mock used to mint a `WO-YYYY-NNNN` work-order number here. Nothing on the server
+      // issues one, so the mock path produced an identifier the real path never could — which
+      // is how a synthesised number ended up looking like a product feature.
       const newOrder: RepairOrder = {
         ...order as RepairOrder,
         id: `ro-${Date.now()}`,
-        workOrderNumber: `WO-${new Date().getFullYear()}-${Math.floor(Math.random() * 9000 + 1000)}`,
         status: 'reported',
-        partsUsed: [],
-        reportedDate: new Date().toISOString(),
+        openedAt: new Date().toISOString(),
       };
       return newOrder;
     }
@@ -210,18 +225,31 @@ export const maintenanceApi = {
       await delay(MOCK_DELAY);
       return mockMaintenanceCosts;
     }
-    // Backend /costs returns { ytdTotal, byCategory }; the Costs tab reads
-    // totalYTD/monthlyAverage/costPerVehicle/upcomingEstimated/monthlyBreakdown.
+    // THE SERVER NOW COMPUTES ALL SIX. It used to return { ytdTotal, byCategory } and
+    // nothing else, while the Costs tab read five figures, so three were manufactured here:
+    //
+    //   `costPerVehicle: 0`     — a hardcoded zero, rendered as "Per Vehicle $0".
+    //   `upcomingEstimated: 0`  — a hardcoded zero, rendered in a highlighted box as
+    //                             "Upcoming (Est.) $0", which reads as "nothing is coming
+    //                             up" rather than "nobody calculated this".
+    //   `monthlyAverage: ytd/12` — YTD divided by twelve regardless of how many months
+    //                             have actually elapsed. In February that understates the
+    //                             true monthly average roughly sixfold, and it is wrong in
+    //                             every month except December.
+    //
+    // Removing them was right and left four blank rows; `/maintenance/costs` computes each
+    // from real columns now (repair costs by month, schedules' estimated_cost, the vehicle
+    // count). The conditional spreads stay: a deployment running an older backend still
+    // sends nothing for them, and an absent row prompts a question where "$0" answers one.
     const response = await api.get<any>('/api/v1/maintenance/costs');
     const d = response.data ?? {};
-    const ytd = d.ytdTotal ?? d.totalYTD ?? 0;
     return {
-      totalYTD: ytd,
-      monthlyAverage: ytd / 12,
-      costPerVehicle: 0,
-      upcomingEstimated: 0,
+      ytdTotal: d.ytdTotal,
       byCategory: d.byCategory ?? {},
       monthlyBreakdown: d.monthlyBreakdown ?? [],
+      ...(d.monthlyAverage != null ? { monthlyAverage: d.monthlyAverage } : {}),
+      ...(d.costPerVehicle != null ? { costPerVehicle: d.costPerVehicle } : {}),
+      ...(d.upcomingEstimated != null ? { upcomingEstimated: d.upcomingEstimated } : {}),
     };
   },
 

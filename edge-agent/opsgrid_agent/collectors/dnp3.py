@@ -15,11 +15,12 @@ Config:
 """
 
 from typing import Dict, Any, Optional, List
-from datetime import datetime
+from datetime import datetime, timezone
 import asyncio
 import structlog
 
 from .base import BaseCollector
+from ..resilience import ReconnectPolicy
 
 logger = structlog.get_logger()
 
@@ -38,6 +39,14 @@ class DNP3Collector(BaseCollector):
 
     def __init__(self, config: Dict[str, Any]):
         super().__init__(config)
+        # Reconnect discipline, from the ONE policy (FS-473). FS-472 gave five collectors
+        # a backoff and a breaker by copying the same four constants into each, which made
+        # sixteen occurrences across eight files of a number `modbus` documents as a
+        # first-pass guess. `ReconnectPolicy` owns them now, and `reconnect:` in this
+        # collector's config overrides them per site without editing this file.
+        self._backoff, self._breaker = ReconnectPolicy.from_config(config).instruments(
+            f"dnp3:{config.get('asset_id')}"
+        )
         self.host = config.get("host") or config.get("ip_address")
         self.port = config.get("port", 20000)
         self.master_addr = config.get("master_addr", 1)
@@ -125,20 +134,46 @@ class DNP3Collector(BaseCollector):
 
     async def _poll_loop(self) -> None:
         while self._running:
+            # Checked BEFORE the attempt (FS-472). This loop calls `_connect()` on every
+            # iteration, so without the breaker an unreachable outstation was dialled once
+            # per `poll_interval` indefinitely.
+            if not self._breaker.allow():
+                wait = self._breaker.time_until_retry()
+                logger.info(
+                    "dnp3_circuit_open", asset_id=self.asset_id, wait_seconds=wait
+                )
+                await asyncio.sleep(wait)
+                continue
+
             try:
                 await self._connect()
                 if self.points:
                     values = await asyncio.to_thread(self._read_points)
                     if values:
                         await self.emit(self._normalize_data(values))
+                self._backoff.reset()
+                self._breaker.record_success()
             except Exception as exc:
                 logger.error("dnp3_poll_error", asset_id=self.asset_id, error=str(exc))
                 await self._disconnect()
+                self._breaker.record_failure()
+                delay = self._backoff.next_delay()
+                logger.info(
+                    "dnp3_reconnect_backoff",
+                    asset_id=self.asset_id,
+                    delay_seconds=delay,
+                )
+                await asyncio.sleep(delay)
+                continue
             await asyncio.sleep(self.poll_interval)
 
     def _normalize_data(self, values: Dict[str, Any]) -> Dict[str, Any]:
         return {
-            "timestamp_edge": datetime.now().isoformat(),
+            # AWARE UTC (FS-461). This was a bare `datetime.now()`, i.e. LOCAL naive.
+            # `telemetry.time` is `timestamptz`, and a naive stamp lands there as
+            # though it were UTC — so every reading from a device outside UTC was
+            # stored wrong by exactly that device's offset.
+            "timestamp_edge": datetime.now(timezone.utc).isoformat(),
             "asset_id": self.asset_id,
             "topic": "telemetry",
             "collector_type": "dnp3",

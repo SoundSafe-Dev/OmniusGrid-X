@@ -11,7 +11,7 @@ import sys
 import os
 from pathlib import Path
 from typing import Dict, List, Any, Optional
-from datetime import datetime
+from datetime import datetime, timezone
 
 # Add backend to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -33,6 +33,18 @@ except ImportError:
     print("Warning: google-generativeai not installed. LLM generation disabled.")
 
 
+def _flatten(value: Any) -> list:
+    """Every leaf item under `value`, whether it is a list or a dict of lists (FS-431)."""
+    if isinstance(value, dict):
+        out = []
+        for nested in value.values():
+            out.extend(_flatten(nested))
+        return out
+    if isinstance(value, list):
+        return value
+    return [value]
+
+
 class StateSpaceLoader:
     """Loads state space JSON files for randomization"""
     
@@ -42,30 +54,68 @@ class StateSpaceLoader:
         self._load_all()
     
     def _load_all(self):
-        """Load all JSON files from state_space directory"""
-        for json_file in self.state_space_dir.glob("*.json"):
+        """Load all JSON files from state_space directory.
+
+        RAISES WHEN IT LOADS NOTHING (FS-431). `Path.glob` on a directory that does not
+        exist yields no entries and no error, so a wrong path produced a loader holding an
+        empty dict and reporting success. Nothing failed until `random.choice` was handed an
+        empty sequence several frames later, and `POST /engines/correlation/generate` turned
+        that into `500: Cannot choose from an empty sequence` — a message that names neither
+        the directory nor the fact that it was missing.
+
+        The path is relative, so this fires whenever the process's working directory is not
+        `backend/`. That is why the endpoint answered 500 under a walk and 200 by hand.
+        """
+        for json_file in sorted(self.state_space_dir.glob("*.json")):
             with open(json_file, 'r') as f:
                 self.data[json_file.stem] = json.load(f)
+        if not self.data:
+            raise FileNotFoundError(
+                f"no state-space JSON found in {self.state_space_dir.resolve()} "
+                f"(exists={self.state_space_dir.is_dir()}); scenario generation needs it"
+            )
     
     def get_random(self, category: str, key: str, subkey: Optional[str] = None) -> Any:
-        """Get random item from state space"""
+        """Get random item from state space.
+
+        HANDLES THE NESTED SHAPE (FS-431). 26 of the 487 top-level keys map to a dict of
+        grouped lists — `liability_types` is `{"driver": [...], "carrier": [...]}` — and the
+        rest map to a flat list. Called without a `subkey`, this did `random.choice` on
+        whichever it found; `random.choice` indexes with an integer, so on a dict it raised
+        `KeyError: 2`.
+
+        That is ~5% of keys, which is why `POST /engines/correlation/generate` failed at its
+        default `count=100` and passed every time it was tried by hand with a handful. A
+        defect whose reproduction probability rises with volume looks like flakiness from
+        underneath and like a hard failure from the endpoint.
+
+        Without a subkey a grouped key means "any item, from any group", so this flattens.
+        """
         if category not in self.data:
             return None
         if key not in self.data[category]:
             return None
+        value = self.data[category][key]
         if subkey:
-            if subkey not in self.data[category][key]:
+            if not isinstance(value, dict) or subkey not in value:
                 return None
-            return random.choice(self.data[category][key][subkey])
-        return random.choice(self.data[category][key])
-    
+            return random.choice(value[subkey]) if value[subkey] else None
+        pool = _flatten(value)
+        return random.choice(pool) if pool else None
+
     def get_random_asset(self) -> str:
-        """Get random asset from any category"""
+        """Get random asset from any category.
+
+        `_flatten` for the same reason (FS-431): this read `assets.extend(items)`, and
+        extending a list with a dict adds its KEYS. So for every grouped key the pool
+        gained the group names — 'driver', 'carrier' — and returned them as asset names.
+        No exception, no wrong type, just occasional nonsense in generated data.
+        """
         assets = []
         for category in self.data.values():
-            for key, items in category.items():
-                assets.extend(items)
-        return random.choice(assets)
+            for items in category.values():
+                assets.extend(_flatten(items))
+        return random.choice(assets) if assets else None
 
 
 class LLMGenerator:
@@ -757,7 +807,7 @@ class ScenarioGenerator:
                         payload_snapshot={
                             "status": random.choice(["normal", "warning", "critical"]),
                             "metric_value": round(random.uniform(0, 100), 2),
-                            "timestamp": datetime.utcnow().isoformat()
+                            "timestamp": datetime.now(timezone.utc).isoformat()
                         }
                     ))
         

@@ -18,12 +18,18 @@ import {
   Sun,
   Moon,
   Kanban as KanbanIcon,
+  ListChecks,
+  Hammer,
   MessageSquare,
   Inbox,
   Database,
   Bug,
+  ListFilter,
   UploadCloud,
   HeartPulse,
+  SlidersHorizontal,
+  ShieldCheck,
+  CalendarClock,
 } from 'lucide-react';
 import { useUIStore, useAuthStore } from '../../stores';
 import { cn } from '../../utils';
@@ -43,9 +49,13 @@ const navItems: NavItem[] = [
   { path: '/', label: 'Dashboard', icon: LayoutDashboard, description: 'Overview of fleet status, assets, and active alarms' },
   { path: '/assets', label: 'Assets', icon: Box, description: 'Manage and monitor manufacturing equipment' },
   { path: '/alarms', label: 'Alarms', icon: Bell, description: 'View and acknowledge system alarms' },
+  { path: '/alarms/rules', label: 'Alarm Rules', icon: SlidersHorizontal, description: 'Define thresholds evaluated against incoming telemetry' },
   { path: '/oee', label: 'OEE', icon: BarChart3, description: 'Overall Equipment Effectiveness analytics' },
   { path: '/kanban', label: 'Kanban Board', icon: KanbanIcon, description: 'Task management and workflow tracking' },
+  { path: '/shop-floor', label: 'Shop Floor', icon: Hammer, description: 'Issue a part, clock time, report a problem, log downtime — each routed to the systems of record that need it' },
   { path: '/nlp', label: 'Correlation AI', icon: MessageSquare, description: 'AI-powered cross-domain analysis' },
+  { path: '/activations', label: 'Activated Insights', icon: ListChecks, description: 'Recommendations someone acted on, and what each still needs — the Kanban task, and every system of record it has to reach' },
+  { path: '/compliance', label: 'Compliance Assistant', icon: ShieldCheck, description: 'Ask about policy, OSHA, and union agreements — answered from your document library, with sources' },
   { path: '/intake', label: 'Intake Inbox', icon: Inbox, description: 'Upload operational data for AI analysis' },
   {
     path: '/engines',
@@ -119,6 +129,8 @@ const navItems: NavItem[] = [
       { path: '/admin/errors', label: 'Error Triage', icon: Bug, description: 'Production error monitoring' },
       { path: '/admin/fleet', label: 'Fleet OTA', icon: UploadCloud, description: 'Edge-agent releases and staged rollouts' },
       { path: '/admin/notifications', label: 'Notifications', icon: Bell, description: 'Alert delivery subscriptions and log' },
+      { path: '/admin/fleet/targeting', label: 'Fleet Targeting', icon: ListFilter, description: 'Sites, tags, groups, and dynamic cohorts' },
+      { path: '/admin/fleet/maintenance', label: 'Maintenance Windows', icon: CalendarClock, description: 'Recurring site windows and rollout scheduling' },
       { path: '/admin/settings', label: 'Settings', icon: Settings, description: 'System configuration' },
     ],
   },
@@ -170,6 +182,7 @@ export const Sidebar: FC<SidebarProps> = ({ mobile = false, onClose }) => {
             <NavLink
               key={child.path}
               to={child.path}
+              end={child.path === '/fleet' || child.path === '/admin/fleet'}
               onClick={() => mobile && onClose?.()}
               className={({ isActive }) =>
                 cn(
@@ -315,6 +328,7 @@ export const Sidebar: FC<SidebarProps> = ({ mobile = false, onClose }) => {
               <Tooltip>
                 <TooltipTrigger asChild>
                   <button
+                    aria-label="Log out"
                     onClick={handleLogout}
                     className="flex items-center justify-center p-2 rounded-lg text-opsgrid-text-secondary hover:bg-opsgrid-hover hover:text-opsgrid-text transition-colors"
                   >
@@ -341,6 +355,7 @@ export const Sidebar: FC<SidebarProps> = ({ mobile = false, onClose }) => {
             <Tooltip>
               <TooltipTrigger asChild>
                 <button
+                  aria-label="Log out"
                   onClick={handleLogout}
                   className="flex items-center justify-center w-full p-2 rounded-lg text-opsgrid-text-secondary hover:bg-opsgrid-hover hover:text-opsgrid-text transition-colors"
                 >

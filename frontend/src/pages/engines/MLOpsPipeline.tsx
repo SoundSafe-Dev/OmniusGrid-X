@@ -76,7 +76,15 @@ export const MLOpsPipeline: FC = () => {
                 <div>
                   <Tooltip>
                     <TooltipTrigger asChild>
-                      <p className="text-lg font-semibold">{status?.currentModel || 'No model deployed'}</p>
+                      {/* `status` is undefined on a failed fetch, so the `||` fallback
+                          asserted "No model deployed" — which an MLOps operator reads as
+                          "nothing is in production" and may act on by deploying. The
+                          fallback now distinguishes a failed read from an empty one. */}
+                      <p className="text-lg font-semibold">
+                        {isError
+                          ? 'Model status unavailable'
+                          : status?.currentModel || 'No model deployed'}
+                      </p>
                     </TooltipTrigger>
                     <TooltipContent>Currently deployed model version</TooltipContent>
                   </Tooltip>
@@ -84,12 +92,30 @@ export const MLOpsPipeline: FC = () => {
               </div>
               <Tooltip>
                 <TooltipTrigger asChild>
-                  <Badge variant="success" size="md">
-                    <CheckCircle size={14} className="mr-1" />
-                    Active
+                  {/* HARDCODED `success` / "Active", beside the very text that was
+                      already corrected to say "Model status unavailable". A green tick
+                      reading Active next to a failed read is the more confident of the
+                      two statements, and it was not derived from anything at all — it
+                      also said Active when `currentModel` was empty and the line beside
+                      it said "No model deployed". Rule 24: the neighbour of a handled
+                      error is where the unhandled claim survives. */}
+                  <Badge
+                    variant={isError ? 'default' : status?.currentModel ? 'success' : 'warning'}
+                    size="md"
+                  >
+                    {!isError && status?.currentModel && (
+                      <CheckCircle size={14} className="mr-1" />
+                    )}
+                    {isError ? 'Unknown' : status?.currentModel ? 'Active' : 'None'}
                   </Badge>
                 </TooltipTrigger>
-                <TooltipContent>Model is currently active in production</TooltipContent>
+                <TooltipContent>
+                  {isError
+                    ? 'The MLOps status could not be read; no deployment state is known'
+                    : status?.currentModel
+                      ? 'Model is currently active in production'
+                      : 'No model is deployed'}
+                </TooltipContent>
               </Tooltip>
             </div>
           </TooltipTrigger>
@@ -157,11 +183,20 @@ export const MLOpsPipeline: FC = () => {
         <div className="grid grid-cols-2 gap-4">
           <div className="p-3 bg-opsgrid-bg rounded-lg">
             <p className="text-sm text-opsgrid-text-secondary">Poll Interval</p>
-            <p className="font-medium">{status?.pollIntervalSeconds || 300} seconds</p>
+            {/* `|| 300` printed a number the registry never reported — a fabricated
+                configuration value, indistinguishable on screen from a real one. */}
+            <p className="font-medium">
+              {isError || !status ? 'Unknown' : `${status.pollIntervalSeconds} seconds`}
+            </p>
           </div>
           <div className="p-3 bg-opsgrid-bg rounded-lg">
             <p className="text-sm text-opsgrid-text-secondary">Available Models</p>
-            <p className="font-medium">{availableVersions.length}</p>
+            {/* `availableVersions` is `status?.cachedModels || []`, so a failed fetch
+                counted 0 — an empty model registry, which is a very different problem
+                from an unreachable one and points an operator at the wrong system. */}
+            <p className="font-medium">
+              {isError || !status ? 'Unknown' : availableVersions.length}
+            </p>
           </div>
         </div>
       </Card>

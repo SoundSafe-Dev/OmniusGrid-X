@@ -442,7 +442,11 @@ echo "Data consistency check complete"
 6. Verify primary site stability
 
 ## Related Documentation
-- DR Site Configuration — **not implemented**: there is no `overlays/dr` kustomize overlay. Only `overlays/staging` and `overlays/production` exist, so the DR-site steps above have no manifests to apply yet.
+- [DR Site Configuration](../../infrastructure/k8s/overlays/dr/) — the `overlays/dr` kustomize overlay: DR namespace, hostnames, standby replica counts and `DEPLOYMENT_SITE=dr`. Apply with `kubectl apply -k infrastructure/k8s/overlays/dr`.
+
+  **What it does not do.** The overlay brings up pods; it does not replicate data. Cross-region replication is pgBackRest's job (see below) and it is what determines the RPO — applying this overlay to an empty cluster gives you a running platform with no data, so the restore step above is the one that matters.
+
+  **Unverified against a real cluster.** There is no second cluster to exercise it on, so what is proven is that it builds, that every resource is valid, and that the NetworkPolicy-coverage and placeholder-credential gates pass. Whether a real failover meets the 60-minute RTO is unmeasured — [rto-rpo-checklist.md](../runbooks/rto-rpo-checklist.md) is still a template.
 - [DNS Configuration](../../infrastructure/k8s/base/ingress.yaml)
 - [Cross-Region Replication](../../infra/pgbackrest/pgbackrest.conf)
 - [Monitoring Setup](../../infra/grafana/provisioning/)

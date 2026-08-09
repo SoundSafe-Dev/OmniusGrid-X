@@ -31,17 +31,26 @@ const formatHours = (hours: number): string => {
   return `${Math.round(hours)} h`;
 };
 
+/** Rows requested per load. Named because the truncation notice quotes it. */
+const PAGE_LIMIT = 100;
+
 export const PredictiveMaintenance: FC = () => {
   const { data, isLoading, isError } = useQuery({
     queryKey: ['rul-assessments'],
-    queryFn: () => rulApi.listAssessments({ hours: 24, limit: 100 }),
+    queryFn: () => rulApi.listAssessments({ hours: 24, limit: PAGE_LIMIT }),
     refetchInterval: 60000,
   });
 
   const [riskFilter, setRiskFilter] = useState<string | null>(null);
   const [expandedAssetId, setExpandedAssetId] = useState<string | null>(null);
 
-  const assessments: RULAssessment[] = useMemo(() => data ?? [], [data]);
+  const assessments: RULAssessment[] = useMemo(() => data?.items ?? [], [data]);
+  // The endpoint caps at `limit` and orders by asset NAME, because remaining useful
+  // life is computed per asset rather than stored — so risk cannot be sorted on in SQL.
+  // Truncation therefore drops the alphabetically-last assets from the one view whose
+  // job is finding machines about to fail, and the tiles below counted the survivors as
+  // though the fleet had been fully assessed.
+  const truncated = data?.truncated ?? false;
 
   // Most-urgent-first: RUL ascending, optionally narrowed to one risk level.
   const visibleAssessments = useMemo(() => {
@@ -92,6 +101,16 @@ export const PredictiveMaintenance: FC = () => {
 
   return (
     <div className="space-y-6">
+      {truncated && (
+        <Card className="p-3 border-status-warning" role="status">
+          <p className="text-sm text-opsgrid-text">
+            Showing the first {assessments.length} assets by name — your fleet has more.
+            The figures below cover only these, so an asset outside this page is not
+            counted even if it is close to failure.
+          </p>
+        </Card>
+      )}
+
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         <Tooltip>
           <TooltipTrigger asChild>
@@ -99,13 +118,20 @@ export const PredictiveMaintenance: FC = () => {
               <div className="flex items-center gap-3">
                 <HeartPulse className="w-8 h-8 text-opsgrid-primary" />
                 <div>
-                  <p className="text-2xl font-bold">{assessments.length}</p>
+                  <p className="text-2xl font-bold">
+                    {assessments.length}
+                    {truncated && <span className="text-base font-normal">+</span>}
+                  </p>
                   <p className="text-sm text-opsgrid-text-secondary">Assets Assessed</p>
                 </div>
               </div>
             </Card>
           </TooltipTrigger>
-          <TooltipContent>Assets with a current RUL assessment</TooltipContent>
+          <TooltipContent>
+            {truncated
+              ? `Assets with a current RUL assessment. More exist than were assessed here — this page requests ${PAGE_LIMIT}, ordered by asset name.`
+              : 'Assets with a current RUL assessment'}
+          </TooltipContent>
         </Tooltip>
         <Tooltip>
           <TooltipTrigger asChild>

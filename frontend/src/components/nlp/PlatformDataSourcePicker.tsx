@@ -17,9 +17,36 @@ export const PlatformDataSourcePicker: FC<Props> = ({ sessionId, onAttached }) =
   const [assetId, setAssetId] = useState('')
   const [busy, setBusy] = useState(false)
   const [status, setStatus] = useState<string | null>(null)
+  // FS-549. The catch was `.catch(() => setTypes([]))` — a failed request left the list
+  // empty and the component rendered an empty `<select>` and an enabled Add button, which
+  // reads as "this platform has no data sources to offer" rather than "we could not ask".
+  //
+  // The user then picks nothing, presses Add, and gets a second failure from the attach
+  // call — so the first failure is discovered through the second, one interaction later,
+  // with nothing connecting them.
+  const [typesError, setTypesError] = useState(false)
+  const [loadingTypes, setLoadingTypes] = useState(true)
 
   useEffect(() => {
-    platformCorrelationApi.listSourceTypes().then(setTypes).catch(() => setTypes([]))
+    let cancelled = false
+    platformCorrelationApi
+      .listSourceTypes()
+      .then((loaded) => {
+        if (cancelled) return
+        setTypes(loaded)
+        setTypesError(false)
+      })
+      .catch(() => {
+        if (cancelled) return
+        setTypes([])
+        setTypesError(true)
+      })
+      .finally(() => {
+        if (!cancelled) setLoadingTypes(false)
+      })
+    return () => {
+      cancelled = true
+    }
   }, [])
 
   const attach = async () => {
@@ -45,9 +72,16 @@ export const PlatformDataSourcePicker: FC<Props> = ({ sessionId, onAttached }) =
         <div className="flex items-center gap-1 text-xs font-medium text-opsgrid-text mb-2">
           <Database className="w-3.5 h-3.5" /> Add platform data
         </div>
+        {typesError && (
+          <p role="alert" className="text-[11px] mb-1 text-status-alarm">
+            Could not load platform data sources. The list below is empty because the
+            request failed, not because none exist.
+          </p>
+        )}
         <div className="flex gap-2">
           <select
             aria-label="Platform data source"
+            disabled={loadingTypes || typesError}
             className="flex-1 text-xs px-2 py-1 bg-opsgrid-panel border border-opsgrid-border rounded text-opsgrid-text"
             value={sourceType}
             onChange={(e) => setSourceType(e.target.value)}
@@ -65,7 +99,16 @@ export const PlatformDataSourcePicker: FC<Props> = ({ sessionId, onAttached }) =
               onChange={(e) => setAssetId(e.target.value)}
             />
           )}
-          <Button size="sm" onClick={attach} loading={busy} aria-label="Attach platform data">
+          {/* Disabled when the source list could not be loaded: an enabled Add button
+              over an empty select invites the user to discover the first failure via a
+              second one, an interaction later. */}
+          <Button
+            size="sm"
+            onClick={attach}
+            loading={busy}
+            disabled={typesError}
+            aria-label="Attach platform data"
+          >
             <Plus className="w-3 h-3" />
           </Button>
         </div>

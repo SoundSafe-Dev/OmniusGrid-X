@@ -15,6 +15,12 @@ on:
       - 'feature/**'
       - htreinen
       - HARSH-CONTRIBUTION
+      # `alex` matched none of the patterns above and was therefore running ZERO push CI —
+      # the same failure `develop` had, one branch later. An allowlist of personal branch
+      # names goes stale every time someone creates one, and it fails silently: nothing
+      # reports "this branch has no gates". `test_ci_covers_every_branch.py` now compares
+      # this list against the branches that actually exist on the remotes.
+      - alex
     # Docs/media-only pushes don't need the gates — skip them so a README or
     # demo-video commit doesn't run (and fail-email) the whole pipeline.
     paths-ignore:
@@ -38,27 +44,69 @@ jobs:
   # --- task 12: property-based API contract tests ---------------------------
   api-contract:
     runs-on: ubuntu-latest
-    # Advisory (ready to flip pending one green CI run). The two known blockers
-    # are now fixed: (1) FS-80 documents 401/403/404/422/429/500 on every router
-    # mount (app/core/responses.py), and (2) migrations 039/040 repaired the
-    # ORM<->schema drift that 500'd reads on a real postgres. Kept advisory only
-    # because schemathesis (a CI-only dev dep) can't be run locally to prove the
-    # full ~400-op property suite is clean; flip to blocking once this job is
-    # observed green in CI.
-    continue-on-error: true
+    # BLOCKING, as a RATCHET rather than a pass/fail gate. Rebuilt 2026-07-30 after
+    # measuring what this job actually did: nothing. Every stated reason it stayed
+    # advisory was false, and it could not have gone green.
+    #
+    #   * It could not FINISH. ~2.5 min per operation x 451 = ~19 hours against
+    #     GitHub's 6h limit, so it was killed every run and `continue-on-error: true`
+    #     hid the kill. The cost was not the API: one request is ~45ms. It was that
+    #     `from_asgi` drives the app in-process, so every generated example ran on a
+    #     NEW event loop while the app's singletons stayed bound to the first — and
+    #     the websocket queue processor, whose error path had no backoff, then span at
+    #     full CPU forever. The suite now runs the app under uvicorn on a real port,
+    #     one long-lived loop, exactly like production. Full run: ~8.5 minutes.
+    #   * It had NO SCHEMA. This job never ran migrations, so every DB-backed
+    #     operation 500'd against an empty database. It also used POSTGRES_USER=test
+    #     while the migration chain grants to the `omniusgrid` role, so migrations
+    #     could not have run even if the step had existed.
+    #   * "schemathesis can't be run locally" was simply out of date — it is pinned in
+    #     requirements-dev.txt.
+    #
+    # 299 of 451 operations now conform. The remaining 152 are mostly one behaviour —
+    # generated input reaching Postgres unvalidated and surfacing as a 500 where the
+    # contract promises a 4xx — which is per-endpoint work across every lane. So this
+    # ratchets on the measured number instead of demanding green: a regression fails
+    # the build today, and the 152 are burned down deliberately. Same instrument as
+    # --cov-fail-under, and the same rule: raise it, never lower it.
+    timeout-minutes: 30
     services:
       postgres:
         image: timescale/timescaledb:latest-pg15
         env:
-          POSTGRES_USER: test
-          POSTGRES_PASSWORD: test
+          # Must be `omniusgrid`: 004_query_optimization.sql and others GRANT to that
+          # role by name, and the whole chain rolls back if it does not exist.
+          POSTGRES_USER: omniusgrid
+          POSTGRES_PASSWORD: omniusgrid_dev_password
           POSTGRES_DB: omniusgrid_test
         options: >-
           --health-cmd pg_isready --health-interval 10s
           --health-timeout 5s --health-retries 5
         ports: ['5432:5432']
+      # ADDED 2026-07-31. This job provisioned ONLY postgres, so every endpoint whose
+      # dependency is Redis answered 503 — feature flags, bulk jobs, export jobs, the
+      # query-performance surface. Those endpoints were reporting a missing dependency
+      # CORRECTLY; schemathesis counts any 5xx as a server error, so they were charged
+      # to the API. Measured against a throwaway database: 368-370 conforming without
+      # Redis, 383 with it. ~14 operations that were never the API's fault.
+      #
+      # No `command:` needed, which is why Redis lands and the broker does not — see
+      # the note on the run step below.
+      redis:
+        image: redis:7-alpine
+        options: >-
+          --health-cmd "redis-cli ping" --health-interval 10s
+          --health-timeout 5s --health-retries 5
+        ports: ['6379:6379']
     steps:
       - uses: actions/checkout@v4
+        with:
+          # backend/dataset is a 1.5 GB LLM-generated training corpus that NO job
+          # reads. Excluding it keeps the checkout at ~100 MB instead of 1.6 GB.
+          sparse-checkout: |
+            /*
+            !/backend/dataset/
+          sparse-checkout-cone-mode: false
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
@@ -66,12 +114,125 @@ jobs:
       - name: Install dev deps
         working-directory: ./backend
         run: pip install -r requirements-dev.txt
+      # A BROKER THAT ADVERTISES AN ADDRESS THE RUNNER CAN REACH (FS-259b).
+      #
+      # Not a service container, because Redpanda needs `redpanda start
+      # --advertise-kafka-addr` and a service block accepts image/env/ports/options and NO
+      # command. Point the app at a broker that advertises its own container hostname and
+      # the client connects to bootstrap, is redirected somewhere it cannot resolve, and
+      # HANGS — the app then never serves /openapi.json inside the suite's 120s window and
+      # the run collects 1 operation instead of 452. Observed on a workstation, not
+      # predicted.
+      #
+      # THE STEP IS DELIBERATELY FAIL-SAFE, because an absent broker is harmless and a
+      # half-working one is not. The app starts in ~2.6s with no broker at all (every
+      # broker-backed endpoint answers 503, which is what this job did before today) and in
+      # ~3.3s with a correctly-advertised one. The dangerous state is in between. So the
+      # advertised address is verified from the runner, and if anything is wrong the
+      # container is removed — leaving the job in its old, known-good shape rather than the
+      # hanging one. `|| true` on the whole block for the same reason.
+      - name: Start a broker the app can actually reach (best effort)
+        continue-on-error: true
+        run: |
+          docker run -d --name contract-redpanda -p 39092:39092 \
+            docker.redpanda.com/redpandadata/redpanda:v23.3.5 \
+            redpanda start --overprovisioned --smp 1 --memory 512M \
+              --reserve-memory 0M --node-id 0 --check=false \
+              --kafka-addr PLAINTEXT://0.0.0.0:39092 \
+              --advertise-kafka-addr PLAINTEXT://127.0.0.1:39092 || true
+
+          # The advertised address is the whole point: verify it from the runner rather
+          # than trusting the container started.
+          for _ in $(seq 1 30); do
+            if docker exec contract-redpanda \
+                 rpk cluster info --brokers 127.0.0.1:39092 2>/dev/null \
+                 | grep -q '127.0.0.1'; then
+              echo "broker advertises 127.0.0.1 - usable"
+              exit 0
+            fi
+            sleep 2
+          done
+
+          echo "broker did not advertise a reachable address; removing it so the app sees"
+          echo "no broker at all rather than one it will hang on."
+          docker rm -f contract-redpanda || true
+      - name: Migrate the schema
+        working-directory: ./backend
+        # Without this the contract suite runs against an empty database and every
+        # DB-backed operation 500s, which is what it did for weeks.
+        #
+        # Runs as the OWNER, which is correct and is also why the next step exists: the
+        # role that creates the tables can never be the role that proves RLS applies.
+        env:
+          DATABASE_URL: postgresql://omniusgrid:omniusgrid_dev_password@localhost:5432/omniusgrid_test
+        run: python scripts/migrate.py
+      - name: Provision the non-superuser application role
+        working-directory: ./backend
+        # FS-307. Everything below used to connect as the service container's
+        # POSTGRES_USER, which the postgres image makes a SUPERUSER — and a superuser
+        # bypasses FORCE ROW LEVEL SECURITY outright. So ~375 operations were exercised
+        # against a database with tenant isolation switched off, and this gate's
+        # conformance number could not have moved if every policy in the schema had been
+        # dropped. A green gate that cannot fail in a whole dimension is worse than a red
+        # one, because it gets cited.
+        #
+        # The script is the same one `tests/conftest.py` uses for its `tenant_user`, and it
+        # asserts NOSUPERUSER/NOBYPASSRLS after creating the role rather than trusting the
+        # DDL — a silent bypass here would make every result downstream a fiction.
+        run: |
+          python scripts/provision_app_role.py \
+            --url postgresql://omniusgrid:omniusgrid_dev_password@localhost:5432/omniusgrid_test \
+            --role omniusgrid_contract \
+            --password contract_role_password
       - name: Run schemathesis contract tests
         working-directory: ./backend
         env:
-          DATABASE_URL: postgresql+asyncpg://test:test@localhost:5432/omniusgrid_test
+          # The restricted role, not the owner (FS-307). If an operation starts failing
+          # after this landed, that is the gate finding something: the app reached for a
+          # privilege it does not have in production. The ratchet reads the junit report
+          # and rejects a collapsed operation count, so a wholesale breakage cannot be
+          # mistaken for a clean run.
+          DATABASE_URL: postgresql+asyncpg://omniusgrid_contract:contract_role_password@localhost:5432/omniusgrid_test
           RUN_CONTRACT_TESTS: "1"
-        run: pytest tests/test_api_contract.py -q
+          JWT_SECRET_KEY: test-secret-key
+          # Points at the service above. Without it the app falls back to the compose
+          # hostname `redis:6379`, which resolves from neither a runner nor a laptop.
+          REDIS_URL: redis://localhost:6379/0
+          # Points at the docker-run broker above, which advertises 127.0.0.1 so the
+          # client is not redirected somewhere it cannot resolve. If that step removed
+          # the container (its own health check failed), this resolves to nothing and the
+          # broker-backed endpoints answer 503 — the job's behaviour before FS-259b, and
+          # a safe floor rather than a hang.
+          REDPANDA_URL: 127.0.0.1:39092
+        # STILL MISSING, and it is the six /admin/query-performance/* operations:
+        # pg_stat_statements needs `shared_preload_libraries` on the server command line,
+        # and postgres is a SERVICE container here, which takes no command for the same
+        # reason the broker could not be one. Fixing it means replacing the service with a
+        # `docker run` — a larger change to a blocking job than the broker was, because a
+        # postgres that fails to start collapses the whole suite rather than degrading it
+        # to 503s. Left until it can be watched on a real run.
+        #
+        # Individual failures do not fail the step; the ratchet below decides. The
+        # junit report is the input, so a crashed or truncated run cannot be mistaken
+        # for a clean one — contract_ratchet.py rejects a report whose operation count
+        # collapsed.
+        run: pytest tests/test_api_contract.py -q --junitxml=contract-report.xml || true
+      # BEFORE the ratchet, so the numbers are in the run summary even when the next
+      # step fails the build — the moment a reader most wants them. Never fails the
+      # build itself; the ratchet below is the gate.
+      - name: Summarise conformance
+        if: always()
+        working-directory: ./backend
+        run: python scripts/contract_summary.py contract-report.xml
+      - name: Conformance must not regress
+        working-directory: ./backend
+        run: python scripts/contract_ratchet.py contract-report.xml
+      - name: Upload contract report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: api-contract-report
+          path: backend/contract-report.xml
 
   # --- FS-114: real-DB guard suite (schema parity + endpoint/write smoke) ---
   backend-realdb:
@@ -86,6 +247,13 @@ jobs:
     # (which SQLite create_all masks) fail the merge instead of prod.
     steps:
       - uses: actions/checkout@v4
+        with:
+          # backend/dataset is a 1.5 GB LLM-generated training corpus that NO job
+          # reads. Excluding it keeps the checkout at ~100 MB instead of 1.6 GB.
+          sparse-checkout: |
+            /*
+            !/backend/dataset/
+          sparse-checkout-cone-mode: false
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
@@ -116,6 +284,13 @@ jobs:
             tests/test_raw_insert_timestamps.py \
             tests/test_timestamp_backfill.py \
             tests/test_tenant_isolation_api.py \
+            tests/test_alarm_tenant_isolation.py \
+            tests/test_alarm_rules_api.py \
+            tests/test_user_management_api.py \
+            tests/test_reporting_honesty.py \
+            tests/test_openapi_quality.py \
+            tests/test_erp_connectors.py \
+            tests/test_erp_netsuite_connector.py \
             tests/test_tenant_isolation_rls.py \
             tests/test_tenant_isolation_dependency.py \
             tests/test_compliance_tenant_isolation_api.py \
@@ -133,6 +308,13 @@ jobs:
     # wrote them.
     steps:
       - uses: actions/checkout@v4
+        with:
+          # backend/dataset is a 1.5 GB LLM-generated training corpus that NO job
+          # reads. Excluding it keeps the checkout at ~100 MB instead of 1.6 GB.
+          sparse-checkout: |
+            /*
+            !/backend/dataset/
+          sparse-checkout-cone-mode: false
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
@@ -172,6 +354,13 @@ jobs:
     #                  random is worse than one with named exclusions.
     steps:
       - uses: actions/checkout@v4
+        with:
+          # backend/dataset is a 1.5 GB LLM-generated training corpus that NO job
+          # reads. Excluding it keeps the checkout at ~100 MB instead of 1.6 GB.
+          sparse-checkout: |
+            /*
+            !/backend/dataset/
+          sparse-checkout-cone-mode: false
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
@@ -215,6 +404,13 @@ jobs:
     # to nightly.
     steps:
       - uses: actions/checkout@v4
+        with:
+          # backend/dataset is a 1.5 GB LLM-generated training corpus that NO job
+          # reads. Excluding it keeps the checkout at ~100 MB instead of 1.6 GB.
+          sparse-checkout: |
+            /*
+            !/backend/dataset/
+          sparse-checkout-cone-mode: false
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
@@ -240,6 +436,13 @@ jobs:
     # promtool unit tests that assert the deterministic alerts actually fire.
     steps:
       - uses: actions/checkout@v4
+        with:
+          # backend/dataset is a 1.5 GB LLM-generated training corpus that NO job
+          # reads. Excluding it keeps the checkout at ~100 MB instead of 1.6 GB.
+          sparse-checkout: |
+            /*
+            !/backend/dataset/
+          sparse-checkout-cone-mode: false
       - name: Install promtool
         run: |
           PROM_VERSION=2.53.1
@@ -268,11 +471,24 @@ jobs:
       - name: Run alert unit tests
         working-directory: ./infra/prometheus
         run: |
-          promtool test rules \
-            tests/error_alerts_test.yml \
-            tests/subsystems_alerts_test.yml \
-            tests/platform_alerts_test.yml \
-            tests/worker_alerts_test.yml
+          set -euo pipefail
+          # GLOBBED, not listed (FS-537). This was six filenames written out, so a new
+          # unit-test file was run only if whoever added it also remembered to edit this
+          # workflow — and an alert test that does not run is indistinguishable from one
+          # that passes. The same shape as `everyE2eFileIsCollectedOrExcused` (FS-489),
+          # where 47 e2e tests had never executed because the collector's pattern did not
+          # match their filenames.
+          shopt -s nullglob
+          files=(tests/*_test.yml)
+          if [ ${#files[@]} -eq 0 ]; then
+            echo "No alert unit tests found under infra/prometheus/tests/ — either they" >&2
+            echo "were deleted or this glob stopped matching. Failing rather than" >&2
+            echo "reporting success over an empty set." >&2
+            exit 1
+          fi
+          echo "Running ${#files[@]} alert unit-test files:"
+          printf '  %s\n' "${files[@]}"
+          promtool test rules "${files[@]}"
 
   # --- k8s manifest validation (blocking) ----------------------------------
   k8s-manifests:
@@ -285,6 +501,13 @@ jobs:
     # the output, so a typo'd field or an unbuildable overlay fails the merge.
     steps:
       - uses: actions/checkout@v4
+        with:
+          # backend/dataset is a 1.5 GB LLM-generated training corpus that NO job
+          # reads. Excluding it keeps the checkout at ~100 MB instead of 1.6 GB.
+          sparse-checkout: |
+            /*
+            !/backend/dataset/
+          sparse-checkout-cone-mode: false
       - name: Setup kustomize
         run: |
           curl -sL "https://github.com/kubernetes-sigs/kustomize/releases/download/kustomize%2Fv5.4.3/kustomize_v5.4.3_linux_amd64.tar.gz" \
@@ -299,31 +522,108 @@ jobs:
       - name: Build + validate app manifests (base + overlays)
         run: |
           set -euo pipefail
-          for t in base overlays/staging overlays/production; do
+          for t in base overlays/staging overlays/production overlays/dr; do
             echo "::group::$t"
             kustomize build "infrastructure/k8s/$t" \
               | kubeconform -strict -summary -ignore-missing-schemas \
                   -kubernetes-version 1.29.0
             echo "::endgroup::"
           done
+      - name: Probes exist and address a real port
+        run: |
+          pip install pyyaml
+          # kubeconform cannot catch this: a probe naming a port the container does not
+          # declare is schema-valid YAML. The kubelet gets connection refused and
+          # restart-loops the workload — so a wrong probe is worse than no probe, because
+          # it reads like the fix.
+          ./tests/k8s/check_probe_ports.py
       - name: No placeholder credentials reachable in staging or production
         run: |
           pip install pyyaml
+          # The matcher first. It once reported OK for a `secretGenerator` placeholder,
+          # because that emits base64 `data` and the markers were compared against the
+          # encoded string — so the three OKs below meant nothing for the idiomatic way
+          # of writing the very thing this guards. If the self-test fails, they mean
+          # nothing again.
+          ./tests/k8s/check_placeholder_secrets.py --self-test
           ./tests/k8s/check_placeholder_secrets.py
           ./tests/k8s/check_placeholder_secrets.py --staging
+          ./tests/k8s/check_placeholder_secrets.py --dr
+      - name: Security-critical backend settings reach the container
+        run: |
+          pip install pyyaml
+          # The app defaults ALLOW_DEV_TOKEN and ALLOW_OPEN_REGISTRATION to TRUE so a
+          # laptop demo works offline, and nothing here overrode them — so every overlay
+          # deployed a backend accepting the string `dev-token` as an admin credential.
+          # validate_settings() exists to stop that and hard-fails at import, but only
+          # when ENVIRONMENT=production, and ENVIRONMENT appeared in no manifest at all.
+          # A real guard that nothing had ever armed.
+          #
+          # Checks the BUILT manifests, and resolves envFrom the way the kubelet does
+          # (explicit `env` beats it) — the sources each read correctly on their own and
+          # the defect is only visible in the combination.
+          ./tests/k8s/check_backend_security_config.py
       - name: Build + validate operator stacks (monitoring, database-ha, autoscaling)
         # These reference operator CRDs (Prometheus rules from outside the tree,
         # CloudNativePG Cluster/Pooler, KEDA ScaledObject) — build with the None
         # load-restrictor and let kubeconform skip the CRD schemas it can't know.
+        #
+        # Built per ENVIRONMENT (FS-509). The raw stack was validated here and applied
+        # somewhere else: all three hardcode `namespace: omniusgrid` and the staging deploy
+        # piped them into `kubectl apply -n omniusgrid-staging`, which kubectl rejects. This
+        # step passed on manifests that could never apply, because it never looked at where
+        # they were being sent.
         run: |
           set -euo pipefail
-          for t in monitoring database-ha autoscaling; do
-            echo "::group::$t"
-            kustomize build --load-restrictor LoadRestrictionsNone "infrastructure/k8s/$t" \
-              | kubeconform -summary -ignore-missing-schemas \
-                  -kubernetes-version 1.29.0
-            echo "::endgroup::"
+          for env in staging production; do
+            for t in monitoring database-ha autoscaling; do
+              echo "::group::$env/$t"
+              kustomize build --load-restrictor LoadRestrictionsNone \
+                "infrastructure/k8s/platform/$env/$t" \
+                | kubeconform -summary -ignore-missing-schemas \
+                    -kubernetes-version 1.29.0
+              echo "::endgroup::"
+            done
           done
+      - name: The canonical README names every buildable tree
+        run: |
+          # overlays/dr has existed since FS-230, is built by five gates, and appeared
+          # nowhere in the README that opens by calling the tree canonical. A directory CI
+          # builds and the canonical document omits is worse than an undocumented one — the
+          # document is complete on its face, so the first omission removes the weight from
+          # all of it. The gap opened by ADDITION, which review does not catch reliably.
+          ./tests/k8s/check_the_readme_describes_the_tree.py
+      - name: Every consumed Secret has somewhere it can come from
+        run: |
+          pip install pyyaml
+          # Both provisioning paths are deliberately applied by nobody — each needs a real
+          # vault or a cluster keypair per environment. That makes the risk a different one:
+          # if the manifests omit a secret the workloads consume, the operator provisions
+          # everything documented, every step reports success, and the deploy still dies on
+          # CreateContainerConfigError for a secret nobody listed. Six were in that state.
+          # Checks BOTH documented paths, because an operator picks one.
+          ./tests/k8s/check_every_secret_has_a_source.py
+      - name: Workloads run at or above their autoscaler's declared floor
+        run: |
+          pip install pyyaml
+          # The ingestion worker — the live telemetry path — declared `replicas: 1` while
+          # the autoscaler that owns it declared `minReplicaCount: 2`, with the reason
+          # written out beside it. Two artefacts, two different stacks, two different deploy
+          # jobs, and nothing read both: the workload ran below its own stated floor until
+          # KEDA's first poll, and permanently wherever the KEDA CRDs are absent — which the
+          # deploy job explicitly tolerates.
+          ./tests/k8s/check_replica_floors.py
+      - name: Manifests land in their declared namespace and name a real target
+        run: |
+          pip install pyyaml
+          # kubeconform cannot see either of these: a namespace disagreeing with the `-n`
+          # flag is schema-valid, and a scaleTargetRef naming a Deployment that does not
+          # exist is just a string. Both fail at apply time or silently at run time —
+          # staging never had monitoring applied at all, and KEDA scaled nothing in EITHER
+          # environment because the app overlays add a namePrefix the autoscaling stack
+          # does not. Also asserts the deploy job still routes through the overlays, since
+          # fixing the manifests alone would leave the mismatch exactly where it was.
+          ./tests/k8s/check_namespaces_and_targets.py
 
   # --- k8s live smoke test on kind (blocking) ------------------------------
   k8s-smoke:
@@ -336,6 +636,13 @@ jobs:
     # Cluster and KEDA ScaledObjects pass their operators' validating webhooks).
     steps:
       - uses: actions/checkout@v4
+        with:
+          # backend/dataset is a 1.5 GB LLM-generated training corpus that NO job
+          # reads. Excluding it keeps the checkout at ~100 MB instead of 1.6 GB.
+          sparse-checkout: |
+            /*
+            !/backend/dataset/
+          sparse-checkout-cone-mode: false
       - name: Create kind cluster
         uses: helm/kind-action@v1.10.0
         with:
@@ -404,6 +711,13 @@ jobs:
     # Calico ("OK (reachable)" / "OK (blocked)").
     steps:
       - uses: actions/checkout@v4
+        with:
+          # backend/dataset is a 1.5 GB LLM-generated training corpus that NO job
+          # reads. Excluding it keeps the checkout at ~100 MB instead of 1.6 GB.
+          sparse-checkout: |
+            /*
+            !/backend/dataset/
+          sparse-checkout-cone-mode: false
       - name: Create kind cluster (no default CNI)
         uses: helm/kind-action@v1.10.0
         with:
@@ -456,6 +770,13 @@ jobs:
     # proves a real CNI agrees with this model); this is the fast feedback loop.
     steps:
       - uses: actions/checkout@v4
+        with:
+          # backend/dataset is a 1.5 GB LLM-generated training corpus that NO job
+          # reads. Excluding it keeps the checkout at ~100 MB instead of 1.6 GB.
+          sparse-checkout: |
+            /*
+            !/backend/dataset/
+          sparse-checkout-cone-mode: false
       - name: Setup kustomize
         run: |
           curl -sL "https://github.com/kubernetes-sigs/kustomize/releases/download/kustomize%2Fv5.4.3/kustomize_v5.4.3_linux_amd64.tar.gz" \
@@ -473,12 +794,31 @@ jobs:
           grep -oE '^  "[^"]+"' tests/k8s/netpol-test.sh | tr -d ' "' \
             | awk -F'|' 'NF>=6{print $1"\t"$3"\t"$4"\t"$5"\t"$6}' > /tmp/matrix.tsv
           ./tests/k8s/simulate-netpols.py /tmp/netpols.yaml tests/k8s/netpol-probe.yaml /tmp/matrix.tsv
+      - name: Every workload in a default-deny namespace has a policy
+        run: |
+          set -euo pipefail
+          # Complements the matrix above rather than duplicating it. The matrix
+          # proves the paths someone wrote a case for; this proves no workload is
+          # entirely cut off — the gap that killed otel/jaeger and, on the guard's
+          # first run, edge-agent / redpanda / timescaledb / frontend too.
+          for overlay in base overlays/staging overlays/production overlays/dr; do
+            echo "--- $overlay ---"
+            kustomize build "infrastructure/k8s/$overlay" \
+              | ./tests/k8s/check_netpol_coverage.py
+          done
 
   # --- task 1: frontend unit tests (Vitest) --------------------------------
   frontend-unit:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          # backend/dataset is a 1.5 GB LLM-generated training corpus that NO job
+          # reads. Excluding it keeps the checkout at ~100 MB instead of 1.6 GB.
+          sparse-checkout: |
+            /*
+            !/backend/dataset/
+          sparse-checkout-cone-mode: false
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
@@ -496,6 +836,13 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          # backend/dataset is a 1.5 GB LLM-generated training corpus that NO job
+          # reads. Excluding it keeps the checkout at ~100 MB instead of 1.6 GB.
+          sparse-checkout: |
+            /*
+            !/backend/dataset/
+          sparse-checkout-cone-mode: false
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
@@ -511,6 +858,371 @@ jobs:
         working-directory: ./frontend
         run: npm run e2e
 
+  # --- ERP Tier 4: the SAP connector against SAP's public sandbox -----------
+  erp-sap-sandbox:
+    runs-on: ubuntu-latest
+    # Runs only when the repository has a SAP_SANDBOX_API_KEY secret. The key is
+    # free but is issued to a person at api.sap.com, so it cannot be provisioned
+    # from CI. Without it the job is a no-op rather than a red build.
+    #
+    # Worth having because the sandbox is a LIVE SAP OData service: it exercises
+    # the $batch multipart parser against genuine SAP bytes rather than the
+    # fixture we wrote, which is the one thing our own fixture cannot do.
+    # NO EVENT GATE (FS-374). This was `if: github.event_name == 'push'`, which skipped
+    # the vendor-facing suites on every pull_request. That mattered less than it looks —
+    # `on.push.branches` covers hamad/**, hridyansh/**, feature/**, htreinen and
+    # HARSH-CONTRIBUTION, so most work is already checked on the branch push — but it left
+    # a real hole: a branch matching NONE of those patterns (`alex` on origin today) runs
+    # zero push CI, so its PR is the only gate, and this was the gate that skipped.
+    #
+    # Removing it is close to free. Every one of these suites is `pytest.mark.skipif` on
+    # its credentials, so with no secrets — the fork-PR case — the whole set is 55 skipped
+    # in 0.18s and green. Verified locally rather than assumed. With secrets present on a
+    # same-repo PR they do the real vendor call, which is the point.
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # backend/dataset is a 1.5 GB LLM-generated training corpus that NO job
+          # reads. Excluding it keeps the checkout at ~100 MB instead of 1.6 GB.
+          sparse-checkout: |
+            /*
+            !/backend/dataset/
+          sparse-checkout-cone-mode: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+      - name: Install backend deps
+        working-directory: ./backend
+        run: pip install -r requirements.txt -r requirements-dev.txt
+      - name: SAP sandbox tests
+        working-directory: ./backend
+        env:
+          SAP_SANDBOX_API_KEY: ${{ secrets.SAP_SANDBOX_API_KEY }}
+        # Skips cleanly when the secret is absent; fails loudly on a STALE key,
+        # so an expired credential is distinguishable from an unconfigured one.
+        run: pytest tests/test_erp_sap_sandbox.py -q -rs
+
+  # --- ERP Tier 4: the Intuit connector against a REAL QuickBooks company ------
+  erp-intuit-sandbox:
+    runs-on: ubuntu-latest
+    # Runs only when the repository has the four Intuit secrets. They cannot be
+    # provisioned from CI: QuickBooks advertises no client-credentials grant, so the
+    # refresh token comes from a ONE-TIME interactive authorization by a human
+    # (backend/scripts/intuit_authorize.py). Without them the job is a no-op rather
+    # than a red build.
+    #
+    # Worth having for one assertion above all: Intuit decides when to ROTATE the
+    # refresh token, retiring the previous one. No fixture can prove we handle that,
+    # because a fixture's rotation behaviour is whatever we wrote. Mishandle it and
+    # the integration works exactly once, then fails forever with invalid_grant.
+    #
+    # NOTE ON THE ROTATING CREDENTIAL. If Intuit rotates during a run, the stored
+    # INTUIT_REFRESH_TOKEN secret becomes STALE and later runs fail with
+    # invalid_grant -- correctly, since that is exactly the failure being guarded
+    # against. Re-run scripts/intuit_authorize.py and update the secret when it
+    # happens; a red build here is real information, not flakiness.
+    # NO EVENT GATE (FS-374). This was `if: github.event_name == 'push'`, which skipped
+    # the vendor-facing suites on every pull_request. That mattered less than it looks —
+    # `on.push.branches` covers hamad/**, hridyansh/**, feature/**, htreinen and
+    # HARSH-CONTRIBUTION, so most work is already checked on the branch push — but it left
+    # a real hole: a branch matching NONE of those patterns (`alex` on origin today) runs
+    # zero push CI, so its PR is the only gate, and this was the gate that skipped.
+    #
+    # Removing it is close to free. Every one of these suites is `pytest.mark.skipif` on
+    # its credentials, so with no secrets — the fork-PR case — the whole set is 55 skipped
+    # in 0.18s and green. Verified locally rather than assumed. With secrets present on a
+    # same-repo PR they do the real vendor call, which is the point.
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # backend/dataset is a 1.5 GB LLM-generated training corpus that NO job
+          # reads. Excluding it keeps the checkout at ~100 MB instead of 1.6 GB.
+          sparse-checkout: |
+            /*
+            !/backend/dataset/
+          sparse-checkout-cone-mode: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+      - name: Install backend deps
+        working-directory: ./backend
+        run: pip install -r requirements.txt -r requirements-dev.txt
+      - name: Intuit sandbox tests
+        working-directory: ./backend
+        env:
+          INTUIT_CLIENT_ID: ${{ secrets.INTUIT_CLIENT_ID }}
+          INTUIT_CLIENT_SECRET: ${{ secrets.INTUIT_CLIENT_SECRET }}
+          INTUIT_REFRESH_TOKEN: ${{ secrets.INTUIT_REFRESH_TOKEN }}
+          INTUIT_REALM_ID: ${{ secrets.INTUIT_REALM_ID }}
+          INTUIT_ENVIRONMENT: sandbox
+        # Skips cleanly when the secrets are absent; fails loudly on a stale
+        # credential, so an expired token is distinguishable from an unconfigured one.
+        run: pytest tests/test_erp_intuit_sandbox.py -q -rs
+
+  # --- ERP Tier 4: the Dynamics connector against a REAL Dataverse ------------
+  erp-dynamics-sandbox:
+    runs-on: ubuntu-latest
+    # Runs only when the four Dataverse secrets are present. A free Power Apps
+    # Developer Plan environment provides them; see
+    # docs/erp/dynamics-dataverse-setup.md. Without them the job is a no-op rather
+    # than a red build.
+    #
+    # Worth having because a real Dataverse found two defects a fixture could not:
+    # @odata.nextLink pagination (GET /stringmaps returns exactly 5000 rows AND a
+    # nextLink, so one request silently dropped the rest), and probe_health
+    # reporting an unreachable system as `degraded` instead of `unhealthy` --
+    # visible only because Dynamics is the first connector whose auth host differs
+    # from its data host.
+    # NO EVENT GATE (FS-374). This was `if: github.event_name == 'push'`, which skipped
+    # the vendor-facing suites on every pull_request. That mattered less than it looks —
+    # `on.push.branches` covers hamad/**, hridyansh/**, feature/**, htreinen and
+    # HARSH-CONTRIBUTION, so most work is already checked on the branch push — but it left
+    # a real hole: a branch matching NONE of those patterns (`alex` on origin today) runs
+    # zero push CI, so its PR is the only gate, and this was the gate that skipped.
+    #
+    # Removing it is close to free. Every one of these suites is `pytest.mark.skipif` on
+    # its credentials, so with no secrets — the fork-PR case — the whole set is 55 skipped
+    # in 0.18s and green. Verified locally rather than assumed. With secrets present on a
+    # same-repo PR they do the real vendor call, which is the point.
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # backend/dataset is a 1.5 GB LLM-generated training corpus that NO job
+          # reads. Excluding it keeps the checkout at ~100 MB instead of 1.6 GB.
+          sparse-checkout: |
+            /*
+            !/backend/dataset/
+          sparse-checkout-cone-mode: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+      - name: Install backend deps
+        working-directory: ./backend
+        run: pip install -r requirements.txt -r requirements-dev.txt
+      - name: Dataverse sandbox tests
+        working-directory: ./backend
+        env:
+          DATAVERSE_ORG: ${{ secrets.DATAVERSE_ORG }}
+          DATAVERSE_TENANT_ID: ${{ secrets.DATAVERSE_TENANT_ID }}
+          DATAVERSE_CLIENT_ID: ${{ secrets.DATAVERSE_CLIENT_ID }}
+          DATAVERSE_CLIENT_SECRET: ${{ secrets.DATAVERSE_CLIENT_SECRET }}
+        # Skips cleanly when absent; fails loudly on an expired client secret, so a
+        # stale credential is distinguishable from an unconfigured one.
+        run: pytest tests/test_erp_dynamics_sandbox.py -q -rs
+
+  # --- ERP end to end: live vendor -> real sync -> RLS-protected Postgres -----
+  erp-sync-e2e:
+    runs-on: ubuntu-latest
+    # The only test that proves the WHOLE path rather than one link: data fetched
+    # from a live ERP landing in this database, scoped to the right tenant and
+    # invisible to every other one.
+    #
+    # Needs Docker (testcontainers Postgres) and the Dataverse secrets. Skips
+    # cleanly without the secrets.
+    #
+    # It runs as a NOSUPERUSER NOBYPASSRLS role that does not own the tables, which
+    # is the only configuration where RLS actually applies. As the owner every
+    # assertion here passes with the bug present -- verified by mutation: removing
+    # the sync's tenant GUC makes it report {'error': 'integration not found'} for
+    # an integration that plainly exists.
+    # NO EVENT GATE (FS-374). This was `if: github.event_name == 'push'`, which skipped
+    # the vendor-facing suites on every pull_request. That mattered less than it looks —
+    # `on.push.branches` covers hamad/**, hridyansh/**, feature/**, htreinen and
+    # HARSH-CONTRIBUTION, so most work is already checked on the branch push — but it left
+    # a real hole: a branch matching NONE of those patterns (`alex` on origin today) runs
+    # zero push CI, so its PR is the only gate, and this was the gate that skipped.
+    #
+    # Removing it is close to free. Every one of these suites is `pytest.mark.skipif` on
+    # its credentials, so with no secrets — the fork-PR case — the whole set is 55 skipped
+    # in 0.18s and green. Verified locally rather than assumed. With secrets present on a
+    # same-repo PR they do the real vendor call, which is the point.
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # backend/dataset is a 1.5 GB LLM-generated training corpus that NO job
+          # reads. Excluding it keeps the checkout at ~100 MB instead of 1.6 GB.
+          sparse-checkout: |
+            /*
+            !/backend/dataset/
+          sparse-checkout-cone-mode: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+      - name: Install backend deps
+        working-directory: ./backend
+        run: pip install -r requirements.txt -r requirements-dev.txt
+      - name: ERP sync end-to-end
+        working-directory: ./backend
+        env:
+          DATAVERSE_ORG: ${{ secrets.DATAVERSE_ORG }}
+          DATAVERSE_TENANT_ID: ${{ secrets.DATAVERSE_TENANT_ID }}
+          DATAVERSE_CLIENT_ID: ${{ secrets.DATAVERSE_CLIENT_ID }}
+          DATAVERSE_CLIENT_SECRET: ${{ secrets.DATAVERSE_CLIENT_SECRET }}
+        run: pytest tests/test_erp_sync_e2e_realdb.py -q -rs
+
+  # --- ERP Tier 3: the Odoo connector against a REAL Odoo -------------------
+  erp-odoo-integration:
+    runs-on: ubuntu-latest
+    # Every other ERP test asserts the request we BUILD, against our reading of the
+    # vendor docs — which cannot disconfirm a wrong assumption, because the fixture
+    # encodes the same assumption as the code. Odoo is the one ERP in the matrix
+    # that is self-hostable, so here the server gets a vote.
+    #
+    # It found a real defect on its first run: health_check probed `sale.order`,
+    # which only exists when the Sales module is installed, so a working Odoo
+    # without Sales reported permanently unhealthy.
+    services:
+      odoo-db:
+        image: postgres:15
+        env:
+          POSTGRES_USER: odoo
+          POSTGRES_PASSWORD: odoo
+          POSTGRES_DB: postgres
+        options: >-
+          --health-cmd pg_isready --health-interval 5s
+          --health-timeout 5s --health-retries 20
+      odoo:
+        image: odoo:17
+        env:
+          HOST: odoo-db
+          USER: odoo
+          PASSWORD: odoo
+        ports: ['8169:8069']
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # backend/dataset is a 1.5 GB LLM-generated training corpus that NO job
+          # reads. Excluding it keeps the checkout at ~100 MB instead of 1.6 GB.
+          sparse-checkout: |
+            /*
+            !/backend/dataset/
+          sparse-checkout-cone-mode: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+      - name: Install backend deps
+        working-directory: ./backend
+        run: pip install -r requirements.txt -r requirements-dev.txt
+      - name: Provision the Odoo sandbox
+        # Creates the database WITH DEMO DATA. An empty Odoo would let every fetch
+        # test pass by returning nothing — the exact silent-empty-result failure
+        # these tests exist to catch.
+        run: python backend/scripts/setup_odoo_sandbox.py
+      - name: Odoo connector integration tests
+        working-directory: ./backend
+        env:
+          RUN_ODOO_INTEGRATION: "1"
+          ODOO_URL: http://localhost:8169
+        run: pytest tests/test_erp_odoo_integration.py -q
+
+  # --- FS-239: authenticated E2E against a LIVE backend ---------------------
+  frontend-e2e-authenticated:
+    runs-on: ubuntu-latest
+    # Separate from frontend-e2e on purpose. That job needs nothing but a browser
+    # and stays fast; this one stands up Postgres, migrations, demo data and
+    # uvicorn, so keeping them together would make every smoke run pay for
+    # infrastructure it does not use.
+    #
+    # This is the test that would have caught FS-191, where the dashboard rendered
+    # every tile as 0 because RLS filtered every row and nothing errored. It can
+    # only catch that against real data, which is why the whole stack is here.
+    services:
+      postgres:
+        image: timescale/timescaledb:latest-pg15
+        env:
+          # The role name matters: migration 004 does
+          # `GRANT SELECT ON pg_stat_statements TO omniusgrid`, so any other
+          # username fails the chain partway through.
+          POSTGRES_USER: omniusgrid
+          POSTGRES_PASSWORD: omniusgrid_dev_password
+          POSTGRES_DB: omniusgrid_test
+        options: >-
+          --health-cmd pg_isready --health-interval 10s
+          --health-timeout 5s --health-retries 5
+        ports: ['5432:5432']
+    env:
+      DATABASE_URL: postgresql+asyncpg://omniusgrid:omniusgrid_dev_password@localhost:5432/omniusgrid_test
+      JWT_SECRET_KEY: e2e-test-secret-key
+      ALLOW_DEV_TOKEN: "false"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # backend/dataset is a 1.5 GB LLM-generated training corpus that NO job
+          # reads. Excluding it keeps the checkout at ~100 MB instead of 1.6 GB.
+          sparse-checkout: |
+            /*
+            !/backend/dataset/
+          sparse-checkout-cone-mode: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: frontend/package-lock.json
+      - name: Install backend deps
+        working-directory: ./backend
+        run: pip install -r requirements.txt
+      - name: Migrate
+        working-directory: ./backend
+        run: python scripts/migrate.py
+      - name: Seed demo data
+        working-directory: ./backend
+        # The dashboard assertions are about NON-ZERO values, so the org this user
+        # lands on has to contain assets, alarms and telemetry. Logging in to an
+        # empty org would pass against a blank page.
+        run: python scripts/seed_demo_data.py
+      - name: Seed the e2e user
+        working-directory: ./backend
+        # seed_demo_data.py's admin carries a placeholder bcrypt hash matching no
+        # known plaintext, so it cannot be logged in as — the demo relies on the
+        # VITE_DEV_MODE bypass instead. This creates a user whose password is
+        # hashed by the application itself.
+        run: python scripts/seed_e2e_user.py
+      - name: Start the backend
+        working-directory: ./backend
+        run: |
+          uvicorn app.main:app --host 127.0.0.1 --port 8000 &
+          for i in $(seq 1 60); do
+            curl -sf http://127.0.0.1:8000/health >/dev/null && break
+            sleep 2
+          done
+          curl -sf http://127.0.0.1:8000/health || { echo "backend did not start"; exit 1; }
+      - name: Install frontend deps
+        working-directory: ./frontend
+        run: npm ci
+      - name: Install Playwright browser
+        working-directory: ./frontend
+        run: npx playwright install --with-deps chromium
+      - name: Live-backend e2e (authenticated journey + data reaches the screen)
+        working-directory: ./frontend
+        env:
+          E2E_LIVE_BACKEND: "1"
+          # Points the SPA at the backend started above; without it the dev build
+          # guesses http://<hostname>:8000, which is right here but only by luck.
+          VITE_API_URL: http://127.0.0.1:8000
+        # NAMED FILES, not the whole directory, and both are named (FS-443). This ran
+        # `authenticated.spec.ts` alone, so a new live-backend spec would have been
+        # collected by Playwright, skipped on every laptop for want of a backend, and
+        # never executed anywhere — a test that exists and never runs, which is the
+        # failure `test_ci_quarantine_expires.py` exists to prevent one layer down.
+        #
+        # Still explicit rather than `npx playwright test`: the smoke suite runs in its own
+        # job without a backend, and running it here too would double every smoke test.
+        run: |
+          npx playwright test \
+            e2e/authenticated.spec.ts \
+            e2e/data-reaches-the-screen.spec.ts \
+            e2e/controls-do-not-break.spec.ts \
+            e2e/writes-actually-persist.spec.ts
+
   # --- task 19: pre-commit hooks as a CI gate ------------------------------
   pre-commit:
     runs-on: ubuntu-latest
@@ -518,6 +1230,13 @@ jobs:
     continue-on-error: true
     steps:
       - uses: actions/checkout@v4
+        with:
+          # backend/dataset is a 1.5 GB LLM-generated training corpus that NO job
+          # reads. Excluding it keeps the checkout at ~100 MB instead of 1.6 GB.
+          sparse-checkout: |
+            /*
+            !/backend/dataset/
+          sparse-checkout-cone-mode: false
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
@@ -530,6 +1249,13 @@ jobs:
     # lockfile is at 0 vulnerabilities. One documented ignore below.
     steps:
       - uses: actions/checkout@v4
+        with:
+          # backend/dataset is a 1.5 GB LLM-generated training corpus that NO job
+          # reads. Excluding it keeps the checkout at ~100 MB instead of 1.6 GB.
+          sparse-checkout: |
+            /*
+            !/backend/dataset/
+          sparse-checkout-cone-mode: false
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
@@ -570,6 +1296,13 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          # backend/dataset is a 1.5 GB LLM-generated training corpus that NO job
+          # reads. Excluding it keeps the checkout at ~100 MB instead of 1.6 GB.
+          sparse-checkout: |
+            /*
+            !/backend/dataset/
+          sparse-checkout-cone-mode: false
 
       - name: Root .dockerignore must be tracked
         run: |
@@ -597,19 +1330,95 @@ jobs:
             exit 1
           fi
 
-  # --- task 20: k6 load test (non-blocking) --------------------------------
+  # --- task 20: k6 smoke load test ------------------------------------------
   load-test:
     runs-on: ubuntu-latest
-    continue-on-error: true
+    # BLOCKING as of 2026-07-30, and it now has a target. It previously ran k6 against
+    # BASE_URL=http://localhost:8000 with nothing in the job listening on it, under a
+    # comment reading "harmless smoke run otherwise" — every request failed with a
+    # connection error, the `http_req_failed: rate<0.01` threshold was breached every
+    # time, and `continue-on-error: true` turned that into a green tick for no work.
+    #
+    # It was broken a second way that standing the app up would NOT have fixed: the
+    # script hit '/api/v1/telemetry' and '/api/v1/dashboard', neither of which is a
+    # route. Every telemetry endpoint is scoped to an asset, and 'dashboard' is a
+    # router prefix. Both 404'd, and '/api/v1/assets' and '/api/v1/alarms' only
+    # 307-redirected. Four of eight endpoints were wrong, so even against a healthy
+    # app it would have reported ~50% errors. All eight now verified 200 against a
+    # migrated database, including the two response-shape checks.
+    #
+    # WHAT IT ASSERTS, deliberately narrowly: that the app serves its main read paths
+    # under concurrency without erroring. It does NOT assert the latency SLOs in the
+    # script's own `thresholds` — p(95)<500ms on a shared GitHub runner measures the
+    # runner's neighbours, and a gate that fails for reasons the author cannot act on
+    # is one that gets disabled. The stage plan in the script is a 29-minute
+    # 1000-user profile for running against real infrastructure; CI overrides it with
+    # 5 VUs for 30s, which is a smoke test and is described as one.
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: timescale/timescaledb:latest-pg15
+        env:
+          POSTGRES_USER: omniusgrid
+          POSTGRES_PASSWORD: omniusgrid_dev_password
+          POSTGRES_DB: omniusgrid_test
+        options: >-
+          --health-cmd pg_isready --health-interval 10s
+          --health-timeout 5s --health-retries 5
+        ports: ['5432:5432']
     steps:
       - uses: actions/checkout@v4
+        with:
+          # backend/dataset is a 1.5 GB LLM-generated training corpus that NO job
+          # reads. Excluding it keeps the checkout at ~100 MB instead of 1.6 GB.
+          sparse-checkout: |
+            /*
+            !/backend/dataset/
+          sparse-checkout-cone-mode: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+      - name: Install backend deps
+        working-directory: ./backend
+        run: pip install -r requirements.txt
+      - name: Migrate the schema
+        working-directory: ./backend
+        env:
+          DATABASE_URL: postgresql://omniusgrid:omniusgrid_dev_password@localhost:5432/omniusgrid_test
+        run: python scripts/migrate.py
+      - name: Start the app
+        working-directory: ./backend
+        env:
+          DATABASE_URL: postgresql+asyncpg://omniusgrid:omniusgrid_dev_password@localhost:5432/omniusgrid_test
+          JWT_SECRET_KEY: test-secret-key
+          ALLOW_DEV_TOKEN: "true"
+        run: |
+          nohup python -m uvicorn app.main:app --host 127.0.0.1 --port 8002 \
+            --log-level warning > uvicorn.log 2>&1 &
+          # Wait for readiness rather than sleeping a guessed interval: a fixed sleep
+          # either wastes time or starts k6 against a half-open socket.
+          for i in $(seq 1 60); do
+            curl -sf http://127.0.0.1:8002/health >/dev/null && echo "app ready" && exit 0
+            sleep 2
+          done
+          echo "app did not become ready; last 50 log lines:" && tail -50 uvicorn.log && exit 1
       - name: Run k6 smoke load test
         uses: grafana/setup-k6-action@v1
       - name: Execute
         uses: grafana/run-k6-action@v1
         with:
           path: tests/load/k6-load-test.js
-          flags: --vus 5 --duration 30s
         env:
-          # Points at whatever the CI stands up; harmless smoke run otherwise.
-          BASE_URL: http://localhost:8000
+          BASE_URL: http://127.0.0.1:8002
+          API_TOKEN: dev-token
+          # Selects the smoke profile INSIDE the script: 5 VUs for 30s, and error-rate
+          # thresholds without the latency SLOs. Doing it there rather than with
+          # `--no-thresholds` here is the whole point — k6 exits non-zero on a breached
+          # threshold and NOT on a failed check, so `--no-thresholds` would have made
+          # this job incapable of failing, which is the state it is being rescued from.
+          CI_SMOKE: "true"
+      - name: App log on failure
+        if: failure()
+        working-directory: ./backend
+        run: tail -100 uvicorn.log

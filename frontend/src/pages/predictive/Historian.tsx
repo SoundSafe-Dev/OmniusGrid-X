@@ -34,7 +34,26 @@ const exportCsv = (result: HistorianQueryResponse) => {
   const rows = result.points.map(
     (p) => `${p.timestamp},${p.average},${p.minimum},${p.maximum},${p.sampleCount}`
   );
-  const blob = new Blob([[header, ...rows].join('\n') + '\n'], {
+
+  // THE FILE SAYS WHAT THE SCREEN SAYS (FS-479).
+  //
+  // The card's subtitle already reads "(more available)" when `hasMore` — the operator
+  // looking at the page knows the window was capped. The CSV carried no such note: header,
+  // rows, end of file. And the CSV is the artefact that leaves the building — filed,
+  // mailed, opened in a spreadsheet by somebody who never saw this page, and read as the
+  // history of that metric over that window.
+  //
+  // A leading comment line rather than a trailing one: spreadsheet software shows the
+  // first rows, and a caveat below ten thousand points is a caveat nobody reads.
+  const preamble = result.hasMore
+    ? [
+        `# PARTIAL: the first ${result.count} points of a larger result` +
+          ` (limit ${result.limit}, offset ${result.offset}).`,
+        `# Narrow the window or raise the limit for the rest.`,
+      ]
+    : [];
+
+  const blob = new Blob([[...preamble, header, ...rows].join('\n') + '\n'], {
     type: 'text/csv;charset=utf-8',
   });
   const url = URL.createObjectURL(blob);
@@ -48,7 +67,12 @@ const exportCsv = (result: HistorianQueryResponse) => {
 };
 
 export const Historian: FC = () => {
-  const { data: assetsPage } = useQuery({
+  // `isLoading` is read as well as `isError` (FS-489). react-query retries by default, so
+  // `isError` stays false for SECONDS while the retries run — and during that window
+  // `assets` is empty and `assetsError` is false, which is the shape of "this plant has
+  // nothing instrumented". The state the picker was missing is the one it is in most of the
+  // time something is wrong.
+  const { data: assetsPage, isError: assetsError, isLoading: assetsLoading } = useQuery({
     queryKey: ['historian-assets'],
     queryFn: () => assetsApi.list({ limit: 500 }),
   });
@@ -118,13 +142,25 @@ export const Historian: FC = () => {
       <Card title="Historian Query" subtitle="Query the tenant time-series historian">
         <div className="grid grid-cols-1 md:grid-cols-5 gap-3 items-end">
           <div className="md:col-span-1">
-            <label className="block text-xs text-opsgrid-text-secondary mb-1">Asset</label>
+            <label htmlFor="historian-asset" className="block text-xs text-opsgrid-text-secondary mb-1">Asset</label>
             <select
+              id="historian-asset"
               value={effectiveAssetId}
               onChange={(e) => setAssetId(e.target.value)}
               className="w-full px-3 py-2 bg-opsgrid-bg border border-opsgrid-border rounded-lg text-opsgrid-text-primary"
             >
-              {assets.length === 0 && <option value="">No assets</option>}
+              {assets.length === 0 && (
+                /* An asset picker reading "No assets" tells an engineer this plant has
+                   nothing instrumented. On a failed load it means the list could not be
+                   read, which is a different thing to go and check. */
+                <option value="">
+                  {assetsLoading
+                    ? 'Loading assets…'
+                    : assetsError
+                      ? 'Asset list unavailable'
+                      : 'No assets'}
+                </option>
+              )}
               {assets.map((a) => (
                 <option key={a.id} value={a.id}>
                   {a.name}
@@ -133,8 +169,9 @@ export const Historian: FC = () => {
             </select>
           </div>
           <div>
-            <label className="block text-xs text-opsgrid-text-secondary mb-1">Metric</label>
+            <label htmlFor="historian-metric" className="block text-xs text-opsgrid-text-secondary mb-1">Metric</label>
             <input
+              id="historian-metric"
               value={metric}
               onChange={(e) => setMetric(e.target.value)}
               placeholder="e.g. temperature"
@@ -142,8 +179,9 @@ export const Historian: FC = () => {
             />
           </div>
           <div>
-            <label className="block text-xs text-opsgrid-text-secondary mb-1">Granularity</label>
+            <label htmlFor="historian-granularity" className="block text-xs text-opsgrid-text-secondary mb-1">Granularity</label>
             <select
+              id="historian-granularity"
               value={granularity}
               onChange={(e) => setGranularity(e.target.value as HistorianGranularity)}
               className="w-full px-3 py-2 bg-opsgrid-bg border border-opsgrid-border rounded-lg text-opsgrid-text-primary"
@@ -156,8 +194,9 @@ export const Historian: FC = () => {
             </select>
           </div>
           <div>
-            <label className="block text-xs text-opsgrid-text-secondary mb-1">Range</label>
+            <label htmlFor="historian-range" className="block text-xs text-opsgrid-text-secondary mb-1">Range</label>
             <select
+              id="historian-range"
               value={range}
               onChange={(e) => setRange(e.target.value)}
               className="w-full px-3 py-2 bg-opsgrid-bg border border-opsgrid-border rounded-lg text-opsgrid-text-primary"
@@ -181,10 +220,18 @@ export const Historian: FC = () => {
         </div>
       </Card>
 
+      {/* ANNOUNCED, and it says which failure it is (FS-479).
+          
+          This card is the only error surface on a FIRST query — the more specific "this is
+          a loading failure, not an empty window" lives inside the `{data && …}` block, so
+          it appears only when a previous query succeeded. Someone whose first query fails
+          saw an unannounced sentence and no empty-state, which is the right information
+          delivered to nobody using a screen reader. */}
       {isError && (
         <Card className="p-4">
-          <p className="text-status-alarm text-sm">
-            Query failed. Check the asset and metric, then try again.
+          <p className="text-status-alarm text-sm" role="alert">
+            Query failed — this is a loading failure, not an empty window. Check the asset
+            and metric, then try again.
           </p>
         </Card>
       )}
@@ -228,7 +275,11 @@ export const Historian: FC = () => {
               </Button>
             }
           >
-            {chartData.length === 0 ? (
+            {isError ? (
+              <p className="text-sm text-status-alarm py-8 text-center" role="alert">
+                Couldn’t load history — this is a loading failure, not an empty window.
+              </p>
+            ) : chartData.length === 0 ? (
               <p className="text-opsgrid-text-secondary text-center py-8">
                 No data points in this window.
               </p>

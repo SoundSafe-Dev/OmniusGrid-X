@@ -38,9 +38,26 @@ class CorrelationAIEngine:
     - Execute AI-recommended commands
     """
     
+    #: What `model_version` says before any model is loaded (FS-434).
+    #:
+    #: It said **"gemma-4-placeholder"**. There is no gemma-4 — the configured base is
+    #: `settings.CORRELATION_BASE_MODEL` and the loaded version reads `<base>+lora`. So the
+    #: default named a model that does not exist, in a version field, on a payload a
+    #: consumer uses to decide how much to trust the analysis, and it reached the logs:
+    #: `correlation_analysis_complete model_version=gemma-4-placeholder`.
+    #:
+    #: `_simulate_analysis` already carries `simulated: True` and a lowered confidence
+    #: (FS-349), so the payload was honest about being a heuristic while this one field
+    #: still claimed a model. A reader filtering logs by `model_version` would have grouped
+    #: heuristic output under a plausible model name.
+    #:
+    #: The replacement is not a nicer placeholder. It states the only true thing available
+    #: before load: no model produced this.
+    NO_MODEL_VERSION = "none (no correlation model loaded)"
+
     def __init__(self):
         self._model_loaded = False
-        self._model_version = "gemma-4-placeholder"
+        self._model_version = self.NO_MODEL_VERSION
         self._tokenizer = None
         self._model = None
     
@@ -88,7 +105,11 @@ class CorrelationAIEngine:
         logger.info(
             "correlation_analysis_complete",
             scenario_id=scenario.scenario_id,
-            risk_score=analysis["risk_score"]
+            risk_score=analysis["risk_score"],
+            # In the log line too: "analysis_complete" with a risk score reads as a
+            # model result, and was emitted for heuristics as well.
+            simulated=analysis.get("simulated", False),
+            model_version=analysis.get("model_version"),
         )
         
         # Auto-integrate with registries and kanban if requested
@@ -171,6 +192,9 @@ class CorrelationAIEngine:
                         "compliance_implications": None,
                         "model_version": f"{settings.CORRELATION_BASE_MODEL}+{settings.CORRELATION_ADAPTER_PATH}",
                         "confidence": 0.85,
+                        # Always present, so a consumer can rely on the key rather
+                        # than inferring "real" from its absence.
+                        "simulated": False,
                         "response_type": "conversational",
                         "follow_up_questions": follow_up_questions,
                     }
@@ -187,6 +211,8 @@ class CorrelationAIEngine:
             "compliance_implications": None,
             "model_version": "fallback-chat",
             "confidence": 0.4,
+            "simulated": True,
+            "simulation_reason": "heuristic chat fallback, not a model inference",
             "response_type": "conversational_fallback",
             "follow_up_questions": self._generate_chat_follow_ups(message, context),
         }
@@ -196,8 +222,30 @@ class CorrelationAIEngine:
         scenario: CorrelationScenario,
         domain_names: List[str]
     ) -> Dict[str, Any]:
-        """Fallback analysis used when the Gemma adapter is unavailable."""
+        """Fallback analysis used when the Gemma adapter is unavailable.
+
+        MARKED AS SIMULATED, deliberately.
+
+        This output was previously indistinguishable from a real inference: it carried
+        `confidence: 0.85` and a `model_version` of "gemma-4-placeholder", and the
+        caller then logged `correlation_analysis_complete` with a risk score. So with
+        CORRELATION_MODEL_ENABLED false (the default) -- or whenever inference threw --
+        every correlation in the product was a heuristic presented as a model result,
+        with no way for a caller, a UI, or a reader of the logs to tell.
+
+        The heuristic itself is fine and useful. Presenting it as an inference is not.
+        `simulated: True` and a lowered confidence let consumers label it honestly;
+        no analysis or scoring logic is changed here.
+
+        (Cross-lane note: this file is Harsh's area. This is the minimum change that
+        makes the output falsifiable -- a flag and a confidence value.)
+        """
         return {
+            "simulated": True,
+            "simulation_reason": (
+                "heuristic fallback: the Gemma correlation adapter was disabled or "
+                "unavailable, so this is not a model inference"
+            ),
             "scenario_id": scenario.scenario_id,
             "analysis_timestamp": datetime.now(timezone.utc).isoformat(),
             "predicted_root_cause": self._simulate_root_cause(domain_names, scenario.domain_links),
@@ -206,7 +254,9 @@ class CorrelationAIEngine:
             "remediation_commands": self._generate_commands(domain_names),
             "compliance_implications": self._identify_compliance(domain_names),
             "model_version": self._model_version,
-            "confidence": 0.85,
+            # NOT 0.85: that is what the real inference path reports, so a heuristic
+            # was claiming model-grade confidence.
+            "confidence": 0.4,
             "response_text": self._format_business_response(
                 self._simulate_root_cause(domain_names, scenario.domain_links),
                 self._calculate_risk_score(scenario.domain_links),
@@ -3536,8 +3586,13 @@ class CorrelationAIEngine:
         
         from generate_dataset import StateSpaceLoader, ScenarioGenerator
         
-        # Load state space
-        state_space = StateSpaceLoader("state_space")
+        # Anchored to the backend package, NOT the working directory (FS-431). This read
+        # `StateSpaceLoader("state_space")`, so it resolved against wherever the process
+        # happened to be started; under a server launched from the repo root it loaded
+        # nothing and the endpoint 500'd with "Cannot choose from an empty sequence".
+        state_space = StateSpaceLoader(
+            str(Path(__file__).parent.parent.parent / "state_space")
+        )
         generator = ScenarioGenerator(state_space)
         
         # Generate scenarios

@@ -1,8 +1,10 @@
 """Local OEE Calculation Module for Edge Agent"""
 
 from typing import Dict, Any, Optional
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from collections import defaultdict
+
+from ..packml import PackMLState
 import structlog
 
 logger = structlog.get_logger()
@@ -19,12 +21,24 @@ class LocalOEECalculator:
     Quality = Good Parts / Total Parts
     """
     
-    def __init__(self, asset_id: str):
+    def __init__(self, asset_id: str, ideal_cycle_time: Optional[float] = None):
         self.asset_id = asset_id
         self.state_history: list[Dict[str, Any]] = []
         self.production_count: int = 0
         self.good_count: int = 0
-        self.ideal_cycle_time: float = 60.0  # seconds (default)
+        #: Seconds per part when the machine runs at its rated rate. **No default**
+        #: (FS-463): this is the numerator of performance, and it is a property of the
+        #: MACHINE, not of this software.
+        #:
+        #: It was hardcoded to 60.0 for every asset in the world. A press with a 3-second
+        #: cycle running flat out computed 2000% and clamped to 100 — right by accident,
+        #: with the error invisible. A CNC with a 600-second cycle running flat out
+        #: computed 10%, and there is no clamp at the bottom.
+        #:
+        #: The backend has always read this per asset from
+        #: `asset.connection_config['ideal_cycle_time_seconds']`; the agent had no way to
+        #: be told at all.
+        self.ideal_cycle_time: Optional[float] = ideal_cycle_time
         self.planned_production_time: float = 8 * 3600  # 8 hours in seconds
     
     def add_state_change(
@@ -51,7 +65,7 @@ class LocalOEECalculator:
         })
         
         # Keep only last 24 hours of history
-        cutoff = datetime.now() - timedelta(hours=24)
+        cutoff = datetime.now(timezone.utc) - timedelta(hours=24)
         self.state_history = [
             s for s in self.state_history
             if s["timestamp"] > cutoff
@@ -82,19 +96,27 @@ class LocalOEECalculator:
             good=good_count
         )
     
-    def calculate_availability(self, time_window_hours: float = 8) -> float:
+    def calculate_availability(self, time_window_hours: float = 8) -> Optional[float]:
         """
         Calculate availability percentage.
         
-        Availability = Operating Time / Planned Production Time
+        Availability = Operating Time / (Planned Production Time − Unmeasured Time)
         
         Args:
             time_window_hours: Time window for calculation (default 8 hours)
             
         Returns:
-            Availability as a percentage (0-100)
+            Availability as a percentage (0-100), or None when the window contains no
+            measured time at all (FS-462).
+            
+        TIME SPENT IN AN UNMAPPED STATE IS EXCLUDED FROM THE DENOMINATOR, not counted as
+        downtime. `PackMLState.UNDEFINED` means the mapper did not understand what the
+        machine reported — which is an absence of information, and dividing by it asserts
+        the machine was idle. This is the standard OEE treatment of excluded time, and it
+        is the same rule as everywhere else here: a count must not stand in for a
+        measurement.
         """
-        cutoff = datetime.now() - timedelta(hours=time_window_hours)
+        cutoff = datetime.now(timezone.utc) - timedelta(hours=time_window_hours)
         
         # Calculate operating time (Execute state)
         operating_time = 0.0
@@ -108,22 +130,45 @@ class LocalOEECalculator:
         # If currently in Execute state, add time since last state change
         if self.state_history and self.state_history[-1]["state"] == "Execute":
             last_change = self.state_history[-1]["timestamp"]
-            operating_time += (datetime.now() - last_change).total_seconds()
+            operating_time += (datetime.now(timezone.utc) - last_change).total_seconds()
         
-        planned_time = time_window_hours * 3600
-        availability = (operating_time / planned_time) * 100 if planned_time > 0 else 0.0
+        # Time the mapper could not interpret, excluded from the denominator.
+        unmeasured_time = 0.0
+        for state_change in self.state_history:
+            if state_change["timestamp"] < cutoff:
+                continue
+            if (
+                state_change["previous_state"] == PackMLState.UNDEFINED.value
+                and state_change["duration_seconds"]
+            ):
+                unmeasured_time += state_change["duration_seconds"]
+        
+        planned_time = time_window_hours * 3600 - unmeasured_time
+        if planned_time <= 0:
+            # Every second of the window was in a state nothing could interpret. There is
+            # no availability to report — 0% would say the machine was down all shift.
+            logger.warning(
+                "availability_unmeasurable",
+                asset_id=self.asset_id,
+                unmeasured_time=unmeasured_time,
+                hint="the PackML mapping does not cover the states this asset reports",
+            )
+            return None
+        
+        availability = (operating_time / planned_time) * 100
         
         logger.debug(
             "availability_calculated",
             asset_id=self.asset_id,
             operating_time=operating_time,
             planned_time=planned_time,
+            unmeasured_time=unmeasured_time,
             availability=availability
         )
         
         return min(availability, 100.0)
     
-    def calculate_performance(self, time_window_hours: float = 8) -> float:
+    def calculate_performance(self, time_window_hours: float = 8) -> Optional[float]:
         """
         Calculate performance percentage.
         
@@ -133,9 +178,11 @@ class LocalOEECalculator:
             time_window_hours: Time window for calculation (default 8 hours)
             
         Returns:
-            Performance as a percentage (0-100)
+            Performance as a percentage (0-100), or **None when it cannot be computed**
+            (FS-461) — no operating time to divide by, or no part counts to divide.
+            A machine nobody has measured is not a machine running at 0%.
         """
-        cutoff = datetime.now() - timedelta(hours=time_window_hours)
+        cutoff = datetime.now(timezone.utc) - timedelta(hours=time_window_hours)
         
         # Calculate operating time (Execute state)
         operating_time = 0.0
@@ -149,15 +196,34 @@ class LocalOEECalculator:
         # If currently in Execute state, add time since last state change
         if self.state_history and self.state_history[-1]["state"] == "Execute":
             last_change = self.state_history[-1]["timestamp"]
-            operating_time += (datetime.now() - last_change).total_seconds()
+            operating_time += (datetime.now(timezone.utc) - last_change).total_seconds()
         
         if operating_time == 0:
-            return 0.0
+            # The machine has not run in this window. Performance is a RATE while
+            # running, so with no running time there is no rate — 0% would claim it ran
+            # and produced nothing.
+            return None
+        
+        # NO PART COUNTS, NO PERFORMANCE (FS-461). `total_parts` comes from optional
+        # telemetry (`total_parts`/`parts_total`), and plenty of PackML feeds carry state
+        # without counts. This used to compute `0 * cycle_time / operating_time` = 0%,
+        # so a machine that ran a full hour reported 0% performance and therefore 0% OEE
+        # — the worst number this system can report — for the whole of its life on a site
+        # whose telemetry simply does not include counts.
+        if self.production_count == 0:
+            return None
+        
+        # NO RATED CYCLE TIME, NO PERFORMANCE (FS-463). Performance is production measured
+        # against the machine's rated rate; without that rate there is nothing to measure
+        # against, and a guessed one produces a number that is wrong by an unbounded
+        # factor while looking exactly like a measurement.
+        if not self.ideal_cycle_time:
+            return None
         
         # Calculate performance
         total_parts = self.production_count
         ideal_time = total_parts * self.ideal_cycle_time
-        performance = (ideal_time / operating_time) * 100 if operating_time > 0 else 0.0
+        performance = (ideal_time / operating_time) * 100
         
         logger.debug(
             "performance_calculated",
@@ -170,17 +236,19 @@ class LocalOEECalculator:
         
         return min(performance, 100.0)
     
-    def calculate_quality(self) -> float:
+    def calculate_quality(self) -> Optional[float]:
         """
         Calculate quality percentage.
         
         Quality = Good Parts / Total Parts
         
         Returns:
-            Quality as a percentage (0-100)
+            Quality as a percentage (0-100), or **None when no parts have been counted**
+            (FS-461). Zero good parts out of zero is not zero quality; it is a ratio with
+            no denominator.
         """
         if self.production_count == 0:
-            return 0.0
+            return None
         
         quality = (self.good_count / self.production_count) * 100
         
@@ -194,7 +262,7 @@ class LocalOEECalculator:
         
         return quality
     
-    def calculate_oee(self, time_window_hours: float = 8) -> Dict[str, float]:
+    def calculate_oee(self, time_window_hours: float = 8) -> Dict[str, Any]:
         """
         Calculate overall OEE.
         
@@ -204,20 +272,44 @@ class LocalOEECalculator:
             time_window_hours: Time window for calculation (default 8 hours)
             
         Returns:
-            Dictionary with availability, performance, quality, and oee
+            Dictionary with availability, performance, quality and oee. **Any of the three
+            factors may be None**, and OEE is then None too (FS-461) — a product is only
+            as defined as its factors, and multiplying an unknown by anything does not
+            produce zero.
+            
+            AVAILABILITY IS None ONLY WHEN THE WHOLE WINDOW WAS UNINTERPRETABLE (FS-462).
+            Its denominator is the window minus time spent in states the PackML mapper did
+            not understand, so an idle machine still reports 0% — that is a measurement —
+            but a machine whose every reported state was unmapped reports nothing, because
+            0% would claim it was down all shift when in truth nobody could read it.
         """
         availability = self.calculate_availability(time_window_hours)
         performance = self.calculate_performance(time_window_hours)
         quality = self.calculate_quality()
         
-        oee = (availability / 100) * (performance / 100) * (quality / 100) * 100
+        if availability is None or performance is None or quality is None:
+            oee = None
+        else:
+            oee = (availability / 100) * (performance / 100) * (quality / 100) * 100
         
         result = {
-            "availability": round(availability, 2),
-            "performance": round(performance, 2),
-            "quality": round(quality, 2),
-            "oee": round(oee, 2),
-            "timestamp": datetime.now().isoformat()
+            "availability": None if availability is None else round(availability, 2),
+            "performance": None if performance is None else round(performance, 2),
+            "quality": None if quality is None else round(quality, 2),
+            "oee": None if oee is None else round(oee, 2),
+            # Names WHY it is None, so a reader of the payload does not have to work out
+            # which factor was missing — the distinction between "no counts yet" and
+            # "never ran" is the whole point of not sending a zero.
+            "oee_unavailable_reason": (
+                None if oee is not None
+                else "no interpretable machine states in the window" if availability is None
+                else "no ideal cycle time configured for this asset"
+                if not self.ideal_cycle_time and self.production_count > 0
+                else "no operating time in the window" if performance is None
+                and self.production_count > 0
+                else "no part counts in telemetry"
+            ),
+            "timestamp": datetime.now(timezone.utc).isoformat()
         }
         
         logger.info(
@@ -238,7 +330,7 @@ class LocalOEECalculator:
         Returns:
             Dictionary mapping state to percentage of time
         """
-        cutoff = datetime.now() - timedelta(hours=time_window_hours)
+        cutoff = datetime.now(timezone.utc) - timedelta(hours=time_window_hours)
         
         state_durations = defaultdict(float)
         
@@ -252,7 +344,7 @@ class LocalOEECalculator:
         # Add current state duration
         if self.state_history:
             last_change = self.state_history[-1]
-            current_duration = (datetime.now() - last_change["timestamp"]).total_seconds()
+            current_duration = (datetime.now(timezone.utc) - last_change["timestamp"]).total_seconds()
             state_durations[last_change["state"]] += current_duration
         
         # Calculate percentages

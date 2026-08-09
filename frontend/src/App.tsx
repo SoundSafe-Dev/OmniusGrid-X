@@ -5,7 +5,7 @@ import { Routes, Route } from 'react-router-dom'
 // imports that don't tree-shake), and App is the eager root, so going through
 // it would pull those heavy libs into the initial bundle.
 import { AdminRoute, Layout, ProtectedRoute } from './components/layout'
-import { Login } from './pages/auth'
+import { AcceptInvitation, Login } from './pages/auth'
 import { TooltipProvider, DialogProvider } from './components/ui'
 import ErrorBoundary from './components/ErrorBoundary'
 
@@ -16,8 +16,11 @@ const Dashboard = lazy(() => import('./pages/Dashboard'))
 const Assets = lazy(() => import('./pages/Assets'))
 const AssetDetail = lazy(() => import('./pages/AssetDetail'))
 const Alarms = lazy(() => import('./pages/Alarms'))
+const AlarmRules = lazy(() => import('./pages/AlarmRules'))
 const OEE = lazy(() => import('./pages/OEE'))
 const Kanban = lazy(() => import('./pages/Kanban'))
+const ShopFloor = lazy(() => import('./pages/ShopFloor'))
+const Activations = lazy(() => import('./pages/Activations'))
 
 const named = <M, K extends keyof M>(loader: () => Promise<M>, key: K) =>
   lazy(() => loader().then((m) => ({ default: m[key] as any })))
@@ -41,6 +44,8 @@ const OrganizationTree = named(() => import('./pages/fleet'), 'OrganizationTree'
 // OTA fleet management (integration), kept lazy like the other admin pages.
 const Fleet = named(() => import('./pages/admin'), 'Fleet')
 const FleetRolloutDetail = named(() => import('./pages/admin'), 'FleetRolloutDetail')
+const FleetTargeting = named(() => import('./pages/admin'), 'FleetTargeting')
+const MaintenanceWindows = named(() => import('./pages/admin'), 'MaintenanceWindows')
 
 // Converged from integration: error-triage admin pages, kept lazy.
 const ErrorTriage = named(() => import('./pages/admin'), 'ErrorTriage')
@@ -48,6 +53,12 @@ const ErrorTriageDetail = named(() => import('./pages/admin'), 'ErrorTriageDetai
 
 // FS-132: notifications center (subscriptions + delivery log), kept lazy.
 const Notifications = named(() => import('./pages/admin'), 'Notifications')
+
+// FS-285. `GET /exports/deliveries` returns a status and an error per scheduled send, and
+// no page called it — a report that failed to go out was invisible to the person waiting
+// for it. Through the same barrel as the other admin pages, which is the import shape
+// `everyRoutedPageHasATest.test.ts` has to follow to see it at all.
+const ExportDeliveries = named(() => import('./pages/admin'), 'ExportDeliveries')
 
 const Users = named(() => import('./pages/admin'), 'Users')
 const Collectors = named(() => import('./pages/admin'), 'Collectors')
@@ -58,6 +69,10 @@ const YardManagement = named(() => import('./pages/logistics'), 'YardManagement'
 const TransportationManagement = named(() => import('./pages/logistics'), 'TransportationManagement')
 
 const ERPIntegrations = named(() => import('./pages/erp'), 'ERPIntegrations')
+
+// Grounded compliance Q&A over the RAG document corpus — a different surface from
+// CorrelationAIPane below, which analyses operational data rather than policy.
+const ComplianceAssistant = named(() => import('./pages/compliance'), 'ComplianceAssistant')
 
 const CorrelationAIPane = named(() => import('./components/nlp/CorrelationAIPane'), 'CorrelationAIPane')
 const IntakeInbox = named(() => import('./pages/intake/IntakeInbox'), 'IntakeInbox')
@@ -77,6 +92,7 @@ const App: FC = () => {
           <Routes>
             {/* Public Routes */}
             <Route path="/login" element={<Login />} />
+            <Route path="/accept-invite" element={<AcceptInvitation />} />
 
             {/* Protected Routes */}
             <Route element={<ProtectedRoute />}>
@@ -90,12 +106,19 @@ const App: FC = () => {
 
                 {/* Alarms */}
                 <Route path="/alarms" element={<Alarms />} />
+                <Route path="/alarms/rules" element={<AlarmRules />} />
 
                 {/* OEE */}
                 <Route path="/oee" element={<OEE />} />
 
                 {/* Kanban Board */}
                 <Route path="/kanban" element={<Kanban />} />
+
+                {/* Shop Floor (FS-405): the four floor events and their posting ledger */}
+                <Route path="/shop-floor" element={<ShopFloor />} />
+
+                {/* Activated insights (FS-425): the cross-system worklist */}
+                <Route path="/activations" element={<Activations />} />
 
                 {/* AI Engines */}
                 <Route path="/engines/tactical" element={<TacticalEngine />} />
@@ -123,6 +146,9 @@ const App: FC = () => {
                 {/* ERP integrations (its data feeds Correlation AI on interaction) */}
                 <Route path="/erp" element={<ERPIntegrations />} />
 
+                {/* Compliance Assistant (RAG Q&A over the policy corpus) */}
+                <Route path="/compliance" element={<ComplianceAssistant />} />
+
                 {/* NLP & Intake */}
                 <Route path="/nlp" element={<CorrelationAIPane />} />
                 <Route path="/intake" element={<IntakeInbox />} />
@@ -136,9 +162,12 @@ const App: FC = () => {
                   <Route path="/admin/health" element={<SystemHealth />} />
                   <Route path="/admin/settings" element={<Settings />} />
                   <Route path="/admin/notifications" element={<Notifications />} />
+                  <Route path="/admin/export-deliveries" element={<ExportDeliveries />} />
                   <Route path="/admin/errors" element={<ErrorTriage />} />
                   <Route path="/admin/errors/:fingerprint" element={<ErrorTriageDetail />} />
                   <Route path="/admin/fleet" element={<Fleet />} />
+                  <Route path="/admin/fleet/targeting" element={<FleetTargeting />} />
+                  <Route path="/admin/fleet/maintenance" element={<MaintenanceWindows />} />
                   <Route path="/admin/fleet/rollouts/:rolloutId" element={<FleetRolloutDetail />} />
                 </Route>
               </Route>

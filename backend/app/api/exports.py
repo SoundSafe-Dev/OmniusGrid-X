@@ -27,7 +27,7 @@ SMTP.
 import os
 from pathlib import Path
 from datetime import datetime, timedelta, timezone
-from typing import Any, Optional
+from typing import Any, Dict, List, Optional
 from uuid import UUID
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -223,6 +223,104 @@ class ScheduledExportUpdate(BaseModel):
     is_active: Optional[bool] = None
 
 
+# ---- Response schemas (pool #43). Documented, not reshaped: each mirrors the
+# dict its handler already builds. The six routes that serve xlsx/PDF/CSV declare
+# their media type through `responses={200: {"content": ...}}` instead — there is
+# no JSON schema for a spreadsheet, so `response_model` cannot describe them.
+
+
+class ExportDefinition(BaseModel):
+    format: str
+    columns: List[str]
+    filters: List[str]
+    required_filters: List[str]
+
+
+class ExportTemplateOut(BaseModel):
+    """`_template_dict`, shared by list / create / get / update."""
+
+    id: str
+    organization_id: str
+    name: str
+    description: Optional[str] = None
+    export_type: str
+    export_format: str
+    columns: List[str]
+    filters: Dict[str, Any]
+    created_by: Optional[str] = None
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+
+
+class ExportTemplateList(BaseModel):
+    items: List[ExportTemplateOut]
+    total: int
+
+
+class ScheduledExportOut(BaseModel):
+    """`_schedule_dict`, shared by list / create / get / update."""
+
+    id: str
+    organization_id: str
+    template_id: str
+    name: str
+    frequency: str
+    timezone: str
+    next_run_at: Optional[datetime] = None
+    recipients: List[str]
+    is_active: bool
+    last_run_at: Optional[datetime] = None
+    last_status: Optional[str] = None
+    created_by: Optional[str] = None
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+
+
+class ScheduledExportList(BaseModel):
+    items: List[ScheduledExportOut]
+    total: int
+    #: Whether SMTP is configured. A schedule with nowhere to deliver is worth
+    #: saying out loud rather than letting the caller infer it from silence.
+    delivery_configured: bool
+
+
+class DeletedResponse(BaseModel):
+    """Both deletes echo the id they removed, as a string."""
+
+    deleted: str
+
+
+class ExportJobOut(BaseModel):
+    """`_job_public` — deliberately omits the server-side `file_path`."""
+
+    job_id: str
+    type: Optional[str] = None
+    status: Optional[str] = None
+    total: Optional[int] = None
+    processed: Optional[int] = None
+    succeeded: Optional[int] = None
+    failed: Optional[int] = None
+    filename: Optional[str] = None
+    created_at: Optional[Any] = None
+    updated_at: Optional[Any] = None
+    errors: List[Any] = []
+    download_url: str
+
+
+class ExportDeliveryItem(BaseModel):
+    id: str
+    schedule_id: str
+    status: str
+    filename: Optional[str] = None
+    error: Optional[str] = None
+    scheduled_for: Optional[datetime] = None
+    completed_at: Optional[datetime] = None
+
+
+class ExportDeliveryList(BaseModel):
+    items: List[ExportDeliveryItem]
+
+
 def _template_dict(template: ExportTemplate) -> dict[str, Any]:
     return {
         "id": str(template.id),
@@ -355,7 +453,7 @@ async def _validate_admin_recipients(
 
 
 # --- Saved templates ----------------------------------------------------------
-@router.get("/definitions", summary="List supported export template definitions")
+@router.get("/definitions", response_model=Dict[str, ExportDefinition], summary="List supported export template definitions")
 async def list_export_definitions(
     _: User = Depends(get_current_active_user),
 ):
@@ -370,7 +468,7 @@ async def list_export_definitions(
     }
 
 
-@router.get("/templates", summary="List saved export templates")
+@router.get("/templates", response_model=ExportTemplateList, summary="List saved export templates")
 async def list_export_templates(
     org_id: UUID = Depends(get_tenant_org_id),
     db: AsyncSession = Depends(get_tenant_db),
@@ -387,6 +485,7 @@ async def list_export_templates(
 @router.post(
     "/templates",
     status_code=status.HTTP_201_CREATED,
+    response_model=ExportTemplateOut,
     summary="Create a saved export template",
 )
 async def create_export_template(
@@ -424,7 +523,7 @@ async def create_export_template(
     return _template_dict(template)
 
 
-@router.get("/templates/{template_id}", summary="Get a saved export template")
+@router.get("/templates/{template_id}", response_model=ExportTemplateOut, summary="Get a saved export template")
 async def get_export_template(
     template_id: UUID,
     org_id: UUID = Depends(get_tenant_org_id),
@@ -443,7 +542,7 @@ async def get_export_template(
     return _template_dict(template)
 
 
-@router.put("/templates/{template_id}", summary="Update a saved export template")
+@router.put("/templates/{template_id}", response_model=ExportTemplateOut, summary="Update a saved export template")
 async def update_export_template(
     template_id: UUID,
     payload: ExportTemplateUpdate,
@@ -491,7 +590,7 @@ async def update_export_template(
     return _template_dict(template)
 
 
-@router.delete("/templates/{template_id}", summary="Delete a saved export template")
+@router.delete("/templates/{template_id}", response_model=DeletedResponse, summary="Delete a saved export template")
 async def delete_export_template(
     template_id: UUID,
     org_id: UUID = Depends(get_tenant_org_id),
@@ -524,7 +623,7 @@ async def delete_export_template(
 
 
 # --- Schedule definitions -----------------------------------------------------
-@router.get("/schedules", summary="List scheduled export definitions")
+@router.get("/schedules", response_model=ScheduledExportList, summary="List scheduled export definitions")
 async def list_scheduled_exports(
     org_id: UUID = Depends(get_tenant_org_id),
     db: AsyncSession = Depends(get_tenant_db),
@@ -545,6 +644,7 @@ async def list_scheduled_exports(
 @router.post(
     "/schedules",
     status_code=status.HTTP_201_CREATED,
+    response_model=ScheduledExportOut,
     summary="Create a scheduled export definition",
 )
 async def create_scheduled_export(
@@ -588,7 +688,7 @@ async def create_scheduled_export(
     return _schedule_dict(schedule)
 
 
-@router.get("/schedules/{schedule_id}", summary="Get a scheduled export definition")
+@router.get("/schedules/{schedule_id}", response_model=ScheduledExportOut, summary="Get a scheduled export definition")
 async def get_scheduled_export(
     schedule_id: UUID,
     org_id: UUID = Depends(get_tenant_org_id),
@@ -607,7 +707,7 @@ async def get_scheduled_export(
     return _schedule_dict(schedule)
 
 
-@router.put("/schedules/{schedule_id}", summary="Update a scheduled export definition")
+@router.put("/schedules/{schedule_id}", response_model=ScheduledExportOut, summary="Update a scheduled export definition")
 async def update_scheduled_export(
     schedule_id: UUID,
     payload: ScheduledExportUpdate,
@@ -661,7 +761,7 @@ async def update_scheduled_export(
     return _schedule_dict(schedule)
 
 
-@router.delete("/schedules/{schedule_id}", summary="Delete a scheduled export definition")
+@router.delete("/schedules/{schedule_id}", response_model=DeletedResponse, summary="Delete a scheduled export definition")
 async def delete_scheduled_export(
     schedule_id: UUID,
     org_id: UUID = Depends(get_tenant_org_id),
@@ -683,7 +783,36 @@ async def delete_scheduled_export(
 
 
 # --- Telemetry (CSV) ----------------------------------------------------------
-@router.get("/telemetry/{asset_id}", summary="Export telemetry as CSV (date-range filtered)")
+# THE 202 IS DECLARED BECAUSE IT HAPPENS (FS-387). This route serves CSV inline for a
+# normal range and switches to an ASYNC JOB above SYNC_ROW_CAP rows, returning
+# `202 application/json` with a status_url and a download_url. Only `200: text/csv` was
+# declared, so a generated client — or anyone reading the contract — saw a route that
+# could only ever return CSV, and met a JSON body it had no type for on exactly the large
+# exports most likely to need the job-polling path.
+#
+# Found by a media-type sweep on 2026-08-01 (tests/test_declared_media_types_are_honest.py).
+# THE 202 IS DECLARED BECAUSE IT HAPPENS (FS-387). This route serves CSV inline for a
+# normal range and switches to an ASYNC JOB above SYNC_ROW_CAP rows, returning
+# `202 application/json` with a status_url and a download_url. Only `200: text/csv` was
+# declared, so a generated client — or anyone reading the contract — saw a route that
+# could only ever return CSV, and met a JSON body it had no type for on exactly the large
+# exports most likely to need the job-polling path.
+#
+# Found by a media-type sweep on 2026-08-01 (tests/test_declared_media_types_are_honest.py).
+@router.get(
+    "/telemetry/{asset_id}",
+    responses={
+        200: {"content": {"text/csv": {}}},
+        202: {
+            "content": {"application/json": {}},
+            "description": (
+                "The range exceeds the synchronous row cap, so the export was queued. "
+                "Poll `status_url`, then fetch `download_url`."
+            ),
+        },
+    },
+    summary="Export telemetry as CSV (date-range filtered)",
+)
 async def export_telemetry_csv(
     asset_id: UUID,
     background_tasks: BackgroundTasks,
@@ -747,7 +876,7 @@ async def export_telemetry_csv(
 
 
 # --- Kanban tasks (Excel) -----------------------------------------------------
-@router.get("/kanban/tasks", summary="Export Kanban tasks as Excel")
+@router.get("/kanban/tasks", responses={200: {"content": {XLSX_MEDIA_TYPE: {}}}}, summary="Export Kanban tasks as Excel")
 async def export_kanban_tasks(
     task_status: Optional[str] = Query(None, alias="status", description="Filter by task status"),
     columns: Optional[str] = Query(None, description="Ordered subset of task columns"),
@@ -768,7 +897,7 @@ async def export_kanban_tasks(
 
 
 # --- Registries (Excel) -------------------------------------------------------
-@router.get("/registries", summary="Export registries as Excel")
+@router.get("/registries", responses={200: {"content": {XLSX_MEDIA_TYPE: {}}}}, summary="Export registries as Excel")
 async def export_registries(
     registry_type: Optional[str] = Query(None),
     columns: Optional[str] = Query(None, description="Ordered subset of registry columns"),
@@ -788,7 +917,7 @@ async def export_registries(
     )
 
 
-@router.get("/registries/{registry_id}/items", summary="Export a registry's items as Excel")
+@router.get("/registries/{registry_id}/items", responses={200: {"content": {XLSX_MEDIA_TYPE: {}}}}, summary="Export a registry's items as Excel")
 async def export_registry_items(
     registry_id: UUID,
     columns: Optional[str] = Query(None, description="Ordered subset of registry-item columns"),
@@ -818,7 +947,7 @@ async def export_registry_items(
 
 
 # --- OEE (PDF) ----------------------------------------------------------------
-@router.get("/oee/summary", summary="Export a fleet OEE summary as PDF")
+@router.get("/oee/summary", responses={200: {"content": {"application/pdf": {}}}}, summary="Export a fleet OEE summary as PDF")
 async def export_oee_summary(
     time_window_hours: float = Query(24.0, ge=0.5, le=24),
     current_user: User = Depends(get_current_active_user),
@@ -845,9 +974,17 @@ async def export_oee_summary(
                 "status": "healthy" if m.oee > 60 else "at_risk" if m.oee > 40 else "critical",
             })
         except Exception:  # noqa: BLE001 - one bad asset shouldn't fail the report
+            # NOT ZEROS. This is a PDF someone files, prints or forwards, and a row
+            # reading "0, 0, 0, 0" states that the machine produced nothing in the
+            # window — a total outage — when the truth is that the calculation failed.
+            # The status column said "no_data", but a reader scanning four numeric
+            # columns has already drawn the conclusion. None renders as an em dash.
+            # Same defect as /oee/dashboard/summary; found by sweeping for the shape
+            # after fixing that one (method rule 18).
             rows.append({
-                "asset_name": asset.name, "oee": 0, "availability": 0,
-                "performance": 0, "quality": 0, "runtime_minutes": 0, "status": "no_data",
+                "asset_name": asset.name, "oee": None, "availability": None,
+                "performance": None, "quality": None, "runtime_minutes": None,
+                "status": "unavailable",
             })
     content = export_processor.build_oee_summary_pdf(rows)
     await export_processor.audit_sync_export(
@@ -859,7 +996,7 @@ async def export_oee_summary(
     )
 
 
-@router.get("/oee/{asset_id}", summary="Export a single asset's OEE report as PDF")
+@router.get("/oee/{asset_id}", responses={200: {"content": {"application/pdf": {}}}}, summary="Export a single asset's OEE report as PDF")
 async def export_oee_report(
     asset_id: UUID,
     time_window_hours: float = Query(1.0, ge=0.5, le=24),
@@ -902,12 +1039,23 @@ async def _get_owned_job(job_id: str, current_user: User) -> dict:
     return job
 
 
-@router.get("/jobs/{job_id}", summary="Get an export job's status/progress")
+# `text/csv` WAS DECLARED HERE AND THIS ROUTE HAS NEVER SERVED A CSV. It returns
+# `_job_public` — a JSON status/progress object — and the CSV lives one path
+# segment down at `/jobs/{job_id}/download`. The media type was almost certainly
+# copied from that neighbour.
+#
+# It is the inverse of the defect #38 fixed across nine export routes (schema
+# promising JSON while the handler sent xlsx/PDF/CSV): same class, opposite
+# direction, and it survived that sweep because the sweep looked for handlers
+# returning binaries, not for declarations claiming one. A consumer generating a
+# client from this schema would have typed the polling endpoint as a file
+# download.
+@router.get("/jobs/{job_id}", response_model=ExportJobOut, summary="Get an export job's status/progress")
 async def get_export_job(job_id: str, current_user: User = Depends(get_current_active_user)):
     return _job_public(await _get_owned_job(job_id, current_user))
 
 
-@router.get("/jobs/{job_id}/download", summary="Download a finished async export")
+@router.get("/jobs/{job_id}/download", responses={200: {"content": {"text/csv": {}}}}, summary="Download a finished async export")
 async def download_export_job(job_id: str, current_user: User = Depends(get_current_active_user)):
     job = await _get_owned_job(job_id, current_user)
     if job.get("status") != "completed":
@@ -929,7 +1077,7 @@ async def download_export_job(job_id: str, current_user: User = Depends(get_curr
     return FileResponse(path, media_type="text/csv", filename=filename)
 
 
-@router.get("/deliveries", summary="List scheduled export delivery jobs")
+@router.get("/deliveries", response_model=ExportDeliveryList, summary="List scheduled export delivery jobs")
 async def list_export_deliveries(
     limit: int = Query(50, ge=1, le=200),
     org_id: UUID = Depends(get_tenant_org_id),
@@ -962,6 +1110,15 @@ async def list_export_deliveries(
 @public_router.get(
     "/deliveries/{job_id}/download",
     summary="Download a scheduled report via a time-limited signed link",
+    # The three the handler's own `media_types` map produces, plus the fallback it
+    # falls back to. Pool #38 fixed nine sibling routes in this file and this one was
+    # missed — it lives at the bottom, past the public_router boundary.
+    responses={200: {"content": {
+        "text/csv": {},
+        XLSX_MEDIA_TYPE: {},
+        "application/pdf": {},
+        "application/octet-stream": {},
+    }}},
 )
 @rate_limit("10/minute")
 async def download_scheduled_export(

@@ -27,11 +27,17 @@ scrape_configs:
       - targets: ['backend:8000']
     metrics_path: '/metrics'
 
-  # Edge agent collector metrics (opt-in: set METRICS_PORT on the agent)
-  - job_name: 'edge-agent'
-    static_configs:
-      - targets: ['edge-agent:9108']
-  # Edge agent metrics (edge-agent-sim service, simulator profile)
+  # Edge agent metrics (edge-agent-sim service, simulator profile).
+  #
+  # FS-517. There were TWO jobs here — 'edge-agent' at `edge-agent:9108` and
+  # 'opsgrid-edge-agent' at `edge-agent-sim:9108`. `edge-agent` is a network ALIAS for
+  # edge-agent-sim (docker-compose.yml:579-581), so both scraped the same container.
+  #
+  # That is not merely a redundant job. No alert rule or dashboard panel filters by
+  # `job`, so every series existed twice under two different job labels:
+  # `sum(edge_agent_up)` on the fleet dashboard counted each agent twice, and
+  # `EdgeAgentBufferHigh` would have fired two identical alerts per agent. The fleet
+  # size was wrong in the direction that looks like growth.
   - job_name: 'opsgrid-edge-agent'
     static_configs:
       - targets: ['edge-agent-sim:9108']

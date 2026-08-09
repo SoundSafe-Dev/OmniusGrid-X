@@ -1,10 +1,15 @@
 import { FC, useMemo } from 'react'
 import { useParams } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
-import { ArrowLeft, Activity, Clock, Box } from 'lucide-react'
+import { ArrowLeft, Activity, Clock, Box, Wrench } from 'lucide-react'
 import { Link } from 'react-router-dom'
 import { assetsApi, telemetryApi } from '../api'
-import { Tooltip, TooltipTrigger, TooltipContent } from '../components/ui'
+// Badge from `components/ui`, NOT the top-level `components` barrel. That barrel
+// statically re-exports FleetTrackerMap, GeoTabIntegration, MaintenancePanel and a
+// recharts chart, so importing one Badge through it would pull the whole fleet surface
+// into this page's module graph — the bundle-size trap the barrel's own comment warns
+// about, and it would also drag all of it into this page's test.
+import { Tooltip, TooltipTrigger, TooltipContent, Badge } from '../components/ui'
 import { RealtimeTelemetryChart, TelemetryHistoryChart } from '../components/charts'
 import { SensorPanels } from '../components/assets/SensorPanels'
 import { CommandPanel } from '../components/commands'
@@ -148,19 +153,42 @@ const AssetDetail: FC = () => {
               </Tooltip>
             </div>
           </div>
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <div className="flex items-center gap-3">
-                <span
-                  className={`w-4 h-4 rounded-full ${getStatusColor(
-                    asset.currentPackmlState
-                  )} ${asset.currentPackmlState === 'Execute' ? 'animate-pulse' : ''}`}
-                />
-                <span className="text-lg font-semibold">{asset.currentPackmlState}</span>
-              </div>
-            </TooltipTrigger>
-            <TooltipContent>Current PackML state</TooltipContent>
-          </Tooltip>
+          <div className="flex items-center gap-3">
+            {/* MAINTENANCE MODE HAD NO READ PATH AT ALL. Migration 053 added the column,
+                the admin endpoint writes it and the tactical engine reads it before
+                dispatching a control command — but `AssetResponse` did not carry it, so
+                an operator could take a machine out of service and see no sign of it
+                anywhere. The PackML state keeps ticking over as normal, which is exactly
+                what makes the omission dangerous: the page looks like it is telling you
+                everything about the asset. */}
+            {asset.maintenanceMode && (
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Badge variant="warning" size="md">
+                    <Wrench size={14} className="mr-1" />
+                    Maintenance
+                  </Badge>
+                </TooltipTrigger>
+                <TooltipContent>
+                  This asset is in maintenance mode. Game-theoretic engine commands are
+                  suppressed until it is cleared.
+                </TooltipContent>
+              </Tooltip>
+            )}
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <div className="flex items-center gap-3">
+                  <span
+                    className={`w-4 h-4 rounded-full ${getStatusColor(
+                      asset.currentPackmlState
+                    )} ${asset.currentPackmlState === 'Execute' ? 'animate-pulse' : ''}`}
+                  />
+                  <span className="text-lg font-semibold">{asset.currentPackmlState}</span>
+                </div>
+              </TooltipTrigger>
+              <TooltipContent>Current PackML state</TooltipContent>
+            </Tooltip>
+          </div>
         </div>
       </div>
 

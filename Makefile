@@ -23,7 +23,37 @@ logs: ## Tail stack logs
 	docker-compose logs -f
 
 tracing: ## Start the stack with the tracing profile (OTel collector + Jaeger)
-	docker-compose --profile tracing up -d
+	# OTEL_ENABLED=true is the part that was missing: the profile started a
+	# collector and a Jaeger UI, but the backend never enabled export, so the
+	# UI was permanently empty and nothing indicated why.
+	OTEL_ENABLED=true docker-compose --profile tracing up -d
+
+lean: ## Drop the 1.5 GB training corpus from THIS checkout (keeps it in git)
+	@git sparse-checkout init --no-cone 2>/dev/null || true
+	@printf '/*\n!/backend/dataset/\n' > .git/info/sparse-checkout
+	@git sparse-checkout reapply
+	@echo "backend/dataset is no longer checked out. 'make unlean' restores it."
+
+unlean: ## Restore the training corpus to this checkout
+	@git sparse-checkout disable
+	@echo "backend/dataset restored."
+
+reap-test-containers: ## Remove testcontainers left behind by killed test runs (FS-371)
+	# WHY THIS IS A TARGET AND NOT A CRON. Ryuk — testcontainers' own reaper — is
+	# DISABLED in `backend/tests/conftest.py`, deliberately: it needs the docker socket
+	# bind-mounted into a container, and colima's VM boundary makes that mount fail, so
+	# with Ryuk enabled the suite could not start at all. The comment there states the
+	# cost plainly: containers from a hard-killed run are no longer cleaned up.
+	#
+	# In the ordinary case the fixtures stop their own containers and nothing accumulates.
+	# The leak is Ctrl-C, a crashed runner, an OOM — and it had reached 23 stopped
+	# containers holding 13 GB, which is what gated the Docker-disk item.
+	#
+	# Matched on the testcontainers label rather than on an image name: the suite starts
+	# postgres, redpanda and redis, and a list of images is a list to forget to update.
+	# `--filter status=exited` so a container from a RUNNING suite is never touched — this
+	# has to be safe to run while somebody else is testing.
+	@stale=$$(docker ps -aq --filter "label=org.testcontainers=true" --filter "status=exited" 2>/dev/null); 	if [ -z "$$stale" ]; then 		echo "no stale test containers"; 	else 		echo "$$stale" | xargs docker rm -v; 		echo "reclaimed; run 'docker system df' to see the space back"; 	fi
 
 test: test-backend test-edge test-frontend ## Run all test suites
 
@@ -35,9 +65,20 @@ seed-demo: ## Seed realistic correlated demo data (simulated ERP + sensors + yar
 
 demo: seed-demo ## One-shot offline demo: seed, then serve the API against dev.db
 	@echo ">> API on :8000 with dev-token auth. In another shell:"
-	@echo ">>   cd frontend && VITE_USE_MOCK=false npm run dev   (login: dev / any password)"
+	@echo ">>   make demo-ui                                (login: dev / any password)"
 	@echo ">> Full walkthrough: docs/DEMO.md"
 	cd backend && DATABASE_URL="sqlite+aiosqlite:///$$(pwd)/dev.db" ALLOW_DEV_TOKEN=true uvicorn app.main:app --port 8000
+
+# THE SKIP-LOGIN DEMO NEEDS TWO GATES, NOT ONE, and this target exists because the
+# instructions here previously named only the first. `ALLOW_DEV_TOKEN=true` (above) makes
+# the BACKEND accept the `dev-token` bearer; `VITE_DEV_MODE=true` makes the FRONTEND offer
+# the bypass at all — `Login.tsx` requires `import.meta.env.DEV && VITE_DEV_MODE === 'true'`.
+# Without the second, typing `dev` falls through to the real login form and returns 401,
+# which is exactly what the documented command did (verified against a running stack,
+# 2026-08-01). A make target rather than a line to copy, so the pair cannot drift apart
+# again; `test_demo_mode_instructions_work.py` pins them to what the code requires.
+demo-ui: ## The demo UI, in real mode against the demo API (skip-login enabled)
+	cd frontend && VITE_USE_MOCK=false VITE_DEV_MODE=true npm run dev
 
 test-backend: ## Backend pytest
 	cd backend && python -m pytest -q

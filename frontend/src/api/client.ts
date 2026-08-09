@@ -8,7 +8,7 @@ import { ApiError } from '../types'
 //  - production builds use SAME-ORIGIN ('' base): nginx serves the SPA and
 //    proxies /api and /ws to the backend (frontend/nginx.conf) — the old
 //    http://<hostname>:8000 guess pointed at an unpublished port in prod.
-const getApiUrl = () => {
+export const getApiUrl = () => {
   const envUrl = import.meta.env?.VITE_API_URL
   if (envUrl) return envUrl
 

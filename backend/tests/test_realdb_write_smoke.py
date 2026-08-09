@@ -104,11 +104,13 @@ async def test_alarm_acknowledge_write_path(
         with conn, conn.cursor() as cur:
             cur.execute(
                 """
-                INSERT INTO alarms (id, asset_id, alarm_code, severity, message,
-                                    is_active, occurred_at)
-                VALUES (%s, %s, %s, %s, %s, TRUE, now())
+                INSERT INTO alarms (id, asset_id, organization_id, alarm_code,
+                                    severity, message, is_active, occurred_at)
+                VALUES (%s, %s,
+                        (SELECT organization_id FROM assets WHERE id = %s),
+                        %s, %s, %s, TRUE, now())
                 """,
-                (alarm_id, asset_id, "SMOKE_TEST", "high",
+                (alarm_id, asset_id, asset_id, "SMOKE_TEST", "high",
                  "write-path smoke alarm"),
             )
     finally:

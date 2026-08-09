@@ -564,7 +564,14 @@ const Dashboard: FC = () => {
         </Widget>
 
         <Widget
-          title={`Active alarms (${alarmsQ.data?.count ?? 0})`}
+          // THE BODY HANDLES THE ERROR; THE TITLE DID NOT. `?? 0` made the heading read
+          // "Active alarms (0)" while the panel underneath said "Couldn't load this
+          // data" — and the title is also this section's `aria-label`, so a screen-reader
+          // user navigating by landmark hears "Active alarms 0" and may never reach the
+          // body that contradicts it. The count is only shown when a count was received.
+          title={
+            alarmsQ.data ? `Active alarms (${alarmsQ.data.count})` : 'Active alarms'
+          }
           to="/alarms"
           isLoading={alarmsQ.isLoading}
           isError={alarmsQ.isError}

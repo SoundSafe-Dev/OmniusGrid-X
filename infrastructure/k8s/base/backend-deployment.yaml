@@ -66,7 +66,41 @@ spec:
               containerPort: 8000
               protocol: TCP
           
+          # Tunables an overlay is meant to control (ENVIRONMENT, DEBUG, LOG_LEVEL,
+          # MTLS_ENABLED, GEOTAB_SIMULATED). The generator lives in base/kustomization.yaml
+          # and each overlay merges over it.
+          #
+          # THIS REFERENCE IS THE POINT (FS-386). All three overlays already declared a
+          # `backend-config` ConfigMap and NOTHING CONSUMED IT — no envFrom existed
+          # anywhere — so `LOG_LEVEL=warn` in production, `MTLS_ENABLED=false` in staging
+          # and `DEPLOYMENT_SITE=dr` were rendered into a ConfigMap object and then
+          # ignored. Settings written, read by nobody: the manifests described a
+          # deployment nobody was running.
+          envFrom:
+            - configMapRef:
+                name: backend-config
           env:
+            # PINNED HERE, NOT IN THE CONFIGMAP, SO NO OVERLAY CAN TURN THEM ON (FS-385).
+            #
+            # `app/core/config.py` defaults ALLOW_DEV_TOKEN and ALLOW_OPEN_REGISTRATION to
+            # **true** so a laptop demo works offline, and nothing in these manifests
+            # overrode them — so every deployment here accepted the literal string
+            # `dev-token` as an admin credential and took unauthenticated registrations.
+            #
+            # `validate_settings()` exists to catch exactly that and hard-fails at import,
+            # but only when ENVIRONMENT == "production", and ENVIRONMENT appeared NOWHERE
+            # in these manifests. It evaluated to "development", so all ten of its checks
+            # were skipped. The guard was real; nothing had ever armed it. Verified with
+            # `kustomize build overlays/production`: zero occurrences of ENVIRONMENT,
+            # ALLOW_DEV_TOKEN, GEOTAB_SIMULATED or CORS_ALLOW_ORIGINS before this change.
+            #
+            # These two stay explicit `env` rather than joining the ConfigMap because
+            # `env` beats `envFrom`: there is no legitimate reason for any overlay to
+            # enable an admin-auth bypass, so the manifest should not offer the knob.
+            - name: ALLOW_DEV_TOKEN
+              value: "false"
+            - name: ALLOW_OPEN_REGISTRATION
+              value: "false"
             - name: DATABASE_URL
               valueFrom:
                 secretKeyRef:
@@ -86,6 +120,28 @@ spec:
                 secretKeyRef:
                   name: signed-url-secret
                   key: secret
+            # The three remaining things validate_settings() demands in production. They
+            # are secrets rather than settings, so they follow the same pattern as
+            # jwt-secret above; `infrastructure/k8s/secrets/` documents how they are
+            # supplied (sealed-secrets or ESO). Without them the backend now refuses to
+            # start and says which one is missing — previously it started happily with an
+            # unauthenticated GeoTab webhook and an ERP encryption key regenerated on
+            # every restart, which silently made previously-encrypted fields unreadable.
+            - name: EDGE_BOOTSTRAP_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: app-secrets
+                  key: edge-bootstrap-token
+            - name: GEOTAB_WEBHOOK_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: app-secrets
+                  key: geotab-webhook-secret
+            - name: ERP_ENCRYPTION_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: app-secrets
+                  key: erp-encryption-key
             # Object storage for export/compliance artifacts. With multiple pods,
             # a worker generates the file on its pod and the backend serves the
             # download from another — so both must read/write the SAME S3 bucket.
@@ -105,16 +161,60 @@ spec:
                 secretKeyRef:
                   name: s3-credentials
                   key: secret-key
-            - name: MTLS_ENABLED
-              value: "true"
+            # MTLS_ENABLED intentionally NOT here — it moved to the backend-config
+            # ConfigMap so the staging overlay's `MTLS_ENABLED=false` can actually take
+            # effect. An explicit `env` entry beats `envFrom`, which is why it could not
+            # stay in both places.
             - name: CA_CERT_PATH
               value: "/etc/tls/ca/ca.crt"
             - name: SERVER_CERT_PATH
               value: "/etc/tls/server/server.crt"
             - name: SERVER_KEY_PATH
               value: "/etc/tls/server/server.key"
-            - name: LOG_LEVEL
-              value: "info"
+            # Trace export (FS-226). The collector was deployed but the backend set
+            # no OTEL env at all, so it exported nothing even once the network path
+            # existed. Enabled here rather than left to an overlay so the default
+            # deployment actually traces.
+            - name: OTEL_ENABLED
+              value: "true"
+            - name: OTEL_EXPORTER_OTLP_ENDPOINT
+              value: "http://otel-collector:4317"
+            - name: OTEL_SERVICE_NAME
+              value: "omniusgrid-backend"
+            # LOG_LEVEL likewise moved to backend-config, so production's `warn` and
+            # staging's `debug` reach the process instead of being shadowed by this.
+            - name: ALLOW_OPEN_REGISTRATION
+              value: "false"
+            - name: USER_INVITE_PUBLIC_BASE_URL
+              value: "https://omniusgrid.local"
+            - name: USER_INVITE_EXPIRE_HOURS
+              value: "72"
+            - name: SMTP_HOST
+              valueFrom:
+                secretKeyRef:
+                  name: smtp-credentials
+                  key: host
+                  optional: true
+            - name: SMTP_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: smtp-credentials
+                  key: username
+                  optional: true
+            - name: SMTP_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: smtp-credentials
+                  key: password
+                  optional: true
+            - name: SMTP_PORT
+              value: "587"
+            - name: SMTP_FROM_EMAIL
+              value: "reports@omniusgrid.local"
+            - name: SMTP_USE_TLS
+              value: "false"
+            - name: SMTP_START_TLS
+              value: "true"
             - name: PYTHONDONTWRITEBYTECODE
               value: "1"
             - name: PYTHONUNBUFFERED

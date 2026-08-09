@@ -2,18 +2,37 @@
 Analysis Sessions API Endpoints
 
 API endpoints for managing analysis sessions, data sources, and session-based chat.
+
+TENANT SESSION, NOT get_db. `analysis_sessions` is RLS-protected, and every handler here
+ran on a session that sets no `app.current_org_id`. The whole surface was dead, in both
+directions at once:
+
+  * reads matched no rows, so listing sessions returned nothing and fetching one 404'd;
+  * **creating a session raised** `InsufficientPrivilegeError: new row violates
+    row-level security policy` — a 500, because the policy's WITH CHECK applies to the
+    INSERT.
+
+That split is worth remembering: under RLS a read fails SILENTLY and a write fails
+LOUDLY. Everything else in this sweep failed quiet, which is why it survived; this one
+would have been noticed the first time anyone opened the feature.
+
+`organization_id=current_user.organization_id` was already set on create — the
+application layer was correct throughout. Only the GUC was missing.
 """
 
 from typing import List, Dict, Any, Optional, Union
 from uuid import UUID
 from datetime import datetime, timezone
-from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks, UploadFile, File, Query
+from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks, UploadFile, File, Query, Response
+
+from app.core.pagination import mark_truncated
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, and_, or_, func
 from pydantic import BaseModel, Field
 import structlog
 
-from app.db.database import get_db
+from app.db.database import get_db  # noqa: F401
+from app.middleware.tenant_isolation import get_tenant_db
 from app.api.auth import get_current_active_user
 from app.db.models import User, AnalysisSession, SessionDataSource, SessionMessage, IntakeItem
 from app.api.nlp_correlation import _process_uploaded_file, build_source_descriptor, _run_scenarios
@@ -292,6 +311,19 @@ class SessionChatResponse(BaseModel):
     actions: Optional[List[Dict[str, Any]]]
     follow_up_questions: Optional[List[str]] = None
     timestamp: datetime
+    # PROVENANCE. correlation_ai_engine falls back to a heuristic when the model or
+    # its LoRA adapter is not loaded — which is the deliberate state right now — and
+    # marks that output `simulated: True` with confidence dropped to 0.4. These two
+    # handlers read the fallback's text and DISCARDED the flag, so heuristic output
+    # reached the caller indistinguishable from a real inference.
+    #
+    # It was latent while the surrounding RLS defect made these endpoints unreachable.
+    # Fixing that made this live, so it is fixed in the same pass rather than left as
+    # a newly-exposed edge.
+    simulated: bool = False
+    simulation_reason: Optional[str] = None
+    confidence: Optional[float] = None
+    model_version: Optional[str] = None
 
 
 class SessionMessageResponse(BaseModel):
@@ -305,6 +337,36 @@ class SessionMessageResponse(BaseModel):
     domains: Optional[List[str]]
     actions: Optional[List[Dict[str, Any]]]
     timestamp: datetime
+    #: PROVENANCE, WHICH USED TO DIE AT THIS BOUNDARY (FS-413).
+    #:
+    #: `SessionChatResponse` carries these and the chat handler sets them on all three of
+    #: its paths — the heuristic substitute when the model or its LoRA adapter is not
+    #: loaded, and the exception path whose reply is not an analysis at all. This model
+    #: declared neither, and the three builders below did not read them, so a reply the
+    #: engine had carefully marked as NOT an inference was labelled while it was live in
+    #: the chat and lost the label the moment the transcript was re-fetched — on reload,
+    #: in chat history, and in search.
+    #:
+    #: The data was never missing. `simulated` is written into `analysis` by the engine;
+    #: it just was not read back out. The frontend's `SessionMessage` interface has
+    #: declared both fields all along, so the client was asking for something no producer
+    #: sent and quietly defaulting to "this is a real inference".
+    simulated: bool = False
+    simulation_reason: Optional[str] = None
+
+
+def _provenance_of(msg) -> Dict[str, Any]:
+    """`simulated` / `simulation_reason` for a stored message, from its `analysis` blob.
+
+    Returns a dict so the three response builders stay one line each. Defaults to not
+    simulated, which is correct: a message whose analysis never set the flag came from a
+    path that did not mark itself, and the engine marks every path that fabricates.
+    """
+    analysis = msg.analysis if isinstance(msg.analysis, dict) else {}
+    return {
+        "simulated": bool(analysis.get("simulated", False)),
+        "simulation_reason": analysis.get("simulation_reason"),
+    }
 
 
 class SuggestedQuestionItem(BaseModel):
@@ -324,7 +386,7 @@ class SuggestedQuestionsResponse(BaseModel):
 @router.post("", response_model=SessionResponse)
 async def create_session(
     request: CreateSessionRequest,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_tenant_db),
     current_user: User = Depends(get_current_active_user)
 ):
     """
@@ -383,10 +445,10 @@ async def create_session(
 
 @router.get("", response_model=SessionListResponse)
 async def list_sessions(
-    limit: int = 50,
-    offset: int = 0,
+    limit: int = Query(50, ge=1, description="Maximum rows to return."),
+    offset: int = Query(0, ge=0, description="Rows to skip."),
     status: Optional[str] = None,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_tenant_db),
     current_user: User = Depends(get_current_active_user)
 ):
     """
@@ -463,7 +525,7 @@ async def list_sessions(
 @router.get("/{session_id}", response_model=SessionResponse)
 async def get_session(
     session_id: UUID,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_tenant_db),
     current_user: User = Depends(get_current_active_user)
 ):
     """
@@ -508,7 +570,7 @@ async def get_session(
 async def update_session(
     session_id: UUID,
     request: UpdateSessionRequest,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_tenant_db),
     current_user: User = Depends(get_current_active_user)
 ):
     """
@@ -572,7 +634,7 @@ async def update_session(
 @router.delete("/{session_id}", status_code=204)
 async def delete_session(
     session_id: UUID,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_tenant_db),
     current_user: User = Depends(get_current_active_user)
 ):
     """
@@ -610,7 +672,7 @@ async def delete_session(
 
 @router.post("/cleanup-orphaned")
 async def cleanup_orphaned_sessions(
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_tenant_db),
     current_user: User = Depends(get_current_active_user)
 ):
     """
@@ -641,7 +703,7 @@ async def cleanup_orphaned_sessions(
 @router.post("/{session_id}/resume", response_model=SessionResponse)
 async def resume_session(
     session_id: UUID,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_tenant_db),
     current_user: User = Depends(get_current_active_user)
 ):
     """
@@ -704,7 +766,7 @@ async def resume_session(
 async def add_intake_data(
     session_id: UUID,
     intake_id: UUID,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_tenant_db),
     current_user: User = Depends(get_current_active_user)
 ):
     """
@@ -771,7 +833,7 @@ async def upload_data_to_session(
     session_id: UUID,
     file: UploadFile = File(...),
     data_type: str = "document",
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_tenant_db),
     current_user: User = Depends(get_current_active_user)
 ):
     """
@@ -829,7 +891,7 @@ async def upload_data_to_session(
 @router.get("/{session_id}/data", response_model=List[DataSourceResponse])
 async def list_session_data(
     session_id: UUID,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_tenant_db),
     current_user: User = Depends(get_current_active_user)
 ):
     """
@@ -864,7 +926,7 @@ async def list_session_data(
 async def get_session_suggested_questions(
     session_id: UUID,
     limit: int = Query(default=3, ge=1, le=6),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_tenant_db),
     current_user: User = Depends(get_current_active_user),
 ):
     """
@@ -906,7 +968,7 @@ class SessionCorrelationRequest(BaseModel):
 async def correlate_session(
     session_id: UUID,
     request: SessionCorrelationRequest,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_tenant_db),
     current_user: User = Depends(get_current_active_user),
 ):
     """
@@ -999,7 +1061,7 @@ async def correlate_session(
 async def remove_data_source(
     session_id: UUID,
     source_id: UUID,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_tenant_db),
     current_user: User = Depends(get_current_active_user)
 ):
     """
@@ -1049,7 +1111,7 @@ async def remove_data_source(
 async def session_chat(
     session_id: UUID,
     request: SessionChatRequest,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_tenant_db),
     current_user: User = Depends(get_current_active_user)
 ):
     """
@@ -1147,7 +1209,14 @@ async def session_chat(
             domains=assistant_message.domains,
             actions=assistant_message.actions,
             follow_up_questions=analysis_result.get("follow_up_questions", []),
-            timestamp=_as_utc(assistant_message.timestamp)
+            timestamp=_as_utc(assistant_message.timestamp),
+            # Carried through from the engine, never defaulted to False here: if the
+            # engine says this was a heuristic rather than an inference, the caller has
+            # to be able to see that.
+            simulated=bool(analysis_result.get("simulated", False)),
+            simulation_reason=analysis_result.get("simulation_reason"),
+            confidence=analysis_result.get("confidence"),
+            model_version=analysis_result.get("model_version"),
         )
     except Exception as e:
         logger.exception("correlation_chat_error", error=str(e))
@@ -1226,17 +1295,41 @@ async def session_chat(
             domains=assistant_message.domains,
             actions=assistant_message.actions,
             follow_up_questions=analysis_result.get("follow_up_questions", []),
-            timestamp=_as_utc(assistant_message.timestamp)
+            timestamp=_as_utc(assistant_message.timestamp),
+            # Carried through from the engine, never defaulted to False here: if the
+            # engine says this was a heuristic rather than an inference, the caller has
+            # to be able to see that.
+            simulated=bool(analysis_result.get("simulated", False)),
+            simulation_reason=analysis_result.get("simulation_reason"),
+            confidence=analysis_result.get("confidence"),
+            model_version=analysis_result.get("model_version"),
         )
         
     except Exception as e:
         logger.exception("correlation_ai_error", error=str(e))
-        
-        # Fallback response if AI integration fails
+
+        # LAST-RESORT FALLBACK, AND IT MUST SAY SO.
+        #
+        # The two paths above carry the engine's `simulated` flag through deliberately
+        # — "never defaulted to False here". This handler used to construct the
+        # response without those fields at all, and `simulated` defaults to False, so
+        # the one reply that is not an analysis AT ALL was the only one asserting it
+        # was a real inference. The old text ("the correlation AI integration is being
+        # set up") also described a deployment state rather than what happened, which
+        # is an exception the operator never hears about.
+        #
+        # The reason names the exception TYPE, never `str(e)`: an exception message is
+        # the field most likely to carry internal detail or customer data, which is the
+        # same reason `/admin/errors` redacts message samples across tenants.
         assistant_message = SessionMessage(
             session_id=session_id_str,
             role="assistant",
-            content=f"I received your query: {request.message}\n\nI'm processing this with the context of {len(data_sources)} data sources. The correlation AI integration is being set up.",
+            content=(
+                "I could not analyse that request — the correlation engine returned an "
+                "error, so there is no result to report. Nothing was inferred from your "
+                f"{len(data_sources)} attached data source(s). The failure has been "
+                "logged; please retry, and report it if it persists."
+            ),
             analysis={},
             risk_score=None,
             domains=[],
@@ -1257,16 +1350,24 @@ async def session_chat(
             domains=assistant_message.domains,
             actions=assistant_message.actions,
             follow_up_questions=[],
-            timestamp=_as_utc(assistant_message.timestamp)
+            timestamp=_as_utc(assistant_message.timestamp),
+            simulated=True,
+            simulation_reason=(
+                f"correlation analysis failed ({type(e).__name__}); no inference was "
+                f"performed"
+            ),
+            confidence=None,
+            model_version=None,
         )
 
 
 @router.get("/{session_id}/messages", response_model=List[SessionMessageResponse])
 async def get_session_messages(
     session_id: UUID,
-    limit: int = 100,
-    offset: int = 0,
-    db: AsyncSession = Depends(get_db),
+    response: Response,
+    limit: int = Query(100, ge=1, description="Maximum rows to return."),
+    offset: int = Query(0, ge=0, description="Rows to skip."),
+    db: AsyncSession = Depends(get_tenant_db),
     current_user: User = Depends(get_current_active_user)
 ):
     """
@@ -1280,9 +1381,13 @@ async def get_session_messages(
     # Get messages
     query = select(SessionMessage).where(SessionMessage.session_id == session_id_str)
     query = query.order_by(SessionMessage.timestamp.asc())
-    query = query.limit(limit).offset(offset)
+    query = query.limit(limit + 1).offset(offset)
     result = await db.execute(query)
-    messages = result.scalars().all()
+    # SAYS WHEN IT CAPPED (FS-459). A bare array of exactly `limit` rows is
+    # indistinguishable from the complete set, so a page of chat history reads as the
+    # whole conversation. One extra row settles it; a COUNT over the table would not
+    # be worth the scan.
+    messages = mark_truncated(response, result.scalars().all(), limit)
     
     return [
         SessionMessageResponse(
@@ -1294,7 +1399,10 @@ async def get_session_messages(
             risk_score=msg.risk_score,
             domains=msg.domains,
             actions=msg.actions,
-            timestamp=_as_utc(msg.timestamp)
+            timestamp=_as_utc(msg.timestamp),
+            # Read from `analysis`, where the engine wrote it. `SessionMessage` has no
+            # dedicated column, so this is the only place the flag survives a round trip.
+            **_provenance_of(msg),
         )
         for msg in messages
     ]
@@ -1305,7 +1413,7 @@ async def get_session_messages(
 @router.post("/{session_id}/generate-title", response_model=SessionResponse)
 async def generate_session_title(
     session_id: UUID,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_tenant_db),
     current_user: User = Depends(get_current_active_user)
 ):
     """
@@ -1410,10 +1518,11 @@ async def generate_session_title(
 
 @router.get("/chat/history", response_model=List[SessionMessageResponse])
 async def get_chat_history(
-    limit: int = 100,
-    offset: int = 0,
+    response: Response,
+    limit: int = Query(100, ge=1, description="Maximum rows to return."),
+    offset: int = Query(0, ge=0, description="Rows to skip."),
     session_id: Optional[UUID] = None,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_tenant_db),
     current_user: User = Depends(get_current_active_user)
 ):
     """
@@ -1430,10 +1539,13 @@ async def get_chat_history(
         query = query.where(SessionMessage.session_id == session_id)
     
     query = query.order_by(SessionMessage.timestamp.desc())
-    query = query.limit(limit).offset(offset)
-    
+    query = query.limit(limit + 1).offset(offset)
     result = await db.execute(query)
-    messages = result.scalars().all()
+    # SAYS WHEN IT CAPPED (FS-459). A bare array of exactly `limit` rows is
+    # indistinguishable from the complete set, so a page of chat history reads as the
+    # whole conversation. One extra row settles it; a COUNT over the table would not
+    # be worth the scan.
+    messages = mark_truncated(response, result.scalars().all(), limit)
     
     return [
         SessionMessageResponse(
@@ -1445,7 +1557,10 @@ async def get_chat_history(
             risk_score=msg.risk_score,
             domains=msg.domains,
             actions=msg.actions,
-            timestamp=_as_utc(msg.timestamp)
+            timestamp=_as_utc(msg.timestamp),
+            # Read from `analysis`, where the engine wrote it. `SessionMessage` has no
+            # dedicated column, so this is the only place the flag survives a round trip.
+            **_provenance_of(msg),
         )
         for msg in messages
     ]
@@ -1453,11 +1568,12 @@ async def get_chat_history(
 
 @router.get("/chat/search", response_model=List[SessionMessageResponse])
 async def search_chat_history(
+    response: Response,
     q: str = Query(..., description="Search query"),
-    limit: int = 50,
-    offset: int = 0,
+    limit: int = Query(50, ge=1, description="Maximum rows to return."),
+    offset: int = Query(0, ge=0, description="Rows to skip."),
     session_id: Optional[UUID] = None,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_tenant_db),
     current_user: User = Depends(get_current_active_user)
 ):
     """
@@ -1477,10 +1593,13 @@ async def search_chat_history(
         query = query.where(SessionMessage.session_id == session_id)
     
     query = query.order_by(SessionMessage.timestamp.desc())
-    query = query.limit(limit).offset(offset)
-    
+    query = query.limit(limit + 1).offset(offset)
     result = await db.execute(query)
-    messages = result.scalars().all()
+    # SAYS WHEN IT CAPPED (FS-459). A bare array of exactly `limit` rows is
+    # indistinguishable from the complete set, so a page of chat history reads as the
+    # whole conversation. One extra row settles it; a COUNT over the table would not
+    # be worth the scan.
+    messages = mark_truncated(response, result.scalars().all(), limit)
     
     return [
         SessionMessageResponse(
@@ -1492,7 +1611,10 @@ async def search_chat_history(
             risk_score=msg.risk_score,
             domains=msg.domains,
             actions=msg.actions,
-            timestamp=_as_utc(msg.timestamp)
+            timestamp=_as_utc(msg.timestamp),
+            # Read from `analysis`, where the engine wrote it. `SessionMessage` has no
+            # dedicated column, so this is the only place the flag survives a round trip.
+            **_provenance_of(msg),
         )
         for msg in messages
     ]
@@ -1503,8 +1625,8 @@ async def search_chat_history(
 @router.get("/{session_id}/context/telemetry")
 async def get_session_telemetry_context(
     session_id: UUID,
-    limit: int = 50,
-    db: AsyncSession = Depends(get_db),
+    limit: int = Query(50, ge=1, description="Maximum rows to return."),
+    db: AsyncSession = Depends(get_tenant_db),
     current_user: User = Depends(get_current_active_user)
 ):
     """
@@ -1585,8 +1707,8 @@ async def get_session_telemetry_context(
 @router.get("/{session_id}/context/alarms")
 async def get_session_alarms_context(
     session_id: UUID,
-    limit: int = 50,
-    db: AsyncSession = Depends(get_db),
+    limit: int = Query(50, ge=1, description="Maximum rows to return."),
+    db: AsyncSession = Depends(get_tenant_db),
     current_user: User = Depends(get_current_active_user)
 ):
     """
@@ -1669,8 +1791,8 @@ async def get_session_alarms_context(
 @router.get("/{session_id}/context/kanban")
 async def get_session_kanban_context(
     session_id: UUID,
-    limit: int = 50,
-    db: AsyncSession = Depends(get_db),
+    limit: int = Query(50, ge=1, description="Maximum rows to return."),
+    db: AsyncSession = Depends(get_tenant_db),
     current_user: User = Depends(get_current_active_user)
 ):
     """
@@ -1747,8 +1869,8 @@ async def get_session_kanban_context(
 @router.get("/{session_id}/context/registries")
 async def get_session_registries_context(
     session_id: UUID,
-    limit: int = 50,
-    db: AsyncSession = Depends(get_db),
+    limit: int = Query(50, ge=1, description="Maximum rows to return."),
+    db: AsyncSession = Depends(get_tenant_db),
     current_user: User = Depends(get_current_active_user)
 ):
     """

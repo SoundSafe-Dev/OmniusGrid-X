@@ -18,6 +18,23 @@ const getStatusColor = (status: string) => {
   }
 };
 
+// A share of a total that may be zero or absent. `amount / 0` is Infinity, which becomes
+// an `Infinity%` CSS width, and `NaN.toFixed(1)` renders the literal string "NaN".
+const share = (amount: number, total?: number): number =>
+  total && total > 0 ? (amount / total) * 100 : 0;
+
+const MONTH_NAMES = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+                     'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+// The server sends `YYYY-MM`. This was `month.month.split(' ')[0]`, which suited the mock's
+// "Jan 2024" and rendered the real value as the literal "2026-01" — a label nobody writes on
+// an axis. Anything that is not `YYYY-MM` is passed through rather than mangled.
+const monthLabel = (month: string): string => {
+  const match = /^\d{4}-(\d{2})$/.exec(month);
+  if (!match) return month.split(' ')[0];
+  return MONTH_NAMES[Number(match[1]) - 1] ?? month;
+};
+
 const getPriorityColor = (priority: string) => {
   switch (priority) {
     case 'urgent': return 'text-red-600 font-bold';
@@ -115,7 +132,11 @@ export const MaintenancePanel: FC = () => {
             <DollarSign className="w-5 h-5 text-green-500" />
             <span className="text-sm text-gray-600">YTD Costs</span>
           </div>
-          <p className="text-2xl font-bold text-green-600">${costs?.totalYTD.toLocaleString() || 0}</p>
+          {/* `|| 0` turned a missing YTD figure into "$0" — a fleet that has spent
+              nothing on maintenance all year, which is a claim, not a blank. */}
+          <p className="text-2xl font-bold text-green-600">
+            {costs?.ytdTotal != null ? `$${costs.ytdTotal.toLocaleString()}` : '—'}
+          </p>
         </div>
       </div>
 
@@ -201,14 +222,24 @@ export const MaintenancePanel: FC = () => {
                           <Calendar className="w-3 h-3" />
                           {new Date(item.scheduledDate).toLocaleDateString()}
                         </span>
-                        <span>Mileage: {item.currentMileage.toLocaleString()}</span>
-                        {item.assignedTechnician && (
-                          <span>Tech: {item.assignedTechnician}</span>
+                        {/* WAS `Mileage: {item.currentMileage}`, which the adapter filled
+                            from `dueMileage` — the odometer at which service falls DUE —
+                            or from 0. A technician reads "Mileage: 128,500" as where the
+                            vehicle is now. The two differ by exactly the distance left
+                            before the service, which is the number that matters here.
+                            Omitted entirely when the schedule carries no due odometer,
+                            because 0 miles is a reading and absence is not. */}
+                        {item.dueMileage != null && (
+                          <span>Due at {item.dueMileage.toLocaleString()} mi</span>
                         )}
+
                       </div>
                     </div>
                     <div className="text-right">
-                      {item.estimatedCost && (
+                      {/* `item.estimatedCost &&` — a FALSY check on a number, so a service
+                          quoted at exactly nothing rendered no figure at all, exactly as if
+                          nobody had quoted it. A zero estimate is a quote. */}
+                      {item.estimatedCost != null && (
                         <p className="font-medium text-green-600">${item.estimatedCost}</p>
                       )}
                       <span className={`text-xs ${getPriorityColor(item.priority)}`}>
@@ -240,7 +271,11 @@ export const MaintenancePanel: FC = () => {
                 <div className="flex items-start justify-between">
                   <div className="flex-1">
                     <div className="flex items-center gap-2">
-                      <span className="font-semibold">{order.workOrderNumber}</span>
+                      {/* Headed by the repair's own summary. It used to be
+                          `workOrderNumber` — the first eight characters of the row's UUID, an
+                          identifier no system issued, printed as the heading a technician
+                          would quote to a vendor. */}
+                      <span className="font-semibold">{order.title}</span>
                       <span className={`px-2 py-0.5 rounded text-xs ${getStatusColor(order.status)}`}>
                         {order.status?.replace(/_/g, ' ')}
                       </span>
@@ -248,36 +283,42 @@ export const MaintenancePanel: FC = () => {
                         {order.priority}
                       </span>
                     </div>
-                    <p className="text-sm text-gray-600 mt-1">{order.issueDescription}</p>
+                    {order.description && (
+                      <p className="text-sm text-gray-600 mt-1">{order.description}</p>
+                    )}
                     <div className="flex items-center gap-4 mt-2 text-xs text-gray-500">
                       <span className="flex items-center gap-1">
                         <Truck className="w-3 h-3" />
                         {order.vehicleNumber}
                       </span>
-                      <span className="flex items-center gap-1">
-                        <Clock className="w-3 h-3" />
-                        Reported: {new Date(order.reportedDate).toLocaleDateString()}
-                      </span>
-                      {order.assignedTechnician && (
-                        <span>Tech: {order.assignedTechnician}</span>
+                      {order.openedAt && (
+                        <span className="flex items-center gap-1">
+                          <Clock className="w-3 h-3" />
+                          Reported: {new Date(order.openedAt).toLocaleDateString()}
+                        </span>
                       )}
-                      {order.laborHours && (
-                        <span>{order.laborHours} hours</span>
-                      )}
+                      {/* WAS "Tech: {assignedTechnician}" — a column that does not exist, so
+                          the line never rendered, while `vendor` (who actually did the work)
+                          arrived on every response and was shown nowhere. */}
+                      {order.vendor && <span>Vendor: {order.vendor}</span>}
+                      {order.category && <span>{order.category}</span>}
                     </div>
-                    {order.partsUsed.length > 0 && (
-                      <div className="mt-2 text-xs">
-                        <span className="text-gray-500">Parts: </span>
-                        {order.partsUsed.map(p => p.description).join(', ')}
-                      </div>
-                    )}
                   </div>
                   <div className="text-right">
-                    <p className="font-medium">${order.estimatedCost.toLocaleString()}</p>
-                    <p className="text-xs text-gray-500">estimated</p>
-                    {order.actualCost && (
-                      <p className="text-xs text-green-600">${order.actualCost.toLocaleString()} actual</p>
+                    {/* WAS `${order.estimatedCost}` with the caption "estimated". It was
+                        fed from `repair_orders.cost` — what the repair COST — and a null
+                        one was coerced to 0, so a repair with nothing recorded against it
+                        displayed as "$0 estimated": a free repair, and an estimate that
+                        nobody made. Omitted when there is no figure. */}
+                    {order.cost != null && (
+                      <>
+                        <p className="font-medium">${order.cost.toLocaleString()}</p>
+                        <p className="text-xs text-gray-500">cost</p>
+                      </>
                     )}
+                    {/* `actualCost` was a second cost line on a table with ONE cost column.
+                        It never rendered, and had it ever been populated the card would have
+                        shown the same number twice under two labels. */}
                   </div>
                 </div>
               </div>
@@ -295,22 +336,41 @@ export const MaintenancePanel: FC = () => {
               Cost Summary
             </h3>
             <div className="space-y-3">
-              <div className="flex justify-between items-center p-3 bg-opsgrid-bg rounded-lg">
-                <span>Total YTD</span>
-                <span className="font-bold text-xl">${costs.totalYTD.toLocaleString()}</span>
-              </div>
-              <div className="flex justify-between items-center p-3 bg-opsgrid-bg rounded-lg">
-                <span>Monthly Average</span>
-                <span className="font-bold">${costs.monthlyAverage.toLocaleString()}</span>
-              </div>
-              <div className="flex justify-between items-center p-3 bg-opsgrid-bg rounded-lg">
-                <span>Per Vehicle</span>
-                <span className="font-bold">${costs.costPerVehicle.toLocaleString()}</span>
-              </div>
-              <div className="flex justify-between items-center p-3 bg-yellow-50 rounded-lg">
-                <span>Upcoming (Est.)</span>
-                <span className="font-bold text-yellow-600">${costs.upcomingEstimated.toLocaleString()}</span>
-              </div>
+              {/* Only the figures the server actually sent. "Per Vehicle $0" and
+                  "Upcoming (Est.) $0" were hardcoded zeros, and the second sat in a
+                  highlighted box where it read as "nothing is coming up" rather than
+                  "nobody calculated this". A row that is absent prompts a question; a row
+                  reading $0 answers one. */}
+              {costs.ytdTotal != null && (
+                <div className="flex justify-between items-center p-3 bg-opsgrid-bg rounded-lg">
+                  <span>Total YTD</span>
+                  <span className="font-bold text-xl">${costs.ytdTotal.toLocaleString()}</span>
+                </div>
+              )}
+              {costs.monthlyAverage != null && (
+                <div className="flex justify-between items-center p-3 bg-opsgrid-bg rounded-lg">
+                  <span>Monthly Average</span>
+                  <span className="font-bold">${costs.monthlyAverage.toLocaleString()}</span>
+                </div>
+              )}
+              {costs.costPerVehicle != null && (
+                <div className="flex justify-between items-center p-3 bg-opsgrid-bg rounded-lg">
+                  <span>Per Vehicle</span>
+                  <span className="font-bold">${costs.costPerVehicle.toLocaleString()}</span>
+                </div>
+              )}
+              {costs.upcomingEstimated != null && (
+                <div className="flex justify-between items-center p-3 bg-yellow-50 rounded-lg">
+                  <span>Upcoming (Est.)</span>
+                  <span className="font-bold text-yellow-600">${costs.upcomingEstimated.toLocaleString()}</span>
+                </div>
+              )}
+              {costs.monthlyAverage == null && costs.costPerVehicle == null && (
+                <p className="text-xs text-opsgrid-text-secondary px-3">
+                  Monthly average, per-vehicle and upcoming figures are not reported by
+                  this deployment.
+                </p>
+              )}
             </div>
           </div>
 
@@ -328,12 +388,16 @@ export const MaintenancePanel: FC = () => {
                     <div className="h-2 bg-gray-200 rounded-full overflow-hidden">
                       <div 
                         className="h-full bg-opsgrid-primary rounded-full"
-                        style={{ width: `${(amount / costs.totalYTD) * 100}%` }}
+                        style={{ width: `${share(amount, costs.ytdTotal)}%` }}
                       />
                     </div>
                   </div>
+                  {/* `amount / 0` is Infinity and `NaN.toFixed(1)` prints the string
+                      "NaN" — both were reachable whenever the YTD total was zero or
+                      absent, which is exactly when a category breakdown is least
+                      meaningful. */}
                   <span className="text-xs text-gray-500 w-12 text-right">
-                    {((amount / costs.totalYTD) * 100).toFixed(1)}%
+                    {costs.ytdTotal ? `${share(amount, costs.ytdTotal).toFixed(1)}%` : '—'}
                   </span>
                 </div>
               ))}
@@ -357,7 +421,7 @@ export const MaintenancePanel: FC = () => {
                         ${month.cost.toLocaleString()}
                       </div>
                     </div>
-                    <span className="text-xs text-gray-500">{month.month.split(' ')[0]}</span>
+                    <span className="text-xs text-gray-500">{monthLabel(month.month)}</span>
                   </div>
                 );
               })}
@@ -386,7 +450,12 @@ const CreateScheduleModal: FC<{ onClose: () => void; onCreated: () => void }> = 
   const [description, setDescription] = useState('');
   const [scheduledDate, setScheduledDate] = useState('');
   const [priority, setPriority] = useState<MaintenanceSchedule['priority']>('normal');
-  const [currentMileage, setCurrentMileage] = useState('');
+  // WAS `currentMileage`, collected under a "Current Mileage" label and sent as a
+  // field `maintenance_schedules` does not have — so the handler dropped it in silence
+  // and the panel then displayed the DUE mileage back, which looked like it had saved.
+  // A schedule holds the odometer at which service falls due; that is what this asks for
+  // now, and it is stored.
+  const [dueMileage, setDueMileage] = useState('');
   const [busy, setBusy] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
 
@@ -403,12 +472,20 @@ const CreateScheduleModal: FC<{ onClose: () => void; onCreated: () => void }> = 
     setFormError(null);
     try {
       await maintenanceApi.createSchedule({
+        // Both names, from one input. `_schedule_out` emits vehicleId and vehicleNumber
+        // from the same column, and create used to demand `vehicleId` specifically — so
+        // this form, which only ever knew the number it was shown, failed every time
+        // with "vehicleId is required". The backend accepts either now; sending both
+        // means neither end has to guess.
+        vehicleId: vehicleNumber.trim(),
         vehicleNumber: vehicleNumber.trim(),
         serviceType,
         description: description.trim() || serviceType?.replace(/_/g, ' '),
         scheduledDate: new Date(scheduledDate).toISOString(),
         priority,
-        currentMileage: Number(currentMileage) || 0,
+        // Only when given. `Number('') || 0` sent a real zero for a blank field, which
+        // the schema would now store as "service is due at zero miles".
+        ...(dueMileage.trim() ? { dueMileage: Number(dueMileage) } : {}),
       } as Partial<MaintenanceSchedule>);
       onCreated();
     } catch (e: any) {
@@ -426,15 +503,17 @@ const CreateScheduleModal: FC<{ onClose: () => void; onCreated: () => void }> = 
           <button onClick={onClose} aria-label="Close" className="text-gray-400 hover:text-gray-600">✕</button>
         </div>
         <div>
-          <label className="block text-sm text-gray-600 mb-1">Vehicle Number</label>
+          <label htmlFor="maintenancepanel-vehicle-number" className="block text-sm text-gray-600 mb-1">Vehicle Number</label>
           <input
+              id="maintenancepanel-vehicle-number"
             className="w-full px-3 py-2 bg-opsgrid-bg border border-opsgrid-border rounded-lg text-sm focus:outline-none"
             value={vehicleNumber} onChange={(e) => setVehicleNumber(e.target.value)} placeholder="TRK-104"
           />
         </div>
         <div>
-          <label className="block text-sm text-gray-600 mb-1">Service Type</label>
+          <label htmlFor="maintenancepanel-service-type" className="block text-sm text-gray-600 mb-1">Service Type</label>
           <select
+              id="maintenancepanel-service-type"
             className="w-full px-3 py-2 bg-opsgrid-bg border border-opsgrid-border rounded-lg text-sm focus:outline-none"
             value={serviceType} onChange={(e) => setServiceType(e.target.value as MaintenanceSchedule['serviceType'])}
           >
@@ -448,24 +527,27 @@ const CreateScheduleModal: FC<{ onClose: () => void; onCreated: () => void }> = 
           </select>
         </div>
         <div>
-          <label className="block text-sm text-gray-600 mb-1">Description</label>
+          <label htmlFor="maintenancepanel-description" className="block text-sm text-gray-600 mb-1">Description</label>
           <input
+              id="maintenancepanel-description"
             className="w-full px-3 py-2 bg-opsgrid-bg border border-opsgrid-border rounded-lg text-sm focus:outline-none"
             value={description} onChange={(e) => setDescription(e.target.value)} placeholder="Optional details"
           />
         </div>
         <div className="grid grid-cols-2 gap-3">
           <div>
-            <label className="block text-sm text-gray-600 mb-1">Scheduled Date</label>
+            <label htmlFor="maintenancepanel-scheduled-date" className="block text-sm text-gray-600 mb-1">Scheduled Date</label>
             <input
+              id="maintenancepanel-scheduled-date"
               type="date"
               className="w-full px-3 py-2 bg-opsgrid-bg border border-opsgrid-border rounded-lg text-sm focus:outline-none"
               value={scheduledDate} onChange={(e) => setScheduledDate(e.target.value)}
             />
           </div>
           <div>
-            <label className="block text-sm text-gray-600 mb-1">Priority</label>
+            <label htmlFor="maintenancepanel-priority" className="block text-sm text-gray-600 mb-1">Priority</label>
             <select
+              id="maintenancepanel-priority"
               className="w-full px-3 py-2 bg-opsgrid-bg border border-opsgrid-border rounded-lg text-sm focus:outline-none"
               value={priority} onChange={(e) => setPriority(e.target.value as MaintenanceSchedule['priority'])}
             >
@@ -477,11 +559,14 @@ const CreateScheduleModal: FC<{ onClose: () => void; onCreated: () => void }> = 
           </div>
         </div>
         <div>
-          <label className="block text-sm text-gray-600 mb-1">Current Mileage</label>
+          <label htmlFor="due-mileage" className="block text-sm text-gray-600 mb-1">
+            Due at mileage
+          </label>
           <input
+            id="due-mileage"
             type="number"
             className="w-full px-3 py-2 bg-opsgrid-bg border border-opsgrid-border rounded-lg text-sm focus:outline-none"
-            value={currentMileage} onChange={(e) => setCurrentMileage(e.target.value)} placeholder="0"
+            value={dueMileage} onChange={(e) => setDueMileage(e.target.value)} placeholder="Optional"
           />
         </div>
         {formError && <p className="text-sm text-status-alarm">{formError}</p>}

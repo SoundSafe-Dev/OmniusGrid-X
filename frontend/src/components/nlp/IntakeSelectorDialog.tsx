@@ -18,6 +18,9 @@ export const IntakeSelectorDialog: React.FC<IntakeSelectorDialogProps> = ({
 }) => {
   const [items, setItems] = useState<IntakeItem[]>([]);
   const [isLoading, setIsLoading] = useState(false);
+  // A failed fetch rendered "No items found", which is how the dialog says a user has
+  // nothing to select from.
+  const [error, setError] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<string>('all');
 
@@ -30,11 +33,13 @@ export const IntakeSelectorDialog: React.FC<IntakeSelectorDialogProps> = ({
 
   const loadIntakeItems = async () => {
     setIsLoading(true);
+    setError(null);
     try {
       const response = await nlpCorrelationApi.listIntakeItems(50, 0, statusFilter === 'all' ? undefined : statusFilter);
       setItems(response.items);
-    } catch (error) {
-      console.error('Error loading intake items:', error);
+    } catch (err) {
+      console.error('Error loading intake items:', err);
+      setError('Could not load intake items.');
     } finally {
       setIsLoading(false);
     }
@@ -113,6 +118,8 @@ export const IntakeSelectorDialog: React.FC<IntakeSelectorDialogProps> = ({
         <div className="flex-1 overflow-y-auto p-4">
           {isLoading ? (
             <div className="text-center text-opsgrid-text-secondary py-8">Loading...</div>
+          ) : error ? (
+            <div className="text-center text-status-alarm py-8">{error}</div>
           ) : filteredItems.length === 0 ? (
             <div className="text-center text-opsgrid-text-secondary py-8">
               No items found

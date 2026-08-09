@@ -4,25 +4,42 @@ import asyncio
 import json
 import os
 import re
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Dict, Any, Optional
 from uuid import UUID
 import structlog
 from aiokafka import AIOKafkaConsumer, AIOKafkaProducer
-from sqlalchemy import select, text, update
+from sqlalchemy import delete, or_, select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 import sys
 sys.path.insert(0, '/app')
 
 from app.core.config import settings
-from app.workers.health_server import start_health_server
+from app.workers.health_server import (
+    INGESTION_DEAD_LETTERED,
+    INGESTION_DEAD_LETTER_FAILED,
+    INGESTION_SIDE_EFFECT_FAILED,
+    start_health_server,
+)
 from app.core.datetime_utils import aware_utc
 from app.db.database import AsyncSessionLocal
-from app.db.models import Telemetry, PackMLState, Asset, Alarm
+from app.db.models import (
+    Alarm,
+    Asset,
+    AssetAgentCollector,
+    PackMLState,
+    Telemetry,
+)
 from app.services.data_shedding import data_shedder
+from app.services.fleet_targeting import semver_asset_values
 from app.services.websocket_manager import websocket_manager
 from app.services.oee_calculator import oee_calculator
+from app.services.alarm_rules import (
+    evaluate_metric,
+    load_rules_for_metrics,
+    make_breach_store,
+)
 
 structlog.configure(
     processors=[
@@ -68,6 +85,9 @@ class IngestionWorker:
             settings.AGENT_STATUS_TOPIC,
         )
         self.dlq_topic = settings.REDPANDA_INGESTION_DLQ_TOPIC
+        # Built on first use so constructing the worker needs no Redis connection
+        # (tests and the offline demo path construct it freely).
+        self._breach_store = None
         # Heartbeat for the liveness probe (see workers/health_server.py).
         # Telemetry is continuous, so a 5-minute gap means wedged, not idle.
         self._health = start_health_server(
@@ -143,7 +163,20 @@ class IngestionWorker:
         original payload plus enough provenance (topic/partition/offset) to
         replay it after the underlying bug is fixed.
         """
+        topic = getattr(msg, "topic", None) or "unknown"
         if self._producer is None:
+            # SAYS SO RATHER THAN RETURNING (FS-464). This branch is defensive — the
+            # producer is started before the consumer — but a bare `return` here discards
+            # an accepted message with no log, no counter and no DLQ record, which is the
+            # only truly silent loss in this worker.
+            INGESTION_DEAD_LETTER_FAILED.labels(source_topic=topic).inc()
+            logger.error(
+                "ingestion_dead_letter_unavailable",
+                source_topic=topic,
+                source_offset=getattr(msg, "offset", None),
+                error=str(error),
+                hint="no DLQ producer; the message is lost and its offset will advance",
+            )
             return
         try:
             envelope = {
@@ -160,6 +193,7 @@ class IngestionWorker:
             }
             key = (msg.key if isinstance(msg.key, (bytes, bytearray)) else None)
             await self._producer.send_and_wait(self.dlq_topic, envelope, key=key)
+            INGESTION_DEAD_LETTERED.labels(source_topic=msg.topic).inc()
             logger.warning(
                 "ingestion_dead_lettered",
                 source_topic=msg.topic,
@@ -167,6 +201,7 @@ class IngestionWorker:
                 error=str(error),
             )
         except Exception as dlq_error:  # noqa: BLE001 — DLQ failure must not crash the worker
+            INGESTION_DEAD_LETTER_FAILED.labels(source_topic=topic).inc()
             logger.error(
                 "ingestion_dead_letter_failed",
                 source_topic=getattr(msg, "topic", None),
@@ -240,6 +275,9 @@ class IngestionWorker:
         # Extract telemetry fields from payload
         telemetry_data = payload.get('telemetry', payload)
         
+        # Numeric readings actually written this message, for rule evaluation below.
+        evaluated: list[tuple[str, float]] = []
+
         if isinstance(telemetry_data, dict):
             for metric_name, value in telemetry_data.items():
                 if value is not None:
@@ -257,17 +295,30 @@ class IngestionWorker:
                         )
                         continue
                     
+                    numeric = float(value) if isinstance(value, (int, float)) else 0
                     telemetry = Telemetry(
                         time=timestamp,
                         asset_id=asset_uuid,
                         metric_name=metric_name,
-                        value=float(value) if isinstance(value, (int, float)) else 0,
+                        value=numeric,
                         unit=self._infer_unit(metric_name),
                         packml_state=packml_state,
                         meta_data=payload,
                         sequence_num=data.get('sequence_num', 0)
                     )
                     session.add(telemetry)
+                    # Only genuinely numeric readings are worth thresholding; a
+                    # non-numeric value coerced to 0 above would otherwise trip
+                    # every "< threshold" rule for free.
+                    if isinstance(value, (int, float)):
+                        evaluated.append((metric_name, numeric))
+
+        # Server-side alarm rules (FS-219). Shedded metrics are deliberately NOT
+        # evaluated: if the system is dropping the reading it must not raise an
+        # alarm about a value it chose not to record.
+        await self._evaluate_alarm_rules(
+            session, asset_uuid, organization_id, evaluated
+        )
         
         # Update asset last_seen
         await session.execute(
@@ -303,6 +354,7 @@ class IngestionWorker:
         except Exception as e:
             # Don't fail ingestion if WebSocket fails
             logger.warning("websocket_publish_failed", error=str(e), asset_id=asset_id)
+            INGESTION_SIDE_EFFECT_FAILED.labels(side_effect="websocket_telemetry_publish").inc()
         
         # Update OEE part counters
         try:
@@ -313,6 +365,7 @@ class IngestionWorker:
             )
         except Exception as e:
             logger.warning("oee_telemetry_tracking_failed", error=str(e), asset_id=asset_id)
+            INGESTION_SIDE_EFFECT_FAILED.labels(side_effect="oee_telemetry_tracking").inc()
 
     async def _process_agent_heartbeat(self, session: AsyncSession, data: Dict):
         """Update asset fleet-version fields from an edge-agent heartbeat."""
@@ -321,49 +374,275 @@ class IngestionWorker:
             return
 
         organization_id = data.get('organization_id')
-        raw_asset_ids = data.get('asset_ids') or []
-        if not organization_id or not raw_asset_ids:
+        raw_asset_ids = data.get('asset_ids')
+        if not organization_id or not isinstance(raw_asset_ids, list):
             logger.warning(
                 "invalid_agent_heartbeat",
                 organization_id=organization_id,
-                asset_count=len(raw_asset_ids),
+                asset_count=len(raw_asset_ids) if isinstance(raw_asset_ids, list) else None,
             )
             return
 
         try:
             org_uuid = UUID(str(organization_id))
-            asset_ids = [UUID(str(asset_id)) for asset_id in raw_asset_ids]
+            if len(raw_asset_ids) > 5000:
+                raise ValueError("agent heartbeat contains too many assets")
+            asset_ids = list(dict.fromkeys(UUID(str(asset_id)) for asset_id in raw_asset_ids))
         except (TypeError, ValueError) as exc:
             logger.warning("invalid_agent_heartbeat_uuid", error=str(exc))
             return
 
-        timestamp_str = data.get('timestamp')
-        if timestamp_str:
-            timestamp = datetime.fromisoformat(timestamp_str.replace('Z', '+00:00'))
-        else:
-            timestamp = datetime.now(timezone.utc)
-
-        result = await session.execute(
-            update(Asset)
-            .where(Asset.organization_id == org_uuid, Asset.id.in_(asset_ids))
-            .values(
-                agent_id=data.get('agent_id'),
-                agent_version=data.get('agent_version'),
-                agent_config_hash=data.get('config_hash'),
-                agent_build_id=data.get('build_id'),
-                agent_last_heartbeat=timestamp,
-                last_seen=timestamp,
-            )
+        # BIND THE TENANT BEFORE THE UPDATE BELOW.
+        #
+        # `assets` is FORCE ROW LEVEL SECURITY. _process_message sets
+        # app.current_org_id for the telemetry/state/alarm branch, but the agent-status
+        # branch returns before reaching it, so this path ran with no GUC at all — and
+        # RLS filters a WRITE silently rather than raising. The UPDATE matched zero rows
+        # on every heartbeat, `result.rowcount` was 0, and the fleet-version fields it
+        # exists to maintain were never written. Verified against a real database:
+        # agent_version stayed NULL after a heartbeat naming the asset directly.
+        #
+        # Set here rather than in the caller so the binding lives next to the
+        # organization_id it is derived from, and holds for any future caller.
+        # Transaction-local: it must not ride the connection back into the pool.
+        await session.execute(
+            text("SELECT set_config('app.current_org_id', :org_id, true)"),
+            {"org_id": str(org_uuid)},
         )
+
+        timestamp_str = data.get('timestamp')
+        received_at = datetime.now(timezone.utc)
+        try:
+            if timestamp_str:
+                reported_at = datetime.fromisoformat(timestamp_str.replace('Z', '+00:00'))
+                if reported_at.tzinfo is None:
+                    reported_at = reported_at.replace(tzinfo=timezone.utc)
+            else:
+                reported_at = received_at
+        except (AttributeError, TypeError, ValueError) as exc:
+            logger.warning("invalid_agent_heartbeat_timestamp", error=str(exc))
+            return
+        if reported_at > received_at + timedelta(minutes=5):
+            reported_at = received_at
+        agent_id = data.get('agent_id')
+        if not isinstance(agent_id, str) or not agent_id.strip() or len(agent_id) > 255:
+            logger.warning("invalid_agent_heartbeat_agent_id")
+            return
+        agent_id = agent_id.strip()
+
+        # Agent status is consumed outside an HTTP tenant dependency. Set the same
+        # transaction-local tenant context explicitly so FORCE RLS remains usable.
+        await session.execute(
+            text("SELECT set_config('app.current_org_id', :org_id, true)"),
+            {"org_id": str(org_uuid)},
+        )
+
+        stale_candidates = list(
+            (
+                await session.execute(
+                    select(Asset.id).where(
+                        Asset.organization_id == org_uuid,
+                        Asset.agent_id == agent_id,
+                        Asset.id.not_in(asset_ids),
+                        or_(
+                            Asset.agent_reported_at.is_(None),
+                            Asset.agent_reported_at < reported_at,
+                        ),
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+        stale_asset_ids: list[UUID] = []
+        if stale_candidates:
+            stale_asset_ids = list(
+                (
+                    await session.execute(
+                        update(Asset)
+                        .where(
+                            Asset.organization_id == org_uuid,
+                            Asset.id.in_(stale_candidates),
+                            Asset.agent_id == agent_id,
+                            or_(
+                                Asset.agent_reported_at.is_(None),
+                                Asset.agent_reported_at < reported_at,
+                            ),
+                        )
+                        .values(
+                            agent_id=None,
+                            agent_version=None,
+                            agent_config_hash=None,
+                            agent_build_id=None,
+                            agent_last_heartbeat=None,
+                            agent_reported_at=reported_at,
+                            **semver_asset_values(None),
+                        )
+                        .returning(Asset.id)
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            if stale_asset_ids:
+                await session.execute(
+                    delete(AssetAgentCollector).where(
+                        AssetAgentCollector.organization_id == org_uuid,
+                        AssetAgentCollector.asset_id.in_(stale_asset_ids),
+                    )
+                )
+
+        raw_version = data.get('agent_version')
+        if raw_version is not None and (
+            not isinstance(raw_version, str) or len(raw_version) > 100
+        ):
+            raw_version = None
+        version_values = semver_asset_values(raw_version)
+        config_hash = data.get('config_hash')
+        if config_hash is not None and (
+            not isinstance(config_hash, str) or len(config_hash) > 64
+        ):
+            config_hash = None
+        build_id = data.get('build_id')
+        if build_id is not None and (
+            not isinstance(build_id, str) or len(build_id) > 255
+        ):
+            build_id = None
+        updated_ids = list(
+            (
+                await session.execute(
+                    update(Asset)
+                    .where(
+                        Asset.organization_id == org_uuid,
+                        Asset.id.in_(asset_ids),
+                        or_(
+                            Asset.agent_reported_at.is_(None),
+                            Asset.agent_reported_at < reported_at,
+                        ),
+                    )
+                    .values(
+                        agent_id=agent_id,
+                        agent_version=raw_version,
+                        agent_config_hash=config_hash,
+                        agent_build_id=build_id,
+                        agent_last_heartbeat=received_at,
+                        agent_reported_at=reported_at,
+                        last_seen=received_at,
+                        **version_values,
+                    )
+                    .returning(Asset.id)
+                )
+            )
+            .scalars()
+            .all()
+        )
+
+        if updated_ids:
+            await session.execute(
+                delete(AssetAgentCollector).where(
+                    AssetAgentCollector.organization_id == org_uuid,
+                    AssetAgentCollector.asset_id.in_(updated_ids),
+                )
+            )
+
+        collector_status = data.get('collector_status') or {}
+        collectors = collector_status.get('collectors') if isinstance(collector_status, dict) else {}
+        collectors = collectors if isinstance(collectors, dict) else {}
+        # UUIDString-backed asset IDs are returned as strings on every dialect,
+        # while heartbeat payload validation produces UUID objects. Compare the
+        # canonical text form so collector facts are not silently discarded.
+        updated_id_set = {str(asset_id) for asset_id in updated_ids}
+        for raw_asset_id, collector in collectors.items():
+            try:
+                collector_asset_id = str(UUID(str(raw_asset_id)))
+            except (TypeError, ValueError):
+                continue
+            if collector_asset_id not in updated_id_set or not isinstance(collector, dict):
+                continue
+            collector_type = collector.get('type')
+            if (
+                not isinstance(collector_type, str)
+                or not collector_type.strip()
+                or len(collector_type.strip()) > 100
+            ):
+                continue
+            session.add(
+                AssetAgentCollector(
+                    organization_id=org_uuid,
+                    asset_id=collector_asset_id,
+                    collector_type=collector_type.strip(),
+                    enabled=bool(collector.get('enabled', True)),
+                    running=bool(collector.get('running', False)),
+                    heartbeat_at=received_at,
+                )
+            )
 
         logger.info(
             "agent_heartbeat_ingested",
-            agent_id=data.get('agent_id'),
+            agent_id=agent_id,
             organization_id=str(org_uuid),
             asset_count=len(asset_ids),
-            updated_assets=result.rowcount,
+            updated_assets=len(updated_ids),
+            retired_assets=len(stale_asset_ids),
         )
     
+    async def _evaluate_alarm_rules(
+        self,
+        session: AsyncSession,
+        asset_uuid,
+        organization_id: str,
+        readings: list,
+    ) -> None:
+        """Evaluate server-side alarm rules for this message's readings (FS-219).
+
+        Cost discipline matters here — this is per telemetry message. The common
+        case is an organization with no rules for these metrics, and that costs
+        exactly ONE indexed query against
+        (organization_id, metric_name, is_enabled) and no asset fetch. The asset
+        row is only loaded when there is at least one candidate rule, because
+        targeting needs its asset_type_id/workcell_id.
+
+        Never raises. A bug in rule evaluation must not fail the telemetry write
+        or dead-letter a message whose data was perfectly good — the reading is
+        the durable fact, the alarm is derived from it.
+        """
+        if not readings:
+            return
+        try:
+            metric_names = {name for name, _ in readings}
+            rules = await load_rules_for_metrics(session, organization_id, metric_names)
+            if not rules:
+                return
+
+            asset = (
+                await session.execute(select(Asset).where(Asset.id == asset_uuid))
+            ).scalars().first()
+            if asset is None:
+                return
+
+            if self._breach_store is None:
+                self._breach_store = make_breach_store()
+
+            for metric_name, value in readings:
+                await evaluate_metric(
+                    session,
+                    self._breach_store,
+                    organization_id=organization_id,
+                    asset=asset,
+                    metric_name=metric_name,
+                    value=value,
+                    rules=rules,
+                )
+        except Exception as exc:  # noqa: BLE001 — see docstring
+            logger.error(
+                "alarm_rule_evaluation_failed",
+                asset_id=str(asset_uuid),
+                error=str(exc),
+            )
+            INGESTION_SIDE_EFFECT_FAILED.labels(
+                side_effect="alarm_rule_evaluation"
+            ).inc()
+
     async def _process_state(self, session: AsyncSession, asset_id: str, data: Dict, organization_id: str):
         """Process PackML state transitions"""
         new_state = data.get('packml_state')
@@ -444,6 +723,7 @@ class IngestionWorker:
             )
         except Exception as e:
             logger.warning("websocket_state_publish_failed", error=str(e), asset_id=asset_id)
+            INGESTION_SIDE_EFFECT_FAILED.labels(side_effect="websocket_state_publish").inc()
         
         # Update OEE tracking
         try:
@@ -456,11 +736,16 @@ class IngestionWorker:
             )
         except Exception as e:
             logger.warning("oee_state_tracking_failed", error=str(e), asset_id=asset_id)
+            INGESTION_SIDE_EFFECT_FAILED.labels(side_effect="oee_state_tracking").inc()
     
     async def _process_alarm(self, session: AsyncSession, asset_id: str, data: Dict, organization_id: str):
         """Process alarm events"""
         alarm = Alarm(
             asset_id=asset_id,
+            # Required since migration 046 (FS-217) and checked by the RLS
+            # WITH CHECK against app.current_org_id, which _process_message set
+            # on this session before dispatching here.
+            organization_id=organization_id,
             alarm_code=data.get('alarm_code', 'UNKNOWN'),
             severity=data.get('severity', 'medium'),
             message=data.get('message', 'Unknown alarm'),
@@ -492,6 +777,9 @@ class IngestionWorker:
             )
         except Exception as e:
             logger.warning("websocket_alarm_publish_failed", error=str(e), asset_id=asset_id)
+            INGESTION_SIDE_EFFECT_FAILED.labels(
+                side_effect="websocket_alarm_publish"
+            ).inc()
     
     def _infer_unit(self, metric_name: str) -> Optional[str]:
         """Infer unit from metric name"""

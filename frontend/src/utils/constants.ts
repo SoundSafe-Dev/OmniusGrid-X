@@ -6,7 +6,13 @@ export const STATUS_COLORS: Record<AlarmSeverity | PackMLState | 'default', stri
   high: 'bg-status-warning text-opsgrid-bg',
   medium: 'bg-packml-held text-opsgrid-bg',
   low: 'bg-opsgrid-text-secondary text-opsgrid-bg',
-  info: 'bg-opsgrid-primary text-white',
+  // `text-opsgrid-bg`, not `text-white`. `bg-opsgrid-primary` is `var(--color-primary)`,
+  // which is #fafafa in the DEFAULT dark theme — so white-on-white rendered every
+  // `info` badge in the app as a blank pill: the ERP type column, the admin user
+  // roles, the NLP domain/priority chips, the fleet vehicle count. Legible in light
+  // theme only, which is why it survived. Every other entry here already pairs a
+  // theme-variable background with `text-opsgrid-bg` for exactly this reason.
+  info: 'bg-opsgrid-primary text-opsgrid-bg',
 
   // PackML states
   Idle: 'bg-packml-idle text-white',

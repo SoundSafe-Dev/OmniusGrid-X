@@ -93,6 +93,9 @@ services:
       JWT_SECRET_KEY: ${JWT_SECRET_KEY:-dev_secret_key_change_in_production}
       JWT_ALGORITHM: HS256
       JWT_ACCESS_TOKEN_EXPIRE_MINUTES: 30
+      ALLOW_OPEN_REGISTRATION: "false"
+      USER_INVITE_PUBLIC_BASE_URL: ${USER_INVITE_PUBLIC_BASE_URL:-http://localhost:3000}
+      USER_INVITE_EXPIRE_HOURS: ${USER_INVITE_EXPIRE_HOURS:-72}
       SIGNED_URL_SECRET_KEY: ${SIGNED_URL_SECRET_KEY:-dev_signed_link_secret_change_in_production}
       SIGNED_URL_ALGORITHM: HS256
       SIGNED_URL_ISSUER: omniusgrid-signed-links
@@ -104,7 +107,20 @@ services:
       # NOT also run them (avoids two pollers racing the same queues).
       SCHEDULERS_IN_API: ${SCHEDULERS_IN_API:-false}
       REDIS_URL: redis://redis:6379/0
+      # Tracing. The otel-collector and jaeger services below sit behind the
+      # `tracing` profile, but the backend never set OTEL_ENABLED — so `make
+      # tracing` brought up a collector and a Jaeger UI that received nothing,
+      # with no indication of why. Off by default because the profile is opt-in;
+      # the make target sets it to true.
+      OTEL_ENABLED: ${OTEL_ENABLED:-false}
+      OTEL_SERVICE_NAME: omniusgrid-backend
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-http://otel-collector:4317}
       EXPORT_STORAGE_PATH: /var/lib/omniusgrid/exports
+      OTA_STORAGE_PATH: /var/lib/omniusgrid/ota
+      OTA_SIGNING_PRIVATE_KEY_PATH: ${OTA_SIGNING_PRIVATE_KEY_PATH:-}
+      OTA_SIGNING_PUBLIC_KEY: ${OTA_SIGNING_PUBLIC_KEY:-}
+      OTA_AGENT_ARTIFACT_MAX_BYTES: ${OTA_AGENT_ARTIFACT_MAX_BYTES:-67108864}
+      OTA_AGENT_ARTIFACT_MAX_UNCOMPRESSED_BYTES: ${OTA_AGENT_ARTIFACT_MAX_UNCOMPRESSED_BYTES:-268435456}
       EXPORT_PUBLIC_BASE_URL: http://localhost:8002
       SMTP_HOST: ${SMTP_HOST:-}
       SMTP_PORT: ${SMTP_PORT:-587}
@@ -145,6 +161,7 @@ services:
     volumes:
       - ./backend:/app
       - export-data:/var/lib/omniusgrid/exports
+      - ota-data:/var/lib/omniusgrid/ota
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -328,6 +345,7 @@ services:
       OTA_ROLLOUT_DISPATCH_ENABLED: ${OTA_ROLLOUT_DISPATCH_ENABLED:-true}
       OTA_ROLLOUT_DISPATCH_INTERVAL_SECONDS: ${OTA_ROLLOUT_DISPATCH_INTERVAL_SECONDS:-30}
       OTA_ROLLOUT_DEFAULT_COMMAND_TIMEOUT_SECONDS: ${OTA_ROLLOUT_DEFAULT_COMMAND_TIMEOUT_SECONDS:-120}
+      OTA_AGENT_UPDATE_COMMAND_TIMEOUT_SECONDS: ${OTA_AGENT_UPDATE_COMMAND_TIMEOUT_SECONDS:-600}
       OTA_ROLLOUT_DEFAULT_HEALTH_TIMEOUT_SECONDS: ${OTA_ROLLOUT_DEFAULT_HEALTH_TIMEOUT_SECONDS:-300}
       OTA_ROLLOUT_DEFAULT_MIN_SUCCESS_RATIO: ${OTA_ROLLOUT_DEFAULT_MIN_SUCCESS_RATIO:-1.0}
       WORKER_HEALTH_PORT: "9109"
@@ -404,7 +422,12 @@ services:
     command:
       - '--config.file=/etc/prometheus/prometheus.yml'
       - '--storage.tsdb.path=/prometheus'
-      - '--alertmanager.url=http://alertmanager:9093'
+      # FS-516. `--alertmanager.url` was REMOVED in Prometheus 2.0. An unknown flag is
+      # fatal at startup, so the compose Prometheus exited immediately — which means
+      # nobody running the stack locally has ever had metrics, alerts or the SLO rules,
+      # and the four gates that assert those rules are well-formed were checking a file
+      # no running Prometheus had ever loaded. It was also redundant:
+      # infra/prometheus/prometheus.yml:8-12 configures the alertmanager the current way.
     networks:
       - omniusgrid-network
 
@@ -556,13 +579,30 @@ services:
       REDPANDA_URL: redpanda:29092
       ORGANIZATION_ID: dev-org
       AGENT_ID: simulator-001
+      AGENT_STATUS_TOPIC: ${AGENT_STATUS_TOPIC:-opsgrid.agent-status}
+      REDPANDA_COMMAND_TOPIC: ${REDPANDA_COMMAND_TOPIC:-opsgrid.commands}
+      REDPANDA_COMMAND_ACK_TOPIC: ${REDPANDA_COMMAND_ACK_TOPIC:-opsgrid.commands.acks}
+      REDPANDA_COMMAND_DLQ_TOPIC: ${REDPANDA_COMMAND_DLQ_TOPIC:-opsgrid.commands.dlq}
+      OTA_SIGNING_PUBLIC_KEY: ${OTA_SIGNING_PUBLIC_KEY:-}
+      OPSGRID_RUNTIME_ROOT: /var/lib/opsgrid-agent/runtime
+      OPSGRID_BOOT_READY_TIMEOUT_SECONDS: ${OPSGRID_BOOT_READY_TIMEOUT_SECONDS:-90}
       BUFFER_RETENTION_HOURS: 24
       METRICS_PORT: 9108
+      # FS-518. Without COLLECTORS the agent logs `no_collectors_configured` and produces
+      # no telemetry at all — so the service named "simulator" simulated nothing, and the
+      # scrape job pointed at it (FS-517) reported an agent with no readings as healthy.
+      #
+      # `simulate` is the explicit source both synthetic-capable collectors understand, so
+      # this stays honest under EDGE_REQUIRE_EXPLICIT_SOURCES (FS-508): the values are
+      # stamped synthetic on the way out rather than passing as hardware.
+      COLLECTORS: >-
+        [{"asset_id": "sim-press-001", "collector_type": "audio", "enabled": true,
+          "config": {"source": "simulate", "asset_id": "sim-press-001",
+                     "sample_rate": 16000, "frame_seconds": 1.0, "poll_interval": 10}}]
     ports:
       - "9108:9108"   # Prometheus /metrics
     volumes:
       - edge-agent-data:/var/lib/opsgrid-agent
-      - ./edge-agent:/app
     depends_on:
       redpanda:
         condition: service_healthy
@@ -609,6 +649,7 @@ volumes:
   timescaledb-data:
   redis-data:
   export-data:
+  ota-data:
   edge-agent-data:
   prometheus-data:
   alertmanager-data:

@@ -65,12 +65,17 @@ export const nlpCorrelationApi = {
 
   // Chat interface
   async chat(message: string, conversationHistory?: ChatMessage[]): Promise<ChatMessage> {
-    const response = await api.post(`/api/v1/nlp/correlation/chat`, null, {
-      params: {
-        message,
-        conversation_history: conversationHistory
-      }
-    });
+    // `conversation_history` is a BODY parameter, not a query parameter. The handler
+    // declares it `Optional[List[Dict[str, str]]]`, and FastAPI reads complex types
+    // from the body — so sending it in `params` with a `null` body meant the server
+    // received `None` every time. The endpoint's docstring promises it "maintains
+    // conversation context for multi-turn queries"; it never received any context to
+    // maintain. `message` genuinely is a query parameter and stays there.
+    const response = await api.post(
+      `/api/v1/nlp/correlation/chat`,
+      conversationHistory ?? null,
+      { params: { message } }
+    );
     return response.data;
   },
 

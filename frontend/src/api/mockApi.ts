@@ -21,7 +21,7 @@ const mockAssets: Asset[] = [
     serialNumber: 'BLX1001',
     currentPackmlState: 'Execute',
     connectionConfig: { protocol: 'MQTT', endpoint: '192.168.1.100' },
-    isInMaintenance: false,
+    maintenanceMode: false,
     isActive: true,
     lastSeen: new Date().toISOString(),
     createdAt: new Date().toISOString(),
@@ -38,7 +38,7 @@ const mockAssets: Asset[] = [
     serialNumber: 'BLX1002',
     currentPackmlState: 'Idle',
     connectionConfig: { protocol: 'MQTT', endpoint: '192.168.1.101' },
-    isInMaintenance: false,
+    maintenanceMode: false,
     isActive: true,
     lastSeen: new Date().toISOString(),
     createdAt: new Date().toISOString(),
@@ -55,7 +55,7 @@ const mockAssets: Asset[] = [
     serialNumber: 'QX3001',
     currentPackmlState: 'Held',
     connectionConfig: { protocol: 'ScreenScrape', endpoint: '192.168.1.102' },
-    isInMaintenance: false,
+    maintenanceMode: false,
     isActive: true,
     lastSeen: new Date().toISOString(),
     createdAt: new Date().toISOString(),
@@ -72,7 +72,7 @@ const mockAssets: Asset[] = [
     serialNumber: 'SCF2001',
     currentPackmlState: 'Execute',
     connectionConfig: { protocol: 'OPC-UA', endpoint: 'opc.tcp://192.168.1.200' },
-    isInMaintenance: false,
+    maintenanceMode: false,
     isActive: true,
     lastSeen: new Date().toISOString(),
     createdAt: new Date().toISOString(),
@@ -89,7 +89,7 @@ const mockAssets: Asset[] = [
     serialNumber: 'HAAS001',
     currentPackmlState: 'Idle',
     connectionConfig: { protocol: 'MTConnect', endpoint: '192.168.1.150' },
-    isInMaintenance: false,
+    maintenanceMode: false,
     isActive: true,
     lastSeen: new Date().toISOString(),
     createdAt: new Date().toISOString(),
@@ -109,7 +109,7 @@ const mockAssets: Asset[] = [
     connectionConfig: { protocol: 'edge-audio', endpoint: 'edge-agent:audio0' },
     sensorClass: 'audio',
     mediaConfig: { sample_rate: 16000, channels: 1 },
-    isInMaintenance: false,
+    maintenanceMode: false,
     isActive: true,
     lastSeen: new Date().toISOString(),
     createdAt: new Date().toISOString(),
@@ -128,7 +128,7 @@ const mockAssets: Asset[] = [
     connectionConfig: { protocol: 'mjpeg', endpoint: '192.168.1.203' },
     sensorClass: 'video',
     mediaConfig: { stream_url: 'http://192.168.1.203/mjpeg', snapshot_interval: 30 },
-    isInMaintenance: false,
+    maintenanceMode: false,
     isActive: true,
     lastSeen: new Date().toISOString(),
     createdAt: new Date().toISOString(),
@@ -146,7 +146,7 @@ const mockAssets: Asset[] = [
     currentPackmlState: 'Execute',
     connectionConfig: { protocol: 'io-link', endpoint: '192.168.1.150' },
     sensorClass: 'machinery',
-    isInMaintenance: false,
+    maintenanceMode: false,
     isActive: true,
     lastSeen: new Date().toISOString(),
     createdAt: new Date().toISOString(),
@@ -166,8 +166,6 @@ const mockAlarms: Alarm[] = [
     isActive: true,
     isAcknowledged: false,
     occurredAt: new Date(Date.now() - 3600000).toISOString(),
-    createdAt: new Date(Date.now() - 3600000).toISOString(),
-    updatedAt: new Date(Date.now() - 3600000).toISOString(),
   },
   {
     id: 'alarm-2',
@@ -183,8 +181,6 @@ const mockAlarms: Alarm[] = [
     acknowledgedAt: new Date(Date.now() - 1800000).toISOString(),
     acknowledgedComment: 'Replenished filament',
     occurredAt: new Date(Date.now() - 7200000).toISOString(),
-    createdAt: new Date(Date.now() - 7200000).toISOString(),
-    updatedAt: new Date(Date.now() - 1800000).toISOString(),
   },
   {
     id: 'alarm-3',
@@ -197,8 +193,6 @@ const mockAlarms: Alarm[] = [
     isActive: true,
     isAcknowledged: false,
     occurredAt: new Date(Date.now() - 10800000).toISOString(),
-    createdAt: new Date(Date.now() - 10800000).toISOString(),
-    updatedAt: new Date(Date.now() - 10800000).toISOString(),
   },
   {
     id: 'alarm-4',
@@ -215,8 +209,6 @@ const mockAlarms: Alarm[] = [
     acknowledgedComment: 'Recalibrated bed manually',
     occurredAt: new Date(Date.now() - 90000000).toISOString(),
     clearedAt: new Date(Date.now() - 85000000).toISOString(),
-    createdAt: new Date(Date.now() - 90000000).toISOString(),
-    updatedAt: new Date(Date.now() - 85000000).toISOString(),
   },
 ];
 
@@ -228,7 +220,7 @@ const mockUsers: User[] = [
     role: 'admin',
     organizationId: 'org-1',
     isActive: true,
-    lastLoginAt: new Date().toISOString(),
+    lastLogin: new Date().toISOString(),
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
   },
@@ -239,7 +231,7 @@ const mockUsers: User[] = [
     role: 'operator',
     organizationId: 'org-1',
     isActive: true,
-    lastLoginAt: new Date(Date.now() - 86400000).toISOString(),
+    lastLogin: new Date(Date.now() - 86400000).toISOString(),
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
   },
@@ -286,61 +278,48 @@ const mockOrganizations: Organization[] = [
   },
 ];
 
+// MIRRORS THE WIRE, not a richer idea of it (FS-439). This carried `description`,
+// `capabilities` and `updatedAt` on every entry; `asset_types` has none of those columns
+// and `AssetTypeResponse` matches its table exactly. So development showed asset types with
+// descriptions and capability lists, and production showed neither — and the TS type agreed
+// with the mock, so nothing anywhere disagreed with itself until the type was corrected.
 const mockAssetTypes: AssetType[] = [
   {
     id: 'printer',
     name: '3D Printer',
     category: 'additive_manufacturing',
-    description: 'FDM 3D printers (temperature, progress telemetry)',
-    capabilities: ['start', 'stop', 'pause', 'resume'],
     createdAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString(),
   },
   {
     id: 'conveyor',
     name: 'Conveyor Belt',
     category: 'material_handling',
-    description: 'Belt conveyors (speed, load telemetry)',
-    capabilities: ['start', 'stop', 'set_speed'],
     createdAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString(),
   },
   {
     id: 'cnc',
     name: 'CNC Machine',
     category: 'subtractive_manufacturing',
-    description: 'CNC mills (spindle RPM, feed rate telemetry)',
-    capabilities: ['start', 'stop', 'pause', 'home'],
     createdAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString(),
   },
   // Sensor taxonomy demo types (migration 024).
   {
     id: 'audio_sensor',
     name: 'Acoustic Sensor',
     category: 'acoustic_monitoring',
-    description: 'Audio feature telemetry (RMS, peak frequency, band energies)',
-    capabilities: ['audio_rms', 'audio_peak_hz', 'fft_bands'],
     createdAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString(),
   },
   {
     id: 'video_camera',
     name: 'Video Camera',
     category: 'visual_monitoring',
-    description: 'Frame metrics (brightness, motion score) + live feed',
-    capabilities: ['mjpeg_stream', 'motion_score', 'snapshots'],
     createdAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString(),
   },
   {
     id: 'vibration_sensor',
     name: 'Vibration Sensor',
     category: 'condition_monitoring',
-    description: 'Machinery condition metrics (vibration RMS, temperature, load)',
-    capabilities: ['vibration_rms', 'temperature', 'load_percent'],
     createdAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString(),
   },
 ];
 
@@ -367,7 +346,10 @@ const withAssetSnakeAliases = (asset: Asset): Asset =>
     ...asset,
     current_packml_state: asset.currentPackmlState,
     is_active: asset.isActive,
-    is_in_maintenance: asset.isInMaintenance,
+    // `maintenance_mode` is what the column and the API are called. The old
+    // `is_in_maintenance` matched nothing on either side of the wire, so this shim was
+    // translating one invented name into another.
+    maintenance_mode: asset.maintenanceMode,
     last_seen: asset.lastSeen,
     serial_number: asset.serialNumber,
   } as Asset);
@@ -420,6 +402,13 @@ const mockOEEMetrics: OEEMetrics = {
   oee: 0.78,
   stateDurations: { Execute: 28800, Idle: 1620, Held: 900, Stopped: 180 },
   totalPlannedTimeSeconds: 31500,
+  // The demo asset is modelled as fully instrumented: part counters and an ideal
+  // cycle time both present. Leaving these undefined would make the mock render the
+  // unmeasured state, which is not what the fixture is depicting.
+  qualityMeasured: true,
+  performanceMeasured: true,
+  totalParts: 1240,
+  goodParts: 1228,
 };
 
 // Helper to simulate async delay
@@ -657,10 +646,10 @@ export const mockApi = {
       modelLoaded: true,
       modelVersion: 'v2.1.0',
       maxLatencyTargetMs: 100,
+      // No lastInferenceAt / averageLatencyMs / totalInferences: the endpoint sends four
+      // keys and these were three the mock invented. A mock that returns more than the
+      // server does is a demo of a feature nobody has built (FS-367).
       safetyThresholds: { max_nozzle_temp_c: 280, max_spindle_load_pct: 95 },
-      lastInferenceAt: new Date().toISOString(),
-      averageLatencyMs: 45.2,
-      totalInferences: 154320,
     };
   },
   
@@ -703,37 +692,30 @@ export const mockApi = {
   getMLOpsStatus: async (): Promise<MLOpsStatus> => {
     await delay(MOCK_DELAY);
     return {
+      // Three keys, matching the endpoint. The two deployment records with rollback
+      // timestamps that used to live here were the most convincing thing in this file and
+      // described a feature the backend has no endpoint for (FS-367).
       currentModel: 'manufacturing-optimizer-v2.1.0.pt',
-      lastDeploymentAt: new Date(Date.now() - 86400000 * 2).toISOString(),
       cachedModels: [
         'manufacturing-optimizer-v2.1.0.pt',
         'manufacturing-optimizer-v2.0.5.pt',
         'manufacturing-optimizer-v1.9.0.pt',
       ],
-      deploymentHistory: [
-        { version: 'manufacturing-optimizer-v2.1.0.pt', deployedAt: new Date(Date.now() - 86400000 * 2).toISOString() },
-        { version: 'manufacturing-optimizer-v2.0.5.pt', deployedAt: new Date(Date.now() - 86400000 * 30).toISOString(), rolledBackAt: new Date(Date.now() - 86400000 * 2).toISOString() },
-      ],
       pollIntervalSeconds: 300,
-      lastPollAt: new Date().toISOString(),
     };
   },
   
   // AI Engines - Cloud Gateway
   getCloudGatewayStatus: async (): Promise<CloudGatewayStatus> => {
     await delay(MOCK_DELAY);
+    // Four keys, matching `cloud_gateway.get_stats()`. It used to return an uptime, a
+    // certificate expiry, a last-sync time and a five-field `egressStats` — a richer gateway
+    // than the one that exists, and only reachable in mock mode (rule 50).
     return {
       connected: true,
-      lastSyncAt: new Date().toISOString(),
-      connectionUptimeSeconds: 86400 * 5,
-      mTlsCertificateExpiry: new Date(Date.now() + 86400000 * 90).toISOString(),
-      egressStats: {
-        totalBytesSent: 157286400,
-        totalBytesCompressed: 133693440,
-        compressionRatio: 0.85,
-        averageBandwidthKbps: 256,
-        queueDepth: 12,
-      },
+      queueSize: 12,
+      endpoint: 'cloud.omniusgrid.internal',
+      mtlsEnabled: true,
     };
   },
 };

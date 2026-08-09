@@ -327,7 +327,9 @@ async def test_register_and_refresh_have_independent_auth_budgets(
     auth_app,
     seeded_orgs,
     auth_memory_limiter,
+    monkeypatch,
 ):
+    monkeypatch.setattr(auth_api.settings, "ALLOW_OPEN_REGISTRATION", True)
     transport = ASGITransport(
         app=auth_app,
         client=("198.51.100.24", 4300),

@@ -48,6 +48,8 @@ export const TelemetryHistoryChart: FC<Props> = ({ assetId, height = 260 }) => {
   const {
     data: history,
     isLoading,
+    isError,
+    refetch,
     hasNextPage,
     isFetchingNextPage,
     fetchNextPage,
@@ -130,6 +132,23 @@ export const TelemetryHistoryChart: FC<Props> = ({ assetId, height = 260 }) => {
       </div>
       {isLoading ? (
         <div className="text-sm text-opsgrid-text-secondary py-8 text-center">Loading history…</div>
+      ) : isError ? (
+        /* A FAILED QUERY IS NOT AN ABSENCE OF TELEMETRY. Without this branch a rejected
+           request fell through to "No history for this metric", which an engineer
+           diagnosing a machine reads as "this sensor produced nothing in that window" —
+           a conclusion about the equipment drawn from a failure of the request. */
+        <div className="text-sm py-8 text-center space-y-2" role="alert">
+          <p className="text-status-alarm">
+            Couldn’t load history — this is a loading failure, not an absence of data.
+          </p>
+          <button
+            type="button"
+            onClick={() => refetch()}
+            className="text-xs underline text-opsgrid-text-secondary hover:text-opsgrid-text"
+          >
+            Retry
+          </button>
+        </div>
       ) : series.length === 0 ? (
         <div className="text-sm text-opsgrid-text-secondary py-8 text-center">No history for this metric</div>
       ) : (

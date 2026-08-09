@@ -134,6 +134,16 @@ export const GeoTabIntegration: FC<GeoTabIntegrationProps> = ({
   const [vehicleTrails, setVehicleTrails] = useState<Record<string, Array<[number, number]>>>({});
   const [mapCenter, setMapCenter] = useState<[number, number]>([39.8283, -98.5795]); // Center of US
   const [connectionStatus, setConnectionStatus] = useState<'connected' | 'disconnected'>('disconnected');
+  // FS-548. Both fetches caught their failure into `console.error` and nothing else, so a
+  // failed vehicle load left `vehicles` at `[]` and the header rendered **"0 Vehicles"** —
+  // a count, presented as a measurement of the fleet. `failureIsNotEmptiness` could not see
+  // it: there is no "No vehicles" sentence to match, and a number is not a phrase.
+  //
+  // "0 Vehicles" is the same lie as "No vehicles found" and reads as more authoritative,
+  // because a figure looks computed. A dispatcher sees an empty map and a zero and concludes
+  // the fleet is not reporting.
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
 
   // Subscribe to GeoTab WebSocket updates
   useEffect(() => {
@@ -224,8 +234,12 @@ export const GeoTabIntegration: FC<GeoTabIntegrationProps> = ({
       if (mapped.length > 0) {
         setMapCenter([mapped[0].currentPosition.latitude, mapped[0].currentPosition.longitude]);
       }
+      setLoadError(null);
     } catch (error) {
       console.error('Failed to fetch vehicles:', error);
+      setLoadError(error instanceof Error ? error.message : 'Could not load vehicles');
+    } finally {
+      setIsLoading(false);
     }
   }, []);
 
@@ -253,6 +267,8 @@ export const GeoTabIntegration: FC<GeoTabIntegrationProps> = ({
         });
       setGeofences(mapped);
     } catch (error) {
+      // Geofences are supplementary — a failure here leaves the map usable, so it does not
+      // set `loadError`, which is reserved for "the vehicle list did not arrive".
       console.error('Failed to fetch geofences:', error);
     }
   }, []);
@@ -276,7 +292,15 @@ export const GeoTabIntegration: FC<GeoTabIntegrationProps> = ({
               <div className={`w-2 h-2 rounded-full ${connectionStatus === 'connected' ? 'bg-green-500' : 'bg-red-500'}`} />
               {connectionStatus === 'connected' ? 'Live' : 'Disconnected'}
             </div>
-            <Badge variant="info">{vehicles.length} Vehicles</Badge>
+            {/* The count is only a count when the request succeeded. On failure this says
+                so instead of reporting zero (FS-548). */}
+            {loadError ? (
+              <Badge variant="error">Vehicles unavailable</Badge>
+            ) : isLoading ? (
+              <Badge variant="info">Loading…</Badge>
+            ) : (
+              <Badge variant="info">{vehicles.length} Vehicles</Badge>
+            )}
           </div>
         </div>
       </div>

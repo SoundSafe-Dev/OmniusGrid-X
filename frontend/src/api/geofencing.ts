@@ -1,4 +1,5 @@
 import { api } from './client';
+import { ListResult, toListResult } from './listResult';
 import type {
   GeofenceZoneExtended,
   GeofenceAlertExtended
@@ -27,48 +28,73 @@ const severityToColor = (severity?: string): GeofenceZoneExtended['color'] => {
   return 'green';
 };
 
+// NOTHING IS DEFAULTED INTO EXISTENCE HERE ANY MORE.
+//
+// Both adapters coerced absent values into plausible ones, and in three places that defeated
+// null-handling written deliberately on BOTH sides of them:
+//
+//   * `geofenceName: a?.geofenceName ?? a?.zoneId ?? ''` — `_alert_out` sends `null` when it
+//     cannot resolve the zone, under a comment saying "the panel must be able to tell a zone
+//     it could not resolve from one with an empty name". The panel does
+//     `geofenceName ?? 'Zone name unavailable'`. `'' ?? x` is `''`, so the panel's fallback
+//     could never fire and the row rendered a blank line — and before reaching `''` it would
+//     print the zone's UUID under a heading reading like a name.
+//   * `alertType: … ?? 'violation'` — THE ORIGINAL DEFECT AS A FALLBACK. Every alert reading
+//     "Violation" is what started this whole thread; the panel now refuses to guess an
+//     unrecognised value, which requires it to SEE the absence.
+//   * `center: { latitude: … ?? 0, longitude: … ?? 0 }` and `radius: … ?? 0` — `center_lat`,
+//     `center_lng` and `radius_meters` are nullable and are genuinely NULL for a POLYGON zone.
+//     `circleRenderableZones` filters on `typeof z.center.latitude === 'number'` precisely to
+//     exclude those, and a coerced 0 passes the filter: a zero-radius circle at 0°N 0°E, in
+//     the Gulf of Guinea, drawn on the fleet map.
+//
+// What remains is renaming (`zoneType` -> `type`, `radiusMeters` -> `radius`) and two real
+// derivations from values the server does send.
 const adaptZone = (z: any): GeofenceZoneExtended => {
-  const center = z?.center
-    ? {
-        latitude: z.center.latitude ?? z.center.lat ?? 0,
-        longitude: z.center.longitude ?? z.center.lng ?? 0,
-        timestamp: z.center.timestamp ?? '',
-      }
-    : undefined;
+  const lat = z?.center?.latitude ?? z?.center?.lat;
+  const lng = z?.center?.longitude ?? z?.center?.lng;
+  const center =
+    typeof lat === 'number' && typeof lng === 'number'
+      ? { latitude: lat, longitude: lng, timestamp: z?.center?.timestamp ?? '' }
+      : undefined;
   const trigger = z?.triggerOn;
   return {
     id: z?.id,
     name: z?.name,
-    type: z?.type ?? z?.zoneType ?? 'circle',
+    type: z?.type ?? z?.zoneType,
     center,
-    radius: z?.radius ?? z?.radiusMeters ?? 0,
+    radius: z?.radius ?? z?.radiusMeters,
     coordinates: z?.coordinates,
+    // A derivation, not a default: severity is sent and maps onto the map's colour scale.
     color: z?.color ?? severityToColor(z?.severity),
-    description: z?.description ?? '',
-    vehiclesInside: z?.vehiclesInside ?? [],
+    description: z?.description,
+    vehiclesInside: z?.vehiclesInside,
+    // Also a derivation: `triggerOn` is 'entry' | 'exit' | 'both' and these are its two flags.
     alertRules: z?.alertRules ?? {
       onEntry: trigger === 'entry' || trigger === 'both',
       onExit: trigger === 'exit' || trigger === 'both',
       notifyRoles: [],
     },
-    isActive: z?.isActive ?? true,
-    createdAt: z?.createdAt ?? '',
-    updatedAt: z?.updatedAt ?? '',
+    isActive: z?.isActive,
+    createdAt: z?.createdAt,
+    updatedAt: z?.updatedAt,
   };
 };
 
 const adaptAlert = (a: any): GeofenceAlertExtended => ({
   id: a?.id,
-  vehicleId: a?.vehicleId ?? '',
-  vehicleNumber: a?.vehicleNumber ?? a?.vehicleId ?? '',
+  vehicleId: a?.vehicleId,
+  // The server resolves this by join and sends null when it cannot; the panel prints
+  // 'Unknown vehicle'. Falling back to the id here would print a UUID as a fleet number.
+  vehicleNumber: a?.vehicleNumber,
   driverName: a?.driverName,
-  geofenceId: a?.geofenceId ?? a?.zoneId ?? '',
-  geofenceName: a?.geofenceName ?? a?.zoneId ?? '',
-  alertType: a?.alertType ?? a?.eventType ?? 'violation',
+  geofenceId: a?.geofenceId ?? a?.zoneId,
+  geofenceName: a?.geofenceName,
+  alertType: a?.alertType ?? a?.eventType,
   location: a?.location,
-  timestamp: a?.timestamp ?? a?.createdAt ?? '',
+  timestamp: a?.timestamp ?? a?.createdAt,
   acknowledged: a?.acknowledged ?? false,
-  severity: a?.severity ?? 'info',
+  severity: a?.severity,
 });
 
 export const geofencingApi = {
@@ -126,13 +152,22 @@ export const geofencingApi = {
     await api.delete(`/api/v1/geofencing/zones/${id}`);
   },
 
-  getAlerts: async (): Promise<GeofenceAlertExtended[]> => {
+  /**
+   * Geofence alerts, newest first, with the truncation flag the server sends (FS-428).
+   *
+   * A `ListResult` rather than a bare array: the endpoint caps at 100 and orders by
+   * recency, which is right for a recent-activity list and wrong for the unacknowledged
+   * view — 150 outstanding alerts rendered as 100 with nothing saying so, and an
+   * unacknowledged alert that never appears is one nobody will action.
+   */
+  getAlerts: async (): Promise<ListResult<GeofenceAlertExtended>> => {
     if (USE_MOCK) {
       await delay(MOCK_DELAY);
-      return mockGeofenceAlerts;
+      return { items: mockGeofenceAlerts, truncated: false, limit: mockGeofenceAlerts.length };
     }
     const response = await api.get<any[]>('/api/v1/geofencing/alerts');
-    return (response.data ?? []).map(adaptAlert);
+    const result = toListResult<any>(response);
+    return { ...result, items: result.items.map(adaptAlert) };
   },
 
   getAlertsByVehicle: async (vehicleId: string): Promise<GeofenceAlertExtended[]> => {
@@ -170,7 +205,17 @@ export const geofencingApi = {
     await api.post(`/api/v1/geofencing/alerts/${alertId}/acknowledge`, {});
   },
 
-  subscribeToAlerts: (onAlert: (alert: GeofenceAlertExtended) => void): (() => void) => {
+  /** Poll for unacknowledged geofence alerts, calling `onAlert` for each new one.
+   *
+   *  `onError` matters more here than on the position poll (FS-487). A geofence alert is an
+   *  event somebody is WAITING for. When the poll fails, no alerts arrive — which is exactly
+   *  what a quiet fleet looks like. A truck leaves its zone, the alert exists on the server,
+   *  and the panel goes on saying nothing at all. There is no stale value to notice, because
+   *  the absence IS the display. */
+  subscribeToAlerts: (
+    onAlert: (alert: GeofenceAlertExtended) => void,
+    onError?: (error: unknown) => void,
+  ): (() => void) => {
     if (USE_MOCK) {
       const interval = setInterval(async () => {
         const alerts = await geofencingApi.getUnacknowledgedAlerts();
@@ -202,8 +247,10 @@ export const geofencingApi = {
           }
         }
         first = false;
+        onError?.(null);
       } catch (error) {
         console.error('Geofencing alert poll failed:', error);
+        onError?.(error);
       }
     }, 15000);
     return () => clearInterval(interval);

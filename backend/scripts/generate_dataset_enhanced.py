@@ -16,7 +16,7 @@ import os
 import hashlib
 from pathlib import Path
 from typing import Dict, List, Any, Optional, Set, Tuple
-from datetime import datetime
+from datetime import datetime, timezone
 from collections import defaultdict, Counter
 from dataclasses import dataclass, asdict
 
@@ -856,7 +856,7 @@ class EnhancedScenarioGenerator:
             scenario_type=scenario_type,
             is_single_domain=is_single_domain,
             severity_level=severity_level,
-            generated_at=datetime.utcnow().isoformat()
+            generated_at=datetime.now(timezone.utc).isoformat()
         )
         
         self.metadata.append(metadata)
@@ -972,7 +972,7 @@ class EnhancedScenarioGenerator:
                     payload_snapshot={
                         "status": random.choice(["normal", "warning", "critical"]),
                         "metric_value": round(random.uniform(0, 100), 2),
-                        "timestamp": datetime.utcnow().isoformat()
+                        "timestamp": datetime.now(timezone.utc).isoformat()
                     }
                 ))
         

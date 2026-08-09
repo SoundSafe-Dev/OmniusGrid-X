@@ -49,8 +49,19 @@ export const TacticalEngine: FC = () => {
                 </div>
                 <div>
                   <p className="text-sm text-opsgrid-text-secondary">Model Status</p>
-                  <Badge variant={status?.modelLoaded ? 'success' : 'error'} size="sm">
-                    {status?.modelLoaded ? 'Loaded' : 'Not Loaded'}
+                  {/* MISSED BY THE FIX ONE SCREEN BELOW. The thresholds panel was
+                      corrected for exactly this — a failed query rendering as a finding —
+                      and this badge, on the same page, kept saying "Not Loaded" in red.
+                      A red badge reading Not Loaded is a claim that edge inference is
+                      down, which is a callout; the truth was that the status endpoint
+                      did not answer. Method rule 18: a guard wrong once is likeliest
+                      wrong again, so re-derive the whole component, not the line that
+                      was reported. */}
+                  <Badge
+                    variant={!status ? 'default' : status.modelLoaded ? 'success' : 'error'}
+                    size="sm"
+                  >
+                    {!status ? 'Unknown' : status.modelLoaded ? 'Loaded' : 'Not Loaded'}
                   </Badge>
                 </div>
               </div>
@@ -106,7 +117,17 @@ export const TacticalEngine: FC = () => {
 
         {showThresholds && (
           <div className="mt-4">
-            {thresholdEntries.length === 0 ? (
+            {isError ? (
+              /* The banner above already says the fetch failed, and this section still
+                 asserted "No safety thresholds reported by the engine" underneath it —
+                 a definitive claim about SAFETY LIMITS, read by whoever expands this
+                 panel. On error `status` is undefined, so `thresholdEntries` is empty
+                 and the absence branch fired. Two contradictory statements on one
+                 screen, and the more specific one was the false one. */
+              <p className="text-opsgrid-text-secondary text-sm">
+                Thresholds unavailable while the engine status cannot be read.
+              </p>
+            ) : thresholdEntries.length === 0 ? (
               <p className="text-opsgrid-text-secondary text-sm">
                 No safety thresholds reported by the engine.
               </p>

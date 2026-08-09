@@ -5,7 +5,7 @@ Feeds each numeric payload field of every reading into a per-asset
 Activates the previously-dead anomaly detector without touching collectors.
 """
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Dict, Iterator, List, Tuple
 
 import structlog
@@ -44,7 +44,7 @@ class AnomalyTracker:
 
         found: List[Dict[str, Any]] = []
         for metric, value in _iter_numeric(payload):
-            anomaly = detector.add_telemetry(metric, value, datetime.now())
+            anomaly = detector.add_telemetry(metric, value, datetime.now(timezone.utc))
             if anomaly:
                 metrics.record_anomaly(asset_id, anomaly)
                 found.append(anomaly)

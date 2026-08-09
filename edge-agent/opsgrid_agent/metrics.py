@@ -78,6 +78,12 @@ buffer_dropped_total = Counter(
 )
 
 
+buffer_expired_total = Counter(
+    "edge_buffer_expired_total",
+    "Undelivered messages deleted for passing the retention window",
+)
+
+
 def set_buffer_stats(pending: int, backfill_lag_seconds: float) -> None:
     buffer_messages.set(pending)
     buffer_backfill_lag_seconds.set(backfill_lag_seconds)
@@ -93,6 +99,19 @@ def record_dropped(count: int) -> None:
         buffer_dropped_total.inc(count)
 
 
+def record_expired(count: int) -> None:
+    """Telemetry deleted for age, having never been delivered (FS-458).
+
+    The buffer loses messages three ways — dead-lettered after retries, pruned for size,
+    and expired for age. The first two increment a counter; this one only logged, at INFO,
+    on a device that by definition has been unable to reach the cloud for longer than the
+    retention window. The one loss whose cause is a LONG OUTAGE was the one invisible to
+    the monitoring that would show the outage.
+    """
+    if count > 0:
+        buffer_expired_total.inc(count)
+
+
 # --- Local OEE (from PackML states) ------------------------------------------
 
 oee_availability = Gauge("edge_oee_availability", "Local OEE availability ratio", ["asset_id"])
@@ -102,11 +121,45 @@ oee_ratio = Gauge("edge_oee", "Local OEE (availability x performance x quality)"
 
 
 def set_oee(asset_id: str, result: dict) -> None:
-    """Publish a LocalOEECalculator result dict (percentages 0-100)."""
-    oee_availability.labels(asset_id=asset_id).set(result.get("availability", 0.0))
-    oee_performance.labels(asset_id=asset_id).set(result.get("performance", 0.0))
-    oee_quality.labels(asset_id=asset_id).set(result.get("quality", 0.0))
-    oee_ratio.labels(asset_id=asset_id).set(result.get("oee", 0.0))
+    """Publish a LocalOEECalculator result dict (percentages 0-100).
+
+    A factor that could not be computed is **not published** (FS-461). Prometheus has no
+    null, and `.set(0.0)` on an unmeasurable factor is not a neutral default: 0% OEE is
+    the single worst number this system can report about a machine, and it was being
+    reported for every asset whose telemetry carries no part counts.
+
+    The series simply does not advance. A gauge that stops updating is what "no data"
+    looks like in Prometheus, and `absent()` / staleness are the tools written for it —
+    both of which a hardcoded zero defeats.
+    """
+    for gauge, key in (
+        (oee_availability, "availability"),
+        (oee_performance, "performance"),
+        (oee_quality, "quality"),
+        (oee_ratio, "oee"),
+    ):
+        value = result.get(key)
+        if value is not None:
+            gauge.labels(asset_id=asset_id).set(value)
+
+
+packml_unmapped_total = Counter(
+    "edge_packml_unmapped_total",
+    "Vendor states the PackML mapper does not understand",
+    ["asset_type"],
+)
+
+
+def record_packml_unmapped(asset_type: str) -> None:
+    """A vendor state the mapper could not translate (FS-462).
+
+    These used to become `Idle`, which is an AVAILABILITY LOSS state — a machine running
+    at full rate recorded as down, with one log line on a device that may not be able to
+    ship logs. This counter is what makes a missing mapping visible from the cloud, and it
+    is labelled by ASSET TYPE rather than by the vendor string: the string is arbitrary
+    text off a PLC, and using it as a label would hand unbounded cardinality to Prometheus.
+    """
+    packml_unmapped_total.labels(asset_type=asset_type or "generic").inc()
 
 
 # --- Local analytics: anomalies + alerts -------------------------------------

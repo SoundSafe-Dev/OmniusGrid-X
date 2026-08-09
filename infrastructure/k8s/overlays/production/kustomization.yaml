@@ -29,8 +29,13 @@ images:
     newTag: v1.0.0
 
 configMapGenerator:
+  # `behavior: merge` — base owns this ConfigMap now and the backend consumes it via
+  # envFrom. Without the merge kustomize errors on the duplicate id; before the envFrom
+  # existed, everything here was rendered and then read by nobody.
   - name: backend-config
+    behavior: merge
     literals:
+      - ENVIRONMENT=production
       - LOG_LEVEL=warn
       - MTLS_ENABLED=true
       - CACHE_ENABLED=true

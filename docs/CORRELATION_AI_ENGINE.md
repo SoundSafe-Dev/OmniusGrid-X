@@ -383,6 +383,56 @@ Risk Score = (Domain Weight × 0.3) + (Link Severity × 0.3) +
 - **Batch Processing:** 1000 scenarios in ~45 seconds
 - **Concurrent Analysis:** Up to 10 simultaneous scenarios
 
+## Current state: the model and its LoRA are deliberately NOT loaded
+
+`CORRELATION_ADAPTER_PATH` defaults to `./checkpoints/best_lora_v2`, and that path is
+**absent on purpose** right now. Read this before enabling it.
+
+### What happens while it is unloaded
+
+`correlation_ai_engine` falls back to a heuristic and labels the result honestly:
+
+```json
+{
+  "simulated": true,
+  "simulation_reason": "heuristic chat fallback, not a model inference",
+  "confidence": 0.4,
+  "model_version": "fallback-chat"
+}
+```
+
+Those four fields are carried through to the API response by
+`SessionChatResponse` (`app/api/analysis_sessions.py`). They are forwarded from the
+engine at both return sites and never defaulted locally, so a caller can always tell a
+heuristic from an inference.
+
+That was not always true. Both chat handlers used to read the fallback's *text* and drop
+the flag, presenting heuristic output as a real inference. It was harmless only because a
+separate RLS defect made those endpoints unreachable; fixing that made it live, and it
+was fixed in the same change.
+
+### Before you switch the model on
+
+**The `simulated: false` branch has never executed against a real adapter.** Everything
+verified so far exercised the fallback, because that is the current state. Specifically:
+
+| Verified | Not verified |
+|---|---|
+| The fallback sets `simulated: true`, `confidence: 0.4` | Any real inference path end to end |
+| The API forwards all four provenance fields | That a loaded adapter reports `simulated: false` |
+| The flag is not hardcoded — a patched engine returning `simulated: false` comes through as `false` | Latency, memory, or output shape under a real model |
+
+`test_analysis_sessions_tenant_scoping_realdb.py::TestSimulatedAnalysisIsLabelledAsSuch`
+covers the **plumbing** — it patches the engine to force a non-simulated result and
+asserts the flag survives. It says nothing about whether a loaded adapter actually
+produces one.
+
+So when the adapter is restored, check first that a real inference comes back with
+`simulated: false` and a confidence above the fallback's 0.4. If it still reports
+`simulated: true`, the adapter did not load and the engine is quietly serving heuristics
+under a model version string that suggests otherwise — which is the failure this
+labelling exists to make visible.
+
 ## Configuration
 
 ### Environment Variables

@@ -14,18 +14,24 @@ file is untouched.
 
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
+from uuid import UUID
 
 import structlog
-from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import select
+
+from app.core.pagination import mark_truncated
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
+from pydantic import BaseModel, Field
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.database import get_db
+from app.db.database import get_db  # noqa: F401 — kept for non-tenant reads
+from app.middleware.tenant_isolation import get_tenant_db, get_tenant_org_id
 from app.db.logistics_models import (
     GeofenceAlert,
     GeofenceZone,
     MaintenanceSchedule,
     RepairOrder,
+    Vehicle,
 )
 from app.db.models import Carrier, Driver, Shipment
 
@@ -62,6 +68,101 @@ maintenance_router = APIRouter(tags=["Fleet Maintenance"], dependencies=_auth)
 logistics_router = APIRouter(tags=["Transportation Management"], dependencies=_auth)
 
 
+def _scope(query, model, org_id: UUID):
+    """Restrict a query to the caller's organization.
+
+    THE FIRST OF TWO LAYERS, in the order migration 051's header insists on: application
+    filter first, policy second. It was written when these four tables — geofence_zones,
+    geofence_alerts, maintenance_schedules, repair_orders — carried `organization_id` with
+    no policy at all, so it was the only thing protecting them; 051 then added ENABLE +
+    FORCE to all four.
+
+    It stays, and not merely out of habit. The filter is what works on the SQLite offline
+    path, where row-level security does not exist, and it is what makes a missing predicate
+    a visible bug rather than a silently empty page.
+
+    `organization_id` is VARCHAR(36) on all four, not a UUID column: comparing it to a
+    UUID object matches zero rows rather than raising, which reads as "scoping works"
+    while emptying the page. Hence `str(org_id)`.
+    """
+    return query.where(model.organization_id == str(org_id))
+
+# ==================== Response models ====================
+#
+# Pool #43. Every field here is named after the key the serializer BELOW actually emits, and
+# typed from the COLUMN it comes from — `logistics_models` is the reference, not the frontend
+# type, because a response model that disagrees with the column 500s on the first real row.
+#
+# Two type choices in here are deliberate and were nearly got wrong:
+#
+#   * `radiusMeters` and `dueMileage` are `float`, not `int`. `geofence_zones.radius_meters`
+#     and `maintenance_schedules.due_odometer_miles` are both `Float`. Declaring the obvious
+#     `int` is how `HealthBandItem.min/max` shipped a 500 against a band whose bound is 100.01.
+#   * `polygon` and `location` are the raw JSON columns and stay open. `polygon` is
+#     `[[lat, lng], ...]` for a polygon zone and NULL for a circle; `location` is whatever the
+#     event writer put there. A fixed model over either would filter a producer's payload.
+#
+# Everything nullable in the table is `Optional` here, and nothing is given a non-None default
+# that the handler does not itself produce: a default is a value invented by the schema, and
+# this file's own history (`priority` defaulting to 'medium' client-side, `upcomingEstimated`
+# hardcoded to 0) is what that costs.
+
+
+class MessageResponse(BaseModel):
+    message: str
+
+
+class GeofenceCenter(BaseModel):
+    """`center_lat` / `center_lng` — both nullable, and genuinely NULL for a polygon zone.
+
+    The client filters on `typeof latitude === 'number'` to decide what it can draw as a
+    circle, so a coerced 0 here would put a zero-radius circle at 0°N 0°E on the fleet map.
+    """
+
+    lat: Optional[float] = None
+    lng: Optional[float] = None
+
+
+class GeofenceZoneOut(BaseModel):
+    id: str
+    name: str
+    zoneType: Optional[str] = None
+    center: GeofenceCenter
+    radiusMeters: Optional[float] = None
+    #: The raw `polygon` JSON column, left open — see the block comment above.
+    polygon: Optional[Any] = None
+    triggerOn: Optional[str] = None
+    severity: Optional[str] = None
+    isActive: Optional[bool] = None
+
+
+class GeofenceAlertOut(BaseModel):
+    """The names the client reads, which are NOT the column names.
+
+    `zone_id` -> `geofenceId`, `event_type` -> `alertType`, `created_at` -> `timestamp`;
+    the panel's ternary on `alertType` is what made every routine entry read "Violation"
+    when the wire carried `eventType` instead.
+    """
+
+    id: str
+    geofenceId: Optional[str] = None
+    #: None, not "" — resolved by join, and the panel must be able to tell a zone it could
+    #: not resolve from one with an empty name.
+    geofenceName: Optional[str] = None
+    vehicleId: Optional[str] = None
+    vehicleNumber: Optional[str] = None
+    alertType: str
+    severity: Optional[str] = None
+    location: Dict[str, Any] = Field(default_factory=dict)
+    acknowledged: Optional[bool] = None
+    timestamp: Optional[str] = None
+
+
+class AlertAcknowledged(BaseModel):
+    message: str
+    id: str
+
+
 # ==================== Geofencing ====================
 
 def _zone_out(z: GeofenceZone) -> Dict[str, Any]:
@@ -73,30 +174,40 @@ def _zone_out(z: GeofenceZone) -> Dict[str, Any]:
     }
 
 
-@geofencing_router.get("/zones")
-async def list_zones(db: AsyncSession = Depends(get_db)):
+@geofencing_router.get("/zones", response_model=List[GeofenceZoneOut])
+async def list_zones(org_id: UUID = Depends(get_tenant_org_id), db: AsyncSession = Depends(get_tenant_db)):
     zones = (await db.execute(
-        select(GeofenceZone).where(GeofenceZone.is_active == True)  # noqa: E712
+        _scope(select(GeofenceZone).where(GeofenceZone.is_active == True), GeofenceZone, org_id)  # noqa: E712
     )).scalars().all()
     return [_zone_out(z) for z in zones]
 
 
-@geofencing_router.get("/zones/{zone_id}")
-async def get_zone(zone_id: str, db: AsyncSession = Depends(get_db)):
+@geofencing_router.get("/zones/{zone_id}", response_model=GeofenceZoneOut)
+async def get_zone(zone_id: str, org_id: UUID = Depends(get_tenant_org_id), db: AsyncSession = Depends(get_tenant_db)):
     _uuid_or_404(zone_id)
-    zone = (await db.execute(select(GeofenceZone).where(GeofenceZone.id == zone_id))).scalar_one_or_none()
+    zone = (await db.execute(
+        _scope(select(GeofenceZone).where(GeofenceZone.id == zone_id), GeofenceZone, org_id)
+    )).scalar_one_or_none()
     if zone is None:
         raise HTTPException(status_code=404, detail="zone not found")
     return _zone_out(zone)
 
 
-@geofencing_router.post("/zones")
-async def create_zone(payload: Dict[str, Any], db: AsyncSession = Depends(get_db)):
+@geofencing_router.post("/zones", response_model=GeofenceZoneOut)
+async def create_zone(
+    payload: Dict[str, Any],
+    org_id: UUID = Depends(get_tenant_org_id),
+    db: AsyncSession = Depends(get_tenant_db),
+):
     if not payload.get("name"):
         raise HTTPException(status_code=400, detail="name is required")
     center = payload.get("center") or {}
     zone = GeofenceZone(
-        organization_id=payload.get("organization_id"),
+        # From the TOKEN, never the payload. Taking it from the body let a caller file a
+        # record under any organization they cared to name, and at the time these tables had
+        # no policy, so nothing downstream would have questioned it. Migration 051 policied
+        # them; the token is still the only honest source for a tenant.
+        organization_id=str(org_id),
         name=payload["name"],
         zone_type=payload.get("zoneType", "circle"),
         center_lat=center.get("lat"),
@@ -112,10 +223,12 @@ async def create_zone(payload: Dict[str, Any], db: AsyncSession = Depends(get_db
     return _zone_out(zone)
 
 
-@geofencing_router.put("/zones/{zone_id}")
-async def update_zone(zone_id: str, payload: Dict[str, Any], db: AsyncSession = Depends(get_db)):
+@geofencing_router.put("/zones/{zone_id}", response_model=GeofenceZoneOut)
+async def update_zone(zone_id: str, payload: Dict[str, Any], org_id: UUID = Depends(get_tenant_org_id), db: AsyncSession = Depends(get_tenant_db)):
     _uuid_or_404(zone_id)
-    zone = (await db.execute(select(GeofenceZone).where(GeofenceZone.id == zone_id))).scalar_one_or_none()
+    zone = (await db.execute(
+        _scope(select(GeofenceZone).where(GeofenceZone.id == zone_id), GeofenceZone, org_id)
+    )).scalar_one_or_none()
     if zone is None:
         raise HTTPException(status_code=404, detail="zone not found")
     center = payload.get("center") or {}
@@ -133,10 +246,12 @@ async def update_zone(zone_id: str, payload: Dict[str, Any], db: AsyncSession = 
     return _zone_out(zone)
 
 
-@geofencing_router.delete("/zones/{zone_id}")
-async def delete_zone(zone_id: str, db: AsyncSession = Depends(get_db)):
+@geofencing_router.delete("/zones/{zone_id}", response_model=MessageResponse)
+async def delete_zone(zone_id: str, org_id: UUID = Depends(get_tenant_org_id), db: AsyncSession = Depends(get_tenant_db)):
     _uuid_or_404(zone_id)
-    zone = (await db.execute(select(GeofenceZone).where(GeofenceZone.id == zone_id))).scalar_one_or_none()
+    zone = (await db.execute(
+        _scope(select(GeofenceZone).where(GeofenceZone.id == zone_id), GeofenceZone, org_id)
+    )).scalar_one_or_none()
     if zone is None:
         raise HTTPException(status_code=404, detail="zone not found")
     zone.is_active = False  # soft delete
@@ -144,34 +259,113 @@ async def delete_zone(zone_id: str, db: AsyncSession = Depends(get_db)):
     return {"message": "zone deleted"}
 
 
-@geofencing_router.get("/alerts")
+@geofencing_router.get("/alerts", response_model=List[GeofenceAlertOut])
 async def list_alerts(
+    response: Response,
     acknowledged: Optional[bool] = Query(None),
     severity: Optional[str] = Query(None),
     vehicle_id: Optional[str] = Query(None),
     limit: int = Query(100, ge=1, le=500),
-    db: AsyncSession = Depends(get_db),
+    org_id: UUID = Depends(get_tenant_org_id),
+    db: AsyncSession = Depends(get_tenant_db),
 ):
-    query = select(GeofenceAlert).order_by(GeofenceAlert.created_at.desc()).limit(limit)
+    """Geofence alerts, newest first.
+
+    TRUNCATION IS SIGNALLED (FS-428). Newest-first plus a cap is the right default for a
+    recent-activity list and the wrong answer for `acknowledged=false`: an operator asking
+    what still needs acting on, with 150 outstanding, saw 100 and had no way to tell. An
+    unacknowledged alert that never appears is one nobody will action.
+
+    `limit + 1` is selected and trimmed by `mark_truncated`, which costs one row rather than
+    a COUNT over the table, and the signal is a header so the bare-array body every existing
+    caller consumes is unchanged.
+    """
+    query = _scope(
+        select(GeofenceAlert).order_by(GeofenceAlert.created_at.desc()).limit(limit + 1),
+        GeofenceAlert, org_id,
+    )
     if acknowledged is not None:
         query = query.where(GeofenceAlert.acknowledged == acknowledged)
     if severity:
         query = query.where(GeofenceAlert.severity == severity)
     if vehicle_id:
         query = query.where(GeofenceAlert.vehicle_id == vehicle_id)
-    alerts = (await db.execute(query)).scalars().all()
+    alerts = mark_truncated(response, (await db.execute(query)).scalars().all(), limit)
+
+    # THE NAMES THE CLIENT ACTUALLY READS. This emitted `zoneId`, `eventType` and
+    # `createdAt`; `GeofenceAlert` in TypeScript declares `geofenceId`, `alertType` and
+    # `timestamp`, and nothing in the frontend reads the three names that were being sent.
+    #
+    # `alertType` was the damaging one. `GeofencingPanel` renders
+    #
+    #     alert.alertType === 'entry' ? 'Entered' : alert.alertType === 'exit' ? 'Exited'
+    #                                             : 'Violation'
+    #
+    # so an undefined field matched neither branch and EVERY alert — every routine entry
+    # into an authorised zone — displayed as "Violation". A falsy ternary branch that
+    # asserts, again.
+    #
+    # `geofenceName` and `vehicleNumber` need the zone and the vehicle, which the alert row
+    # references by id. Fetched in two batched queries rather than per row: an N+1 behind
+    # an alert list would be a performance defect introduced while fixing a correctness one.
+    zone_names: Dict[str, str] = {}
+    vehicle_numbers: Dict[str, str] = {}
+
+    # ONLY IDS THAT ARE ACTUALLY UUIDS. `geofence_alerts.zone_id` and `.vehicle_id` are
+    # `String(36)`, while `geofence_zones.id` and `vehicles.id` are UUID columns — so an
+    # `IN (...)` against a free-form string raises `DataError: invalid UUID` and 500s the
+    # whole endpoint. Integrations do write non-UUID identifiers here (the tenant-isolation
+    # suite seeds `'VEH-a'`, which is what caught this), and a device reference that is not
+    # an internal id is not a reason to fail the list — those rows simply resolve to None.
+    def _uuids(values):
+        out = set()
+        for value in values:
+            try:
+                out.add(str(UUID(str(value))))
+            except (ValueError, AttributeError, TypeError):
+                continue
+        return out
+
+    zone_ids = _uuids(a.zone_id for a in alerts if a.zone_id)
+    vehicle_ids = _uuids(a.vehicle_id for a in alerts if a.vehicle_id)
+    if zone_ids:
+        zone_names = {
+            str(z.id): z.name
+            for z in (await db.execute(
+                _scope(select(GeofenceZone).where(GeofenceZone.id.in_(zone_ids)),
+                       GeofenceZone, org_id)
+            )).scalars().all()
+        }
+    if vehicle_ids:
+        vehicle_numbers = {
+            str(v.id): v.vehicle_number
+            for v in (await db.execute(
+                _scope(select(Vehicle).where(Vehicle.id.in_(vehicle_ids)), Vehicle, org_id)
+            )).scalars().all()
+        }
+
     return [{
-        "id": str(a.id), "zoneId": a.zone_id, "vehicleId": a.vehicle_id,
-        "eventType": a.event_type, "severity": a.severity, "location": a.location or {},
+        "id": str(a.id),
+        "geofenceId": a.zone_id,
+        # None, not "" — the panel must be able to tell a zone it could not resolve from
+        # one with an empty name. A blank would read as an unnamed zone.
+        "geofenceName": zone_names.get(str(a.zone_id)) if a.zone_id else None,
+        "vehicleId": a.vehicle_id,
+        "vehicleNumber": vehicle_numbers.get(str(a.vehicle_id)) if a.vehicle_id else None,
+        "alertType": a.event_type,
+        "severity": a.severity,
+        "location": a.location or {},
         "acknowledged": a.acknowledged,
-        "createdAt": a.created_at.isoformat() if a.created_at else None,
+        "timestamp": a.created_at.isoformat() if a.created_at else None,
     } for a in alerts]
 
 
-@geofencing_router.post("/alerts/{alert_id}/acknowledge")
-async def acknowledge_alert(alert_id: str, db: AsyncSession = Depends(get_db)):
+@geofencing_router.post("/alerts/{alert_id}/acknowledge", response_model=AlertAcknowledged)
+async def acknowledge_alert(alert_id: str, org_id: UUID = Depends(get_tenant_org_id), db: AsyncSession = Depends(get_tenant_db)):
     _uuid_or_404(alert_id)
-    alert = (await db.execute(select(GeofenceAlert).where(GeofenceAlert.id == alert_id))).scalar_one_or_none()
+    alert = (await db.execute(
+        _scope(select(GeofenceAlert).where(GeofenceAlert.id == alert_id), GeofenceAlert, org_id)
+    )).scalar_one_or_none()
     if alert is None:
         raise HTTPException(status_code=404, detail="alert not found")
     alert.acknowledged = True
@@ -181,6 +375,104 @@ async def acknowledge_alert(alert_id: str, db: AsyncSession = Depends(get_db)):
 
 
 # ==================== Maintenance ====================
+
+
+class MaintenanceScheduleOut(BaseModel):
+    """`_schedule_out`. Ten keys, and the client adapter is now a bare spread — every one of
+    these reaches the panel under this name, so dropping any of them here blanks a card row."""
+
+    id: str
+    vehicleId: str
+    #: The same column as `vehicleId`. `maintenance_schedules` has no join to `vehicles`, and
+    #: the create form sends back what it was shown — which is why the handler accepts
+    #: `vehicleNumber` as an alias for `vehicleId` on the way in.
+    vehicleNumber: str
+    serviceType: str
+    description: Optional[str] = None
+    scheduledDate: Optional[str] = None
+    #: `due_odometer_miles` is a Float column — the odometer reading at which service falls
+    #: due, not the vehicle's present mileage.
+    dueMileage: Optional[float] = None
+    #: Not always the stored value: a scheduled row past its due date is reported `overdue`.
+    status: Optional[str] = None
+    #: A real column since migration 054. Absent from the wire before that, which is how the
+    #: client's `?? 'medium'` came to overwrite every operator's choice with a value that is
+    #: not even a member of its own union.
+    priority: str
+    estimatedCost: Optional[float] = None
+
+
+class RepairOrderOut(BaseModel):
+    id: str
+    vehicleId: str
+    title: str
+    #: Sent since the same fix that added it — `_history_out` on this table always read
+    #: `description` while `_order_out` did not send it, so one repair carried the
+    #: technician's detail in the completed-work view and lost it in the active list.
+    description: Optional[str] = None
+    status: Optional[str] = None
+    priority: Optional[str] = None
+    vendor: Optional[str] = None
+    cost: Optional[float] = None
+    category: Optional[str] = None
+    completedAt: Optional[str] = None
+    openedAt: Optional[str] = None
+
+
+class RepairOrderCreated(BaseModel):
+    """`POST /repair-orders` answers with two fields, unlike `POST /schedules` which answers
+    with the whole row. Declared as it is rather than widened: making the two consistent is a
+    behaviour change, and this pool declares what handlers do."""
+
+    id: str
+    status: Optional[str] = None
+
+
+class ServiceHistoryOut(BaseModel):
+    """A completed repair order projected onto the client's `ServiceHistoryEntry`."""
+
+    id: str
+    vehicleId: str
+    vehicleNumber: str
+    serviceType: str
+    description: str
+    serviceDate: Optional[str] = None
+    #: A literal 0. `repair_orders` records no odometer reading, and nothing else on this
+    #: path does either — the value is a placeholder the shape requires, not a measurement.
+    mileageAtService: int
+    cost: float
+    technician: Optional[str] = None
+    notes: Optional[str] = None
+
+
+class MonthlyCost(BaseModel):
+    month: str
+    cost: float
+
+
+class MaintenanceStatisticsOut(BaseModel):
+    scheduledCount: int
+    overdueCount: int
+    activeRepairs: int
+    ytdCosts: float
+    costsByCategory: Dict[str, float] = Field(default_factory=dict)
+    monthlyBreakdown: List[MonthlyCost] = Field(default_factory=list)
+    monthlyAverage: float
+    #: `None` when NO outstanding schedule carries an estimate — a different fact from an
+    #: outstanding estimate of zero, which is what the panel used to display in a highlighted
+    #: box reading "Upcoming (Est.) $0" for a fleet whose upcoming work nobody had costed.
+    upcomingEstimated: Optional[float] = None
+
+
+class MaintenanceCostsOut(BaseModel):
+    ytdTotal: float
+    byCategory: Dict[str, float] = Field(default_factory=dict)
+    monthlyBreakdown: List[MonthlyCost] = Field(default_factory=list)
+    monthlyAverage: float
+    upcomingEstimated: Optional[float] = None
+    #: `None` for an empty fleet — not 0, and not a division by zero.
+    costPerVehicle: Optional[float] = None
+
 
 def _aware(d: Optional[datetime]) -> Optional[datetime]:
     """Coerce a datetime to aware-UTC so naive (sqlite) and aware (asyncpg
@@ -205,6 +497,10 @@ def _schedule_out(s: Any, now: Optional[datetime] = None) -> Dict[str, Any]:
         "scheduledDate": s.due_date.isoformat() if s.due_date else None,
         "dueMileage": s.due_odometer_miles,
         "status": "overdue" if (s.status in ("scheduled", "overdue") and due and due < now) else s.status,
+        # Emitted since migration 054. It was absent, so the client's adapter substituted
+        # the literal 'medium' — not even a member of its own declared union — and every
+        # row rendered the same invented priority whatever the operator had chosen.
+        "priority": s.priority,
         "estimatedCost": s.estimated_cost,
     }
 
@@ -212,8 +508,15 @@ def _schedule_out(s: Any, now: Optional[datetime] = None) -> Dict[str, Any]:
 def _order_out(o: Any) -> Dict[str, Any]:
     return {
         "id": str(o.id), "vehicleId": o.vehicle_id, "title": o.title,
+        # `description` was NOT SENT, though the column has always existed. The client's
+        # adapter therefore filled `issueDescription` from `title` — a rename that reads
+        # sensibly and quietly discarded the longer detail a technician had typed. The
+        # completed-work serializer below (`_history_out`) does read `o.description`, so the
+        # same repair carried its description in one view and lost it in the other.
+        "description": o.description,
         "status": o.status, "priority": o.priority, "vendor": o.vendor,
         "cost": o.cost, "category": o.category,
+        "completedAt": o.completed_at.isoformat() if o.completed_at else None,
         "openedAt": o.opened_at.isoformat() if o.opened_at else None,
     }
 
@@ -228,14 +531,24 @@ def _history_out(o: Any) -> Dict[str, Any]:
     }
 
 
-@maintenance_router.get("/schedules")
+@maintenance_router.get("/schedules", response_model=List[MaintenanceScheduleOut])
 async def list_schedules(
     status: Optional[str] = Query(None),
     vehicle_id: Optional[str] = Query(None),
-    upcoming: Optional[int] = Query(None, description="only schedules due within N days"),
-    db: AsyncSession = Depends(get_db),
+    # BOUNDED, because the value is added to `now`. `upcoming=10508090` is not a large
+    # window — it is a date past year 9999, and `now + timedelta(days=...)` raises
+    # `OverflowError: date value out of range` before any query runs, so the endpoint
+    # 500s where the schema promises a 4xx. Found by the contract gate (FS-259).
+    #
+    # 36500 days is a century: far beyond any maintenance horizon anyone would schedule,
+    # and far below the overflow point, so nothing that works today starts failing.
+    upcoming: Optional[int] = Query(
+        None, ge=1, le=36500, description="only schedules due within N days"
+    ),
+    org_id: UUID = Depends(get_tenant_org_id),
+    db: AsyncSession = Depends(get_tenant_db),
 ):
-    query = select(MaintenanceSchedule)
+    query = _scope(select(MaintenanceSchedule), MaintenanceSchedule, org_id)
     now = datetime.now(timezone.utc)
     if status == "overdue":
         query = query.where(
@@ -256,19 +569,25 @@ async def list_schedules(
     return [_schedule_out(s, now) for s in schedules]
 
 
-@maintenance_router.get("/schedules/{schedule_id}")
-async def get_schedule(schedule_id: str, db: AsyncSession = Depends(get_db)):
+@maintenance_router.get("/schedules/{schedule_id}", response_model=MaintenanceScheduleOut)
+async def get_schedule(schedule_id: str, org_id: UUID = Depends(get_tenant_org_id), db: AsyncSession = Depends(get_tenant_db)):
     _uuid_or_404(schedule_id)
-    s = (await db.execute(select(MaintenanceSchedule).where(MaintenanceSchedule.id == schedule_id))).scalar_one_or_none()
+    s = (await db.execute(
+        _scope(select(MaintenanceSchedule).where(MaintenanceSchedule.id == schedule_id),
+               MaintenanceSchedule, org_id)
+    )).scalar_one_or_none()
     if s is None:
         raise HTTPException(status_code=404, detail="schedule not found")
     return _schedule_out(s)
 
 
-@maintenance_router.patch("/schedules/{schedule_id}")
-async def update_schedule(schedule_id: str, payload: Dict[str, Any], db: AsyncSession = Depends(get_db)):
+@maintenance_router.patch("/schedules/{schedule_id}", response_model=MaintenanceScheduleOut)
+async def update_schedule(schedule_id: str, payload: Dict[str, Any], org_id: UUID = Depends(get_tenant_org_id), db: AsyncSession = Depends(get_tenant_db)):
     _uuid_or_404(schedule_id)
-    s = (await db.execute(select(MaintenanceSchedule).where(MaintenanceSchedule.id == schedule_id))).scalar_one_or_none()
+    s = (await db.execute(
+        _scope(select(MaintenanceSchedule).where(MaintenanceSchedule.id == schedule_id),
+               MaintenanceSchedule, org_id)
+    )).scalar_one_or_none()
     if s is None:
         raise HTTPException(status_code=404, detail="schedule not found")
     # Accept the frontend MaintenanceSchedule field names (serviceType/dueMileage),
@@ -283,6 +602,7 @@ async def update_schedule(schedule_id: str, payload: Dict[str, Any], db: AsyncSe
         (pick("description"), "description"),
         (pick("status"), "status"),
         (pick("dueMileage", "dueOdometer"), "due_odometer_miles"),
+        (pick("priority"), "priority"),
         (pick("estimatedCost"), "estimated_cost"),
     ):
         if value is not None:
@@ -297,42 +617,64 @@ async def update_schedule(schedule_id: str, payload: Dict[str, Any], db: AsyncSe
     return _schedule_out(s)
 
 
-@maintenance_router.get("/vehicles/{vehicle_id}/schedules")
-async def list_vehicle_schedules(vehicle_id: str, db: AsyncSession = Depends(get_db)):
+@maintenance_router.get("/vehicles/{vehicle_id}/schedules", response_model=List[MaintenanceScheduleOut])
+async def list_vehicle_schedules(vehicle_id: str, org_id: UUID = Depends(get_tenant_org_id), db: AsyncSession = Depends(get_tenant_db)):
     schedules = (await db.execute(
-        select(MaintenanceSchedule).where(MaintenanceSchedule.vehicle_id == vehicle_id)
+        _scope(select(MaintenanceSchedule).where(MaintenanceSchedule.vehicle_id == vehicle_id),
+               MaintenanceSchedule, org_id)
         .order_by(MaintenanceSchedule.due_date.asc())
     )).scalars().all()
     now = datetime.now(timezone.utc)
     return [_schedule_out(s, now) for s in schedules]
 
 
-@maintenance_router.post("/schedules")
-async def create_schedule(payload: Dict[str, Any], db: AsyncSession = Depends(get_db)):
-    if not payload.get("vehicleId") and not payload.get("vehicle_id"):
+@maintenance_router.post("/schedules", response_model=MaintenanceScheduleOut)
+async def create_schedule(
+    payload: Dict[str, Any],
+    org_id: UUID = Depends(get_tenant_org_id),
+    db: AsyncSession = Depends(get_tenant_db),
+):
+    # `vehicleNumber` is accepted because `_schedule_out` EMITS it — from this same
+    # column, alongside `vehicleId`. The create form sends what it was shown, so it sent
+    # vehicleNumber and every creation failed with "vehicleId is required". Reading a
+    # field under one name and refusing to accept it under that name is a round trip
+    # that cannot close.
+    vehicle = (payload.get("vehicleId") or payload.get("vehicle_id")
+               or payload.get("vehicleNumber"))
+    if not vehicle:
         raise HTTPException(status_code=400, detail="vehicleId is required")
     scheduled = payload.get("scheduledDate") or payload.get("dueDate")
     schedule = MaintenanceSchedule(
-        organization_id=payload.get("organization_id"),
-        vehicle_id=payload.get("vehicleId") or payload.get("vehicle_id"),
+        # From the TOKEN, never the payload. Taking it from the body let a caller file a
+        # record under any organization they cared to name, and at the time these tables had
+        # no policy, so nothing downstream would have questioned it. Migration 051 policied
+        # them; the token is still the only honest source for a tenant.
+        organization_id=str(org_id),
+        vehicle_id=vehicle,
         maintenance_type=payload.get("serviceType") or payload.get("maintenanceType") or payload.get("maintenance_type") or "inspection",
         description=payload.get("description"),
         due_date=_iso_or_400(scheduled, "scheduledDate") if scheduled else None,
         due_odometer_miles=payload.get("dueMileage") or payload.get("dueOdometer"),
+        # Collected by the form since it shipped; dropped on the floor until 054.
+        priority=payload.get("priority") or "normal",
         estimated_cost=payload.get("estimatedCost"),
     )
     db.add(schedule)
     await db.commit()
     await db.refresh(schedule)
-    return {"id": str(schedule.id), "status": schedule.status}
+    # The whole row, not two fields. Returning only id+status meant a caller could not
+    # confirm that what it sent was what was stored — which is exactly how a silently
+    # dropped `priority` survived.
+    return _schedule_out(schedule)
 
 
-@maintenance_router.get("/repair-orders")
+@maintenance_router.get("/repair-orders", response_model=List[RepairOrderOut])
 async def list_repair_orders(
     status: Optional[str] = Query(None),
-    db: AsyncSession = Depends(get_db),
+    org_id: UUID = Depends(get_tenant_org_id),
+    db: AsyncSession = Depends(get_tenant_db),
 ):
-    query = select(RepairOrder)
+    query = _scope(select(RepairOrder), RepairOrder, org_id)
     if status == "active":
         query = query.where(RepairOrder.status.in_(("open", "in_progress", "awaiting_parts")))
     elif status:
@@ -341,18 +683,28 @@ async def list_repair_orders(
     return [_order_out(o) for o in orders]
 
 
-@maintenance_router.get("/repair-orders/{order_id}")
-async def get_repair_order(order_id: str, db: AsyncSession = Depends(get_db)):
+@maintenance_router.get("/repair-orders/{order_id}", response_model=RepairOrderOut)
+async def get_repair_order(order_id: str, org_id: UUID = Depends(get_tenant_org_id), db: AsyncSession = Depends(get_tenant_db)):
     _uuid_or_404(order_id)
-    o = (await db.execute(select(RepairOrder).where(RepairOrder.id == order_id))).scalar_one_or_none()
+    o = (await db.execute(
+        _scope(select(RepairOrder).where(RepairOrder.id == order_id), RepairOrder, org_id)
+    )).scalar_one_or_none()
     if o is None:
         raise HTTPException(status_code=404, detail="repair order not found")
     return _order_out(o)
 
 
-@maintenance_router.patch("/repair-orders/{order_id}")
-async def update_repair_order(order_id: str, payload: Dict[str, Any], db: AsyncSession = Depends(get_db)):
-    o = (await db.execute(select(RepairOrder).where(RepairOrder.id == order_id))).scalar_one_or_none()
+@maintenance_router.patch("/repair-orders/{order_id}", response_model=RepairOrderOut)
+async def update_repair_order(order_id: str, payload: Dict[str, Any], org_id: UUID = Depends(get_tenant_org_id), db: AsyncSession = Depends(get_tenant_db)):
+    # THE ONE HANDLER IN THIS FILE THAT DID NOT CALL IT. Every sibling — get, delete,
+    # acknowledge, the schedule routes — validates the path id first, for the reason
+    # `_uuid_or_404` documents: on Postgres, comparing a UUID column to a non-UUID string
+    # is an asyncpg type error, so `PATCH /repair-orders/0` answered 500 instead of 404.
+    # Found by the contract gate (FS-259); the guard existed and this one call was missing.
+    _uuid_or_404(order_id)
+    o = (await db.execute(
+        _scope(select(RepairOrder).where(RepairOrder.id == order_id), RepairOrder, org_id)
+    )).scalar_one_or_none()
     if o is None:
         raise HTTPException(status_code=404, detail="repair order not found")
     for key, attr in (("title", "title"), ("description", "description"), ("status", "status"),
@@ -367,35 +719,61 @@ async def update_repair_order(order_id: str, payload: Dict[str, Any], db: AsyncS
     return _order_out(o)
 
 
-@maintenance_router.get("/vehicles/{vehicle_id}/repair-orders")
-async def list_vehicle_repair_orders(vehicle_id: str, db: AsyncSession = Depends(get_db)):
+@maintenance_router.get("/vehicles/{vehicle_id}/repair-orders", response_model=List[RepairOrderOut])
+async def list_vehicle_repair_orders(vehicle_id: str, org_id: UUID = Depends(get_tenant_org_id), db: AsyncSession = Depends(get_tenant_db)):
     orders = (await db.execute(
-        select(RepairOrder).where(RepairOrder.vehicle_id == vehicle_id)
+        _scope(select(RepairOrder).where(RepairOrder.vehicle_id == vehicle_id), RepairOrder, org_id)
         .order_by(RepairOrder.opened_at.desc())
     )).scalars().all()
     return [_order_out(o) for o in orders]
 
 
-@maintenance_router.get("/vehicles/{vehicle_id}/history")
-async def vehicle_service_history(vehicle_id: str, db: AsyncSession = Depends(get_db)):
-    """Service history = completed repair orders for the vehicle, newest first."""
+@maintenance_router.get("/vehicles/{vehicle_id}/history", response_model=List[ServiceHistoryOut])
+async def vehicle_service_history(
+    vehicle_id: str,
+    org_id: UUID = Depends(get_tenant_org_id),
+    db: AsyncSession = Depends(get_tenant_db),
+):
+    """Service history = completed repair orders for the vehicle, newest first.
+
+    THE ONE HANDLER IN THIS FILE THAT TOOK NO `org_id` AND CALLED NO `_scope`. It filtered on
+    `vehicle_id` and status alone, and returned `_history_out` — description, cost, vendor and
+    the technician's notes.
+
+    On Postgres migration 051's FORCEd policy covers it, so there was no leak there. On the
+    SQLite offline path there is no policy at all, which is the case `_scope` exists for: any
+    caller who knew a vehicle id got that vehicle's repair history regardless of whose vehicle
+    it was. The sibling endpoint one function up — same table, same shape — was scoped.
+    """
     orders = (await db.execute(
-        select(RepairOrder).where(
-            RepairOrder.vehicle_id == vehicle_id,
-            RepairOrder.status == "completed",
+        _scope(
+            select(RepairOrder).where(
+                RepairOrder.vehicle_id == vehicle_id,
+                RepairOrder.status == "completed",
+            ),
+            RepairOrder,
+            org_id,
         ).order_by(RepairOrder.completed_at.desc())
     )).scalars().all()
     return [_history_out(o) for o in orders]
 
 
-@maintenance_router.post("/history")
-async def add_service_history(payload: Dict[str, Any], db: AsyncSession = Depends(get_db)):
+@maintenance_router.post("/history", response_model=ServiceHistoryOut)
+async def add_service_history(
+    payload: Dict[str, Any],
+    org_id: UUID = Depends(get_tenant_org_id),
+    db: AsyncSession = Depends(get_tenant_db),
+):
     """Record a completed service as a completed repair order."""
     vehicle_id = payload.get("vehicleId") or payload.get("vehicle_id")
     if not vehicle_id:
         raise HTTPException(status_code=400, detail="vehicleId is required")
     order = RepairOrder(
-        organization_id=payload.get("organization_id"),
+        # From the TOKEN, never the payload. Taking it from the body let a caller file a
+        # record under any organization they cared to name, and at the time these tables had
+        # no policy, so nothing downstream would have questioned it. Migration 051 policied
+        # them; the token is still the only honest source for a tenant.
+        organization_id=str(org_id),
         vehicle_id=vehicle_id,
         title=payload.get("description") or payload.get("serviceType") or "Service",
         description=payload.get("notes"),
@@ -411,12 +789,20 @@ async def add_service_history(payload: Dict[str, Any], db: AsyncSession = Depend
     return _history_out(order)
 
 
-@maintenance_router.post("/repair-orders")
-async def create_repair_order(payload: Dict[str, Any], db: AsyncSession = Depends(get_db)):
+@maintenance_router.post("/repair-orders", response_model=RepairOrderCreated)
+async def create_repair_order(
+    payload: Dict[str, Any],
+    org_id: UUID = Depends(get_tenant_org_id),
+    db: AsyncSession = Depends(get_tenant_db),
+):
     if not (payload.get("vehicleId") or payload.get("vehicle_id")) or not payload.get("title"):
         raise HTTPException(status_code=400, detail="vehicleId and title are required")
     order = RepairOrder(
-        organization_id=payload.get("organization_id"),
+        # From the TOKEN, never the payload. Taking it from the body let a caller file a
+        # record under any organization they cared to name, and at the time these tables had
+        # no policy, so nothing downstream would have questioned it. Migration 051 policied
+        # them; the token is still the only honest source for a tenant.
+        organization_id=str(org_id),
         vehicle_id=payload.get("vehicleId") or payload.get("vehicle_id"),
         schedule_id=payload.get("scheduleId"),
         title=payload["title"],
@@ -451,48 +837,172 @@ def summarize_maintenance(schedules: List[Any], orders: List[Any], now: Optional
     for o in ytd:
         key = o.category or "other"
         by_category[key] = round(by_category.get(key, 0.0) + float(o.cost), 2)
+    # Completed spend per month of the current year, up to and including this one. Every month
+    # that has elapsed is present even at 0.00 — a month in which nothing was repaired really
+    # did cost nothing, and a chart that silently omits it draws a shorter year.
+    monthly: Dict[int, float] = {m: 0.0 for m in range(1, now.month + 1)}
+    for o in ytd:
+        month = _aware(o.completed_at).month
+        if month in monthly:
+            monthly[month] = round(monthly[month] + float(o.cost), 2)
+    monthly_breakdown = [
+        {"month": f"{now.year}-{m:02d}", "cost": monthly[m]} for m in sorted(monthly)
+    ]
+
+    ytd_total = round(sum(float(o.cost) for o in ytd), 2)
+
+    # Estimated cost of maintenance that has NOT been done yet. `None` when no outstanding
+    # schedule carries an estimate at all, which is a different fact from an outstanding
+    # estimate of zero — the panel showed the latter, in a highlighted box reading
+    # "Upcoming (Est.) $0", for a fleet whose upcoming work nobody had costed.
+    outstanding = [
+        s for s in schedules
+        if getattr(s, "status", None) not in ("completed", "cancelled")
+        and getattr(s, "estimated_cost", None) is not None
+    ]
+    upcoming_estimated = (
+        round(sum(float(s.estimated_cost) for s in outstanding), 2) if outstanding else None
+    )
+
     return {
         "scheduledCount": sum(1 for s in schedules if getattr(s, "status", None) == "scheduled"),
         "overdueCount": len(overdue),
         "activeRepairs": len(active),
-        "ytdCosts": round(sum(float(o.cost) for o in ytd), 2),
+        "ytdCosts": ytd_total,
         "costsByCategory": by_category,
+        "monthlyBreakdown": monthly_breakdown,
+        # YTD divided by the months that have ELAPSED. The client computed `ytd / 12` in
+        # January as readily as in December, so the figure it showed was a twelfth of the
+        # year's spend labelled as a monthly average.
+        "monthlyAverage": round(ytd_total / now.month, 2),
+        "upcomingEstimated": upcoming_estimated,
     }
 
 
-@maintenance_router.get("/statistics")
-async def maintenance_statistics(db: AsyncSession = Depends(get_db)):
-    schedules = (await db.execute(select(MaintenanceSchedule))).scalars().all()
-    orders = (await db.execute(select(RepairOrder))).scalars().all()
+@maintenance_router.get("/statistics", response_model=MaintenanceStatisticsOut)
+async def maintenance_statistics(org_id: UUID = Depends(get_tenant_org_id), db: AsyncSession = Depends(get_tenant_db)):
+    schedules = (await db.execute(_scope(select(MaintenanceSchedule), MaintenanceSchedule, org_id))).scalars().all()
+    orders = (await db.execute(_scope(select(RepairOrder), RepairOrder, org_id))).scalars().all()
     return summarize_maintenance(schedules, orders)
 
 
-@maintenance_router.get("/costs")
-async def maintenance_costs(db: AsyncSession = Depends(get_db)):
-    orders = (await db.execute(select(RepairOrder))).scalars().all()
-    summary = summarize_maintenance([], orders)
-    return {"ytdTotal": summary["ytdCosts"], "byCategory": summary["costsByCategory"]}
+@maintenance_router.get("/costs", response_model=MaintenanceCostsOut)
+async def maintenance_costs(org_id: UUID = Depends(get_tenant_org_id), db: AsyncSession = Depends(get_tenant_db)):
+    """The maintenance costs tab.
+
+    THIS USED TO SEND TWO FIGURES AND THE CLIENT INVENTED THREE MORE. `monthlyAverage` was
+    `ytd / 12` — computed in January as readily as in December; `costPerVehicle` and
+    `upcomingEstimated` were hardcoded zeros, the second rendered in a highlighted box reading
+    "Upcoming (Est.) $0"; and `monthlyBreakdown` was a required array the server never sent, so
+    the chart below it drew nothing. A later pass made all four optional and the panel stopped
+    displaying them, which removed the false figures and left four blank rows.
+
+    All four are facts about data this endpoint already has, or one join away, so they are
+    computed here instead. It also loads the SCHEDULES now — costs of work not yet done live
+    there (`maintenance_schedules.estimated_cost`), and the previous call passed `[]`.
+    """
+    orders = (await db.execute(_scope(select(RepairOrder), RepairOrder, org_id))).scalars().all()
+    schedules = (
+        await db.execute(_scope(select(MaintenanceSchedule), MaintenanceSchedule, org_id))
+    ).scalars().all()
+    summary = summarize_maintenance(schedules, orders)
+
+    # Cost per vehicle needs the fleet size, which is not derivable from repair orders: a
+    # vehicle with no repairs this year has no row here and is exactly the vehicle that makes
+    # the average meaningful. `None` for an empty fleet — not 0, and not a division by zero.
+    vehicle_count = (
+        await db.execute(_scope(select(func.count(Vehicle.id)), Vehicle, org_id))
+    ).scalar() or 0
+
+    return {
+        "ytdTotal": summary["ytdCosts"],
+        "byCategory": summary["costsByCategory"],
+        "monthlyBreakdown": summary["monthlyBreakdown"],
+        "monthlyAverage": summary["monthlyAverage"],
+        "upcomingEstimated": summary["upcomingEstimated"],
+        "costPerVehicle": (
+            round(summary["ytdCosts"] / vehicle_count, 2) if vehicle_count else None
+        ),
+    }
 
 
 # ==================== Logistics aggregates ====================
 
-@logistics_router.get("/delivery-efficiency")
-async def delivery_efficiency(db: AsyncSession = Depends(get_db)):
+
+class DeliveryEfficiencyOut(BaseModel):
+    """`compute_delivery_efficiency` in `transportation.py`, declared at the route that
+    serves it.
+
+    THE FIELD NAMES ARE THE FUNCTION'S, NOT THE CLIENT'S. `transportation.ts` types this call
+    as `{ onTimeRate, avgTransitTime, totalDeliveries, lateDeliveries }` and three of those
+    four names have never been on the wire — the aggregate sends `avgTransitHours`,
+    `deliveredToday` and `totalDelivered`. Declaring the client's names here would have made
+    the schema agree with the type and disagree with the payload, which is the wrong of the
+    two to fix from this side. Recorded in the burn-down doc rather than silently reconciled.
+    """
+
+    #: A RATIO, 0..1 — `round(on_time / delivered, 4)`, and 1.0 for an empty fleet. The
+    #: client's mock path computes a PERCENTAGE for the same field.
+    onTimeRate: float
+    avgTransitHours: float
+    deliveredToday: int
+    totalDelivered: int
+
+
+class LogisticsComplianceSummaryOut(BaseModel):
+    totalCarriers: int
+    ctpatCertified: int
+    activeViolations: int
+    safetyAlerts: int
+    #: So a zero can be read. `activeViolations: 0` means something different depending on
+    #: whether it was computed over the whole fleet or over nobody, and the tile paints zero
+    #: green either way.
+    driversAssessed: int
+    driversUnassessable: int
+
+
+@logistics_router.get("/delivery-efficiency", response_model=DeliveryEfficiencyOut)
+async def delivery_efficiency(db: AsyncSession = Depends(get_tenant_db)):
     from app.api.transportation import compute_delivery_efficiency
 
     shipments = (await db.execute(select(Shipment))).scalars().all()
     return compute_delivery_efficiency(shipments)
 
 
-@logistics_router.get("/compliance/summary")
-async def compliance_summary(db: AsyncSession = Depends(get_db)):
+@logistics_router.get("/compliance/summary", response_model=LogisticsComplianceSummaryOut)
+async def compliance_summary(db: AsyncSession = Depends(get_tenant_db)):
     """Org-wide carrier/driver compliance rollup for the Compliance tab."""
     carriers = (await db.execute(select(Carrier).where(Carrier.is_active == True))).scalars().all()  # noqa: E712
     drivers = (await db.execute(select(Driver).where(Driver.is_active == True))).scalars().all()  # noqa: E712
     now = datetime.now(timezone.utc)
+
+    # `(d.hos_drive_hours_today or 0) >= 11` COUNTED AN UNREPORTED DRIVER AS COMPLIANT. Both
+    # columns are nullable and NULL means the driver has not reported — not that they have
+    # driven zero hours — so a fleet where nobody had reported produced `activeViolations: 0`,
+    # which the Compliance tab renders in GREEN. An all-clear on DOT-regulated hours, generated
+    # by the absence of the data that would decide it.
+    #
+    # This is the second time this exact class has been found on HOS. The first was
+    # `hosDriveHoursRemaining === 0` on the driver list, where `null === 0` is false and every
+    # fleet came back clean; the fix there derives the remaining hours and leaves them NULL
+    # when the consumed figure is missing too. Same column family, different endpoint, and the
+    # rollup was never brought into line.
+    #
+    # A driver is now assessable only if both figures are present. The counts are separate
+    # because "no violations" and "nobody reported" are different facts, and
+    # `/logistics_correlation`'s driver_compliance block already reports them that way.
+    # The FMCSA limits live on HOSComplianceMonitor, which is what judges an individual
+    # driver. A third copy of 11.0 and 70.0 here is a third place to update.
+    from app.services.transportation_management import HOSComplianceMonitor
+
+    assessable = [
+        d for d in drivers
+        if d.hos_drive_hours_today is not None and d.hos_cycle_hours is not None
+    ]
     hos_violations = sum(
-        1 for d in drivers
-        if (d.hos_drive_hours_today or 0) >= 11 or (d.hos_cycle_hours or 0) >= 70
+        1 for d in assessable
+        if d.hos_drive_hours_today >= HOSComplianceMonitor.MAX_DRIVE_HOURS_DAY
+        or d.hos_cycle_hours >= HOSComplianceMonitor.MAX_CYCLE_HOURS
     )
     expiring_soon = sum(
         1 for c in carriers
@@ -504,4 +1014,8 @@ async def compliance_summary(db: AsyncSession = Depends(get_db)):
         "ctpatCertified": sum(1 for c in carriers if c.ctpat_certified),
         "activeViolations": hos_violations,
         "safetyAlerts": expiring_soon,
+        # So a zero can be read. `activeViolations: 0` means something different depending on
+        # whether it was computed over the whole fleet or over nobody.
+        "driversAssessed": len(assessable),
+        "driversUnassessable": len(drivers) - len(assessable),
     }

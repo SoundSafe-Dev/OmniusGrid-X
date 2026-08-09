@@ -14,7 +14,6 @@ import pytest_asyncio
 async def app(tenant_async_url):
     """Minimal production-router app isolated from unrelated optional modules."""
     from fastapi import Depends, FastAPI
-    from sqlalchemy import text
     from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
     from app.api import data_retention, historian
@@ -44,25 +43,18 @@ async def app(tenant_async_url):
                 await session.rollback()
                 raise
 
-    async def _get_tenant_db(
-        org_id=Depends(get_tenant_org_id),
-    ):
-        async with session_maker() as session:
-            try:
-                await session.execute(
-                    text("SELECT set_config('app.current_org_id', :org_id, false)"),
-                    {"org_id": str(org_id)},
-                )
-                yield session
-                await session.commit()
-            except Exception:
-                await session.rollback()
-                raise
-            finally:
-                await session.execute(
-                    text("SELECT set_config('app.current_org_id', '', false)")
-                )
-                await session.commit()
+    async def _get_tenant_db(org_id=Depends(get_tenant_org_id)):
+        # DELEGATES to the production implementation, swapping only the session
+        # maker — it must not reimplement it. This was a byte-identical copy of
+        # get_tenant_db's old body, and it carried the same defect: a single
+        # `set_config(..., false)` does not survive an endpoint's mid-request
+        # commit, because commit returns the connection to the pool. Every
+        # assertion in this file ran against the copy, so the bug was invisible
+        # here. See tests/test_tenant_guc_survives_commit_realdb.py.
+        from app.core.tenant import tenant_session
+
+        async with tenant_session(org_id, session_maker) as session:
+            yield session
 
     fastapi_app.dependency_overrides[db_module.get_db] = _get_db
     fastapi_app.dependency_overrides[get_tenant_db] = _get_tenant_db

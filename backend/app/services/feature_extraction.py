@@ -54,12 +54,18 @@ class FeatureExtractor:
             stats = await self._get_telemetry_stats(session, asset_id, window_start, now)
             
             # Get current PackML state
+            # Bound, not interpolated. `asset_id` reaches here from the feature-vector
+            # pipeline, which reads it from edge telemetry — data this codebase has
+            # already had to defend once, see the note on
+            # tactical_engine._is_maintenance_mode about `' OR '1'='1` matching every
+            # row.
             state_result = await session.execute(
-                text(f"""
+                text("""
                     SELECT current_packml_state, last_seen
                     FROM assets
-                    WHERE id = '{asset_id}'
-                """)
+                    WHERE id = :asset_id
+                """),
+                {"asset_id": asset_id},
             )
             row = state_result.fetchone()
             if not row:
@@ -115,7 +121,7 @@ class FeatureExtractor:
     ) -> Dict[str, Dict[str, float]]:
         """Get aggregated telemetry statistics"""
         result = await session.execute(
-            text(f"""
+            text("""
                 SELECT 
                     metric_name,
                     avg(value) as mean,
@@ -124,11 +130,12 @@ class FeatureExtractor:
                     max(value) as max_val,
                     count(*) as sample_count
                 FROM telemetry
-                WHERE asset_id = '{asset_id}'
-                  AND time >= '{start.isoformat()}'
-                  AND time <= '{end.isoformat()}'
+                WHERE asset_id = :asset_id
+                  AND time >= :start
+                  AND time <= :end
                 GROUP BY metric_name
-            """)
+            """),
+            {"asset_id": asset_id, "start": start.isoformat(), "end": end.isoformat()},
         )
         
         stats = {}
@@ -152,13 +159,14 @@ class FeatureExtractor:
     ) -> int:
         """Count PackML state transitions in window"""
         result = await session.execute(
-            text(f"""
+            text("""
                 SELECT count(*)
                 FROM packml_states
-                WHERE asset_id = '{asset_id}'
-                  AND state_entered_at >= '{start.isoformat()}'
-                  AND state_entered_at <= '{end.isoformat()}'
-            """)
+                WHERE asset_id = :asset_id
+                  AND state_entered_at >= :start
+                  AND state_entered_at <= :end
+            """),
+            {"asset_id": asset_id, "start": start.isoformat(), "end": end.isoformat()}
         )
         return int(result.scalar() or 0)
     

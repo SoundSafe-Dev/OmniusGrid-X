@@ -8,21 +8,39 @@ import { Rate } from 'k6/metrics';
 // Custom metrics
 const errorRate = new Rate('errors');
 
-// Test configuration
+// CI runs this as a 30-second smoke test on a shared runner; a human runs it against
+// real infrastructure. The two want DIFFERENT THRESHOLDS, and the distinction matters:
+// k6 decides its exit code from thresholds alone — failed `check()`s do not fail the
+// run — so this block is what makes the CI job able to fail at all.
+//
+// The latency SLOs stay out of CI on purpose. p(95)<500ms on a shared GitHub runner
+// measures whichever neighbour is busy, not this API, and a gate that fails for
+// reasons its author cannot act on is one that gets switched off. What CI does assert
+// is the part that is stable and meaningful: the app serves its main read paths under
+// concurrency without erroring.
+const CI_SMOKE = __ENV.CI_SMOKE === 'true';
+
 export const options = {
-  stages: [
-    { duration: '2m', target: 100 },   // Ramp up to 100 users
-    { duration: '5m', target: 500 },   // Ramp up to 500 users
-    { duration: '5m', target: 1000 },  // Ramp up to 1000 users
-    { duration: '10m', target: 1000 }, // Stay at 1000 users
-    { duration: '5m', target: 500 },   // Ramp down to 500 users
-    { duration: '2m', target: 0 },     // Ramp down to 0
-  ],
-  thresholds: {
-    http_req_duration: ['p(95)<500', 'p(99)<1000'], // 95% under 500ms, 99% under 1s
-    http_req_failed: ['rate<0.01'], // Error rate < 1%
-    errors: ['rate<0.01'],
-  },
+  stages: CI_SMOKE
+    ? [{ duration: '30s', target: 5 }]
+    : [
+        { duration: '2m', target: 100 },   // Ramp up to 100 users
+        { duration: '5m', target: 500 },   // Ramp up to 500 users
+        { duration: '5m', target: 1000 },  // Ramp up to 1000 users
+        { duration: '10m', target: 1000 }, // Stay at 1000 users
+        { duration: '5m', target: 500 },   // Ramp down to 500 users
+        { duration: '2m', target: 0 },     // Ramp down to 0
+      ],
+  thresholds: CI_SMOKE
+    ? {
+        http_req_failed: ['rate<0.01'], // transport/status errors < 1%
+        errors: ['rate<0.01'],          // failed check()s < 1%
+      }
+    : {
+        http_req_duration: ['p(95)<500', 'p(99)<1000'], // 95% under 500ms, 99% under 1s
+        http_req_failed: ['rate<0.01'], // Error rate < 1%
+        errors: ['rate<0.01'],
+      },
 };
 
 const BASE_URL = __ENV.BASE_URL || 'http://localhost:8002';
@@ -64,32 +82,41 @@ export default function () {
   sleep(1);
   
   // Scenario 2: Get assets (read-heavy)
-  let assetsRes = makeRequest('GET', '/api/v1/assets');
+  let assetsRes = makeRequest('GET', '/api/v1/assets/');
   check(assetsRes, {
     'assets status 200': (r) => r.status === 200,
-    'assets has items': (r) => JSON.parse(r.body).items !== undefined,
+    // Defensive parse: when the app is down or erroring, r.body is empty and a bare
+    // JSON.parse(...).items throws a TypeError per iteration, burying the actual
+    // signal (the status check) under stack traces. The run still fails either way —
+    // this just makes it fail legibly.
+    'assets has items': (r) => { try { return JSON.parse(r.body).items !== undefined; }
+                                 catch (e) { return false; } },
   }) || errorRate.add(1);
   
   sleep(1);
-  
-  // Scenario 3: Get telemetry (read-heavy)
-  let telemetryRes = makeRequest('GET', '/api/v1/telemetry');
+
+  // Scenario 3: Get fleet OEE (read-heavy)
+  // Was '/api/v1/telemetry', which has never existed as a collection route — every
+  // telemetry endpoint is scoped to an asset (/api/v1/telemetry/{asset_id}/history and
+  // friends). It returned 404 on every request.
+  let telemetryRes = makeRequest('GET', '/api/v1/dashboard/fleet/oee');
   check(telemetryRes, {
-    'telemetry status 200': (r) => r.status === 200,
+    'fleet oee status 200': (r) => r.status === 200,
   }) || errorRate.add(1);
-  
+
   sleep(1);
-  
+
   // Scenario 4: Get alarms (read-heavy)
-  let alarmsRes = makeRequest('GET', '/api/v1/alarms');
+  let alarmsRes = makeRequest('GET', '/api/v1/alarms/');
   check(alarmsRes, {
     'alarms status 200': (r) => r.status === 200,
   }) || errorRate.add(1);
-  
+
   sleep(1);
-  
+
   // Scenario 5: Get dashboard data (read-heavy)
-  let dashboardRes = makeRequest('GET', '/api/v1/dashboard');
+  // Was '/api/v1/dashboard', which is a router prefix and not a route: 404 every time.
+  let dashboardRes = makeRequest('GET', '/api/v1/dashboard/assets/at-risk');
   check(dashboardRes, {
     'dashboard status 200': (r) => r.status === 200,
   }) || errorRate.add(1);
@@ -108,7 +135,8 @@ export default function () {
   let userRes = makeRequest('GET', '/api/v1/auth/me');
   check(userRes, {
     'user info status 200': (r) => r.status === 200,
-    'user has email': (r) => JSON.parse(r.body).email !== undefined,
+    'user has email': (r) => { try { return JSON.parse(r.body).email !== undefined; }
+                               catch (e) { return false; } },
   }) || errorRate.add(1);
   
   sleep(1);
@@ -132,7 +160,7 @@ export function handleWriteOperations() {
     status: 'active',
   };
   
-  let createRes = makeRequest('POST', '/api/v1/assets', assetData);
+  let createRes = makeRequest('POST', '/api/v1/assets/', assetData);
   check(createRes, {
     'create asset status 201': (r) => r.status === 201,
   }) || errorRate.add(1);
@@ -165,10 +193,10 @@ export function handleWriteOperations() {
 // Alternative test: Mixed workload
 export function handleMixedWorkload() {
   const scenarios = [
-    () => makeRequest('GET', '/api/v1/assets'),
-    () => makeRequest('GET', '/api/v1/telemetry'),
-    () => makeRequest('GET', '/api/v1/alarms'),
-    () => makeRequest('GET', '/api/v1/dashboard'),
+    () => makeRequest('GET', '/api/v1/assets/'),
+    () => makeRequest('GET', '/api/v1/dashboard/fleet/oee'),
+    () => makeRequest('GET', '/api/v1/alarms/'),
+    () => makeRequest('GET', '/api/v1/dashboard/assets/at-risk'),
     () => makeRequest('GET', '/api/v1/kanban/tasks'),
     () => makeRequest('GET', '/api/v1/registries'),
   ];

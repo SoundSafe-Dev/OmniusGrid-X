@@ -1,8 +1,11 @@
-import { FC, FormEvent, useMemo, useState } from 'react';
+import { FC, FormEvent, useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import {
   LucideIcon,
   AlertTriangle,
+  CalendarClock,
+  Eye,
+  ListFilter,
   RefreshCw,
   Rocket,
   ShieldCheck,
@@ -24,6 +27,8 @@ import {
   useCancelAgentRollout,
   useCreateAgentRelease,
   useCreateAgentRollout,
+  useCreateFleetTargetPreview,
+  useFleetCohorts,
   usePublishAgentRelease,
   useYankAgentRelease,
 } from '../../hooks/useFleet';
@@ -32,7 +37,11 @@ import {
   AgentRollout,
   AgentRolloutStatus,
   AgentRolloutTargetStatus,
+  FleetTargetMode,
+  FleetTargetPreview,
+  FleetTargetSelector,
 } from '../../types/fleet';
+import { handleApiError } from '../../api';
 import { cn, formatDateTime, formatNumber, formatTimeAgo } from '../../utils';
 
 const RELEASE_STATUS_VARIANT: Record<AgentReleaseStatus, 'neutral' | 'success' | 'warning'> = {
@@ -73,14 +82,17 @@ interface ReleaseFormState {
 interface RolloutFormState {
   name: string;
   release_id: string;
-  target_mode: 'all' | 'assets';
+  target_mode: FleetTargetMode;
   asset_ids: string;
+  cohort_id: string;
   canary_percentage: string;
   wave_size: string;
   health_timeout_seconds: string;
   min_success_ratio: string;
   failure_threshold: string;
   rollback_release_id: string;
+  scheduled_start_at: string;
+  enforce_maintenance_windows: boolean;
 }
 
 const emptyReleaseForm: ReleaseFormState = {
@@ -97,12 +109,15 @@ const emptyRolloutForm: RolloutFormState = {
   release_id: '',
   target_mode: 'all',
   asset_ids: '',
+  cohort_id: '',
   canary_percentage: '10',
   wave_size: '',
   health_timeout_seconds: '300',
   min_success_ratio: '1',
   failure_threshold: '1',
   rollback_release_id: '',
+  scheduled_start_at: '',
+  enforce_maintenance_windows: false,
 };
 
 const SummaryCard: FC<{
@@ -137,6 +152,30 @@ function asNumber(value: string): number | undefined {
   return Number.isFinite(parsed) ? parsed : undefined;
 }
 
+function selectorForRollout(form: RolloutFormState): FleetTargetSelector | null {
+  if (form.target_mode === 'all') return { all: true };
+  if (form.target_mode === 'cohort') {
+    return form.cohort_id ? { cohort_id: form.cohort_id } : null;
+  }
+  const assetIds = form.asset_ids
+    .split(',')
+    .map((item) => item.trim())
+    .filter(Boolean);
+  return assetIds.length > 0 ? { asset_ids: assetIds } : null;
+}
+
+function previewFingerprint(
+  releaseId: string,
+  selector: FleetTargetSelector | null
+): string {
+  return selector ? JSON.stringify({ release_id: releaseId, selector }) : '';
+}
+
+interface RolloutPreviewState {
+  data: FleetTargetPreview;
+  fingerprint: string;
+}
+
 function rolloutProgress(rollout: AgentRollout): { done: number; total: number } {
   const total = rollout.targets.length;
   const done = rollout.targets.filter((target) =>
@@ -149,16 +188,20 @@ export const Fleet: FC = () => {
   const versions = useAgentVersions();
   const releases = useAgentReleases();
   const rollouts = useAgentRollouts();
+  const cohorts = useFleetCohorts();
   const createRelease = useCreateAgentRelease();
   const publishRelease = usePublishAgentRelease();
   const yankRelease = useYankAgentRelease();
   const createRollout = useCreateAgentRollout();
+  const createTargetPreview = useCreateFleetTargetPreview();
   const cancelRollout = useCancelAgentRollout();
 
   const [showReleaseForm, setShowReleaseForm] = useState(false);
   const [showRolloutForm, setShowRolloutForm] = useState(false);
   const [releaseForm, setReleaseForm] = useState(emptyReleaseForm);
   const [rolloutForm, setRolloutForm] = useState(emptyRolloutForm);
+  const [rolloutPreview, setRolloutPreview] = useState<RolloutPreviewState | null>(null);
+  const [previewClock, setPreviewClock] = useState(Date.now());
   const [formError, setFormError] = useState('');
 
   const versionItems = versions.data?.items ?? [];
@@ -183,11 +226,81 @@ export const Fleet: FC = () => {
       })),
     [publishedReleases]
   );
+  const cohortOptions = useMemo(
+    () =>
+      (cohorts.data ?? []).map((cohort) => ({
+        value: cohort.id,
+        label: cohort.name,
+      })),
+    [cohorts.data]
+  );
+  const selectedSelector = selectorForRollout(rolloutForm);
+  const selectedFingerprint = previewFingerprint(
+    rolloutForm.release_id,
+    selectedSelector
+  );
+  const previewExpiresAt = rolloutPreview
+    ? Date.parse(rolloutPreview.data.expires_at)
+    : 0;
+  const previewIsFresh = Boolean(
+    rolloutPreview &&
+      !rolloutPreview.data.expired &&
+      Number.isFinite(previewExpiresAt) &&
+      previewExpiresAt > previewClock &&
+      rolloutPreview.fingerprint === selectedFingerprint
+  );
+
+  useEffect(() => {
+    if (!rolloutPreview) return undefined;
+    const timer = window.setInterval(() => setPreviewClock(Date.now()), 1_000);
+    return () => window.clearInterval(timer);
+  }, [rolloutPreview]);
 
   const refreshAll = () => {
     versions.refetch();
     releases.refetch();
     rollouts.refetch();
+    cohorts.refetch();
+  };
+
+  const updateRolloutTarget = (patch: Partial<RolloutFormState>) => {
+    setRolloutForm((current) => ({ ...current, ...patch }));
+    setRolloutPreview(null);
+    setFormError('');
+  };
+
+  const requestTargetPreview = () => {
+    setFormError('');
+    if (!rolloutForm.release_id) {
+      setFormError('Select a published release before previewing targets.');
+      return;
+    }
+    const selector = selectorForRollout(rolloutForm);
+    if (!selector) {
+      setFormError(
+        rolloutForm.target_mode === 'cohort'
+          ? 'Select a saved cohort.'
+          : 'Enter at least one asset ID for explicit targeting.'
+      );
+      return;
+    }
+    const fingerprint = previewFingerprint(rolloutForm.release_id, selector);
+    createTargetPreview.mutate(
+      {
+        release_id: rolloutForm.release_id,
+        selector,
+      },
+      {
+        onSuccess: (data) => {
+          setRolloutPreview({ data, fingerprint });
+          setPreviewClock(Date.now());
+        },
+        onError: (error) => {
+          setRolloutPreview(null);
+          setFormError(handleApiError(error).message);
+        },
+      }
+    );
   };
 
   const submitRelease = (event: FormEvent) => {
@@ -237,31 +350,55 @@ export const Fleet: FC = () => {
     if (failureThreshold !== undefined) strategy.failure_threshold = failureThreshold;
     if (rolloutForm.rollback_release_id) strategy.rollback_release_id = rolloutForm.rollback_release_id;
 
-    const assetIds = rolloutForm.asset_ids
-      .split(',')
-      .map((item) => item.trim())
-      .filter(Boolean);
-    if (rolloutForm.target_mode === 'assets' && assetIds.length === 0) {
-      setFormError('Enter at least one asset ID for explicit targeting.');
+    const selector = selectorForRollout(rolloutForm);
+    const expiresAt = rolloutPreview
+      ? Date.parse(rolloutPreview.data.expires_at)
+      : 0;
+    const hasFreshPreview = Boolean(
+      rolloutPreview &&
+        selector &&
+        rolloutPreview.fingerprint === previewFingerprint(rolloutForm.release_id, selector) &&
+        !rolloutPreview.data.expired &&
+        Number.isFinite(expiresAt) &&
+        expiresAt > Date.now()
+    );
+    if (!hasFreshPreview || !rolloutPreview) {
+      setFormError('Preview these targets again before creating the rollout.');
       return;
+    }
+
+    let scheduledStartAt: string | undefined;
+    if (rolloutForm.scheduled_start_at) {
+      const parsed = new Date(rolloutForm.scheduled_start_at);
+      if (Number.isNaN(parsed.getTime())) {
+        setFormError('Scheduled start time is invalid.');
+        return;
+      }
+      scheduledStartAt = parsed.toISOString();
     }
 
     createRollout.mutate(
       {
         name: rolloutForm.name.trim(),
         release_id: rolloutForm.release_id,
-        target_selector:
-          rolloutForm.target_mode === 'all'
-            ? { all: true }
-            : { asset_ids: assetIds },
+        target_selector: rolloutPreview.data.selector,
+        preview_id: rolloutPreview.data.id,
+        membership_hash: rolloutPreview.data.membership_hash,
         strategy,
+        scheduled_start_at: scheduledStartAt,
+        enforce_maintenance_windows:
+          rolloutForm.enforce_maintenance_windows,
       },
       {
         onSuccess: () => {
           setRolloutForm(emptyRolloutForm);
+          setRolloutPreview(null);
           setShowRolloutForm(false);
         },
-        onError: (error) => setFormError(error.message),
+        onError: (error) => {
+          setRolloutPreview(null);
+          setFormError(handleApiError(error).message);
+        },
       }
     );
   };
@@ -276,6 +413,20 @@ export const Fleet: FC = () => {
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
+          <Link
+            to="/admin/fleet/targeting"
+            className="inline-flex items-center justify-center rounded-lg border border-opsgrid-border bg-opsgrid-panel px-4 py-2 text-sm font-medium text-opsgrid-text transition-colors hover:bg-opsgrid-border focus:outline-none focus:ring-2 focus:ring-opsgrid-border-emphasis"
+          >
+            <ListFilter size={16} className="mr-2" />
+            Targeting
+          </Link>
+          <Link
+            to="/admin/fleet/maintenance"
+            className="inline-flex items-center justify-center rounded-lg border border-opsgrid-border bg-opsgrid-panel px-4 py-2 text-sm font-medium text-opsgrid-text transition-colors hover:bg-opsgrid-border focus:outline-none focus:ring-2 focus:ring-opsgrid-border-emphasis"
+          >
+            <CalendarClock size={16} className="mr-2" />
+            Maintenance
+          </Link>
           <Button variant="secondary" onClick={refreshAll}>
             <RefreshCw size={16} className="mr-2" />
             Refresh
@@ -284,7 +435,12 @@ export const Fleet: FC = () => {
             <UploadCloud size={16} className="mr-2" />
             Release
           </Button>
-          <Button onClick={() => setShowRolloutForm((value) => !value)}>
+          <Button
+            onClick={() => {
+              setShowRolloutForm((value) => !value);
+              setFormError('');
+            }}
+          >
             <Rocket size={16} className="mr-2" />
             Rollout
           </Button>
@@ -297,6 +453,32 @@ export const Fleet: FC = () => {
         <SummaryCard label="Active rollouts" value={formatNumber(activeRollouts.length, 0)} icon={Rocket} />
         <SummaryCard label="Failed / rolled back targets" value={formatNumber(failedTargets, 0)} icon={AlertTriangle} tone={failedTargets > 0 ? 'danger' : 'default'} />
       </div>
+
+      {/* THE FOUR OTA MUTATIONS SAY WHEN THEY FAIL (FS-480).
+      
+          All four read only `isPending` before this. `yankRelease` is the sharpest: it is
+          the safety action — pulling a release that is going badly — and a failed yank left
+          the release listed exactly as it was, which is what a successful one looks like
+          for the moment before the list refetches.
+      
+          They are defined in `useFleet.ts`, and the mutation-failure sweep scans `.tsx`
+          only, so it could not see them. */}
+      {(createRelease.isError ||
+        publishRelease.isError ||
+        yankRelease.isError ||
+        createRollout.isError) && (
+        <Card className="p-4">
+          <p role="alert" className="text-sm text-status-alarm">
+            {yankRelease.isError
+              ? 'Could not yank that release — it is still published.'
+              : publishRelease.isError
+                ? 'Could not publish that release — it is unchanged.'
+                : createRollout.isError
+                  ? 'Could not create the rollout — nothing was started.'
+                  : 'Could not create the release — nothing was saved.'}
+          </p>
+        </Card>
+      )}
 
       {(showReleaseForm || showRolloutForm) && (
         <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
@@ -344,20 +526,47 @@ export const Fleet: FC = () => {
                   <Select
                     label="Release"
                     value={rolloutForm.release_id}
-                    onChange={(e) => setRolloutForm({ ...rolloutForm, release_id: e.target.value })}
+                    onChange={(e) => updateRolloutTarget({ release_id: e.target.value })}
                     options={releaseOptions}
                     placeholder={releaseOptions.length ? 'Select release' : 'No published releases'}
                   />
                   <Select
                     label="Targets"
                     value={rolloutForm.target_mode}
-                    onChange={(e) => setRolloutForm({ ...rolloutForm, target_mode: e.target.value as 'all' | 'assets' })}
+                    onChange={(e) =>
+                      updateRolloutTarget({
+                        target_mode: e.target.value as FleetTargetMode,
+                      })
+                    }
                     options={[
                       { value: 'all', label: 'All active assets' },
                       { value: 'assets', label: 'Explicit asset IDs' },
+                      { value: 'cohort', label: 'Saved dynamic cohort' },
                     ]}
                   />
-                  <Input label="Asset IDs" disabled={rolloutForm.target_mode === 'all'} value={rolloutForm.asset_ids} onChange={(e) => setRolloutForm({ ...rolloutForm, asset_ids: e.target.value })} placeholder="uuid-1, uuid-2" />
+                  {rolloutForm.target_mode === 'assets' && (
+                    <Input
+                      label="Asset IDs"
+                      value={rolloutForm.asset_ids}
+                      onChange={(e) => updateRolloutTarget({ asset_ids: e.target.value })}
+                      placeholder="uuid-1, uuid-2"
+                      helperText="Comma-separated asset UUIDs."
+                    />
+                  )}
+                  {rolloutForm.target_mode === 'cohort' && (
+                    <Select
+                      label="Cohort"
+                      value={rolloutForm.cohort_id}
+                      onChange={(e) => updateRolloutTarget({ cohort_id: e.target.value })}
+                      options={cohortOptions}
+                      placeholder={cohortOptions.length ? 'Select cohort' : 'No cohorts configured'}
+                    />
+                  )}
+                  {rolloutForm.target_mode === 'all' && (
+                    <div className="rounded-lg border border-opsgrid-border bg-opsgrid-bg px-3 py-2 text-sm text-opsgrid-text-secondary">
+                      All eligible active assets will be resolved at preview time.
+                    </div>
+                  )}
                   <Input label="Canary %" type="number" min="1" max="99" value={rolloutForm.canary_percentage} onChange={(e) => setRolloutForm({ ...rolloutForm, canary_percentage: e.target.value })} />
                   <Input label="Wave size" type="number" min="1" value={rolloutForm.wave_size} onChange={(e) => setRolloutForm({ ...rolloutForm, wave_size: e.target.value })} placeholder="Overrides canary" />
                   <Input label="Health timeout (s)" type="number" min="0" value={rolloutForm.health_timeout_seconds} onChange={(e) => setRolloutForm({ ...rolloutForm, health_timeout_seconds: e.target.value })} />
@@ -370,11 +579,170 @@ export const Fleet: FC = () => {
                     options={releaseOptions}
                     placeholder="None"
                   />
+                  <Input
+                    label={`Not before (${Intl.DateTimeFormat().resolvedOptions().timeZone || 'local'})`}
+                    type="datetime-local"
+                    value={rolloutForm.scheduled_start_at}
+                    onChange={(e) =>
+                      setRolloutForm({
+                        ...rolloutForm,
+                        scheduled_start_at: e.target.value,
+                      })
+                    }
+                    helperText="Optional. Stored and evaluated in UTC."
+                  />
+                  <label className="flex min-h-[42px] items-center gap-2 self-end rounded-lg border border-opsgrid-border bg-opsgrid-bg px-3 text-sm text-opsgrid-text">
+                    <input
+                      type="checkbox"
+                      checked={rolloutForm.enforce_maintenance_windows}
+                      onChange={(e) =>
+                        setRolloutForm({
+                          ...rolloutForm,
+                          enforce_maintenance_windows: e.target.checked,
+                        })
+                      }
+                    />
+                    Dispatch only in maintenance windows
+                  </label>
+                </div>
+                {rolloutForm.enforce_maintenance_windows && (
+                  <p className="rounded-lg border border-status-warning/30 bg-status-warning/10 p-3 text-sm text-opsgrid-text-secondary">
+                    Every resolved agent group must have an organization or site window. Multi-site agents wait until all of their site windows overlap.
+                  </p>
+                )}
+                <div className="rounded-lg border border-opsgrid-border bg-opsgrid-bg p-4">
+                  <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                    <div>
+                      <p className="font-medium text-opsgrid-text">Target approval</p>
+                      <p className="text-sm text-opsgrid-text-secondary">
+                        Resolve the selector and review the exact members before creating the rollout.
+                      </p>
+                    </div>
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      onClick={requestTargetPreview}
+                      loading={createTargetPreview.isPending}
+                    >
+                      <Eye size={16} className="mr-2" />
+                      {rolloutPreview ? 'Refresh preview' : 'Preview targets'}
+                    </Button>
+                  </div>
+
+                  {rolloutPreview && (
+                    <div className="mt-4 space-y-4">
+                      <div
+                        className={cn(
+                          'rounded-lg border p-3',
+                          previewIsFresh
+                            ? 'border-status-running/40 bg-status-running/10'
+                            : 'border-status-warning/40 bg-status-warning/10'
+                        )}
+                      >
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <p className="font-medium text-opsgrid-text">
+                            {formatNumber(rolloutPreview.data.asset_count, 0)} assets on{' '}
+                            {formatNumber(rolloutPreview.data.agent_count, 0)} agents
+                          </p>
+                          <Badge variant={previewIsFresh ? 'success' : 'warning'}>
+                            {previewIsFresh ? 'Ready' : 'Preview expired or changed'}
+                          </Badge>
+                        </div>
+                        <p className="mt-1 text-xs text-opsgrid-text-secondary">
+                          Expires {formatDateTime(rolloutPreview.data.expires_at)} · membership{' '}
+                          <span className="font-mono">
+                            {rolloutPreview.data.membership_hash.slice(0, 12)}
+                          </span>
+                        </p>
+                      </div>
+
+                      {(rolloutPreview.data.warnings.length > 0 ||
+                        rolloutPreview.data.excluded_assets.length > 0) && (
+                        <div className="space-y-2">
+                          {rolloutPreview.data.warnings.map((warning, index) => (
+                            <div
+                              key={`${warning.code}-${index}`}
+                              className="flex items-start gap-2 rounded-lg border border-status-warning/40 bg-status-warning/10 p-3 text-sm text-opsgrid-text"
+                            >
+                              <AlertTriangle size={16} className="mt-0.5 shrink-0 text-status-warning" />
+                              <span>{warning.message}</span>
+                            </div>
+                          ))}
+                          {rolloutPreview.data.excluded_assets.map((asset) => (
+                            <div
+                              key={asset.asset_id}
+                              className="flex items-start gap-2 rounded-lg border border-opsgrid-border p-3 text-sm text-opsgrid-text-secondary"
+                            >
+                              <AlertTriangle size={16} className="mt-0.5 shrink-0" />
+                              <span>
+                                {asset.name} was excluded ({asset.reason.replace(/_/g, ' ')}).
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+
+                      <div className="max-h-72 overflow-auto rounded-lg border border-opsgrid-border">
+                        <Table>
+                          <Table.Head>
+                            <Table.Row>
+                              <Table.Header>Agent</Table.Header>
+                              <Table.Header>Asset</Table.Header>
+                              <Table.Header>Site / workcell</Table.Header>
+                              <Table.Header>Running version</Table.Header>
+                            </Table.Row>
+                          </Table.Head>
+                          <Table.Body>
+                            {rolloutPreview.data.agents.flatMap((agent) =>
+                              agent.assets.map((asset) => (
+                                <Table.Row key={`${agent.agent_key}-${asset.asset_id}`}>
+                                  <Table.Cell className="font-mono text-xs">
+                                    {agent.agent_id || agent.agent_key}
+                                  </Table.Cell>
+                                  <Table.Cell>
+                                    <div className="font-medium">{asset.name}</div>
+                                    <div className="font-mono text-xs text-opsgrid-text-secondary">
+                                      {asset.asset_id}
+                                    </div>
+                                  </Table.Cell>
+                                  <Table.Cell>
+                                    <div>{asset.site_name || 'Unassigned site'}</div>
+                                    <div className="text-xs text-opsgrid-text-secondary">
+                                      {asset.workcell_name}
+                                    </div>
+                                  </Table.Cell>
+                                  <Table.Cell className="font-mono text-xs">
+                                    {asset.agent_version || 'Unknown'}
+                                  </Table.Cell>
+                                </Table.Row>
+                              ))
+                            )}
+                          </Table.Body>
+                        </Table>
+                      </div>
+                    </div>
+                  )}
                 </div>
                 {formError && <p className="text-sm text-status-alarm">{formError}</p>}
                 <div className="flex justify-end gap-2">
-                  <Button type="button" variant="ghost" onClick={() => setShowRolloutForm(false)}>Cancel</Button>
-                  <Button type="submit" loading={createRollout.isPending}>Create rollout</Button>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    onClick={() => {
+                      setShowRolloutForm(false);
+                      setRolloutPreview(null);
+                    }}
+                  >
+                    Cancel
+                  </Button>
+                  <Button
+                    type="submit"
+                    loading={createRollout.isPending}
+                    disabled={!previewIsFresh}
+                    tooltip={!previewIsFresh ? 'Preview and approve a fresh target list first' : undefined}
+                  >
+                    Create rollout
+                  </Button>
                 </div>
               </form>
             </Card>

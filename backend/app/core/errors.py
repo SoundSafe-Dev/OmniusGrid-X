@@ -18,12 +18,14 @@ This is response *shape* only — distinct from the error-capture/triage subsyst
 owned on the integration branch.
 """
 
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Mapping, Optional
 
 from fastapi import FastAPI, Request, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
+import re
+
 import structlog
 
 logger = structlog.get_logger()
@@ -107,10 +109,18 @@ def _envelope(
     details: Any,
     trace_id: Optional[str],
     instance: Optional[str] = None,
+    headers: Optional[Mapping[str, str]] = None,
 ) -> JSONResponse:
     return JSONResponse(
         status_code=status_code,
         media_type=PROBLEM_JSON,
+        # Headers the raiser attached are part of the response's MEANING, not
+        # decoration: RFC 9110 makes `Allow` on a 405 and `WWW-Authenticate` on a
+        # 401 mandatory, and a client that follows the spec cannot act on either
+        # response without them. Starlette's router raises 405 with `Allow`
+        # already set and FastAPI's auth dependencies raise 401 with the
+        # challenge; this envelope rebuilt the response and dropped both.
+        headers=dict(headers) if headers else None,
         content={
             # RFC-9457 standard members (additive).
             "type": _problem_type(code),
@@ -129,11 +139,183 @@ def _envelope(
     )
 
 
+def _is_nul_byte_error(exc: BaseException) -> bool:
+    """True when this exception is Postgres rejecting a NUL byte in the input.
+
+    Walks ``__cause__``/``__context__`` because SQLAlchemy wraps the driver error
+    twice — asyncpg's CharacterNotInRepertoireError arrives inside an
+    AsyncAdapt_asyncpg_dbapi.Error inside a sqlalchemy.exc.DBAPIError — so matching on
+    the outermost type would never fire.
+
+    Matches on the class NAME rather than importing asyncpg, so the check costs nothing
+    when the driver changes and cannot break the error handler by failing to import. The
+    message test is the belt to that braces: 0x00 is the only byte that produces this
+    error for UTF-8 input.
+    """
+    seen = set()
+    current: Optional[BaseException] = exc
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        if type(current).__name__ == "CharacterNotInRepertoireError":
+            return True
+        text = str(current)
+        if "invalid byte sequence for encoding" in text and "0x00" in text:
+            return True
+        current = current.__cause__ or current.__context__
+    return False
+
+
+_FK_DETAIL = re.compile(
+    r'Key \((?P<column>[\w, ]+)\)=\([^)]*\) is not present in table "(?P<table>\w+)"'
+)
+
+
+def _foreign_key_target(exc: BaseException) -> Optional[Dict[str, str]]:
+    """Return {column, table} when this is Postgres rejecting an unknown reference.
+
+    A foreign-key violation says the row you pointed at does not exist. In a request
+    context that pointer came from the payload — `trailer_id`, `shipment_id`,
+    `dock_door_id` — so it is the caller's mistake, and 500 both misleads them and
+    buries a real 4xx in the error budget.
+
+    THE RESPONSE NAMES THE COLUMN AND TABLE, and nothing else. Postgres's DETAIL line
+    also contains the offending VALUE, which may be another tenant's identifier; echoing
+    it back would turn an error message into a probe for what exists. The constraint name
+    is likewise withheld — it is schema shape the caller has no use for.
+    """
+    seen = set()
+    current: Optional[BaseException] = exc
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        if type(current).__name__ == "ForeignKeyViolationError" or "violates foreign key constraint" in str(current):
+            match = _FK_DETAIL.search(str(current))
+            if match:
+                return {"column": match.group("column"), "table": match.group("table")}
+            return {"column": "", "table": ""}
+        current = current.__cause__ or current.__context__
+    return None
+
+
 def _instance(request: Request) -> Optional[str]:
     try:
         return request.url.path
     except Exception:  # pragma: no cover - defensive
         return None
+
+
+def _jsonable_validation_errors(exc: RequestValidationError) -> Any:
+    """`exc.errors()`, made encodable — WITHOUT throwing the message away.
+
+    A `@model_validator` that raises a bare `ValueError` (the documented way to express a
+    cross-field rule) makes pydantic v2 put the LIVE EXCEPTION OBJECT in the error's
+    `ctx`:
+
+        {'type': 'value_error', 'msg': 'Value error, ...',
+         'ctx': {'error': ValueError('retention days must satisfy hot <= warm <= cold')}}
+
+    `JSONResponse` then calls `json.dumps` on it, raises
+    `TypeError: Object of type ValueError is not JSON serializable`, and the generic
+    handler below turns that into a **500**. So every request that violated a cross-field
+    rule got a server error where the schema promises 422 — the validator worked
+    perfectly and the envelope reporting it was what failed.
+
+    Found by the contract gate (FS-259) on `PUT /data-retention/policies/{metric_name}`;
+    it affects every model with such a validator, which today is that one plus the three
+    in `twin_optimizer`.
+
+    `jsonable_encoder` alone would fix the crash and encode the exception as `{}`, which
+    silently drops the only text saying WHICH rule was broken. Stringifying it first keeps
+    that, and `msg` and `ctx` then agree.
+    """
+    from fastapi.encoders import jsonable_encoder
+
+    cleaned = []
+    for error in exc.errors():
+        error = dict(error)
+        ctx = error.get("ctx")
+        if isinstance(ctx, Mapping):
+            error["ctx"] = {
+                key: str(value) if isinstance(value, BaseException) else value
+                for key, value in ctx.items()
+            }
+        cleaned.append(error)
+    return jsonable_encoder(cleaned)
+
+
+def unhandled_exception_response(request: Request, exc: Exception) -> JSONResponse:
+    """The envelope for an exception nothing else claimed.
+
+    FACTORED OUT so it can be produced from two places that are at different DEPTHS in the
+    middleware stack. Starlette installs a catch-all ``@app.exception_handler(Exception)``
+    on ``ServerErrorMiddleware``, which is the OUTERMOST layer — outside ``CORSMiddleware``
+    — so the 500 it returns carries no ``Access-Control-Allow-Origin``. A browser then
+    reports the request as a CORS failure rather than as the 500 it is: the frontend sees
+    an opaque ``Network Error`` with no status and no trace id, and the app's own error
+    triage cannot record the one class of failure it exists for.
+
+    `UnhandledExceptionMiddleware` (app/middleware/unhandled.py) calls this from *inside*
+    the CORS layer so the headers get added; the registered handler below stays as the
+    backstop for anything that bypasses the middleware stack.
+    """
+    tid = _trace_id(request)
+
+    # A NUL byte in the request is a CLIENT error, and the only one of Postgres's
+    # data errors that can be attributed to the request with certainty.
+    #
+    # Postgres text columns cannot store 0x00 at all, so a string containing one can
+    # never be written however the endpoint is fixed — and nothing in this codebase
+    # generates a NUL, so it arrived in the payload. Returning 500 told the caller
+    # the server had broken and a retry might work, when the request was simply
+    # unstorable.
+    #
+    # DELIBERATELY NARROW. The tempting version of this maps every asyncpg DataError
+    # to 400, which would also relabel our own bad values — a wrong cast, a
+    # miscomputed id — as the caller's fault and hide real defects behind a 4xx.
+    # This matches one exception type whose cause is unambiguous. Everything else
+    # stays a 500.
+    if _is_nul_byte_error(exc):
+        logger.warning("request_contained_nul_byte", trace_id=tid, path=_instance(request))
+        return _envelope(
+            "Request contains a NUL byte (0x00), which cannot be stored.",
+            "bad_request", 400, {}, tid, _instance(request),
+        )
+
+    # A reference to a row that does not exist is the caller's mistake.
+    fk = _foreign_key_target(exc)
+    if fk is not None:
+        # STILL LOGGED AT ERROR. The status is now the caller's, but the cause might
+        # not be: our own code can insert a bad reference too, and a 4xx that goes
+        # unlogged would hide that class of bug completely. The status code answers
+        # the client; the log entry keeps the server honest.
+        logger.error(
+            "foreign_key_violation",
+            error=str(exc),
+            trace_id=tid,
+            path=_instance(request),
+            referenced_table=fk["table"] or None,
+            column=fk["column"] or None,
+        )
+        detail = (
+            f"Reference in '{fk['column']}' does not exist in '{fk['table']}'."
+            if fk["table"]
+            else "The request references a record that does not exist."
+        )
+        return _envelope(detail, "bad_request", 400, {}, tid, _instance(request))
+
+    # Never leak internals; log with the trace id for correlation.
+    #
+    # `exc_info` MATTERS HERE. Previously this response came from ServerErrorMiddleware,
+    # which re-raises after responding so uvicorn printed the traceback. Handling the
+    # exception lower down stops that re-raise, so the traceback has to be captured here
+    # or the fix above would trade a visible 500 for an unreadable one.
+    logger.error(
+        "unhandled_exception",
+        error=str(exc),
+        trace_id=tid,
+        path=_instance(request),
+        exc_info=exc,
+    )
+    return _envelope("internal server error", "internal_error", 500, {}, tid, _instance(request))
 
 
 def register_exception_handlers(app: FastAPI) -> None:
@@ -155,6 +337,7 @@ def register_exception_handlers(app: FastAPI) -> None:
         return _envelope(
             message, code, exc.status_code, details,
             _trace_id(request), _instance(request),
+            headers=getattr(exc, "headers", None),
         )
 
     @app.exception_handler(RequestValidationError)
@@ -163,14 +346,14 @@ def register_exception_handlers(app: FastAPI) -> None:
             "request validation failed",
             "validation_error",
             status.HTTP_422_UNPROCESSABLE_ENTITY,
-            {"errors": exc.errors()},
+            {"errors": _jsonable_validation_errors(exc)},
             _trace_id(request),
             _instance(request),
         )
 
     @app.exception_handler(Exception)
     async def _unhandled(request: Request, exc: Exception) -> JSONResponse:
-        # Never leak internals; log with the trace id for correlation.
-        tid = _trace_id(request)
-        logger.error("unhandled_exception", error=str(exc), trace_id=tid, path=request.url.path)
-        return _envelope("internal server error", "internal_error", 500, {}, tid, _instance(request))
+        # BACKSTOP ONLY. `UnhandledExceptionMiddleware` normally answers first, from
+        # inside the CORS layer; this stays registered for anything that reaches
+        # ServerErrorMiddleware without passing through it.
+        return unhandled_exception_response(request, exc)

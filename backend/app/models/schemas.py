@@ -1,9 +1,31 @@
 """Pydantic Schemas for API"""
 
 from datetime import datetime
-from typing import Optional, Dict, Any, List
+from typing import Annotated, Optional, Dict, Any, List, Literal
 from uuid import UUID
-from pydantic import ConfigDict, AliasChoices, BaseModel, Field
+from pydantic import computed_field, BeforeValidator, ConfigDict, AliasChoices, BaseModel, Field
+
+
+def _none_is_empty(value: Any) -> Any:
+    """A NULL JSON column is an object with no extra attributes, which is `{}`."""
+    return {} if value is None else value
+
+
+#: `metadata` as it comes off a row, tolerating the NULL the column can actually hold.
+#:
+#: `Dict[str, Any] = Field(default_factory=dict)` REJECTS None. The factory fires only when the
+#: key is ABSENT — and `model_validate(orm_row)` does not omit the key, it supplies the
+#: attribute's value, which is `None` for any row not written through the ORM. Seventeen of the
+#: twenty-one `meta_data` columns in the migrations are declared with no DEFAULT, so the NULL is
+#: not hypothetical: a data import, a partner integration, or a plain `INSERT` produces one, and
+#: the whole LIST endpoint then 500s for that tenant — not the one row, the page.
+#:
+#: Three schemas had already been changed to `Optional[...] = None` for exactly this, one table
+#: at a time, after `test_yard_trailer_plate_is_resolved.py` found it on appointments. That
+#: changes the wire contract (clients receive `null` where they had `{}`); coercing keeps the
+#: contract and covers every schema at once. NULL and `{}` genuinely mean the same thing here,
+#: which is what makes the coercion honest rather than a papered-over absence.
+JsonMetadata = Annotated[Dict[str, Any], BeforeValidator(_none_is_empty)]
 
 
 # Asset Schemas
@@ -20,7 +42,15 @@ class AssetBase(BaseModel):
 
 
 class AssetCreate(AssetBase):
-    organization_id: UUID
+    # FS-523, and these two were found by the GUARD rather than by the sweep that
+    # preceded it — the first pass keyed on the handler's own parameter being named
+    # `organization_id`, and these derive the tenant under a different parameter name.
+    # A detector narrower than the class it checks for is the recurring failure in this
+    # repository; the guard reads the imported model and the handler's dependency, so it
+    # does not care what anything is called.
+    #
+    # As with the other twelve: required on the schema, never read by the handler, so a
+    # caller who omits it got a 422. `POST /assets` is the core create path of the product.
     # Required: migration 013 made assets.workcell_id NOT NULL. Optional here
     # meant POST /assets without a workcell 500'd (NotNullViolation) instead of
     # returning a clean 422. (FS-90 write-path alignment.)
@@ -46,6 +76,16 @@ class AssetResponse(AssetBase):
     workcell_id: Optional[UUID]
     asset_type_id: UUID
     current_packml_state: str
+    # THE READ PATH THAT WAS MISSING. Migration 053 added the column, the admin endpoint
+    # writes it, and `TacticalEngine._is_maintenance_mode` reads it before dispatching a
+    # control command — but this schema did not carry it, so nothing in the product could
+    # show which assets were in maintenance. An operator could take a machine out of
+    # service, have the engine correctly stop commanding it, and see no sign of either.
+    #
+    # The frontend even had a name for it: `Asset.isInMaintenance`, declared as a required
+    # boolean, populated by the mock fixtures and by nothing else. FastAPI drops whatever
+    # the schema does not declare, so adding the column was necessary and not sufficient.
+    maintenance_mode: bool = False
     last_seen: Optional[datetime]
     created_at: datetime
     updated_at: datetime
@@ -77,7 +117,7 @@ class AlarmCreate(BaseModel):
     severity: str  # critical, high, medium, low, info
     message: str
     description: Optional[str] = None
-    metadata: Dict[str, Any] = Field(default_factory=dict, validation_alias=AliasChoices('meta_data', 'metadata'), serialization_alias='metadata')
+    metadata: JsonMetadata = Field(default_factory=dict, validation_alias=AliasChoices('meta_data', 'metadata'), serialization_alias='metadata')
 
 
 class AlarmResponse(AlarmCreate):
@@ -89,6 +129,16 @@ class AlarmResponse(AlarmCreate):
     acknowledged_comment: Optional[str]
     occurred_at: datetime
     cleared_at: Optional[datetime]
+    #: Resolved by join, not stored (FS-436). The dashboard's Active Alarms panel renders
+    #: `{alarm.assetName} • {occurredAt}` and this was never sent, so every row showed a
+    #: bullet with an empty space in front of it. `alarms` carries only `asset_id`.
+    #:
+    #: Optional and defaulting to None because the two single-row paths (`GET /alarms/{id}`
+    #: and the acknowledge/clear responses) do not run the resolver — a null that means
+    #: "not resolved here" is honest, and a client rendering it falls back to the id. The
+    #: alternative, resolving it on every path, adds a query to writes for a field only the
+    #: list views display.
+    asset_name: Optional[str] = None
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -103,7 +153,7 @@ class OperationCreate(BaseModel):
     operation_name: str
     job_id: Optional[str] = None
     planned_duration: Optional[int] = None  # seconds
-    metadata: Dict[str, Any] = Field(default_factory=dict, validation_alias=AliasChoices('meta_data', 'metadata'), serialization_alias='metadata')
+    metadata: JsonMetadata = Field(default_factory=dict, validation_alias=AliasChoices('meta_data', 'metadata'), serialization_alias='metadata')
 
 
 class OperationResponse(OperationCreate):
@@ -183,11 +233,20 @@ class YardTrailerBase(BaseModel):
     weight_lbs: Optional[float] = None
     temperature_setpoint: Optional[float] = None
     temperature_actual: Optional[float] = None
-    metadata: Dict[str, Any] = Field(default_factory=dict, validation_alias=AliasChoices('meta_data', 'metadata'), serialization_alias='metadata')
+    metadata: JsonMetadata = Field(default_factory=dict, validation_alias=AliasChoices('meta_data', 'metadata'), serialization_alias='metadata')
 
 
 class YardTrailerCreate(YardTrailerBase):
-    organization_id: UUID
+    # FS-523. `organization_id` was declared here and REQUIRED, while the handler
+    # derives the tenant from the token and never reads the body's value — its own
+    # comment says "FROM THE TOKEN, NEVER THE REQUEST". So the schema forced every
+    # caller to send a value the server discards, and a caller who omitted it got a
+    # 422. The frontend types carry no organization_id, so it omitted it: all twelve
+    # of these create endpoints answered 422 to the only client that calls them.
+    #
+    # Removed rather than made Optional. A field a caller can set that changes nothing
+    # is its own small lie, and pydantic ignores extra keys by default, so a client
+    # still sending one is unaffected.
     carrier_id: Optional[UUID] = None
     driver_id: Optional[UUID] = None
     shipment_id: Optional[UUID] = None
@@ -229,23 +288,55 @@ class DockDoorBase(BaseModel):
 
 
 class DockDoorCreate(DockDoorBase):
-    organization_id: UUID
+    # FS-523, and these two were found by the GUARD rather than by the sweep that
+    # preceded it — the first pass keyed on the handler's own parameter being named
+    # `organization_id`, and these derive the tenant under a different parameter name.
+    # A detector narrower than the class it checks for is the recurring failure in this
+    # repository; the guard reads the imported model and the handler's dependency, so it
+    # does not care what anything is called.
+    #
+    # As with the other twelve: required on the schema, never read by the handler, so a
+    # caller who omits it got a 422. `POST /assets` is the core create path of the product.
+    pass
 
 
 class DockDoorUpdate(BaseModel):
     status: Optional[str] = None
-    equipment_capabilities: Optional[Dict[str, Any]] = None
+    equipment_capabilities: Dict[str, Any] = {}
     is_active: Optional[bool] = None
     current_trailer_id: Optional[UUID] = None
 
 
 class DockDoorResponse(DockDoorBase):
+    # These five are nullable on `dock_doors` with NO server default, so they override
+    # the stricter request-side types in DockDoorBase. Their ORM `default=` is
+    # PYTHON-side: it fires only for rows written through SQLAlchemy, so a migration,
+    # a seeder or any raw INSERT leaves NULL — and a pydantic default does not save
+    # you, because the ORM hands the field an explicit None rather than omitting it.
+    #
+    # Not hypothetical: a raw-inserted dock door made GET /yard/dock/doors return 500
+    # with "equipment_capabilities: Input should be a valid dictionary" — a validation
+    # error naming OUR schema rather than the data, so nobody would think to look at
+    # the row. Overridden here rather than in DockDoorBase so create/update keep
+    # requiring them.
+    status: Optional[str] = None
+    equipment_capabilities: Optional[Dict[str, Any]] = None
+    is_active: Optional[bool] = None
+
     id: UUID
     organization_id: UUID
     current_trailer_id: Optional[UUID]
+    # DENORMALISED, and declared here for a specific reason: `response_model` DROPS
+    # anything the schema does not name. The handler now resolves the plate from
+    # `yard_trailers` via `current_trailer_id`, and without this line FastAPI would have
+    # deleted it from every response and the fix would have done nothing visible — the
+    # same way `AssetResponse` silently swallowed `maintenance_mode`.
+    trailer_license_plate: Optional[str] = None
+    # Declared explicitly so it survives the response model, like the plate above. The door
+    # card now shows "Last occupied" instead of an `estimatedReleaseAt` no column produces.
     last_occupied_at: Optional[datetime]
-    created_at: datetime
-    updated_at: datetime
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -255,19 +346,33 @@ class YardMoveBase(BaseModel):
     to_location: str
     move_type: Optional[str] = None  # check_in, dock, yard_relocate, check_out
     duration_seconds: Optional[float] = None
-    metadata: Dict[str, Any] = Field(default_factory=dict, validation_alias=AliasChoices('meta_data', 'metadata'), serialization_alias='metadata')
+    metadata: JsonMetadata = Field(default_factory=dict, validation_alias=AliasChoices('meta_data', 'metadata'), serialization_alias='metadata')
 
 
 class YardMoveCreate(YardMoveBase):
-    organization_id: UUID
+    # FS-523. `organization_id` was declared here and REQUIRED, while the handler
+    # derives the tenant from the token and never reads the body's value — its own
+    # comment says "FROM THE TOKEN, NEVER THE REQUEST". So the schema forced every
+    # caller to send a value the server discards, and a caller who omitted it got a
+    # 422. The frontend types carry no organization_id, so it omitted it: all twelve
+    # of these create endpoints answered 422 to the only client that calls them.
+    #
+    # Removed rather than made Optional. A field a caller can set that changes nothing
+    # is its own small lie, and pydantic ignores extra keys by default, so a client
+    # still sending one is unaffected.
     trailer_id: UUID
     jockey_driver_id: Optional[UUID] = None
 
 
 class YardMoveResponse(YardMoveBase):
+    # Mirrors the columns: nullable on the table with NO server default, so a row
+    # written outside SQLAlchemy (migration, seeder, raw INSERT) hands these an
+    # explicit None. A pydantic default does not help — the ORM passes the None
+    # rather than omitting the field. Response-only; create/update keep their
+    # stricter types.
     id: UUID
     organization_id: UUID
-    trailer_id: UUID
+    trailer_id: Optional[UUID] = None
     jockey_driver_id: Optional[UUID]
     started_at: datetime
     completed_at: Optional[datetime]
@@ -289,22 +394,51 @@ class DriverWaitTimeBase(BaseModel):
     detention_charge: Optional[float] = None
     demurrage_charge: Optional[float] = None
     is_billed: bool = False
-    metadata: Dict[str, Any] = Field(default_factory=dict, validation_alias=AliasChoices('meta_data', 'metadata'), serialization_alias='metadata')
+    metadata: JsonMetadata = Field(default_factory=dict, validation_alias=AliasChoices('meta_data', 'metadata'), serialization_alias='metadata')
 
 
 class DriverWaitTimeCreate(DriverWaitTimeBase):
-    organization_id: UUID
+    # FS-523. `organization_id` was declared here and REQUIRED, while the handler
+    # derives the tenant from the token and never reads the body's value — its own
+    # comment says "FROM THE TOKEN, NEVER THE REQUEST". So the schema forced every
+    # caller to send a value the server discards, and a caller who omitted it got a
+    # 422. The frontend types carry no organization_id, so it omitted it: all twelve
+    # of these create endpoints answered 422 to the only client that calls them.
+    #
+    # Removed rather than made Optional. A field a caller can set that changes nothing
+    # is its own small lie, and pydantic ignores extra keys by default, so a client
+    # still sending one is unaffected.
     driver_id: UUID
     trailer_id: Optional[UUID] = None
 
 
 class DriverWaitTimeResponse(DriverWaitTimeBase):
+    # Mirrors the columns: nullable on the table with NO server default, so a row
+    # written outside SQLAlchemy (migration, seeder, raw INSERT) hands these an
+    # explicit None. A pydantic default does not help — the ORM passes the None
+    # rather than omitting the field. Response-only; create/update keep their
+    # stricter types.
     id: UUID
     organization_id: UUID
-    driver_id: UUID
+    driver_id: Optional[UUID] = None
     trailer_id: Optional[UUID]
     updated_at: datetime
     created_at: datetime
+
+    #: THE CAVEAT TRAVELS WITH THE CHARGE (FS-426). `detention_charge` is nullable, and null
+    #: means "nobody has assessed this" — a different fact from "assessed at zero". The
+    #: dwell-times path already publishes exactly this flag, computed the same way, because
+    #: it coerces the charge to a float and would otherwise report an unassessed trailer as
+    #: owing nothing. This endpoint sent the charge and not the flag, so the two disagreed
+    #: about the same concept, and a reader had to know that null carries meaning here.
+    #:
+    #: `test_qualifiers_reach_the_frontend` had `detention_assessed` exempted on the
+    #: grounds that `detention_charge` was not rendered. It is now, and the guard said so on
+    #: the commit that made it true.
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def detention_assessed(self) -> bool:
+        return self.detention_charge is not None
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -315,18 +449,32 @@ class YardCheckPointBase(BaseModel):
     weight_lbs: Optional[float] = None
     inspection_status: Optional[str] = None  # passed, failed, pending
     inspector_id: Optional[UUID] = None
-    metadata: Dict[str, Any] = Field(default_factory=dict, validation_alias=AliasChoices('meta_data', 'metadata'), serialization_alias='metadata')
+    metadata: JsonMetadata = Field(default_factory=dict, validation_alias=AliasChoices('meta_data', 'metadata'), serialization_alias='metadata')
 
 
 class YardCheckPointCreate(YardCheckPointBase):
-    organization_id: UUID
+    # FS-523. `organization_id` was declared here and REQUIRED, while the handler
+    # derives the tenant from the token and never reads the body's value — its own
+    # comment says "FROM THE TOKEN, NEVER THE REQUEST". So the schema forced every
+    # caller to send a value the server discards, and a caller who omitted it got a
+    # 422. The frontend types carry no organization_id, so it omitted it: all twelve
+    # of these create endpoints answered 422 to the only client that calls them.
+    #
+    # Removed rather than made Optional. A field a caller can set that changes nothing
+    # is its own small lie, and pydantic ignores extra keys by default, so a client
+    # still sending one is unaffected.
     trailer_id: UUID
 
 
 class YardCheckPointResponse(YardCheckPointBase):
+    # Mirrors the columns: nullable on the table with NO server default, so a row
+    # written outside SQLAlchemy (migration, seeder, raw INSERT) hands these an
+    # explicit None. A pydantic default does not help — the ORM passes the None
+    # rather than omitting the field. Response-only; create/update keep their
+    # stricter types.
     id: UUID
     organization_id: UUID
-    trailer_id: UUID
+    trailer_id: Optional[UUID] = None
     passed_at: datetime
     created_at: datetime
 
@@ -351,7 +499,17 @@ class CarrierBase(BaseModel):
 
 
 class CarrierCreate(CarrierBase):
-    organization_id: UUID
+    # FS-523. `organization_id` was declared here and REQUIRED, while the handler
+    # derives the tenant from the token and never reads the body's value — its own
+    # comment says "FROM THE TOKEN, NEVER THE REQUEST". So the schema forced every
+    # caller to send a value the server discards, and a caller who omitted it got a
+    # 422. The frontend types carry no organization_id, so it omitted it: all twelve
+    # of these create endpoints answered 422 to the only client that calls them.
+    #
+    # Removed rather than made Optional. A field a caller can set that changes nothing
+    # is its own small lie, and pydantic ignores extra keys by default, so a client
+    # still sending one is unaffected.
+    pass
 
 
 class CarrierUpdate(BaseModel):
@@ -394,9 +552,17 @@ class DriverBase(BaseModel):
     medical_cert_expires: Optional[datetime] = None
     dq_file_complete: bool = False
     current_hos_status: Optional[str] = None  # on_duty, driving, off_duty, sleeper
-    hos_drive_hours_today: float = 0
-    hos_on_duty_hours_today: float = 0
-    hos_cycle_hours: float = 0
+    # OPTIONAL, AND NOT DEFAULTED TO ZERO. All three columns are nullable, so a driver
+    # who has not reported made `model_validate` raise and the whole `/drivers` list
+    # answered 500 — one silent driver took the page down for the entire fleet.
+    #
+    # The `= 0` was the sharper half. Zero is not "unknown", it is "has driven no hours
+    # today", which is a clean HOS record; it is the same coercion `check_compliance` was
+    # fixed for (`float(x or 0)` turning a driver who never reported into one who drove
+    # nothing). A schema default is a claim about the world just as much as a coalesce is.
+    hos_drive_hours_today: Optional[float] = None
+    hos_on_duty_hours_today: Optional[float] = None
+    hos_cycle_hours: Optional[float] = None
     eld_device_id: Optional[str] = None
     phone: Optional[str] = None
     email: Optional[str] = None
@@ -404,7 +570,16 @@ class DriverBase(BaseModel):
 
 
 class DriverCreate(DriverBase):
-    organization_id: UUID
+    # FS-523. `organization_id` was declared here and REQUIRED, while the handler
+    # derives the tenant from the token and never reads the body's value — its own
+    # comment says "FROM THE TOKEN, NEVER THE REQUEST". So the schema forced every
+    # caller to send a value the server discards, and a caller who omitted it got a
+    # 422. The frontend types carry no organization_id, so it omitted it: all twelve
+    # of these create endpoints answered 422 to the only client that calls them.
+    #
+    # Removed rather than made Optional. A field a caller can set that changes nothing
+    # is its own small lie, and pydantic ignores extra keys by default, so a client
+    # still sending one is unaffected.
     carrier_id: Optional[UUID] = None
 
 
@@ -453,11 +628,20 @@ class ShipmentBase(BaseModel):
     temperature_required: bool = False
     temperature_min: Optional[float] = None
     temperature_max: Optional[float] = None
-    metadata: Dict[str, Any] = Field(default_factory=dict, validation_alias=AliasChoices('meta_data', 'metadata'), serialization_alias='metadata')
+    metadata: JsonMetadata = Field(default_factory=dict, validation_alias=AliasChoices('meta_data', 'metadata'), serialization_alias='metadata')
 
 
 class ShipmentCreate(ShipmentBase):
-    organization_id: UUID
+    # FS-523. `organization_id` was declared here and REQUIRED, while the handler
+    # derives the tenant from the token and never reads the body's value — its own
+    # comment says "FROM THE TOKEN, NEVER THE REQUEST". So the schema forced every
+    # caller to send a value the server discards, and a caller who omitted it got a
+    # 422. The frontend types carry no organization_id, so it omitted it: all twelve
+    # of these create endpoints answered 422 to the only client that calls them.
+    #
+    # Removed rather than made Optional. A field a caller can set that changes nothing
+    # is its own small lie, and pydantic ignores extra keys by default, so a client
+    # still sending one is unaffected.
     carrier_id: Optional[UUID] = None
     driver_id: Optional[UUID] = None
     trailer_id: Optional[UUID] = None
@@ -475,6 +659,12 @@ class ShipmentUpdate(BaseModel):
 
 
 class ShipmentResponse(ShipmentBase):
+    # Mirrors the columns: nullable on the table with NO server default, so a row
+    # written outside SQLAlchemy (migration, seeder, raw INSERT) hands these an
+    # explicit None. A pydantic default does not help — the ORM passes the None
+    # rather than omitting the field. Response-only; create/update keep their
+    # stricter types.
+    shipment_type: Optional[str] = None
     id: UUID
     organization_id: UUID
     carrier_id: Optional[UUID]
@@ -501,7 +691,17 @@ class RouteBase(BaseModel):
 
 
 class RouteCreate(RouteBase):
-    organization_id: UUID
+    # FS-523. `organization_id` was declared here and REQUIRED, while the handler
+    # derives the tenant from the token and never reads the body's value — its own
+    # comment says "FROM THE TOKEN, NEVER THE REQUEST". So the schema forced every
+    # caller to send a value the server discards, and a caller who omitted it got a
+    # 422. The frontend types carry no organization_id, so it omitted it: all twelve
+    # of these create endpoints answered 422 to the only client that calls them.
+    #
+    # Removed rather than made Optional. A field a caller can set that changes nothing
+    # is its own small lie, and pydantic ignores extra keys by default, so a client
+    # still sending one is unaffected.
+    pass
 
 
 class RouteUpdate(BaseModel):
@@ -513,6 +713,12 @@ class RouteUpdate(BaseModel):
 
 
 class RouteResponse(RouteBase):
+    # Mirrors the columns: nullable on the table with NO server default, so a row
+    # written outside SQLAlchemy (migration, seeder, raw INSERT) hands these an
+    # explicit None. A pydantic default does not help — the ORM passes the None
+    # rather than omitting the field. Response-only; create/update keep their
+    # stricter types.
+    optimization_criteria: Optional[str] = None
     id: UUID
     organization_id: UUID
     created_at: datetime
@@ -529,20 +735,34 @@ class LoadPlanBase(BaseModel):
     special_instructions: Optional[str] = None
     is_executed: bool = False
     executed_at: Optional[datetime] = None
-    metadata: Dict[str, Any] = Field(default_factory=dict, validation_alias=AliasChoices('meta_data', 'metadata'), serialization_alias='metadata')
+    metadata: JsonMetadata = Field(default_factory=dict, validation_alias=AliasChoices('meta_data', 'metadata'), serialization_alias='metadata')
 
 
 class LoadPlanCreate(LoadPlanBase):
-    organization_id: UUID
+    # FS-523. `organization_id` was declared here and REQUIRED, while the handler
+    # derives the tenant from the token and never reads the body's value — its own
+    # comment says "FROM THE TOKEN, NEVER THE REQUEST". So the schema forced every
+    # caller to send a value the server discards, and a caller who omitted it got a
+    # 422. The frontend types carry no organization_id, so it omitted it: all twelve
+    # of these create endpoints answered 422 to the only client that calls them.
+    #
+    # Removed rather than made Optional. A field a caller can set that changes nothing
+    # is its own small lie, and pydantic ignores extra keys by default, so a client
+    # still sending one is unaffected.
     shipment_id: UUID
     trailer_id: Optional[UUID] = None
     planned_by: Optional[UUID] = None
 
 
 class LoadPlanResponse(LoadPlanBase):
+    # Mirrors the columns: nullable on the table with NO server default, so a row
+    # written outside SQLAlchemy (migration, seeder, raw INSERT) hands these an
+    # explicit None. A pydantic default does not help — the ORM passes the None
+    # rather than omitting the field. Response-only; create/update keep their
+    # stricter types.
     id: UUID
     organization_id: UUID
-    shipment_id: UUID
+    shipment_id: Optional[UUID] = None
     trailer_id: Optional[UUID]
     planned_by: Optional[UUID]
     planned_at: datetime
@@ -564,20 +784,34 @@ class FreightChargeBase(BaseModel):
     billed_at: Optional[datetime] = None
     invoice_number: Optional[str] = None
     approved_at: Optional[datetime] = None
-    metadata: Dict[str, Any] = Field(default_factory=dict, validation_alias=AliasChoices('meta_data', 'metadata'), serialization_alias='metadata')
+    metadata: JsonMetadata = Field(default_factory=dict, validation_alias=AliasChoices('meta_data', 'metadata'), serialization_alias='metadata')
 
 
 class FreightChargeCreate(FreightChargeBase):
-    organization_id: UUID
+    # FS-523. `organization_id` was declared here and REQUIRED, while the handler
+    # derives the tenant from the token and never reads the body's value — its own
+    # comment says "FROM THE TOKEN, NEVER THE REQUEST". So the schema forced every
+    # caller to send a value the server discards, and a caller who omitted it got a
+    # 422. The frontend types carry no organization_id, so it omitted it: all twelve
+    # of these create endpoints answered 422 to the only client that calls them.
+    #
+    # Removed rather than made Optional. A field a caller can set that changes nothing
+    # is its own small lie, and pydantic ignores extra keys by default, so a client
+    # still sending one is unaffected.
     shipment_id: UUID
     carrier_id: Optional[UUID] = None
     approved_by: Optional[UUID] = None
 
 
 class FreightChargeResponse(FreightChargeBase):
+    # Mirrors the columns: nullable on the table with NO server default, so a row
+    # written outside SQLAlchemy (migration, seeder, raw INSERT) hands these an
+    # explicit None. A pydantic default does not help — the ORM passes the None
+    # rather than omitting the field. Response-only; create/update keep their
+    # stricter types.
     id: UUID
     organization_id: UUID
-    shipment_id: UUID
+    shipment_id: Optional[UUID] = None
     carrier_id: Optional[UUID]
     approved_by: Optional[UUID]
     created_at: datetime
@@ -597,11 +831,20 @@ class DockAppointmentBase(BaseModel):
     status: str = "scheduled"  # scheduled, in_progress, completed, cancelled, no_show
     priority: str = "normal"
     compliance_required: bool = False
-    metadata: Dict[str, Any] = Field(default_factory=dict, validation_alias=AliasChoices('meta_data', 'metadata'), serialization_alias='metadata')
+    metadata: JsonMetadata = Field(default_factory=dict, validation_alias=AliasChoices('meta_data', 'metadata'), serialization_alias='metadata')
 
 
 class DockAppointmentCreate(DockAppointmentBase):
-    organization_id: UUID
+    # FS-523. `organization_id` was declared here and REQUIRED, while the handler
+    # derives the tenant from the token and never reads the body's value — its own
+    # comment says "FROM THE TOKEN, NEVER THE REQUEST". So the schema forced every
+    # caller to send a value the server discards, and a caller who omitted it got a
+    # 422. The frontend types carry no organization_id, so it omitted it: all twelve
+    # of these create endpoints answered 422 to the only client that calls them.
+    #
+    # Removed rather than made Optional. A field a caller can set that changes nothing
+    # is its own small lie, and pydantic ignores extra keys by default, so a client
+    # still sending one is unaffected.
     dock_door_id: UUID
     trailer_id: Optional[UUID] = None
     shipment_id: Optional[UUID] = None
@@ -619,9 +862,33 @@ class DockAppointmentUpdate(BaseModel):
 
 
 class DockAppointmentResponse(DockAppointmentBase):
+    # Mirrors the columns: nullable on the table with NO server default, so a row
+    # written outside SQLAlchemy (migration, seeder, raw INSERT) hands these an
+    # explicit None. A pydantic default does not help — the ORM passes the None
+    # rather than omitting the field. Response-only; create/update keep their
+    # stricter types.
+    appointment_type: Optional[str] = None
+    # THE SAME DEFECT THE COMMENT ABOVE DESCRIBES, one class over. `dock_appointments`
+    # declares `meta_data = Column(JSON, default={})` — a PYTHON-side default, so a row
+    # written by a migration, a seeder or any raw INSERT holds NULL, and the ORM hands this
+    # field an explicit None. `Dict[str, Any]` with a `default_factory` does not save you
+    # from an explicit None, so `GET /yard/dock/appointments` answered 500 with
+    # "metadata: Input should be a valid dictionary" — a validation error naming OUR schema
+    # rather than the row, so nobody would think to look at the data.
+    #
+    # `DockDoorResponse` was fixed for exactly this (see `equipment_capabilities` there) and
+    # the appointment beside it was left. Method rule 18: the second instance is in the
+    # nearest neighbour of the first.
+    metadata: Optional[Dict[str, Any]] = Field(
+        default=None,
+        validation_alias=AliasChoices('meta_data', 'metadata'),
+        serialization_alias='metadata',
+    )
+    status: Optional[str] = None
+    priority: Optional[str] = None
     id: UUID
     organization_id: UUID
-    dock_door_id: UUID
+    dock_door_id: Optional[UUID] = None
     trailer_id: Optional[UUID]
     shipment_id: Optional[UUID]
     operation_id: Optional[UUID]
@@ -643,7 +910,7 @@ class TruckAssetCorrelationBase(BaseModel):
     detention_incurred: bool = False
     detention_charge: Optional[float] = None
     efficiency_score: Optional[float] = None
-    metadata: Dict[str, Any] = Field(default_factory=dict, validation_alias=AliasChoices('meta_data', 'metadata'), serialization_alias='metadata')
+    metadata: JsonMetadata = Field(default_factory=dict, validation_alias=AliasChoices('meta_data', 'metadata'), serialization_alias='metadata')
 
 
 class TruckAssetCorrelationCreate(TruckAssetCorrelationBase):
@@ -675,15 +942,38 @@ class LoadQualityLogBase(BaseModel):
     claim_filed: bool = False
     claim_amount: Optional[float] = None
     resolved_at: Optional[datetime] = None
-    metadata: Dict[str, Any] = Field(default_factory=dict, validation_alias=AliasChoices('meta_data', 'metadata'), serialization_alias='metadata')
+    metadata: JsonMetadata = Field(default_factory=dict, validation_alias=AliasChoices('meta_data', 'metadata'), serialization_alias='metadata')
 
 
 class LoadQualityLogCreate(LoadQualityLogBase):
-    organization_id: UUID
+    # FS-523. `organization_id` was declared here and REQUIRED, while the handler
+    # derives the tenant from the token and never reads the body's value — its own
+    # comment says "FROM THE TOKEN, NEVER THE REQUEST". So the schema forced every
+    # caller to send a value the server discards, and a caller who omitted it got a
+    # 422. The frontend types carry no organization_id, so it omitted it: all twelve
+    # of these create endpoints answered 422 to the only client that calls them.
+    #
+    # Removed rather than made Optional. A field a caller can set that changes nothing
+    # is its own small lie, and pydantic ignores extra keys by default, so a client
+    # still sending one is unaffected.
     shipment_id: Optional[UUID] = None
     trailer_id: Optional[UUID] = None
-    asset_id: Optional[UUID] = None
+    # REQUIRED, because the column is (FS-523). `load_quality_logs.asset_id` is
+    # `nullable=False` with no default; declaring it Optional here meant a caller who
+    # omitted it reached the INSERT and got a NotNullViolationError — a **500** they
+    # cannot act on, where the honest answer is a 422 naming the field.
+    #
+    # This was masked. Before the spurious `organization_id` above was removed, an
+    # incomplete body failed validation on that first, so the endpoint answered 422 for
+    # the wrong reason and the real missing field was never reached. Removing a field
+    # that should not have been required revealed one that should have been.
+    asset_id: UUID
     operation_id: Optional[UUID] = None
+    # Same column shape, and NOT required: the service computes it
+    # (`logistics_correlation_engine.py:509`, from `_analyze_root_cause`) and never reads
+    # a caller's value, so requiring it would ask for something the server overwrites.
+    # It is the second NOT NULL column on this table, and `_analyze_root_cause` defaults
+    # it to `asset_id` — which is why fixing only the field above is enough.
     root_cause_asset: Optional[UUID] = None
     root_cause_operation: Optional[UUID] = None
 
@@ -711,7 +1001,9 @@ class DwellTimeAnalytics(BaseModel):
     trailer_number: str
     check_in_at: datetime
     check_out_at: Optional[datetime]
-    dwell_hours: float
+    #: None when the trailer has no recorded check-in (FS-465) — an unknown dwell, not a
+    #: zero one. Mirrors `detention_charge`, which is null until a charge is assessed.
+    dwell_hours: Optional[float]
     is_detention: bool
     detention_charge: Optional[float]
 
@@ -911,6 +1203,12 @@ class TaskCommentCreate(TaskCommentBase):
 
 
 class TaskCommentResponse(TaskCommentBase):
+    # Mirrors the columns: nullable on the table with NO server default, so a row
+    # written outside SQLAlchemy (migration, seeder, raw INSERT) hands these an
+    # explicit None. A pydantic default does not help — the ORM passes the None
+    # rather than omitting the field. Response-only; create/update keep their
+    # stricter types.
+    content: Optional[str] = None
     id: UUID
     task_id: UUID
     user_id: Optional[UUID]
@@ -989,6 +1287,27 @@ class TaskRuleResponse(TaskRuleBase):
     updated_at: datetime
 
     model_config = ConfigDict(from_attributes=True)
+
+
+class TaskRuleTemplateResponse(TaskRuleBase):
+    """A premade rule a user can activate — NOT an activated rule (FS-431).
+
+    `/kanban/rules/premade` declared `List[TaskRuleResponse]` and returned five static
+    dicts. `TaskRuleResponse` requires `id: UUID`, `organization_id: UUID`, `is_active`,
+    `created_at` and `updated_at`; a template has none of those, and its ids are literals
+    like 'template-001'. So response validation raised on every call and the endpoint has
+    answered 500 since it was written — on any database, with no data involved.
+
+    The declaration was a category error, not a missing field: a template is a thing you
+    could create, so it has no identity, no owner and no history until you do. Modelling it
+    as a rule forces five values to be invented before anyone has asked for one.
+
+    `template_id` is deliberately a `str`. Widening `TaskRuleResponse.id` to accept both
+    would have made every real rule's id un-typed to spare these five constants.
+    """
+
+    template_id: str
+    is_system_rule: bool = True
 
 
 class TaskRuleTestRequest(BaseModel):
@@ -1194,4 +1513,137 @@ class DataCorrelationResponse(DataCorrelationBase):
     created_at: datetime
     updated_at: datetime
 
+    model_config = ConfigDict(from_attributes=True)
+
+
+# ---------------------------------------------------------------------------
+# Alarm rules (FS-218)
+# ---------------------------------------------------------------------------
+
+COMPARATORS = ("gt", "gte", "lt", "lte", "eq", "ne")
+SEVERITIES = ("critical", "high", "medium", "low", "info")
+
+
+class AlarmRuleBase(BaseModel):
+    """Shared fields. Validation mirrors the CHECK constraints in migration 047 so
+    a bad rule is rejected at the edge of the API with a 422 naming the field,
+    rather than as an opaque IntegrityError from Postgres.
+    """
+
+    name: str = Field(min_length=1, max_length=255)
+    description: Optional[str] = None
+
+    metric_name: str = Field(min_length=1, max_length=255)
+    comparator: Literal["gt", "gte", "lt", "lte", "eq", "ne"]
+    threshold: float
+
+    duration_seconds: int = Field(default=0, ge=0)
+    hysteresis: float = Field(default=0.0, ge=0)
+
+    severity: Literal["critical", "high", "medium", "low", "info"]
+    alarm_code: str = Field(min_length=1, max_length=100)
+    # Rendered with {asset_id}, {metric_name}, {value}, {threshold}. Left None to
+    # get a generated message.
+    message_template: Optional[str] = None
+
+    # Targeting: most specific wins. All None = every asset in the organization.
+    asset_id: Optional[UUID] = None
+    asset_type_id: Optional[UUID] = None
+    workcell_id: Optional[UUID] = None
+
+    is_enabled: bool = True
+
+
+class AlarmRuleCreate(AlarmRuleBase):
+    pass
+
+
+class AlarmRuleUpdate(BaseModel):
+    """All fields optional — PATCH semantics.
+
+    Deliberately NOT `AlarmRuleBase` with defaults: that would make omitting a
+    field indistinguishable from resetting it to the default, so a PATCH that only
+    changed `threshold` would silently re-enable a disabled rule.
+    """
+
+    name: Optional[str] = Field(default=None, min_length=1, max_length=255)
+    description: Optional[str] = None
+    metric_name: Optional[str] = Field(default=None, min_length=1, max_length=255)
+    comparator: Optional[Literal["gt", "gte", "lt", "lte", "eq", "ne"]] = None
+    threshold: Optional[float] = None
+    duration_seconds: Optional[int] = Field(default=None, ge=0)
+    hysteresis: Optional[float] = Field(default=None, ge=0)
+    severity: Optional[Literal["critical", "high", "medium", "low", "info"]] = None
+    alarm_code: Optional[str] = Field(default=None, min_length=1, max_length=100)
+    message_template: Optional[str] = None
+    asset_id: Optional[UUID] = None
+    asset_type_id: Optional[UUID] = None
+    workcell_id: Optional[UUID] = None
+    is_enabled: Optional[bool] = None
+
+
+class AlarmRuleResponse(AlarmRuleBase):
+    id: UUID
+    organization_id: UUID
+    created_by: Optional[UUID] = None
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+# ---------------------------------------------------------------------------
+# Admin user management (FS-221)
+# ---------------------------------------------------------------------------
+
+class UserAdminCreate(BaseModel):
+    """Deliberately has NO organization_id field.
+
+    The endpoint derives it from the caller's token, so a client cannot place a
+    user into another tenant — the tenant-trust shape already fixed in yard,
+    dashboard and alarms.
+    """
+
+    # `str` with a pattern, not pydantic's EmailStr: that requires the
+    # `email-validator` package, which is not a dependency of this project, and
+    # every other schema here (UserLogin, UserCreate) uses a plain str. A new
+    # runtime dependency for one field is not worth it; a pattern still rejects
+    # the mistakes that matter (missing @, whitespace, no domain).
+    email: str = Field(min_length=3, max_length=255, pattern=r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+    full_name: Optional[str] = Field(default=None, max_length=255)
+    password: str = Field(min_length=12, max_length=128)
+    # Literal, not str: an unconstrained role stored fine and then matched no
+    # require_* dependency, leaving the account with no permissions at all.
+    role: Literal["viewer", "operator", "admin"] = "operator"
+    department: Optional[str] = Field(default=None, max_length=100)
+
+
+class UserAdminUpdate(BaseModel):
+    """PATCH semantics — every field optional.
+
+    Not `UserAdminCreate` with defaults: that would make omitting `is_active`
+    indistinguishable from setting it, so an edit to someone's department could
+    silently reactivate a deactivated account.
+    """
+
+    full_name: Optional[str] = Field(default=None, max_length=255)
+    role: Optional[Literal["viewer", "operator", "admin"]] = None
+    department: Optional[str] = Field(default=None, max_length=100)
+    is_active: Optional[bool] = None
+
+
+class UserAdminResponse(BaseModel):
+    id: UUID
+    email: str
+    full_name: Optional[str] = None
+    role: str
+    department: Optional[str] = None
+    organization_id: Optional[UUID] = None
+    is_active: bool
+    last_login: Optional[datetime] = None
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+
+    # No hashed_password field: response_model filtering is what keeps the hash
+    # out of the payload, so this class is a security boundary, not just a shape.
     model_config = ConfigDict(from_attributes=True)

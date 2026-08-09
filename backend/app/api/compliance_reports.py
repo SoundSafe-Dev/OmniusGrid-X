@@ -4,7 +4,7 @@
 import json
 import uuid
 from datetime import datetime, timezone
-from typing import Literal
+from typing import List, Literal
 from uuid import UUID
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -18,7 +18,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.auth import get_current_active_user
 from app.core.config import settings
 from app.db.models import ComplianceReportJob, ScheduledComplianceReport, User
-from app.middleware.rbac import require_admin, require_roles
+from app.core.roles import VIEWER
+from app.middleware.rbac import require_admin, require_at_least
 from app.middleware.rate_limit import rate_limit
 from app.middleware.tenant_isolation import get_tenant_db, get_tenant_org_id
 from app.db.database import AsyncSessionLocal
@@ -133,6 +134,16 @@ class ComplianceReportJobResponse(BaseModel):
     download_url: str
 
 
+class ScheduleListResponse(BaseModel):
+    """`GET /reports/schedules` wraps the typed schedule rows in `items`."""
+
+    items: List[ScheduledComplianceReportResponse]
+
+
+class ScheduleDeleted(BaseModel):
+    deleted: str
+
+
 def _job_response(job: ComplianceReportJob) -> ComplianceReportJobResponse:
     job_id = job.id
     return ComplianceReportJobResponse(
@@ -177,6 +188,7 @@ async def _get_owned_job(
 
 @router.post(
     "/reports",
+    response_model=ComplianceReportJobResponse,
     status_code=status.HTTP_202_ACCEPTED,
     summary="Enqueue async compliance report generation",
     dependencies=[Depends(require_admin)],
@@ -395,6 +407,7 @@ async def _get_owned_schedule(
 
 @router.get(
     "/reports/schedules",
+    response_model=ScheduleListResponse,
     summary="List scheduled compliance report definitions",
     dependencies=[Depends(require_admin)],
 )
@@ -417,6 +430,7 @@ async def list_compliance_report_schedules(
 
 @router.post(
     "/reports/schedules",
+    response_model=ScheduledComplianceReportResponse,
     status_code=status.HTTP_201_CREATED,
     summary="Create a scheduled compliance report definition",
     dependencies=[Depends(require_admin)],
@@ -478,6 +492,7 @@ async def create_compliance_report_schedule(
 
 @router.get(
     "/reports/schedules/{schedule_id}",
+    response_model=ScheduledComplianceReportResponse,
     summary="Get a scheduled compliance report definition",
     dependencies=[Depends(require_admin)],
 )
@@ -495,6 +510,7 @@ async def get_compliance_report_schedule(
 
 @router.put(
     "/reports/schedules/{schedule_id}",
+    response_model=ScheduledComplianceReportResponse,
     summary="Update a scheduled compliance report definition",
     dependencies=[Depends(require_admin)],
 )
@@ -565,6 +581,7 @@ async def update_compliance_report_schedule(
 
 @router.delete(
     "/reports/schedules/{schedule_id}",
+    response_model=ScheduleDeleted,
     summary="Delete a scheduled compliance report definition",
     dependencies=[Depends(require_admin)],
 )
@@ -606,8 +623,9 @@ async def delete_compliance_report_schedule(
 
 @router.get(
     "/reports/{job_id}",
+    response_model=ComplianceReportJobResponse,
     summary="Get compliance report job status",
-    dependencies=[Depends(require_roles('admin', 'viewer'))],
+    dependencies=[Depends(require_at_least(VIEWER))],
 )
 @rate_limit("100/minute")
 async def get_compliance_report_job(
@@ -624,7 +642,18 @@ async def get_compliance_report_job(
 @router.get(
     "/reports/{job_id}/download",
     summary="Download a completed compliance report",
-    dependencies=[Depends(require_roles('admin', 'viewer'))],
+    # THE SCHEMA SAID JSON AND THIS HAS NEVER SERVED A JSON *RESPONSE*. It streams the
+    # generated artifact with a Content-Disposition, and `compliance_report_service`
+    # writes either a PDF or a JSON document depending on the requested format —
+    # `application/octet-stream` covers a job whose media type was never recorded.
+    # Same class as pool #38's nine export routes: a generated client typed a file
+    # download as a parsed object.
+    responses={200: {"content": {
+        "application/pdf": {},
+        "application/json": {},
+        "application/octet-stream": {},
+    }}},
+    dependencies=[Depends(require_at_least(VIEWER))],
 )
 @rate_limit("100/minute")
 async def download_compliance_report(
@@ -689,6 +718,12 @@ async def download_compliance_report(
 @public_router.get(
     "/reports/{job_id}/signed-download",
     summary="Download a compliance report via a time-limited signed link",
+    # Same artifact as /download, reached with a signed token instead of a session.
+    responses={200: {"content": {
+        "application/pdf": {},
+        "application/json": {},
+        "application/octet-stream": {},
+    }}},
 )
 @rate_limit("10/minute")
 async def download_compliance_report_signed(

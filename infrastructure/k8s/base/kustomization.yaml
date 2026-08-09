@@ -30,6 +30,45 @@ resources:
 # against an initdb-built schema. The db-migrate Job owns the schema now
 # (same model as docker-compose.prod.yml).
 
+# The settings an overlay is meant to tune. Consumed via `envFrom` on the backend
+# Deployment; each overlay declares the same generator with `behavior: merge` and
+# overrides only the keys it cares about.
+#
+# ENVIRONMENT DEFAULTS TO production, AND THAT DIRECTION IS DELIBERATE (FS-385).
+# `validate_settings()` in app/core/config.py hard-fails at import on an insecure
+# production config — insecure JWT, DEBUG on, dev-token bypass, wildcard CORS,
+# unauthenticated GeoTab webhook, unset ERP encryption key, simulated telematics — but
+# every one of those checks is inside `if ENVIRONMENT.lower() == "production"`. With
+# ENVIRONMENT unset the app read "development" and the entire guard was a no-op, which
+# is how these manifests came to ship an admin-auth bypass.
+#
+# So the strict value is the inherited one. A future overlay that forgets to set
+# ENVIRONMENT now gets the checks rather than losing them, and the cost of forgetting is
+# a pod that refuses to start with a named reason instead of one that starts insecure
+# and says nothing. Staging opts down to "staging" explicitly.
+configMapGenerator:
+  - name: backend-config
+    literals:
+      - ENVIRONMENT=production
+      - DEBUG=false
+      - LOG_LEVEL=info
+      - MTLS_ENABLED=true
+      # Random demo telematics. Off by default: served as real fleet data it is
+      # indistinguishable from a GPS fix to anything downstream.
+      - GEOTAB_SIMULATED=false
+      # Required by validate_settings() once ENVIRONMENT=production, and both are
+      # settings rather than secrets.
+      #
+      # CORS_ALLOW_ORIGINS defaults to "*" in the app, which the validator rejects
+      # outright — a wildcard is incompatible with credentialed requests anyway, so the
+      # app disables credentials whenever it sees one. The value here tracks the hosts in
+      # base/ingress.yaml; AN OPERATOR CHANGING THE INGRESS HOST MUST CHANGE THIS TOO, and
+      # the symptom of forgetting is every browser request failing CORS after a deploy
+      # that otherwise looks healthy.
+      - CORS_ALLOW_ORIGINS=https://omniusgrid.local,https://api.omniusgrid.local
+      # Unsigned edge requests are replayable.
+      - EDGE_REQUIRE_PROOF_OF_POSSESSION=true
+
 commonLabels:
   app.kubernetes.io/part-of: omniusgrid
   app.kubernetes.io/managed-by: kustomize

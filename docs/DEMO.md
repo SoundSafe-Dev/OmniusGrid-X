@@ -58,11 +58,42 @@ DATABASE_URL="postgresql+asyncpg://<user>:<pass>@localhost:5432/omnius_demo" \
   ALLOW_DEV_TOKEN=true uvicorn app.main:app --port 8000
 
 # frontend (separate shell)
-cd frontend && VITE_USE_MOCK=false npm run dev
+cd frontend && VITE_USE_MOCK=false VITE_DEV_MODE=true npm run dev
 ```
 
-Log in as `dev` / any password (the backend accepts the `dev-token` bypass when
-`ALLOW_DEV_TOKEN=true` — dev only; production rejects it).
+Log in as `dev` / any password.
+
+**The skip-login demo needs BOTH variables, and this page used to name only one.**
+They gate different halves and neither works alone:
+
+| | set on | what it does | without it |
+|---|---|---|---|
+| `ALLOW_DEV_TOKEN=true` | backend | accepts the `dev-token` bearer as an admin | every API call returns 401 |
+| `VITE_DEV_MODE=true` | frontend | offers the bypass at all — `Login.tsx` requires `import.meta.env.DEV && VITE_DEV_MODE === 'true'` | typing `dev` falls through to the real login form and returns **401** |
+
+The frontend gate is also why a production bundle cannot enable this: `import.meta.env.DEV`
+is false in a build, so the bypass is compiled out regardless of the variable.
+
+`make demo` + `make demo-ui` set both for you, and are the recommended path — the two
+commands were documented separately and drifted, so the pair now lives in the Makefile
+where `test_demo_mode_instructions_work.py` can check it against what the code requires.
+
+## The seed ages — re-run it if a page looks empty
+
+**`seed_demo_data.py` writes timestamps relative to the moment it runs**, so a database
+seeded yesterday is a day out of date and several endpoints legitimately return nothing.
+Re-run `make seed-demo` (it is idempotent) before deciding a page is broken.
+
+The sharpest case is **Alarms**. `GET /api/v1/alarms/` defaults to the last 24 hours when no
+range is given — documented behaviour — and the seeder places its nine alarms across the
+previous four days. Right after seeding, four fall inside the window and the page is
+populated. About a day later, none do, and the Alarms page is empty with no error anywhere.
+`/yard/dock/appointments` behaves the same way.
+
+Recorded because a full functional sweep on 2026-08-02 flagged both as "200 but empty with
+rows in the table" and they looked exactly like tenancy filter bugs. They were not: a fresh
+seed returns 4 alarms and 2 appointments. **An empty page on stale demo data is
+indistinguishable from a broken filter until you check the seed's age.**
 
 ## Notes & known offline gaps
 

@@ -1,9 +1,15 @@
 """WebSocket API endpoints for real-time updates"""
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Depends, Query
+
+from app.core.http_metrics import record_websocket_event
 from typing import Optional, Set
+import asyncio
 import json
+from typing import Optional, Set
+
 import structlog
+from fastapi import APIRouter, Query, WebSocket, WebSocketDisconnect
 
 from app.services.websocket_manager import websocket_manager
 from app.api.auth import resolve_websocket_user
@@ -24,8 +30,8 @@ async def websocket_endpoint(
     WebSocket endpoint for real-time telemetry, state changes, and alarms.
     
     Query Parameters:
-    - token: JWT authentication token
-    - organization_id: Organization to subscribe to
+    - token: Required JWT authentication token
+    - organization_id: Optional organization assertion; must match the user
     - asset_ids: Optional comma-separated list of asset IDs to filter (empty = all)
     
     Message Types Received from Client:
@@ -75,30 +81,68 @@ async def _serve_websocket(
 ):
     # Validate authentication via the shared resolver (handles JWTs and the
     # dev-token bypass under ALLOW_DEV_TOKEN — one ws auth path, not two).
-    user = None
-    if token:
-        try:
-            user = await resolve_websocket_user(token)
-        except Exception as e:
-            await websocket.close(code=1008, reason="Authentication failed")
-            logger.warning("websocket_auth_failed", error=str(e))
-            return
-        if user is None:
-            await websocket.close(code=1008, reason="Authentication failed")
-            logger.warning("websocket_auth_failed", error="invalid token")
-            return
-
-    # Default to user's organization if not specified
-    if not organization_id and user:
-        organization_id = str(user.organization_id)
-
-    if not organization_id:
-        await websocket.close(code=1008, reason="Organization ID required")
+    # A TOKEN IS REQUIRED. This used to be `if token:` — with no token, `user` stayed
+    # None, the block below fell through to the client-supplied organization_id, and the
+    # connection was accepted as "anonymous". Anyone able to reach this endpoint could
+    # subscribe to ANY organization's live telemetry, alarms, state changes and command
+    # statuses by naming its id. Confirmed against the running app before the fix.
+    #
+    # `test_route_auth_walk.py` asserts every route rejects an unauthenticated request,
+    # and cannot see this one: it skips WebSocketRoute by construction (see its line
+    # "skips WebSocketRoute (/ws) + mounts"). The rule was enforced everywhere the walk
+    # could reach, and this endpoint was outside it.
+    if not token:
+        await websocket.close(code=1008, reason="Authentication required")
+        logger.warning("websocket_auth_failed", error="no token")
         return
+
+    try:
+        user = await resolve_websocket_user(token)
+    except Exception as e:
+        await websocket.close(code=1008, reason="Authentication failed")
+        logger.warning("websocket_auth_failed", error=str(e))
+        return
+    if user is None:
+        await websocket.close(code=1008, reason="Authentication failed")
+        logger.warning("websocket_auth_failed", error="invalid token")
+        return
+
+    # THE ORGANISATION COMES FROM THE TOKEN, never from the query string.
+    #
+    # It used to be "default to the user's organization if not specified", so a
+    # client-supplied value took PRECEDENCE — an authenticated user of org A could pass
+    # ?organization_id=<org B> and be added to org B's broadcast set, then receive its
+    # data continuously. That is the IDOR shape already removed from yard, transportation
+    # and logistics_correlation, on a channel that streams rather than answers once.
+    #
+    # A mismatched value is refused rather than ignored: silently substituting the right
+    # org would leave a caller believing it had subscribed to something it had not, and
+    # this codebase has enough silently-ignored parameters already.
+    user_org = str(user.organization_id) if user.organization_id else None
+    if not user_org:
+        await websocket.close(code=1008, reason="User has no organization")
+        logger.warning("websocket_auth_failed", error="user has no organization")
+        return
+
+    if organization_id and organization_id != user_org:
+        await websocket.close(code=1008, reason="Organization mismatch")
+        logger.warning(
+            "websocket_org_mismatch",
+            requested=organization_id,
+            user_org=user_org,
+            user_id=str(user.id),
+        )
+        return
+
+    organization_id = user_org
 
     # Connect client
     await websocket_manager.connect_client(websocket, organization_id,
                                            subprotocol=negotiated_subprotocol)
+    # Instrumented for FS-229. There were no WebSocket metrics at all, so a
+    # "drop rate" alert had nothing to measure — realtime could degrade to zero
+    # connected clients with no signal anywhere.
+    record_websocket_event("connect", +1)
     
     # Parse asset filter
     subscribed_assets: Set[str] = set()
@@ -118,11 +162,30 @@ async def _serve_websocket(
         asset_filter=list(subscribed_assets) if subscribed_assets else "all",
         user_id=str(user.id) if user else "anonymous"
     )
-    
+
+    # Default to the error classification: if we somehow leave this handler
+    # without passing through a known branch, that IS an abnormal teardown and
+    # should be counted as one rather than flattering the drop-rate metric.
+    disconnect_reason = "disconnect_error"
+
     try:
         while True:
             # Receive messages from client
-            data = await websocket.receive_text()
+            try:
+                data = await asyncio.wait_for(
+                    websocket.receive_text(),
+                    timeout=30,
+                )
+            except asyncio.TimeoutError:
+                # Re-read durable account/session state so role changes and
+                # deactivation close passive sockets on every API replica.
+                if await resolve_websocket_user(token) is None:
+                    await websocket.close(
+                        code=1008,
+                        reason="Authentication expired",
+                    )
+                    return
+                continue
             
             try:
                 message = json.loads(data)
@@ -183,6 +246,16 @@ async def _serve_websocket(
     
     except WebSocketDisconnect:
         logger.info("websocket_client_disconnected", organization_id=organization_id)
-    
+        disconnect_reason = "disconnect_clean"
+
+    except Exception as exc:  # noqa: BLE001 — classify, then re-raise
+        # A clean client close and a server-side teardown are different signals.
+        # Counting both as "disconnect" would make the drop-rate alert useless,
+        # since a busy system produces clean closes constantly.
+        logger.warning("websocket_closed_with_error", error=str(exc))
+        disconnect_reason = "disconnect_error"
+        raise
+
     finally:
+        record_websocket_event(disconnect_reason, -1)
         websocket_manager.disconnect_client(websocket, organization_id)

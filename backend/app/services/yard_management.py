@@ -19,6 +19,37 @@ from app.db.models import (
 logger = structlog.get_logger()
 
 
+def _as_utc(value: Optional[datetime]) -> Optional[datetime]:
+    """Coerce a datetime to timezone-aware UTC; naive values are assumed UTC (FS-391).
+
+    THE CRASH THIS PREVENTS. Both calculators below compare a stored timestamp against
+    `datetime.now(timezone.utc)`, and mixing naive with aware raises
+
+        TypeError: can't subtract offset-naive and offset-aware datetimes
+
+    `DriverWaitTime.check_in_at` is `DateTime(timezone=True)`, so Postgres hands back an
+    aware value and the production path is fine. SQLite does not preserve tzinfo — there is
+    no timestamp type to preserve it in — so on the documented local dev path (`make demo`
+    against dev.db) every one of these is naive, and checking out a trailer raised straight
+    out of `_finalize_wait_time`. Reproduced directly, not inferred.
+
+    Same class as `_check_ingestion` in app/api/health.py, which reported a working database
+    as a subsystem in error for exactly this reason.
+
+    ASSUMING UTC IS THE RIGHT DEFAULT AND WORTH SAYING WHY: everything that writes these
+    columns writes `datetime.now(timezone.utc)`, so a naive value here has already lost a
+    tzinfo that said UTC. Guessing local time would silently shift every detention charge by
+    the host's offset — and this function's output is billed to a carrier.
+
+    A fourth copy of this helper in the tree (app/api/exports.py, app/utils/signed_urls.py,
+    app/api/analysis_sessions.py). Not consolidated here because one of those is another
+    lane's file and a shared move would touch it.
+    """
+    if value is None:
+        return None
+    return value if value.tzinfo is not None else value.replace(tzinfo=timezone.utc)
+
+
 class DetentionCalculator:
     """Calculate detention and demurrage charges"""
     
@@ -42,8 +73,8 @@ class DetentionCalculator:
                 'is_detention': False
             }
         
-        end_time = check_out_at or datetime.now(timezone.utc)
-        total_minutes = (end_time - check_in_at).total_seconds() / 60
+        end_time = _as_utc(check_out_at) or datetime.now(timezone.utc)
+        total_minutes = (end_time - _as_utc(check_in_at)).total_seconds() / 60
         
         if total_minutes <= free_minutes:
             return {
@@ -79,7 +110,7 @@ class DetentionCalculator:
                 'is_demurrage': False
             }
         
-        total_minutes = (unloaded_at - docked_at).total_seconds() / 60
+        total_minutes = (_as_utc(unloaded_at) - _as_utc(docked_at)).total_seconds() / 60
         
         if total_minutes <= free_minutes:
             return {
@@ -374,18 +405,36 @@ class YardManagementService:
                 hourly_rate=wait_time.demurrage_rate or DetentionCalculator.DEFAULT_DEMURRAGE_RATE
             )
             
+            # Same naive/aware mix as the calculators: check_out_at was just set aware,
+            # check_in_at came from the driver. This line raised before the calculators
+            # were even reached on SQLite.
             wait_time.total_wait_minutes = (
-                wait_time.check_out_at - wait_time.check_in_at
+                _as_utc(wait_time.check_out_at) - _as_utc(wait_time.check_in_at)
             ).total_seconds() / 60
             wait_time.detention_minutes = detention['detention_minutes']
             wait_time.detention_charge = detention['detention_charge']
             wait_time.demurrage_minutes = demurrage['demurrage_minutes']
             wait_time.demurrage_charge = demurrage['demurrage_charge']
     
-    def _calculate_dwell_hours(self, trailer: YardTrailer) -> float:
-        """Calculate total dwell time in hours"""
-        end_time = trailer.check_out_at or datetime.now(timezone.utc)
-        return round((end_time - trailer.check_in_at).total_seconds() / 3600, 2)
+    def _calculate_dwell_hours(self, trailer: YardTrailer) -> Optional[float]:
+        """Total dwell time in hours, or None when the trailer has no check-in (FS-465).
+
+        `check_in_at` is nullable — its `default=utcnow` is applied by the ORM and skipped
+        by a raw insert, which is a case this repository already tests for
+        (`test_raw_insert_timestamps.py` parametrises over `yard_trailers`).
+
+        This used to subtract from `_as_utc(None)` and raise
+        `TypeError: unsupported operand type(s) for -: 'datetime.datetime' and 'NoneType'`,
+        which is a 500 on the yard inventory. **The sibling path computing the same
+        quantity returned 0.0 instead** — so one crashed and one reported that a trailer of
+        unknown age had just arrived. Neither is the answer; the answer is that nobody
+        recorded when it came in.
+        """
+        check_in = _as_utc(trailer.check_in_at)
+        if check_in is None:
+            return None
+        end_time = _as_utc(trailer.check_out_at) or datetime.now(timezone.utc)
+        return round((end_time - check_in).total_seconds() / 3600, 2)
     
     async def get_yard_inventory(
         self,
@@ -468,16 +517,29 @@ class YardManagementService:
                 check_in = _aware(row.check_in_at)
                 check_out = _aware(row.check_out_at)
                 end = check_out or now
-                dwell_hours = (end - check_in).total_seconds() / 3600 if check_in else 0.0
+                # None, not 0.0 (FS-465). A trailer with no recorded check-in has an
+                # unknown dwell, and 0.0 reads as "arrived just now" — the most favourable
+                # reading available, on a page whose banner exists to flag trailers that
+                # have been sitting too long.
+                dwell_hours = (
+                    (end - check_in).total_seconds() / 3600 if check_in else None
+                )
+                # `detention_charge` is NULL until the charge has been CALCULATED, and
+                # `float(None or 0)` turns "not yet worked out" into "nothing owed".
+                # `is_detention` below then reads as a settled answer on a trailer that
+                # has not been assessed — the same absence-as-verdict shape as the HOS
+                # checks, on billable time.
+                detention_known = row.detention_charge is not None
                 detention = float(row.detention_charge or 0)
                 out.append({
                     'trailer_id': row.trailer_id,
                     'trailer_number': row.trailer_number,
                     'check_in_at': row.check_in_at,
                     'check_out_at': row.check_out_at,
-                    'dwell_hours': round(dwell_hours, 2),
-                    'is_detention': detention > 0,
-                    'detention_charge': detention,
+                    'dwell_hours': None if dwell_hours is None else round(dwell_hours, 2),
+                    'is_detention': detention_known and detention > 0,
+                    'detention_assessed': detention_known,
+                    'detention_charge': detention if detention_known else None,
                 })
             return out
     
@@ -561,6 +623,26 @@ class DockScheduler:
         db: Optional[AsyncSession] = None
     ) -> DockAppointment:
         """Schedule a dock appointment"""
+        # AN APPOINTMENT MUST OCCUPY TIME, AND NOTHING CHECKED (FS-392).
+        #
+        # A reversed booking (end before start) was accepted and stored, and it does not
+        # merely sit there being wrong: `_check_conflicts` matches it through the
+        # "existing is contained by new" branch, so a 13:00->08:00 row BLOCKS a legitimate
+        # 09:00-10:00 booking on that door while protecting no real slot. Measured — the
+        # bogus row blocked 09:00-10:00 and left 14:00-15:00 and 06:00-07:00 free.
+        #
+        # Zero-length is rejected for the same reason: a dock reserved for no time is not
+        # a reservation, and it participates in overlap tests as though it were one.
+        #
+        # Validated in the SERVICE rather than on `DockAppointmentCreate`, because this is
+        # an invariant of the domain and not of one HTTP request — `logistics_correlation_
+        # engine` imports this service directly. The API maps ValueError to 400.
+        if scheduled_end <= scheduled_start:
+            raise ValueError(
+                f"scheduled_end ({scheduled_end.isoformat()}) must be after "
+                f"scheduled_start ({scheduled_start.isoformat()})"
+            )
+
         async with (db or AsyncSessionLocal()) as session:
             # Check for conflicts
             conflicts = await self._check_conflicts(

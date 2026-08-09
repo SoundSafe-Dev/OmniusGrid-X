@@ -1,0 +1,251 @@
+#!/usr/bin/env python3
+"""Every Secret a workload consumes has somewhere it can come from (FS-514).
+
+THE SITUATION. `infrastructure/k8s/secrets/` holds two complete provisioning paths — an
+External Secrets Operator manifest and a Sealed Secrets sealing script — and **neither is
+referenced by any kustomization or any workflow.** That is deliberate and correct: both need a
+real vault or a cluster keypair per environment, so CI cannot apply them. The overlays say so,
+and `strip_placeholder_secrets.py` states the intended failure mode: a pod that never got its
+secret dies with `CreateContainerConfigError`, loudly, rather than running on a placeholder.
+
+WHICH MAKES THE ACTUAL RISK A DIFFERENT ONE. If the provisioning manifests name a secret the
+workloads do not consume — or, worse, omit one they do — the operator provisions everything the
+documentation asks for, every step reports success, and the deploy still dies on a secret
+nobody listed. **The failure is loud but the cause is invisible**, because the two halves are
+in different trees and nothing compared them.
+
+WHAT THIS FOUND. Six secrets consumed by workloads had no entry in either path:
+
+    app-secrets           edge-bootstrap-token, erp-encryption-key, geotab-webhook-secret
+    smtp-credentials      (whole secret)
+    grafana-admin         admin-password
+    backend-tls           (whole secret)     <- cert-manager's job, see ISSUED_BY_CERT_MANAGER
+    ca-certificate        (whole secret)     <- same
+    redpanda-broker-tls   (whole secret)     <- same
+
+The three TLS ones are issued by cert-manager (`base/ingress.yaml`,
+`overlays/staging/kustomization.yaml`) rather than copied from a vault, so they are recorded
+below as having a different source rather than being missing. **The other three were real gaps
+and are now closed**: each has an ExternalSecret, an entry in `secrets.env.example`, and a
+`seal` call in `seal.sh`, so both documented paths provision it. `NO_SOURCE_YET` is
+consequently empty, which is the state it should stay in.
+
+This deliberately checks that a **source exists**, not that it is applied. Applying is the
+operator's act, per environment, and the placeholder gate already covers what happens if they
+skip it.
+
+Usage:  ./check_every_secret_has_a_source.py
+"""
+from __future__ import annotations
+
+import collections
+import re
+import subprocess
+import sys
+from pathlib import Path
+
+import yaml
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+EXTERNAL_SECRETS = REPO_ROOT / "infrastructure/k8s/secrets/external-secrets/externalsecrets.yaml"
+SEALED_EXAMPLE = REPO_ROOT / "infrastructure/k8s/secrets/sealed-secrets/secrets.env.example"
+
+#: Every target whose workloads may consume a Secret, and whether it needs the permissive
+#: load-restrictor (the platform stacks pull files from outside their own directory).
+TARGETS = [
+    ("infrastructure/k8s/overlays/production", False),
+    ("infrastructure/k8s/overlays/staging", False),
+    ("infrastructure/k8s/overlays/dr", False),
+    ("infrastructure/k8s/platform/production/monitoring", True),
+    ("infrastructure/k8s/platform/production/database-ha", True),
+]
+
+#: Secrets issued in-cluster by cert-manager rather than copied from a secret store. They have
+#: a source; it is simply not a vault. Listed so "no ExternalSecret" does not read as "no
+#: source" — a wrong reason in an allowlist is how FS-504 lost a buffer counter.
+ISSUED_BY_CERT_MANAGER = {
+    "backend-tls": "cert-manager Certificate via the ingress annotation (base/ingress.yaml)",
+    "ca-certificate": "the cluster CA bundle, mounted from the cert-manager issuer",
+    "redpanda-broker-tls": "cert-manager Certificate for the broker's mTLS listener",
+}
+
+#: Secrets with no provisioning path anywhere, with what each needs. An entry here is a
+#: deployment that will die on `CreateContainerConfigError` with nothing to point the
+#: operator at — so it is a promise to fix, not an excuse.
+NO_SOURCE_YET: dict[str, str] = {
+    # Empty, and it is meant to stay that way. The three that were here — app-secrets,
+    # smtp-credentials and grafana-admin — are now provisioned by both paths. An entry here
+    # is a deployment that will die on CreateContainerConfigError with nothing to point the
+    # operator at, so it is a promise to fix rather than an excuse; the tests below assert
+    # any entry is still both consumed and unprovisioned, so one cannot go stale.
+}
+
+
+def _build(path: str, permissive: bool) -> list[dict]:
+    cmd = ["kustomize", "build"]
+    if permissive:
+        cmd += ["--load-restrictor", "LoadRestrictionsNone"]
+    cmd.append(str(REPO_ROOT / path))
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    if result.returncode != 0:
+        raise SystemExit(f"kustomize build failed for {path}:\n{result.stderr}")
+    return [doc for doc in yaml.safe_load_all(result.stdout) if doc]
+
+
+def _consumed() -> dict[str, set[str]]:
+    """Secret names every workload references, with the keys it asks for.
+
+    Reads env, envFrom AND volumes — a secret mounted as a file is just as fatal when absent
+    as one read into an environment variable, and only the env form is obvious.
+    """
+    consumed: dict[str, set[str]] = collections.defaultdict(set)
+    for path, permissive in TARGETS:
+        for doc in _build(path, permissive):
+            if doc.get("kind") not in {"Deployment", "StatefulSet", "CronJob", "Job"}:
+                continue
+            spec = doc["spec"].get("template") or (
+                doc["spec"].get("jobTemplate", {}).get("spec", {}).get("template", {})
+            )
+            pod = (spec or {}).get("spec", {})
+            containers = (pod.get("containers") or []) + (pod.get("initContainers") or [])
+            for container in containers:
+                for env in container.get("env") or []:
+                    ref = (env.get("valueFrom") or {}).get("secretKeyRef") or {}
+                    if ref.get("name"):
+                        consumed[ref["name"]].add(ref.get("key", "*"))
+                for source in container.get("envFrom") or []:
+                    ref = source.get("secretRef") or {}
+                    if ref.get("name"):
+                        consumed[ref["name"]].add("*")
+            for volume in pod.get("volumes") or []:
+                name = (volume.get("secret") or {}).get("secretName")
+                if name:
+                    consumed[name].add("*")
+    return consumed
+
+
+def _provisioned() -> set[str]:
+    """Secret names the External Secrets manifest creates."""
+    names: set[str] = set()
+    for doc in yaml.safe_load_all(EXTERNAL_SECRETS.read_text()):
+        if doc and doc.get("kind") == "ExternalSecret":
+            target = (doc["spec"].get("target") or {}).get("name")
+            names.add(target or doc["metadata"]["name"])
+    return names
+
+
+def _sealed() -> set[str]:
+    """Secret names `seal.sh` produces.
+
+    The repository documents TWO provisioning paths, and an operator picks one. A secret
+    covered by only the External Secrets manifest leaves everyone on the Sealed Secrets path
+    with exactly the gap this file exists to catch — so both are held to the same rule rather
+    than the one that happens to be read more often.
+    """
+    script = (REPO_ROOT / "infrastructure/k8s/secrets/sealed-secrets/seal.sh").read_text()
+    names = set(re.findall(r"^seal\s+([a-z0-9-]+)", script, re.M))
+    # The CNPG app secret needs `--type=basic-auth`, so it is created inline rather than
+    # through the `seal` helper. Picked up by its explicit kubectl line.
+    names |= set(re.findall(r"kubectl create secret generic ([a-z0-9-]+)", script))
+    return names
+
+
+def _shipped_in_base() -> set[str]:
+    """Placeholder Secrets that base still ships, which the overlays strip."""
+    return {
+        doc["metadata"]["name"]
+        for doc in _build("infrastructure/k8s/base", False)
+        if doc.get("kind") == "Secret"
+    }
+
+
+def main() -> int:
+    consumed = _consumed()
+    provisioned = _provisioned()
+    in_base = _shipped_in_base()
+
+    if not consumed:
+        print(
+            "FAIL: no workload references any Secret. The traversal is broken — env, envFrom "
+            "and volumes all read empty — and every check below would pass on nothing.",
+            file=sys.stderr,
+        )
+        return 1
+    if not provisioned:
+        print(
+            "FAIL: the External Secrets manifest declares nothing. Either it was emptied or "
+            "the parse broke; either way every consumed secret would read as unprovisioned.",
+            file=sys.stderr,
+        )
+        return 1
+
+    problems: list[str] = []
+
+    unsourced = sorted(
+        name
+        for name in consumed
+        if name not in provisioned
+        and name not in ISSUED_BY_CERT_MANAGER
+        and name not in NO_SOURCE_YET
+        and name not in in_base
+    )
+    for name in unsourced:
+        problems.append(
+            f"Secret/{name} is consumed by a workload (keys {sorted(consumed[name])}) and has "
+            f"no ExternalSecret, no cert-manager entry and no NO_SOURCE_YET record. An "
+            f"operator following the secrets README provisions everything documented and the "
+            f"deploy still dies on CreateContainerConfigError for this one."
+        )
+
+    # A stale allowlist is worse than none: it reports a solved gap as outstanding, and the
+    # next reader stops trusting the list.
+    for name in sorted(NO_SOURCE_YET):
+        if name in provisioned:
+            problems.append(
+                f"Secret/{name} has an ExternalSecret now — delete its NO_SOURCE_YET entry, "
+                f"the gap it describes is closed."
+            )
+        elif name not in consumed:
+            problems.append(
+                f"Secret/{name} is in NO_SOURCE_YET and no workload consumes it any more; "
+                f"the entry describes nothing."
+            )
+    for name in sorted(ISSUED_BY_CERT_MANAGER):
+        if name not in consumed:
+            problems.append(
+                f"Secret/{name} is recorded as cert-manager-issued and no workload consumes "
+                f"it; remove the entry."
+            )
+
+    # Both documented paths, held to the same rule. A secret that only one of them
+    # provisions is a gap for every operator who chose the other.
+    sealed = _sealed()
+    for name in sorted(set(consumed) - in_base - set(ISSUED_BY_CERT_MANAGER) - set(NO_SOURCE_YET)):
+        if name in provisioned and name not in sealed:
+            problems.append(
+                f"Secret/{name} has an ExternalSecret but no `seal` call in seal.sh, so it is "
+                f"provisioned on the External Secrets path and missing on the Sealed Secrets "
+                f"path. The repository documents both and an operator picks one."
+            )
+        if name in sealed and name not in provisioned:
+            problems.append(
+                f"Secret/{name} is sealed by seal.sh but has no ExternalSecret — the mirror "
+                f"of the case above."
+            )
+
+    if problems:
+        print("FAIL: a consumed Secret has nowhere to come from:\n", file=sys.stderr)
+        for problem in problems:
+            print(f"  - {problem}\n", file=sys.stderr)
+        return 1
+
+    print(
+        f"OK: {len(consumed)} consumed secrets — {len(set(consumed) & provisioned)} "
+        f"via External Secrets, {len(ISSUED_BY_CERT_MANAGER)} issued by cert-manager, "
+        f"{len(NO_SOURCE_YET)} recorded as outstanding with what each needs"
+    )
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

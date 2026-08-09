@@ -16,7 +16,7 @@ from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import get_current_active_user
-from app.core.pagination import PaginatedResponse, paginate
+from app.core.pagination import MAX_OFFSET, PaginatedResponse, paginate
 from app.middleware.rbac import require_admin
 from app.middleware.tenant_isolation import get_tenant_org_id, get_tenant_db
 from app.db.models import Workcell, Organization
@@ -71,7 +71,7 @@ def _org_out(o: Organization) -> dict:
 
 @workcells_router.get("/", response_model=PaginatedResponse[WorkcellOut])
 async def list_workcells(
-    skip: int = Query(0, ge=0),
+    skip: int = Query(0, ge=0, le=MAX_OFFSET),
     limit: int = Query(100, ge=1, le=1000),
     org_id: UUID = Depends(get_tenant_org_id),
     db: AsyncSession = Depends(get_tenant_db),
@@ -140,7 +140,34 @@ async def _org_or_404(org_id: UUID, db: AsyncSession) -> Organization:
     return o
 
 
-@organizations_router.get("/settings/current")
+class OrgSettings(BaseModel):
+    """The five allowlisted settings keys, and NOTHING IS EMITTED THAT WAS NOT STORED.
+
+    Both routes are declared `response_model_exclude_unset=True`, which is load-bearing.
+    The handlers return only the keys present in the org's settings blob; a plain model
+    would fill the absent ones with `null`, and the admin Settings page does
+
+        const current = { ...SETTING_DEFAULTS, ...settings, ...draft }
+
+    — a spread, so an emitted `null` OVERWRITES the default rather than falling back to
+    it. Declaring this naively would have blanked the Timezone field and turned three
+    notification toggles from `true` to null for every organization that had never saved
+    a setting. Not a dropped field this time; an INVENTED one, which the same spread
+    cannot tell from a real value.
+    """
+
+    timezone: Optional[str] = None
+    date_format: Optional[str] = None
+    notify_email: Optional[bool] = None
+    notify_sms: Optional[bool] = None
+    notify_webhook: Optional[bool] = None
+
+
+@organizations_router.get(
+    "/settings/current",
+    response_model=OrgSettings,
+    response_model_exclude_unset=True,
+)
 async def get_org_settings(
     org_id: UUID = Depends(get_tenant_org_id),
     db: AsyncSession = Depends(get_tenant_db),
@@ -151,7 +178,11 @@ async def get_org_settings(
     return {k: v for k, v in stored.items() if k in _SETTING_KEYS}
 
 
-@organizations_router.put("/settings/current")
+@organizations_router.put(
+    "/settings/current",
+    response_model=OrgSettings,
+    response_model_exclude_unset=True,
+)
 async def update_org_settings(
     settings_patch: Dict[str, Any],
     current_user=Depends(require_admin),

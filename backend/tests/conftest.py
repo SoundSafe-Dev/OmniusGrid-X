@@ -21,6 +21,7 @@ ends, the container is destroyed and all data with it.
 from __future__ import annotations
 
 import os
+import socket
 import sys
 import tarfile
 import time
@@ -33,6 +34,35 @@ from uuid import UUID, uuid4
 
 import pytest
 import pytest_asyncio
+from sqlalchemy import event
+from sqlalchemy.engine import Engine
+
+
+# --------------------------------------------------------------------------------------
+# SQLITE ENFORCES FOREIGN KEYS HERE (FS-410).
+#
+# SQLite ships with `PRAGMA foreign_keys=OFF`, so an in-memory test can insert a child
+# before its parent, or against a parent nobody created, and pass. Real Postgres rejects
+# both. That gap is not theoretical: `scripts/seed_demo_data.py` — the path docs/DEMO.md
+# tells operators to run — died on a foreign key the first time it met a fresh database,
+# and none of 3,200 tests could see why, because SQLAlchemy's unit of work orders inserts
+# from `relationship()` and most models here declared only the FK column.
+#
+# Switched on globally rather than per-module: an opt-in guard protects the files that
+# remembered to opt in, which is the set least likely to need it.
+#
+# DIALECT-GUARDED, and the guard is load-bearing. A first measurement ran this against
+# Postgres connections too, where PRAGMA raises and the failed statement poisons the
+# transaction — it reported 623 failures where there were 39. The instrument was wrong,
+# not the code.
+@event.listens_for(Engine, "connect")
+def _sqlite_enforces_foreign_keys(dbapi_connection, _connection_record):
+    module = type(dbapi_connection).__module__.lower()
+    if "sqlite" not in module and "sqlite" not in str(type(dbapi_connection)).lower():
+        return
+    cursor = dbapi_connection.cursor()
+    cursor.execute("PRAGMA foreign_keys=ON")
+    cursor.close()
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -125,34 +155,17 @@ def _provision_tenant_role(sync_url: str, role: str, password: str) -> None:
     Critically, this role is NOT a superuser and does NOT own the tables
     (the container's POSTGRES_USER does). That combination is what makes
     RLS actually apply to its sessions.
-    """
-    import psycopg2
 
-    conn = psycopg2.connect(sync_url)
-    conn.autocommit = True
-    try:
-        with conn.cursor() as cur:
-            cur.execute(
-                f"DO $$ BEGIN "
-                f"  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = '{role}') THEN "
-                f"    CREATE ROLE {role} LOGIN PASSWORD '{password}' NOSUPERUSER NOBYPASSRLS; "
-                f"  END IF; "
-                f"END $$;"
-            )
-            cur.execute(f"GRANT USAGE ON SCHEMA public TO {role};")
-            cur.execute(
-                f"GRANT SELECT, INSERT, UPDATE, DELETE "
-                f"ON ALL TABLES IN SCHEMA public TO {role};"
-            )
-            cur.execute(
-                f"GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO {role};"
-            )
-            cur.execute(
-                f"ALTER DEFAULT PRIVILEGES IN SCHEMA public "
-                f"GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO {role};"
-            )
-    finally:
-        conn.close()
+    THE GRANT LIST LIVES IN `scripts/provision_app_role.py` (FS-307). The schemathesis
+    contract gate needed the same role for the same reason — it had been running as the
+    container superuser, so FORCE RLS did not apply and its conformance number could not
+    have moved if every policy in the schema had been dropped. Two copies of a
+    security-relevant grant list is two things to forget, so there is one, and CI calls it
+    as a script while this calls it as a function.
+    """
+    from scripts.provision_app_role import provision
+
+    provision(sync_url, role, password)
 
 
 def _build_async_url(sync_url: str, user: str, password: str) -> str:
@@ -199,9 +212,44 @@ def _make_jwt(user_id: UUID, secret: str, algorithm: str = "HS256") -> str:
 # Session-scoped fixtures
 # ---------------------------------------------------------------------------
 
+def _disable_ryuk_on_socket_mount_failure() -> None:
+    """Ryuk cannot start on a colima/Lima Docker host, and it takes 393 tests with it.
+
+    Ryuk is testcontainers' reaper: a sidecar that bind-mounts the Docker socket so
+    it can remove leaked containers after a crashed run. On Docker Desktop that
+    works. On colima the socket is a Lima-forwarded path and the mount is refused:
+
+        error while creating mount source path
+        '/Users/…/.colima/default/docker.sock': operation not supported
+
+    The reaper fails to start, testcontainers treats that as fatal, and **every
+    database-backed test errors at setup** — 393 of them, which is 14% of the
+    suite and, worse, the specific 14% that covers tenant isolation, RLS and the
+    real migrated schema. A developer on a Mac ran 1975 green tests and had no
+    signal that the strongest part of the suite had not executed.
+
+    That is not hypothetical damage. Enabling these locally immediately caught two
+    500s introduced by this session's own `response_model` work — a float band
+    bound declared `int` and a numeric priority declared `str` — both of which
+    passed the AST guard, the unit guards and the type checker, because the only
+    thing that disagrees with a wrong type is a real row.
+
+    WHAT DISABLING RYUK COSTS: containers from a hard-killed run are no longer
+    reaped automatically, so an aborted session can leave one behind
+    (`docker ps` then `docker rm`). That is a cleanup chore. Silently skipping the
+    database half of the suite is a correctness risk, and between the two this is
+    the cheaper failure.
+
+    Only set when the caller has not already chosen; an explicit
+    TESTCONTAINERS_RYUK_DISABLED wins either way.
+    """
+    os.environ.setdefault("TESTCONTAINERS_RYUK_DISABLED", "true")
+
+
 @pytest.fixture(scope="session")
 def pg_container():
     """Start an ephemeral TimescaleDB container for the whole test session."""
+    _disable_ryuk_on_socket_mount_failure()
     from testcontainers.postgres import PostgresContainer
 
     # testcontainers 4.x renamed the `user` kwarg to `username` (it raises
@@ -260,7 +308,6 @@ async def app(tenant_async_url):
     ``app.db.database`` created at import time pointing at a placeholder.
     """
     from fastapi import Depends
-    from sqlalchemy import text
     from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
     from app.db import database as db_module
@@ -308,6 +355,23 @@ async def app(tenant_async_url):
     }
     for module in patched_modules:
         module.AsyncSessionLocal = test_session_maker
+
+    # `engine` NEEDS THE SAME SWEEP, and did not have it. The comment above says this is kept
+    # "complete and self-maintaining", and it swept one of the two names `app.db.database`
+    # exports: six modules bind `engine`, including `app.db.database` itself and
+    # `app.api.health`, whose `_vacuum_telemetry` opens a connection on it directly.
+    #
+    # The consequence was invisible because nothing reached that handler. A walk over the POST
+    # surface did, and got `role "placeholder" does not exist` — the exact error this sweep
+    # exists to prevent, from the exact cause, one attribute over.
+    patched_engines = [
+        module
+        for name, module in list(sys.modules.items())
+        if name.startswith("app.") and getattr(module, "engine", None) is not None
+    ]
+    original_engines = {module: module.engine for module in patched_engines}
+    for module in patched_engines:
+        module.engine = test_engine
     original_async_session_local = original_session_locals.get(
         db_module, db_module.AsyncSessionLocal
     )
@@ -326,27 +390,24 @@ async def app(tenant_async_url):
     async def _override_get_tenant_db(
         org_id: UUID = Depends(get_tenant_org_id),
     ) -> AsyncIterator:
-        # Mirrors the production get_tenant_db: session-scoped GUC so it
-        # survives mid-request commits (create/update + refresh), reset at
-        # the end so context can't leak to a connection reused by a later
-        # request.
-        async with test_session_maker() as session:
-            try:
-                await session.execute(
-                    text("SELECT set_config('app.current_org_id', :org_id, false)"),
-                    {"org_id": str(org_id)},
-                )
-                yield session
-                await session.commit()
-            except Exception:
-                await session.rollback()
-                raise
-            finally:
-                await session.execute(
-                    text("SELECT set_config('app.current_org_id', '', false)")
-                )
-                await session.commit()
-                await session.close()
+        # DELEGATES to the production implementation, swapping only the session
+        # maker. It must not reimplement it.
+        #
+        # This used to be a hand-copy of `get_tenant_db`'s body, under a comment
+        # reading "Mirrors the production get_tenant_db." It mirrored the bug
+        # too: both set the GUC once with `set_config(..., false)`, which does
+        # not survive an endpoint's mid-request commit, because commit returns
+        # the connection to the pool and the next query gets a fresh one. Every
+        # RLS test in the suite ran against the copy, so the defect was invisible
+        # to all of them — and a fix to production would not have reached them
+        # either.
+        #
+        # A test double that reimplements the thing it is standing in for can
+        # only ever prove the double works.
+        from app.core.tenant import tenant_session
+
+        async with tenant_session(org_id, test_session_maker) as session:
+            yield session
 
     # FastAPI's dependency-override matches on the original callable.
     # Each override keeps its own ``Depends`` chain so ``get_tenant_org_id``
@@ -359,6 +420,8 @@ async def app(tenant_async_url):
     fastapi_app.dependency_overrides.clear()
     for module, original in original_session_locals.items():
         module.AsyncSessionLocal = original
+    for module, original in original_engines.items():
+        module.engine = original
     await test_engine.dispose()
 
 
@@ -526,7 +589,38 @@ class _RedpandaContainer:
             r".*Started Kafka API server.*",
             timeout=15,
         )
+        self._await_reachable(host, int(port))
         return self
+
+    @staticmethod
+    def _await_reachable(host: str, port: int, timeout: float = 45.0) -> None:
+        """Block until the broker actually accepts a connection FROM THE HOST.
+
+        The log wait above is necessary and not sufficient. "Started Kafka API
+        server" is printed when Redpanda binds inside the container; the host's
+        published port can take meaningfully longer to start forwarding, and on a
+        Docker-in-VM setup (colima, Docker Desktop) that gap widens with the
+        number of running containers.
+
+        The symptom was a `KafkaConnectionError: Unable to bootstrap` that only
+        appeared in a FULL test run and never in isolation — the classic shape of
+        a readiness check that returns too early. It was read as flakiness; it is
+        a race, and it has a right answer: wait for the thing you actually need,
+        which is a connection, not a log line.
+        """
+        deadline = time.time() + timeout
+        last_error: Exception | None = None
+        while time.time() < deadline:
+            try:
+                with socket.create_connection((host, port), timeout=2.0):
+                    return
+            except OSError as exc:  # not listening yet, or not forwarded yet
+                last_error = exc
+                time.sleep(0.25)
+        raise RuntimeError(
+            f"Redpanda logged that it started but {host}:{port} never became "
+            f"reachable within {timeout}s (last error: {last_error})"
+        )
 
     def stop(self):
         self._container.stop()
@@ -534,6 +628,7 @@ class _RedpandaContainer:
 
 @pytest.fixture(scope="session")
 def redpanda_container():
+    _disable_ryuk_on_socket_mount_failure()  # same colima constraint as pg_container
     """ONE broker per test session, shared by every Kafka-dependent e2e module.
 
     This used to be duplicated: an identical _RedpandaContainer lived in both

@@ -39,6 +39,23 @@ from ..quality import QualityAction, QualityConfig, QualityPipeline
 logger = structlog.get_logger()
 
 
+#: Config keys consumed by the agent rather than by a collector's constructor (FS-500).
+#:
+#: They live inside each collector's `config` block because that is where an operator
+#: naturally writes them, and they are read from there by the coordinator, the adapter and
+#: `main`. Splatting them into the constructor is what broke the four collectors that take
+#: no `**kwargs`.
+#: Whether a reading is published to Kafka the moment it arrives, in addition to being
+#: buffered (FS-499). **False**, and the long comment in `_on_collector_message` says why:
+#: the path raised on every message from the day it was written until FS-495, so
+#: buffer-then-backfill is the only delivery behaviour that has ever shipped; and switching it
+#: on needs the org in the topic, an ack-guaranteed send, and marking the buffered row sent,
+#: or every reading is delivered twice.
+IMMEDIATE_FORWARD_ENABLED = False
+
+CROSS_CUTTING_KEYS = frozenset({"quality", "packml", "alerts", "oee"})
+
+
 @dataclass
 class CollectorConfig:
     """Configuration for a single collector instance"""
@@ -105,6 +122,15 @@ class UnifiedCollectorCoordinator:
         # Status tracking
         self._running = False
         self._health_check_task: Optional[asyncio.Task] = None
+        #: The per-collector supervision tasks (FS-502). Held so they are not garbage
+        #: collected mid-flight and so `stop_all` can cancel them.
+        self._collector_tasks: List[asyncio.Task] = []
+        #: True while the immediate Kafka forward is failing (FS-496). Used only to decide
+        #: LOG LEVEL: the first failure since the last success is a warning, the rest are
+        #: debug. Without this, either a broken path stays silent (what FS-495 did for its
+        #: whole life) or an offline broker writes one warning per message.
+        self._forward_failing = False
+        self._restart_locks: Dict[str, asyncio.Lock] = {}
     
     def register_collector(self, config: CollectorConfig):
         """Register a collector configuration"""
@@ -143,19 +169,29 @@ class UnifiedCollectorCoordinator:
             async with semaphore:
                 await self._start_collector(config)
         
-        # Create tasks for all collectors
-        tasks = [
+        # RETAINED, NOT DROPPED (FS-502). This built the list into a local that went out of
+        # scope on the next line — never awaited, and with no strong reference, so the event
+        # loop was free to garbage-collect a supervision task mid-flight and the exception
+        # from a collector that failed to start had nowhere to surface. `all_collectors_started`
+        # was then logged before any collector had started.
+        #
+        # These are long-lived supervisors, so they are NOT awaited here — `start_all` must
+        # return. They are held on the instance and cancelled in `stop_all`.
+        self._collector_tasks = [
             asyncio.create_task(start_with_limit(config))
             for config in self.configs.values()
             if config.enabled
         ]
-        
+
         # Start health monitoring
         self._health_check_task = asyncio.create_task(self._health_monitor())
         
-        logger.info("all_collectors_started")
+        logger.info(
+            "collector_supervisors_started",
+            count=len(self._collector_tasks),
+        )
     
-    async def _start_collector(self, config: CollectorConfig):
+    async def _start_collector(self, config: CollectorConfig) -> bool:
         """Start a single collector instance"""
         try:
             collector_class = self.SUPPORTED_COLLECTORS.get(config.collector_type)
@@ -165,11 +201,29 @@ class UnifiedCollectorCoordinator:
                     asset_id=config.asset_id,
                     type=config.collector_type
                 )
-                return
+                return False
             
-            # Create collector instance
+            # CROSS-CUTTING KEYS ARE STRIPPED FIRST (FS-500).
+            #
+            # `config.config` is splatted into the constructor, and four of its keys are not
+            # the collector's business at all — they are read by other parts of the agent
+            # out of the same dict:
+            #
+            #     quality  -> this class, `_quality` (line ~123)
+            #     packml   -> `collectors/adapter.py:55`
+            #     alerts   -> `main.py:506`
+            #     oee      -> `main.py:512`
+            #
+            # Four of the seventeen registered collector types take no `**kwargs` — mqtt,
+            # modbus, opcua and orca_file — so for those, a `quality:` or `alerts:` block
+            # raised `TypeError: unexpected keyword argument`, which the handler below
+            # catches and logs as `collector_start_failed`. **The collector then never ran**,
+            # and the only symptom was one log line at startup describing a config key the
+            # operator had every reason to think was supported. The adapter-wrapped
+            # collectors were unaffected because they take the raw dict, which is why this
+            # depended on which device you were talking to.
             collector = collector_class(
-                **config.config,
+                **{k: v for k, v in (config.config or {}).items() if k not in CROSS_CUTTING_KEYS},
                 on_message_callback=self._on_collector_message
             )
             
@@ -186,6 +240,7 @@ class UnifiedCollectorCoordinator:
                 asset_id=config.asset_id,
                 type=config.collector_type
             )
+            return True
             
         except Exception as e:
             logger.error(
@@ -193,6 +248,7 @@ class UnifiedCollectorCoordinator:
                 asset_id=config.asset_id,
                 error=str(e)
             )
+            return False
     
     async def _run_collector(self, asset_id: str, collector: Any):
         """Run a collector and handle restarts"""
@@ -202,6 +258,19 @@ class UnifiedCollectorCoordinator:
         while self._running and restart_count < max_restarts:
             try:
                 await collector.start()
+                # A CLEAN RETURN IS STILL A RESTART (FS-501). Only the `except` branch
+                # counted and slept, so a `start()` that RETURNS rather than raises spun this
+                # loop as fast as the scheduler allowed, for the life of the process — no
+                # counter moving, no delay, nothing in the log. A collector that exits
+                # normally on a closed connection is the ordinary case, not an exotic one.
+                restart_count += 1
+                logger.warning(
+                    "collector_returned",
+                    asset_id=asset_id,
+                    restart_count=restart_count,
+                    note="start() returned without raising; treating as a restart",
+                )
+                await asyncio.sleep(5)
             except Exception as e:
                 restart_count += 1
                 logger.error(
@@ -294,19 +363,64 @@ class UnifiedCollectorCoordinator:
             if quality_action != QualityAction.QUARANTINE:
                 analytics_pipeline.record(message)
 
-            # Also try to forward immediately if connected
-            if self.kafka_producer:
+            # THE IMMEDIATE FORWARD IS OFF, DELIBERATELY (FS-499).
+            #
+            # FS-495 found that this path raised on every message since the day it was
+            # written, so the delivery behaviour production has ALWAYS had is
+            # buffer-then-backfill. Fixing the serialisation turned the path on for the first
+            # time — and it publishes to `telemetry.{asset}` while the contract, stated in
+            # `edge-agent-statefulset.yaml:60-63` and parsed at `workers/ingestion.py:219`,
+            # is `telemetry.{org}.{asset}`. The worker rejects anything with fewer than three
+            # parts as `invalid_topic_format`, so every live message became a backend warning
+            # and a dropped copy while the backfill copy arrived correctly.
+            #
+            # Correcting only the topic is worse, not better: nothing marks the buffered row
+            # sent (`mark_sent` is called by the backfill loop alone, `main.py:357`), so a
+            # correct live publish would deliver every reading TWICE.
+            #
+            # Making it real needs three things together — the org in the topic, an
+            # ack-guaranteed send (`send_and_wait`, since `send()` only awaits batching), and
+            # marking the row sent so backfill skips it. That is a change to the delivery
+            # semantics of the core data path and belongs to whoever owns that decision, not
+            # to a defect fix. Until then this stays off, which is exactly what has shipped
+            # all along.
+            #
+            # `_forward_to_kafka` is kept, and correct, so the work above is a wiring change
+            # rather than a rewrite.
+            if IMMEDIATE_FORWARD_ENABLED and self.kafka_producer:
                 try:
                     await self._forward_to_kafka(enriched_message)
                     metrics.record_kafka_success()
+                    if self._forward_failing:
+                        self._forward_failing = False
+                        logger.info("immediate_forward_recovered", asset_id=asset_id)
                 except Exception as e:
                     metrics.record_kafka_error()
-                    # Already in buffer, will retry later
-                    logger.debug(
-                        "immediate_forward_failed",
-                        asset_id=asset_id,
-                        error=str(e)
-                    )
+                    # WARNING, NOT DEBUG (FS-496). The message is already buffered and the
+                    # backfill path will deliver it, so this is not data loss — which is
+                    # why it was written at `debug`. But that reasoning holds for ONE
+                    # failure, not for a path that fails every time: FS-495 was a 100%
+                    # failure rate that produced no visible signal for as long as it
+                    # existed, because the only two witnesses were a debug line and a
+                    # counter nobody alerts on.
+                    #
+                    # The first failure since the last success is logged at warning; the
+                    # rest stay at debug so a genuinely offline broker does not flood the
+                    # log with one line per message.
+                    if not self._forward_failing:
+                        self._forward_failing = True
+                        logger.warning(
+                            "immediate_forward_failed",
+                            asset_id=asset_id,
+                            error=str(e),
+                            note="message is buffered; delivery falls back to backfill",
+                        )
+                    else:
+                        logger.debug(
+                            "immediate_forward_still_failing",
+                            asset_id=asset_id,
+                            error=str(e),
+                        )
             
             logger.debug(
                 "collector_message_received",
@@ -326,15 +440,29 @@ class UnifiedCollectorCoordinator:
             )
     
     async def _forward_to_kafka(self, message: Dict):
-        """Forward message to Kafka"""
+        """Forward a message to Kafka.
+
+        THE PRODUCER SERIALISES, NOT THIS (FS-495). `main.py:259` builds the producer with
+        `value_serializer=lambda v: json.dumps(v).encode('utf-8')` and hands that same
+        object here (`main.py:270`). This method used to `json.dumps(...).encode()` first
+        and pass the bytes as the value, so aiokafka then ran `json.dumps(b'{...}')` —
+        **TypeError: Object of type bytes is not JSON serializable, on every message**,
+        since the day it was written.
+
+        It cost delivery latency rather than data: the message is buffered before this is
+        attempted and the backfill path serialises correctly, so everything arrived by the
+        slow route. But the immediate path never once worked, and the failure went to
+        `logger.debug` (see the caller, fixed in FS-496).
+
+        No test could see it because the producer double in
+        `tests/test_edge_agent_integration.py:47-55` stores `value` verbatim and applies no
+        serializer — a fake that is wrong at exactly the seam that is broken.
+        `tests/test_live_forward_survives_the_serializer.py` models the real contract.
+        """
         asset_id = message.get('asset_id', 'unknown')
         topic = f"telemetry.{asset_id}"
-        
-        # Serialize
-        payload = json.dumps(message).encode('utf-8')
-        
-        # Send
-        await self.kafka_producer.send(topic, payload)
+
+        await self.kafka_producer.send(topic, message)
     
     async def _health_monitor(self):
         """Monitor health of all collectors"""
@@ -389,6 +517,14 @@ class UnifiedCollectorCoordinator:
         # Cancel health monitor
         if self._health_check_task:
             self._health_check_task.cancel()
+
+        # And the supervisors (FS-502). `self._running = False` above lets each loop exit at
+        # its next iteration, but a supervisor sitting in `await collector.start()` does not
+        # reach that check — so without this, `stop_all` returns while supervisors are still
+        # awaiting sockets the stop below is about to close.
+        for task in getattr(self, "_collector_tasks", []):
+            task.cancel()
+        self._collector_tasks = []
         
         # Stop all collectors
         stop_tasks = []
@@ -427,24 +563,92 @@ class UnifiedCollectorCoordinator:
         if task is not None and not task.done():
             task.cancel()
 
-    async def restart_collector(self, asset_id: str):
-        """Restart a specific collector"""
-        logger.info("restarting_collector", asset_id=asset_id)
-        
-        # Stop existing
-        if asset_id in self.collectors:
-            try:
-                await self.collectors[asset_id].stop()
-            except:
-                pass
-        
-        if asset_id in self.collector_tasks:
-            self.collector_tasks[asset_id].cancel()
-        
-        # Start new
+    async def restart_collector(
+        self,
+        asset_id: str,
+        *,
+        readiness_timeout_seconds: int = 10,
+    ) -> Dict[str, Any]:
+        """Restart exactly one configured collector and verify its task stays live."""
+
         config = self.configs.get(asset_id)
-        if config:
-            await self._start_collector(config)
+        if config is None:
+            raise KeyError(asset_id)
+        if not config.enabled:
+            raise PermissionError(asset_id)
+        if readiness_timeout_seconds <= 0:
+            raise ValueError("readiness_timeout_seconds must be positive")
+
+        lock = self._restart_locks.setdefault(asset_id, asyncio.Lock())
+        if lock.locked():
+            raise RuntimeError("collector restart already in progress")
+
+        async with lock:
+            before = self.get_collector_status(asset_id)
+            logger.info("restarting_collector", asset_id=asset_id)
+
+            collector = self.collectors.get(asset_id)
+            if collector is not None:
+                try:
+                    await asyncio.wait_for(collector.stop(), timeout=5)
+                except Exception as exc:
+                    logger.warning(
+                        "collector_stop_during_restart_failed",
+                        asset_id=asset_id,
+                        error=str(exc),
+                    )
+
+            task = self.collector_tasks.get(asset_id)
+            if task is not None and not task.done():
+                task.cancel()
+                try:
+                    await asyncio.wait_for(task, timeout=2)
+                except (asyncio.CancelledError, asyncio.TimeoutError):
+                    pass
+
+            self.collectors.pop(asset_id, None)
+            self.collector_tasks.pop(asset_id, None)
+            if not await self._start_collector(config):
+                raise RuntimeError("collector could not be started")
+
+            loop = asyncio.get_running_loop()
+            deadline = loop.time() + readiness_timeout_seconds
+            # A collector is ready for coordinator purposes once its newly
+            # created task survives a scheduling grace period. Protocol-level
+            # connectivity remains visible in diagnostics where supported.
+            await asyncio.sleep(min(0.1, readiness_timeout_seconds))
+            while loop.time() < deadline:
+                replacement = self.collector_tasks.get(asset_id)
+                if replacement is not None and not replacement.done():
+                    after = self.get_collector_status(asset_id)
+                    logger.info(
+                        "collector_restart_ready",
+                        asset_id=asset_id,
+                    )
+                    return {"before": before, "after": after}
+                if replacement is not None and replacement.done():
+                    break
+                await asyncio.sleep(0.05)
+
+            raise RuntimeError("collector did not become ready")
+
+    def get_collector_status(self, asset_id: str) -> Dict[str, Any]:
+        """Return bounded lifecycle state for one configured collector."""
+
+        config = self.configs.get(asset_id)
+        if config is None:
+            raise KeyError(asset_id)
+        task = self.collector_tasks.get(asset_id)
+        collector = self.collectors.get(asset_id)
+        status = {
+            "asset_id": asset_id,
+            "type": config.collector_type,
+            "enabled": config.enabled,
+            "running": task is not None and not task.done(),
+        }
+        if collector is not None and hasattr(collector, "_connected"):
+            status["connected"] = bool(getattr(collector, "_connected"))
+        return status
     
     def get_status(self) -> Dict[str, Any]:
         """Get status of all collectors"""

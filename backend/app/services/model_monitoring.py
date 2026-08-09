@@ -1,7 +1,20 @@
-"""Model Monitoring Service for Drift Detection and Performance Tracking"""
+"""Model Monitoring Service for Drift Detection and Performance Tracking
+
+TIMESTAMPS ARE TIMEZONE-AWARE, like the other 483 datetime constructions in this
+codebase. This module used bare `datetime.now()` in nine places — the only naive island
+in `app/` — which made its ISO strings carry no offset while every other endpoint emits
+`+00:00`.
+
+Internally that was consistent: the drift and performance histories are in-memory, both
+sides of every comparison were naive, and nothing raised. The hazard was at the boundary.
+`new Date("2026-07-28T02:15:00")` is parsed by JavaScript as LOCAL time while
+`new Date("2026-07-28T02:15:00+00:00")` is UTC, so the same instant would have rendered
+hours apart depending on which endpoint it came from. No frontend consumes these routes
+today, which is the only reason it never showed.
+"""
 
 from typing import Dict, Any, List, Optional
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from scipy import stats
 import numpy as np
 import structlog
@@ -63,7 +76,7 @@ class ModelDriftDetector:
                 "reason": "Insufficient data",
                 "p_value": None,
                 "ks_statistic": None,
-                "timestamp": datetime.now().isoformat()
+                "timestamp": datetime.now(timezone.utc).isoformat()
             }
         
         # Perform KS test
@@ -82,7 +95,7 @@ class ModelDriftDetector:
             "threshold": self.threshold,
             "reference_size": len(self.reference_data),
             "current_size": len(self.current_data),
-            "timestamp": datetime.now().isoformat()
+            "timestamp": datetime.now(timezone.utc).isoformat()
         }
         
         if drift_detected:
@@ -106,7 +119,7 @@ class ModelDriftDetector:
         Returns:
             List of drift detection results
         """
-        cutoff = datetime.now() - timedelta(hours=hours)
+        cutoff = datetime.now(timezone.utc) - timedelta(hours=hours)
         return [
             drift for drift in self.drift_history
             if datetime.fromisoformat(drift["timestamp"]) > cutoff
@@ -246,7 +259,7 @@ class DataDriftMonitor:
         result = {
             "model_id": self.model_id,
             "features": drift_results,
-            "timestamp": datetime.now().isoformat()
+            "timestamp": datetime.now(timezone.utc).isoformat()
         }
         
         self.psi_history.append(result)
@@ -263,7 +276,7 @@ class DataDriftMonitor:
         Returns:
             List of PSI results
         """
-        cutoff = datetime.now() - timedelta(hours=hours)
+        cutoff = datetime.now(timezone.utc) - timedelta(hours=hours)
         return [
             psi for psi in self.psi_history
             if datetime.fromisoformat(psi["timestamp"]) > cutoff
@@ -306,7 +319,7 @@ class ModelPerformanceTracker:
             "prediction": prediction,
             "actual": actual,
             "latency_ms": latency_ms,
-            "timestamp": datetime.now().isoformat()
+            "timestamp": datetime.now(timezone.utc).isoformat()
         })
         
         # Keep only last 1000 predictions
@@ -333,7 +346,7 @@ class ModelPerformanceTracker:
             "model_id": self.model_id,
             "total_predictions": len(self.predictions),
             "predictions_with_actual": len(predictions_with_actual),
-            "timestamp": datetime.now().isoformat()
+            "timestamp": datetime.now(timezone.utc).isoformat()
         }
         
         if predictions_with_actual:
@@ -387,7 +400,7 @@ class ModelPerformanceTracker:
         Returns:
             List of performance metrics
         """
-        cutoff = datetime.now() - timedelta(hours=hours)
+        cutoff = datetime.now(timezone.utc) - timedelta(hours=hours)
         return [
             perf for perf in self.performance_history
             if datetime.fromisoformat(perf["timestamp"]) > cutoff
@@ -441,7 +454,7 @@ class ModelMonitoringService:
         """
         summary = {
             "model_id": model_id,
-            "timestamp": datetime.now().isoformat()
+            "timestamp": datetime.now(timezone.utc).isoformat()
         }
         
         # Drift detection

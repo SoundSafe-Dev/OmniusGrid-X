@@ -12,15 +12,27 @@ export interface YardTrailer {
   assignedDoorId?: string;
   checkedInAt?: string;
   checkedOutAt?: string;
-  expectedDuration?: number; // minutes
+  /** `expectedDuration` is GONE (FS-439). No column, no computation, and the unit
+   *  comment made it look like a settled contract. */
   detentionRisk: 'low' | 'medium' | 'high';
   detentionCost: number;
-  contents?: string;
-  poNumber?: string;
+  /** `contents` and `poNumber` were HERE and are gone. `yard_trailers` records what the
+   *  trailer IS — type, seal, weight, temperature setpoint — and nothing about what is inside
+   *  it or which purchase order it belongs to. The inventory table printed `contents || '-'`
+   *  in a column headed "Contents", so every row showed a dash under a heading promising
+   *  something the schema has never held. */
   sealNumber?: string;
+  /** `driverName` has no column either — `yard_trailers.driver_id` references `drivers`, and
+   *  resolving a name there is the same join that now resolves the phone. Left declared
+   *  because the panel renders it conditionally and the join is a one-line follow-up; the
+   *  phone was the field an operator actually needs. */
   driverName?: string;
-  driverPhone?: string;
-  lastLocation?: GeoLocation;
+  /** Resolved through `yard_trailers.driver_id` -> `drivers.phone`. The number an operator
+   *  calls about a trailer sitting on the yard, declared and rendered in two places and sent
+   *  by nothing until now. */
+  driverPhone?: string | null;
+  /** `yard_trailers` has no position column; this is credited to the vocabulary by
+   *  `vehicles.last_location`. Rule 34's blind spot, same as `Driver.lastLocation`. */
   createdAt: string;
   updatedAt: string;
 }
@@ -28,19 +40,47 @@ export interface YardTrailer {
 export interface DockDoor {
   id: string;
   doorNumber: string;
-  workcellId: string;
-  workcellName: string;
+  /** `dock_doors.door_type` — inbound | outbound | cross_dock. A real column that the API
+   *  has always sent and this interface never declared. */
+  doorType?: string | null;
+  /** `workcellId` is GONE (FS-439). `dock_doors` has no `workcell_id` column and no
+   *  handler joins one, so it could never arrive; `workcellName` sat beside it, was
+   *  rendered, and printed a blank line for an association this schema does not have.
+   *
+   *  THE NOTE THAT USED TO BE HERE IS RESOLVED AND WAS ALREADY STALE. It listed
+   *  `supportedEquipment`, `hasLoadingEquipment`, `maxWeightCapacity`,
+   *  `currentAppointmentId` and `estimatedReleaseAt` as having the same problem and said
+   *  "recorded rather than fixed here" — but all five were fixed in this very interface,
+   *  which now declares `equipmentCapabilities` and `lastOccupiedAt` with the reasoning
+   *  attached. A deferral note outlived the work it deferred.
+   *
+   *  It was right about the cause: the wire-vocabulary sweep is GLOBAL, so a name that is
+   *  a column on ANY table passes even when this entity has no such column. That gap is
+   *  now closed by `test_frontend_types_match_their_own_payload`, which pairs each
+   *  interface with its own response model — and which is what flagged this last field. */
   status: 'available' | 'occupied' | 'reserved' | 'maintenance' | 'blocked';
   currentTrailerId?: string;
   trailerLicensePlate?: string;
-  supportedEquipment: string[];
-  hasLoadingEquipment: boolean;
-  maxWeightCapacity: number; // kg
-  currentAppointmentId?: string;
-  estimatedReleaseAt?: string;
+  /** `dock_doors.equipment_capabilities` — a JSON OBJECT, not a list. This was declared as
+   *  `supportedEquipment: string[]`, a name the wire does not use and a shape the column
+   *  does not hold, so it was both unsourced and untypeable. Nothing rendered it. */
+  equipmentCapabilities?: Record<string, unknown> | null;
+  /** `dock_doors.last_occupied_at`. NOT an estimated release: it records when the door was
+   *  last occupied, which is a fact about the past. `estimatedReleaseAt` was declared here
+   *  and rendered as "Release: HH:MM" — a prediction nothing produces, so the line never
+   *  appeared. Mapping `last_occupied_at` onto it would have been the `currentMileage`
+   *  defect exactly: the right number under the wrong label. */
+  lastOccupiedAt?: string | null;
+  isActive?: boolean;
   createdAt: string;
   updatedAt: string;
 }
+// DELETED FROM DockDoor, all four unsourced and unrendered: `hasLoadingEquipment`,
+// `maxWeightCapacity`, `currentAppointmentId` (appointments reference doors, not the
+// reverse) and `estimatedReleaseAt`. `dock_doors` carries door_number, door_type, status,
+// equipment_capabilities, current_trailer_id, last_occupied_at and is_active — nothing else.
+// This is the per-interface audit rule 34 says the global sweep cannot do: its vocabulary
+// credits a name that exists as a column on ANY table, so none of these were ever reported.
 
 export interface DockAppointment {
   id: string;
@@ -48,23 +88,25 @@ export interface DockAppointment {
   carrierName: string;
   trailerId?: string;
   trailerLicensePlate?: string;
-  doorId?: string;
+  /** `dock_door_id` on the wire (FS-439). Declared as `doorId`, which nothing sends.
+   *  `workcellId` is GONE with it: `dock_appointments` has no workcell column and no
+   *  handler joins one, and it was declared REQUIRED — TypeScript vouching for a string
+   *  that is `undefined` at runtime. */
+  dockDoorId?: string;
   doorNumber?: string;
-  workcellId: string;
-  workcellName: string;
   appointmentType: 'pickup' | 'delivery' | 'transfer';
   scheduledArrival: string;
   actualArrival?: string;
   scheduledDeparture: string;
   actualDeparture?: string;
   status: 'scheduled' | 'checked_in' | 'docked' | 'loading' | 'complete' | 'cancelled' | 'no_show';
-  poNumber?: string;
-  loadDescription?: string;
+  /** `poNumber`, `loadDescription`, `detentionStartAt` and `notes` are GONE (FS-439). None
+   *  is a column on `dock_appointments` and nothing computes them, so no fix could have
+   *  made them arrive. Detention is reported by the driver-wait-time endpoint, which has
+   *  its own assessed/not-assessed qualifier rather than a bare start timestamp. */
   priority: 'low' | 'normal' | 'high' | 'urgent';
-  detentionStartAt?: string;
   driverName?: string;
   driverPhone?: string;
-  notes?: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -77,32 +119,60 @@ export interface YardMove {
   toLocation: string;
   moveType: 'check_in' | 'check_out' | 'dock' | 'undock' | 'reposition' | 'maintenance';
   performedBy: string;
-  equipmentUsed?: string;
+  /** `equipmentUsed` is GONE (FS-439). `yard_moves` records who moved a trailer and
+   *  when, never what with. Nothing to send and nothing read it. */
   startTime: string;
   endTime?: string;
   status: 'in_progress' | 'completed' | 'cancelled';
-  notes?: string;
+  /** `notes` is GONE (FS-439). `yard_moves` carries `meta_data` and no notes column;
+   *  a free-text note would have to go in the metadata bag or get a column of its own. */
   createdAt: string;
 }
 
+/**
+ * One driver's wait, as `POST /api/v1/yard/driver-wait-times` actually returns it (FS-424).
+ *
+ * SIX FIELDS HERE NAMED THINGS THE WIRE NEVER SENDS: `checkInTime`, `dockTime`,
+ * `departureTime`, `waitDurationMinutes`, `dockDurationMinutes`, `totalDurationMinutes`.
+ * The server sends `check_in_at`, `docked_at`, `check_out_at` and `total_wait_minutes`, and
+ * the yard casing seam turns those into `checkedInAt`, `dockedAt`, `checkedOutAt` and
+ * `totalWaitMinutes`. Every one of the six would have been `undefined` at render — the
+ * FS-394/FS-398 shape, where a panel is blank because the type described a payload nobody
+ * sends.
+ *
+ * Rule 35: name the field after the wire, not after the nicer word. `departureTime` reads
+ * better than `checkedOutAt` and is worth nothing, because it does not arrive.
+ *
+ * Also gone: `driverName`, `carrierName`, `carrierId`, `appointmentId`, `isDetention`,
+ * `detentionCost` and `reason`, none of which the response carries either. Detention is
+ * reported as `detentionMinutes` / `detentionCharge` / `detentionRate`, and demurrage
+ * likewise — the endpoint distinguishes the two and this type collapsed them into one
+ * boolean and one number.
+ */
 export interface DriverWaitTime {
   id: string;
+  organizationId: string;
   driverId: string;
-  driverName: string;
-  carrierId: string;
-  carrierName: string;
   trailerId?: string;
-  appointmentId?: string;
-  checkInTime: string;
-  dockTime?: string;
-  departureTime?: string;
-  waitDurationMinutes?: number;
-  dockDurationMinutes?: number;
-  totalDurationMinutes?: number;
-  isDetention: boolean;
-  detentionCost?: number;
-  reason?: string;
+  checkedInAt: string;
+  dockedAt?: string;
+  unloadedAt?: string;
+  checkedOutAt?: string;
+  totalWaitMinutes?: number;
+  detentionMinutes?: number;
+  detentionRate?: number;
+  detentionCharge?: number;
+  /** Whether detention has been ASSESSED at all. `detentionCharge` is nullable and null
+   *  means nobody has judged this trailer — a different fact from "assessed at zero", and
+   *  the reason the caveat travels with the number rather than being inferred from it. */
+  detentionAssessed: boolean;
+  demurrageMinutes?: number;
+  demurrageRate?: number;
+  demurrageCharge?: number;
+  isBilled: boolean;
+  metadata?: Record<string, unknown>;
   createdAt: string;
+  updatedAt: string;
 }
 
 // Transportation Management System (TMS) Types
@@ -118,9 +188,14 @@ export interface Carrier {
   insuranceExpiry?: string;
   operatingAuthority: 'active' | 'inactive' | 'pending' | 'revoked';
   safetyRating?: 'satisfactory' | 'conditional' | 'unsatisfactory';
-  contactEmail: string;
-  contactPhone: string;
-  billingAddress?: Address;
+  /** DELETED: `contactEmail` and `contactPhone` were declared REQUIRED here and `carriers`
+   *  has neither column. The table carries DOT/MC numbers, C-TPAT and insurance dates,
+   *  safety rating, CSA score, SCAC and operating authority — and no way to reach anybody.
+   *  The carrier card rendered a "Contact" heading above two empty lines for every row.
+   *  Carrier contact details are collected nowhere in this product: a gap in the schema,
+   *  not something the type can assert its way out of. */
+  /** `billingAddress` is GONE (FS-439). `carriers` has no such column and nothing
+   *  computes one; the `Address` type it referenced is still used by other shapes. */
   isActive: boolean;
   complianceScore: number;
   onTimePerformance: number; // percentage
@@ -141,13 +216,30 @@ export interface Driver {
   endorsements: string[];
   hazmatCertified: boolean;
   currentHosStatus: 'off_duty' | 'sleeper' | 'driving' | 'on_duty';
-  hosCycleHoursUsed: number;
-  hosDriveHoursRemaining: number;
-  hosDutyHoursRemaining: number;
-  lastLocation?: GeoLocation;
+  /** Null when unreported — `drivers.hos_cycle_hours` is nullable. */
+  hosCycleHoursUsed: number | null;
+  /** Null when the driver has reported no hours — the API derives this from
+   *  `hos_drive_hours_today` and leaves it null when that is missing too. Treat null as
+   *  UNASSESSABLE: `x === 0` is false for null, which cleared every fleet. */
+  hosDriveHoursRemaining: number | null;
+  /** Null when unreported — see `hosDriveHoursRemaining`. */
+  hosDutyHoursRemaining: number | null;
+  /** `drivers` HAS NO POSITION COLUMN, and the sweep did not report this one because the
+   *  global vocabulary credits `lastLocation` from `vehicles.last_location`. Rule 34's blind
+   *  spot; found by auditing this interface against its own table. A driver's position is
+   *  their vehicle's, which the vehicle already carries, so this field is gone. */
+  /** Reverse lookups, not columns: a vehicle names its driver (`vehicles.current_driver_id`)
+   *  and a shipment names its driver (`shipments.driver_id`). Nothing produced either, so the
+   *  "Current Vehicle" and "Current Shipment" rows never rendered; `/transportation/drivers`
+   *  resolves both in one query each now. `currentShipmentId` is the driver's CURRENT load —
+   *  shipments in a terminal status are excluded, or the row would name a delivered one. */
   currentVehicleId?: string;
   currentShipmentId?: string;
-  geoTabDeviceId?: string; // GeoTab device ID
+  /** WAS `geoTabDeviceId`. Drivers have no GeoTab device — the column is
+   *  `drivers.eld_device_id`, an ELD, which is a different system. The detail panel showed
+   *  a "GeoTab Device ID" row that could never populate while the id the driver DOES have
+   *  was sent and never displayed. */
+  eldDeviceId?: string;
   isActive: boolean;
   createdAt: string;
   updatedAt: string;
@@ -160,7 +252,13 @@ export interface Shipment {
   carrierName: string;
   driverId?: string;
   driverName?: string;
-  vehicleId?: string;
+  /** `vehicleId`, `freightDescription`, `geoTabTripId`, `detentionRate`,
+   *  `detentionHours` and `detentionTotal` are GONE (FS-439). None is a column on
+   *  `shipments` and none is computed: a shipment references a TRAILER, a driver and
+   *  a carrier, not a vehicle, and detention belongs to the driver-wait-time record
+   *  where it is measured — with an assessed/not-assessed qualifier these three bare
+   *  numbers could not carry. Declaring them here invited a screen to add up a
+   *  detention bill from three undefineds. */
   trailerId?: string;
   status: 'planned' | 'dispatched' | 'picked_up' | 'in_transit' | 'delivered' | 'cancelled';
   origin: Location;
@@ -168,9 +266,11 @@ export interface Shipment {
   scheduledPickup: string;
   actualPickup?: string;
   scheduledDelivery: string;
-  estimatedDelivery?: string;
+  /** `shipments` records `scheduled_delivery` and `actual_delivery`. There is no ETA: nothing
+   *  in this product predicts a delivery time. The list coloured a row yellow when
+   *  `estimatedDelivery > scheduledDelivery` — a late-running warning driven by a field no
+   *  endpoint has ever sent, so it never fired, and the field is gone. Same shape as `DockDoor.estimatedReleaseAt`. */
   actualDelivery?: string;
-  freightDescription?: string;
   weight?: number; // kg
   pieces?: number;
   palletCount?: number;
@@ -180,29 +280,49 @@ export interface Shipment {
   bolNumber?: string;
   proNumber?: string;
   freightCharge?: number;
-  detentionRate?: number; // per hour
-  detentionHours?: number;
-  detentionTotal?: number;
-  currentLocation?: GeoLocation;
-  geoTabTripId?: string;
+  /** `shipments` carries no position. The nearest real thing is the assigned driver's
+   *  vehicle's `last_location`, two hops away through `shipments.driver_id` ->
+   *  `vehicles.current_driver_id` — and that silently becomes another load's position the
+   *  moment a driver changes vehicle. Presenting it as the shipment's would be the
+   *  `currentMileage` defect: the right number under the wrong label. The field is gone. */
   routeId?: string;
   createdAt: string;
   updatedAt: string;
 }
 
+/** `RouteResponse`, field for field (FS-439).
+ *
+ *  EVERY NAME HERE WAS WRONG, and four of them were wrong about the UNITS as well. The
+ *  server sends `total_distance_miles` and `estimated_duration_hours`; this declared
+ *  `distance // km` and `estimatedDuration // minutes`. So the data arrived, was renamed
+ *  into nothing by the casing seam, and had it been aliased instead the numbers would have
+ *  been read as kilometres and minutes — wrong by 1.6x and 60x, silently, on a fuel and
+ *  routing screen.
+ *
+ *  That is the argument for renaming rather than aliasing here: `totalDistanceMiles` and
+ *  `estimatedDurationHours` carry their units in the name, and a component cannot use one
+ *  while believing the other.
+ *
+ *  `averageSpeed`, `fuelStops` and `restStops` are GONE. `routes` has no such columns and
+ *  no handler computes them; `FuelStop` and `RestStop` existed only to type them. Nothing
+ *  read any of the eleven fields, which is the only reason this was a trap for the next
+ *  page rather than a broken one.
+ *
+ *  `origin`/`destination`/`waypoints` are free-form JSON on the wire, not the `Location`
+ *  object this declared. Typed as such rather than promising a shape the server does not
+ *  guarantee. */
 export interface Route {
   id: string;
-  name: string;
-  origin: Location;
-  destination: Location;
-  waypoints?: Location[];
-  distance: number; // km
-  estimatedDuration: number; // minutes
-  averageSpeed?: number; // km/h
-  fuelStops?: FuelStop[];
-  restStops?: RestStop[];
-  tollCosts?: number;
-  fuelCosts?: number;
+  routeName?: string;
+  origin: Record<string, any>;
+  destination: Record<string, any>;
+  waypoints?: Record<string, any>[];
+  totalDistanceMiles?: number;
+  estimatedDurationHours?: number;
+  tollCostEstimate?: number;
+  fuelCostEstimate?: number;
+  optimizationCriteria?: string;
+  isActive: boolean;
   createdAt: string;
   updatedAt: string;
 }
@@ -225,9 +345,17 @@ export interface Vehicle {
   dotNumber?: string;
   isActive: boolean;
   currentDriverId?: string;
-  currentShipmentId?: string;
-  currentLocation?: GeoLocation;
-  geoTabDeviceId?: string;
+  /** `vehicles` HAS NO SHIPMENT LINK — a shipment names its driver, and a vehicle names its
+   *  driver, so a vehicle's load is really its driver's load. Removed rather than derived
+   *  through two hops. */
+  /** WAS `currentLocation`, which no endpoint has ever sent, so every location block on the
+   *  vehicle panel was dead. The column is `vehicles.last_location` and the serializer emits
+   *  it as `lastLocation` with exactly this shape. Rule 35: name the field after the wire. */
+  lastLocation?: GeoLocation;
+  /** `vehicles.geotab_device_id`. WAS `geoTabDeviceId` with a capital T — the casing seam
+   *  produces `geotabDeviceId`, so the declared name matched nothing and the row never
+   *  rendered. Rule 35: name the field after the wire. */
+  geotabDeviceId?: string;
   odometer?: number;
   fuelLevel?: number;
   engineHours?: number;
@@ -240,12 +368,16 @@ export interface FreightCharge {
   shipmentId: string;
   carrierId: string;
   chargeType: 'line_haul' | 'fuel_surcharge' | 'accessorial' | 'detention' | 'layover' | 'lumper' | 'redelivery' | 'tonu';
-  description: string;
+  /** `charge_description` on the wire (FS-439). Declared as `description`, which nothing
+   *  sends — `freight_charges` has no such column. */
+  chargeDescription?: string;
   quantity: number;
   rate: number;
   amount: number;
   currency: string;
-  approved: boolean;
+  /** `approved` is GONE. There is no such column: approval is recorded as `approvedBy` and
+   *  `approvedAt`, and a boolean beside them would be a third source of truth that could
+   *  disagree with both. A caller wanting the boolean asks `approvedAt != null`. */
   approvedBy?: string;
   approvedAt?: string;
   invoiceNumber?: string;
@@ -287,11 +419,13 @@ export interface GeoTabTrip {
 export interface GeoTabDiagnostic {
   id: string;
   deviceId: string;
-  diagnosticCode: string;
   name: string;
   source: string;
   value?: string;
-  timestamp: string;
+  /** The device's `lastSeen`, which is a heartbeat's time standing in for a fault's — the
+   *  closest thing the payload carries. NULL when the device has never reported; it used to
+   *  fall back to `new Date()`, stamping every fault code with the current time. */
+  timestamp: string | null;
   isActive: boolean;
 }
 
@@ -299,7 +433,6 @@ export interface GeoTabException {
   id: string;
   deviceId: string;
   ruleName: string;
-  ruleType: string;
   startTime: string;
   endTime?: string;
   duration: number; // minutes
@@ -313,8 +446,6 @@ export interface GeoTabException {
 export interface GeoLocation {
   latitude: number;
   longitude: number;
-  accuracy?: number;
-  altitude?: number;
   heading?: number;
   speed?: number; // km/h
   timestamp: string;
@@ -331,6 +462,10 @@ export interface Location {
   latitude?: number;
   longitude?: number;
   contactName?: string;
+  /** `Location` is a frontend-only shape (shipment origin/destination), not a table, and
+   *  nothing renders these two — kept because a caller constructing a Location may set
+   *  them. The CARRIER equivalents were deleted: `carriers` has no contact columns, and the
+   *  card rendered a "Contact" heading above two empty lines for every row. */
   contactPhone?: string;
   contactEmail?: string;
   hours?: string;
@@ -344,74 +479,69 @@ export interface Address {
   country: string;
 }
 
-export interface FuelStop {
-  location: GeoLocation;
-  address: string;
-  estimatedTime: string;
-  fuelPrice?: number;
-}
-
-export interface RestStop {
-  location: GeoLocation;
-  address: string;
-  estimatedTime: string;
-  duration: number;
-  type: 'rest_break' | 'meal_break' | 'overnight';
-}
+/* `FuelStop` and `RestStop` are GONE (FS-442). They existed only to type
+ * `Route.fuelStops` / `Route.restStops`, which were removed with the Route rewrite because
+ * `routes` has no such columns and nothing computes them. After that they were referenced
+ * by nothing at all — dead types describing a feature that was never built, and exactly
+ * the kind of thing a later reader mistakes for a contract. */
 
 // Dashboard Types
 
-export interface LogisticsOverview {
-  // Yard Stats
-  trailersInYard: number;
-  trailersDocked: number;
-  dockDoorsAvailable: number;
-  dockDoorsOccupied: number;
-  todayAppointments: number;
-  appointmentsOnTime: number;
-  detentionRiskCount: number;
-  detentionCostToday: number;
-  
-  // Fleet Stats
-  vehiclesActive: number;
-  vehiclesIdle: number;
-  shipmentsInTransit: number;
-  shipmentsDeliveredToday: number;
-  onTimeDeliveryRate: number;
-  averageTransitTime: number;
-  
-  // Compliance
-  driversHosViolations: number;
-  vehiclesInspectionDue: number;
-  carrierComplianceIssues: number;
-}
+// REMOVED 2026-08-04 (FS-424): `LogisticsOverview`, sixteen fields describing a logistics
+// dashboard that no endpoint serves and no component imports. It was a specification, not a
+// contract — and indistinguishable from a real type to anyone grepping, which is what makes
+// it a trap rather than a note. It also supplied sixteen of the fifty-six entries in the
+// phantom-field ratchet, none of which that ratchet could ever have retired.
+//
+// Same call as FS-367, which deleted `ModelDeployment` and six engine fields for the same
+// reason. When the overview endpoint is built, its type gets written against what the
+// endpoint sends — which is the order that produces a type worth trusting.
 
+/** Live detention exposure, named after `/api/v1/yard/detention-alerts`.
+ *
+ *  EVERY FIELD ON THIS INTERFACE WAS WRONG, and the banner it feeds appears only when a
+ *  trailer is at risk or already accruing charges — which is to say, only when it matters. It
+ *  rendered the trailer id above a bare " • ", a "$" with no number, and "N/A excess".
+ *
+ *  The numbers were all being sent under different names (`detention_minutes`,
+ *  `current_charge`, `elapsed_minutes`, `free_minutes`), so those are renames — rule 35. The
+ *  identifying details genuinely were not sent, and are real columns on the row the endpoint
+ *  already had in hand, so those are now served.
+ *
+ *  Only `excessMinutes` appeared in the wire-vocabulary sweep: `carrierName`, `location` and
+ *  `estimatedCost` all exist on OTHER interfaces, so the global vocabulary credits them and the
+ *  sweep sees nothing. Rule 34, and the reason this one needed reading against its own
+ *  endpoint.
+ *
+ *  There is no `id`: the alert is computed, not stored. `trailerId` is the natural key and is
+ *  what the list should be keyed on — it was keyed on `alert.id`, so every row shared
+ *  `undefined`.
+ */
 export interface DetentionAlert {
-  id: string;
   trailerId: string;
-  trailerLicensePlate?: string;
-  driverName?: string;
-  carrierName: string;
-  location: string;
-  checkInTime: string;
-  currentDurationMinutes: number;
-  freeTimeMinutes: number;
-  excessMinutes: number;
-  estimatedCost: number;
-  severity: 'low' | 'medium' | 'high' | 'critical';
+  /** `yard_trailers.trailer_number` — the human-readable identifier on the trailer. */
+  trailerNumber: string;
+  /** 'at_risk' before free time expires, 'detention' once charges are accruing. Replaces a
+   *  four-value `severity` union nothing ever produced. */
+  status: 'at_risk' | 'detention';
+  licensePlate?: string | null;
+  yardLocation?: string | null;
+  carrierName?: string | null;
+  checkInAt: string;
+  elapsedMinutes: number;
+  freeMinutes: number;
+  /** Minutes past free time. Zero while 'at_risk'. */
+  detentionMinutes: number;
+  currentCharge: number;
+  hourlyRate: number;
 }
 
-export interface HOSViolationAlert {
-  id: string;
-  driverId: string;
-  driverName: string;
-  carrierName: string;
-  violationType: 'driving_limit' | 'duty_limit' | 'rest_break' | 'cycle_limit';
-  hoursRemaining: number;
-  estimatedViolationTime?: string;
-  currentLocation?: GeoLocation;
-  severity: 'warning' | 'violation';
-}
+// `HOSViolationAlert` was declared here and referenced by NOTHING — one occurrence in the
+// whole frontend, its own declaration. It described an alert no endpoint produces and no
+// component renders: `hoursRemaining` and `currentLocation` had no source, and neither did
+// `estimatedViolationTime` or the four-value `violationType` union. A type that nothing
+// constructs is not a contract, it is a plan; the HOS surface that DOES exist reads
+// `hosDriveHoursRemaining` off the driver, which the API derives and this file documents.
 
 // Filter Types
 
@@ -435,7 +565,15 @@ export interface ShipmentFilters {
 
 export interface AppointmentFilters {
   status?: DockAppointment['status'];
-  workcellId?: string;
+  /** `workcellId` is GONE (FS-439). `dock_appointments` has no workcell column and the
+   *  endpoint declares no such parameter, so the filter worked in mock mode and did
+   *  NOTHING in real mode — the request went out, the server ignored the unknown
+   *  parameter, and the full unfiltered list came back looking filtered.
+   *
+   *  `test_dock_doors_ignores_a_workcell_filter` pinned exactly this for dock DOORS,
+   *  under a note reading "pinned so nobody reintroduces it believing it filters". The
+   *  appointment beside it was left. Method rule 18: the second instance is in the
+   *  nearest neighbour of the first. */
   carrierId?: string;
   dateFrom?: string;
   dateTo?: string;
@@ -488,9 +626,17 @@ export interface FleetUpdate {
 export interface GeofenceAlert {
   id: string;
   vehicleId: string;
+  /** Denormalised from the vehicle; null when the referenced vehicle is not resolvable. */
+  vehicleNumber?: string | null;
   geofenceId: string;
-  geofenceName: string;
+  /** Denormalised from the zone. NULL means the server could not resolve the zone — which
+   *  is not the same as a zone with no name, and the panel says so. */
+  geofenceName?: string | null;
+  /** `geofence_alerts.event_type`. The API used to send this as `eventType`, so it arrived
+   *  undefined and the panel's ternary fell through to "Violation" for every alert. */
   alertType: 'entry' | 'exit' | 'violation';
+  severity?: string;
+  acknowledged?: boolean;
   location: GeoLocation;
   timestamp: string;
 }
@@ -502,30 +648,47 @@ export type MapFilterType = 'all' | 'shipments' | 'fleet' | 'carriers' | 'compli
 // ============================================
 
 // Geofencing Types
+/** THE NULLABLE FIELDS ARE NULLABLE ON PURPOSE. `_alert_out` resolves the zone and vehicle
+ *  names by join and sends `null` when it cannot, with a comment saying why: *"the panel must
+ *  be able to tell a zone it could not resolve from one with an empty name."* `adaptAlert` then
+ *  replaced that `null` with the zone ID, and failing that with `''` — and `'' ?? fallback` is
+ *  `''`, so the panel's `geofenceName ?? 'Zone name unavailable'` could never fire and the row
+ *  rendered a blank line. A deliberate distinction, made on the server and handled in the
+ *  panel, destroyed by the layer between them. */
 export interface GeofenceAlertExtended {
   id: string;
-  vehicleId: string;
-  vehicleNumber: string;
+  vehicleId?: string | null;
+  vehicleNumber?: string | null;
   driverName?: string;
-  geofenceId: string;
-  geofenceName: string;
-  alertType: 'entry' | 'exit' | 'violation';
-  location: GeoLocation;
-  timestamp: string;
+  geofenceId?: string | null;
+  geofenceName?: string | null;
+  /** NOT defaulted to 'violation'. That default is the original defect wearing a fallback:
+   *  every alert, including a routine authorised entry, read "Violation". The panel already
+   *  refuses to guess an unrecognised value — it needs to see the absence to do so. */
+  alertType?: string | null;
+  location?: GeoLocation | null;
+  timestamp?: string | null;
   acknowledged: boolean;
-  severity: 'info' | 'warning' | 'critical';
+  /** An alert whose severity did not arrive is not an informational one. */
+  severity?: 'info' | 'warning' | 'critical' | null;
 }
 
 export interface GeofenceZoneExtended extends GeofenceZone {
-  vehiclesInside: string[];
+  /** OPTIONAL, and it was `string[]` defaulted to `[]`. `_zone_out` does not send it and
+   *  nothing computes it, so the panel's "{n} vehicles inside" read "0 vehicles inside" for
+   *  every zone — a count, not a blank. Present only when a producer supplies one. */
+  vehiclesInside?: string[];
+  /** Derived from `triggerOn`, which the server does send. A real derivation, not a default. */
   alertRules: {
     onEntry: boolean;
     onExit: boolean;
     notifyRoles: string[];
   };
   isActive: boolean;
-  createdAt: string;
-  updatedAt: string;
+  /** `_zone_out` sends neither. They were defaulted to `''`, and `new Date('')` is an
+   *  Invalid Date — which renders as the literal string "Invalid Date". */
+  createdAt?: string;
+  updatedAt?: string;
 }
 
 // Fleet Health & Security Types
@@ -575,10 +738,20 @@ export interface DriverSafetyMetrics {
   harshBrakingEvents: number;
   harshAccelerationEvents: number;
   speedingEvents: number;
-  idleTimeHours: number;
+  /** NULL — nothing measures this (FS-533). `geotab_exceptions` records events with no
+   *  duration column, so the backend has nothing to compute idle HOURS from and sends
+   *  `null` rather than a zero that would read as a measurement. */
+  idleTimeHours: number | null;
   seatbeltViolations: number;
   period: string;
-  trend: 'improving' | 'stable' | 'declining';
+  /** `'declining'` WAS NEVER SENT (FS-533). The backend's vocabulary is
+   *  improving/worsening/stable — `HealthSecurityPanel` tested for `'declining'` and so
+   *  the red styling for a worsening driver could never apply, in either direction: the
+   *  value was hardcoded `'stable'` for every driver anyway. Two independent reasons the
+   *  branch was dead, which is why neither was noticed. Same class as FS-435.
+   *
+   *  `null` when there is no previous window to compare against. */
+  trend: 'improving' | 'stable' | 'worsening' | null;
 }
 
 // Maintenance Types
@@ -589,39 +762,74 @@ export interface MaintenanceSchedule {
   serviceType: 'oil_change' | 'tire_rotation' | 'brake_inspection' | 'engine_tuneup' | 'transmission_service' | 'annual_inspection' | 'other';
   description: string;
   scheduledDate: string;
+  /** Odometer reading at which this service falls due (`due_odometer_miles`). */
   dueMileage?: number;
-  currentMileage: number;
   status: 'scheduled' | 'overdue' | 'completed' | 'cancelled';
   priority: 'low' | 'normal' | 'high' | 'urgent';
   estimatedCost?: number;
-  assignedTechnician?: string;
+  /** `assignedTechnician` was HERE. `maintenance_schedules` has no technician column and,
+   *  unlike `repair_orders`, no vendor either — a schedule records WHAT is due and WHEN,
+   *  not who will do it. The card offered a "Tech:" line that could never populate; the
+   *  same field on `RepairOrder` at least had `vendor` standing beside it. */
   notes?: string;
 }
 
-export interface PartUsed {
-  partNumber: string;
-  description: string;
-  quantity: number;
-  unitCost: number;
-}
-
+/** A repair order, named after the wire.
+ *
+ *  THIS INTERFACE USED TO DECLARE SEVEN FIELDS `_order_out` HAS NEVER SENT — the largest
+ *  cluster left in the declared-but-unsent baseline. `repair_orders` has thirteen columns and
+ *  the serializer emits eleven of them; the type described a different, richer object that no
+ *  endpoint produces and no migration plans:
+ *
+ *    * `workOrderNumber` — no such number is issued anywhere in this product. It had been
+ *      synthesised from eight characters of the row's UUID and printed as the heading a
+ *      technician would quote to a vendor; that was already removed, leaving a field nothing
+ *      could fill.
+ *    * `assignedTechnician` — no column, and the sharpest of the seven, because
+ *      `repair_orders.vendor` — who actually did the work — WAS being sent and rendered
+ *      nowhere. The card offered a "Tech:" line that could never populate while the name it
+ *      could have shown arrived on every response. Same shape as the `geoTabDeviceId` finding.
+ *    * `actualCost` — a second cost on a table with one `cost` column, which is the actual
+ *      cost. Two names for one number invites someone to populate both.
+ *    * `laborHours`, `partsUsed` (with its `PartUsed` shape) — no columns, no tables, and no
+ *      pending work that would add them.
+ *    * `issueDescription`, `reportedDate` — real data under invented names. The adapter filled
+ *      them from `title` and `openedAt`, which is rule 35's case: name the field after the
+ *      wire, not after the nicer word. Renamed rather than deleted.
+ *
+ *  What the server sends and the type now says: `title`, `description`, `vendor`, `category`,
+ *  `cost`, `status`, `priority`, `openedAt`, `completedAt`. `vehicleNumber` is the one
+ *  legitimately client-side value, derived by the adapter.
+ */
 export interface RepairOrder {
   id: string;
   vehicleId: string;
+  /** Derived client-side by `adaptRepairOrder`; falls back to the id when absent. */
   vehicleNumber: string;
-  workOrderNumber: string;
-  issueDescription: string;
-  reportedDate: string;
-  startedDate?: string;
-  completedDate?: string;
+  /** The summary. Headed the card as of this change — previously the heading was a
+   *  work-order number that no system issues. */
+  title: string;
+  /** The detail a technician typed. `_history_out` on the same table always read it while
+   *  `_order_out` did not send it, so one repair carried its description in the
+   *  completed-work view and lost it in the active list. */
+  description?: string | null;
   status: 'reported' | 'diagnosing' | 'in_progress' | 'waiting_parts' | 'completed' | 'cancelled';
+  /** MISMATCHED WITH THE SERVER, deliberately left as-is for now: `repair_orders.priority`
+   *  is `low | medium | high | critical`, so 'medium' and 'critical' arrive here as values
+   *  this union does not contain and `getPriorityColor` falls through to its default.
+   *  Reconciling the two vocabularies is a product decision (which set of words does the
+   *  operator use?), not a mechanical fix — recorded in defect-class-sweeps.md. */
   priority: 'low' | 'normal' | 'high' | 'urgent';
-  assignedTechnician?: string;
-  estimatedCost: number;
-  actualCost?: number;
-  partsUsed: PartUsed[];
-  laborHours?: number;
-  relatedDTCs?: string[];
+  /** The shop or supplier that did the work. Sent on every response since the endpoint was
+   *  written and displayed nowhere, under a card that asked for a technician instead. */
+  vendor?: string | null;
+  /** `repair_orders.category` — likewise sent and never shown. */
+  category?: string | null;
+  /** What the repair cost. NOT an estimate — the panel labelled it "estimated" and coerced a
+   *  missing value to 0, so a repair with no cost recorded displayed as a free one. */
+  cost?: number;
+  openedAt?: string | null;
+  completedAt?: string | null;
 }
 
 export interface ServiceHistoryEntry {
@@ -635,15 +843,28 @@ export interface ServiceHistoryEntry {
   cost: number;
   technician?: string;
   notes?: string;
-  partsReplaced?: string[];
 }
 
 export interface MaintenanceCosts {
-  totalYTD: number;
-  monthlyAverage: number;
-  costPerVehicle: number;
-  upcomingEstimated: number;
+  /** Undefined if the endpoint sent nothing at all. Was named `totalYTD` — real data
+   *  under a name no endpoint uses, renamed to what the wire calls it. */
+  ytdTotal?: number;
+  /** OPTIONAL BECAUSE A DEPLOYMENT MAY BE OLDER THAN THIS CLIENT. `/maintenance/costs`
+   *  used to send only `ytdTotal` and `byCategory`, and these three were manufactured
+   *  client-side — two hardcoded to 0, one as `ytd / 12` regardless of the month — and
+   *  rendered as figures. The server computes all three now (repair costs by month,
+   *  `maintenance_schedules.estimated_cost`, and the vehicle count); they stay optional so
+   *  a client talking to an older backend omits the row rather than inventing a zero.
+   *
+   *  `costPerVehicle` and `upcomingEstimated` are also legitimately absent against a
+   *  CURRENT backend: an empty fleet has no cost per vehicle, and outstanding work that
+   *  nobody has costed has no estimate. Neither is zero. */
+  monthlyAverage?: number;
+  costPerVehicle?: number;
+  upcomingEstimated?: number;
   byCategory: Record<string, number>;
+  /** `YYYY-MM` per entry, one for every elapsed month of the current year — including the
+   *  months that cost nothing, which is a number and not a gap. */
   monthlyBreakdown: { month: string; cost: number }[];
 }
 
@@ -700,7 +921,6 @@ export interface VehicleHealthScoreData {
     dtcs: number;
     maintenance: number;
     safety: number;
-    connectivity: number;
   };
 }
 

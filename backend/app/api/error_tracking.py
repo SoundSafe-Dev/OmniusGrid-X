@@ -17,6 +17,7 @@ from pydantic import BaseModel
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.pagination import MAX_OFFSET
 from app.api.auth import get_current_active_user
 from app.db.database import get_db
 from app.db.models import User
@@ -94,6 +95,16 @@ class ErrorEventDetail(BaseModel):
     regression_count: int
     message_sample: Optional[str]
     traceback_sample: Optional[str]
+    #: True when the two samples above were withheld because the row belongs to another
+    #: organisation (FS-477). The withheld value is a sentence, not a traceback, and the
+    #: client cannot tell the difference by looking at it — `_REDACTED` is prose, and a
+    #: client matching on prose is a coupling nobody declared.
+    #:
+    #: Without this the detail page rendered the sentence inside a `<pre>` under the
+    #: subtitle "Latest occurrence · scrubbed of PII", with the Copy button ENABLED — so
+    #: an operator could paste "[redacted: belongs to another organization]" into a bug
+    #: report believing it was a stack trace.
+    samples_redacted: bool = False
     organization_id: Optional[str]
     status_changed_by: Optional[str]
     status_changed_at: Optional[datetime]
@@ -128,7 +139,7 @@ async def list_errors(
     order: Literal["asc", "desc"] = "desc",
     range: Literal["24h", "7d", "30d", "all"] = "7d",
     limit: int = Query(25, ge=1, le=100),
-    offset: int = Query(0, ge=0),
+    offset: int = Query(0, ge=0, le=MAX_OFFSET),
     current_user: User = Depends(get_current_active_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -280,7 +291,44 @@ async def error_summary(
     )
 
 
-async def _build_detail(fingerprint: str, db: AsyncSession) -> ErrorEventDetail:
+
+_REDACTED = "[redacted: belongs to another organization]"
+
+
+def _samples_are_redacted(row, viewer_org: Optional[str]) -> bool:
+    """Whether `_visible_sample` withheld this row's samples (FS-477).
+
+    Derived from the same condition rather than by comparing the returned value to
+    `_REDACTED` — the marker is prose, and a caller that matches on prose breaks the day
+    somebody improves the wording. The flag is what the client reads.
+    """
+    owner = row["organization_id"]
+    outsider = owner is not None and (
+        viewer_org is None or str(owner) != str(viewer_org)
+    )
+    # SOMETHING WAS ACTUALLY WITHHELD. An outsider viewing a row that carries no samples
+    # has had nothing kept from them, and "redacted" there would put a withholding notice
+    # over an error that simply never captured a traceback — an absence dressed as a
+    # refusal, which is its own small lie.
+    return outsider and bool(row["message_sample"] or row["traceback_sample"])
+
+
+def _visible_sample(row, field: str, viewer_org: Optional[str]) -> Optional[str]:
+    """Return an error sample only to a viewer in the row's own organisation.
+
+    A row with no `organization_id` is platform-level (it predates attribution, or the
+    error happened outside a tenant request) and is shown to everyone — withholding it
+    would hide genuinely shared infrastructure errors from the triage view for no gain.
+    """
+    owner = row["organization_id"]
+    if owner is None or (viewer_org is not None and str(owner) == str(viewer_org)):
+        return row[field]
+    return _REDACTED if row[field] else None
+
+
+async def _build_detail(
+    fingerprint: str, db: AsyncSession, viewer_org: Optional[str] = None
+) -> ErrorEventDetail:
     """Shared detail builder used by GET detail and PATCH status (404 on miss)."""
     row = (await db.execute(text(
         "SELECT * FROM error_events WHERE fingerprint = :fp"
@@ -310,8 +358,25 @@ async def _build_detail(fingerprint: str, db: AsyncSession) -> ErrorEventDetail:
         total_count=row["total_count"],
         count_in_range=count_in_range,
         regression_count=row["regression_count"],
-        message_sample=row["message_sample"],
-        traceback_sample=row["traceback_sample"],
+        # REDACTED FOR ANOTHER TENANT'S ROW.
+        #
+        # `error_events` is keyed on `fingerprint` alone — one row per distinct error
+        # for the whole platform — so this is a cross-tenant triage view by design, and
+        # `require_admin` means a TENANT admin, since no platform-admin role exists yet.
+        # Left as-is, any tenant's admin could read any other tenant's `message_sample`
+        # and `traceback_sample`. Verified against a real database: org A retrieved a
+        # row belonging to org B whose message carried a customer identifier and whose
+        # traceback carried a payment-card value. Exception text and tracebacks are the two
+        # fields most likely to contain customer data, precisely because nobody chooses
+        # what goes in them.
+        #
+        # The counts, route and status stay visible — that is the triage value, and it
+        # carries no payload. Only the samples are withheld, and only from a viewer in a
+        # different organisation. If a platform-admin role is added, gate on that
+        # instead of dropping the check.
+        message_sample=_visible_sample(row, "message_sample", viewer_org),
+        traceback_sample=_visible_sample(row, "traceback_sample", viewer_org),
+        samples_redacted=_samples_are_redacted(row, viewer_org),
         organization_id=str(row["organization_id"]) if row["organization_id"] else None,
         status_changed_by=str(row["status_changed_by"]) if row["status_changed_by"] else None,
         status_changed_at=row["status_changed_at"],
@@ -330,7 +395,10 @@ async def error_detail(
     db: AsyncSession = Depends(get_db),
 ):
     """Full record for one fingerprint plus a 7-day hourly series."""
-    return await _build_detail(fingerprint, db)
+    return await _build_detail(
+        fingerprint, db, viewer_org=str(current_user.organization_id)
+        if current_user.organization_id else None,
+    )
 
 
 @router.patch("/{fingerprint}", summary="Change error status", response_model=ErrorEventDetail, dependencies=[Depends(require_admin)])
@@ -344,10 +412,33 @@ async def update_error_status(
 ):
     """Transition an error through the triage workflow (validated transitions)."""
     row = (await db.execute(text(
-        "SELECT status FROM error_events WHERE fingerprint = :fp"
+        "SELECT status, organization_id FROM error_events WHERE fingerprint = :fp"
     ), {"fp": fingerprint})).mappings().first()
     if row is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Error not found")
+
+    # YOU MAY READ EVERY ERROR AND ACT ONLY ON YOUR OWN.
+    #
+    # `error_events` is keyed on `fingerprint` alone — one row per distinct error for the
+    # entire platform — so this endpoint is cross-tenant by construction, and
+    # `require_admin` means a TENANT admin because no platform-admin role exists yet.
+    # The READ side already reflects that: `_visible_sample` withholds another tenant's
+    # message and traceback while leaving the triage metadata visible.
+    #
+    # The WRITE side did not. This updated by fingerprint alone, so one tenant's admin
+    # could resolve or reopen an error owned by another and change what that tenant sees
+    # in their own triage queue. Reading a shared row is defensible; mutating one on
+    # somebody else's behalf is not.
+    #
+    # An unattributed row (organization_id IS NULL) is platform-level — it happened
+    # outside a tenant request or predates attribution — and stays writable by any admin,
+    # for the same reason its samples stay readable: it belongs to nobody in particular.
+    owner = row["organization_id"]
+    if owner is not None and str(owner) != str(current_user.organization_id):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="This error belongs to another organization; you can view it but not triage it.",
+        )
 
     current = row["status"]
     target = payload.status
@@ -357,20 +448,34 @@ async def update_error_status(
             detail=f"Invalid transition: {current} -> {target}",
         )
 
-    await db.execute(text(
+    # The ownership predicate is repeated in the UPDATE rather than trusted from the
+    # SELECT above: between the two statements is a gap, and the check that matters is
+    # the one the write itself carries.
+    result = await db.execute(text(
         """
         UPDATE error_events
         SET status = :status,
             status_changed_by = :user_id,
             status_changed_at = :now
         WHERE fingerprint = :fp
+          AND (organization_id IS NULL OR organization_id = :org)
         """
     ), {
         "status": target,
         "user_id": current_user.id,
         "now": datetime.now(timezone.utc),
         "fp": fingerprint,
+        "org": current_user.organization_id,
     })
+    # ROWCOUNT IS CHECKED BECAUSE AN UPDATE FAILS QUIETLY. Under row-level security an
+    # INSERT is REJECTED by the policy's WITH CHECK, loudly; an UPDATE is FILTERED, so it
+    # succeeds and touches nothing. Without this, a write that matched no rows returned
+    # 200 and the triage page showed the new status until the next refresh undid it.
+    if result.rowcount == 0:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="The error changed or is no longer yours to triage; reload and retry.",
+        )
     await db.commit()
 
     logger.info(
@@ -381,4 +486,7 @@ async def update_error_status(
         user_id=str(current_user.id),
     )
 
-    return await _build_detail(fingerprint, db)
+    return await _build_detail(
+        fingerprint, db, viewer_org=str(current_user.organization_id)
+        if current_user.organization_id else None,
+    )

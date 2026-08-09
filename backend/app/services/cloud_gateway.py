@@ -50,6 +50,10 @@ class CloudGateway:
         self._queue: List[Dict] = []
         self._client: Optional[aiomqtt.Client] = None
         self._connected = False
+        # FS-530. The three sibling engines carry this flag and this one did not, so
+        # `get_stats()` had no way to say whether its loops were running — and they
+        # never are: `start()` is called from nowhere.
+        self._running = False
         self._max_queue_size = 10000
         self._batch_size = 100
         self._flush_interval = 30  # seconds
@@ -102,6 +106,7 @@ class CloudGateway:
     
     async def start(self):
         """Start the cloud gateway"""
+        self._running = True
         logger.info("cloud_gateway_starting", 
                    host=self.endpoint.host,
                    port=self.endpoint.port)
@@ -205,12 +210,31 @@ class CloudGateway:
             await self._client.disconnect()
     
     def get_stats(self) -> Dict:
-        """Get gateway statistics"""
+        """Gateway statistics, and whether the loops producing them are running (FS-530).
+
+        `connected` and `queue_size` are maintained by `_connection_manager` and
+        `_flush_loop`, both spawned by `start()`. **`start()` is called from nowhere** —
+        `main.py` starts eight background services and this is not among them. So
+        `connected: False` on this endpoint has meant "the gateway has never been asked to
+        connect", and read as "the cloud is unreachable"; `queue_size: 0` has meant "nothing
+        is queueing" rather than "the queue is draining fine".
+
+        A status endpoint that cannot distinguish *not running* from *running and idle* is
+        the shape FS-349 named — a report carrying a `model_version` for a model that was
+        never loaded. `running` is the field that separates them.
+        """
         return {
+            'running': self._running,
             'connected': self._connected,
             'queue_size': len(self._queue),
             'endpoint': self.endpoint.host,
             'mtls_enabled': self.endpoint.use_mtls,
+            'note': (
+                None if self._running else
+                "The gateway loops are not running: start() is not called at startup. "
+                "`connected` and `queue_size` describe a gateway that has never been "
+                "asked to connect, not a cloud that is unreachable."
+            ),
         }
 
 

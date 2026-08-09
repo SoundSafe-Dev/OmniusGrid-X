@@ -62,6 +62,13 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          # See the note on the other checkout steps: backend/dataset is a
+          # 1.5 GB corpus no job reads.
+          sparse-checkout: |
+            /*
+            !/backend/dataset/
+          sparse-checkout-cone-mode: false
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -95,17 +102,50 @@ jobs:
           DATABASE_URL: postgresql://test:test@localhost:5432/omniusgrid_test
           REDPANDA_URL: localhost:9092
           JWT_SECRET_KEY: test-secret-key
-        # Excluded: 3 scenario-builder files fail COLLECTION and 3 domain-mapper/
-        # shared-key tests fail — pre-existing, owned by the intake/parsing lane.
-        # Everything else must pass.
+        # Every exclusion below is registered in tests/test_quarantine.py with an
+        # owner, a real diagnosis and an EXPIRY date. That suite fails when a window
+        # lapses, when a quarantined test starts passing, and when this list and the
+        # register drift apart — so a temporary exclusion can no longer become
+        # permanent by nobody noticing (FS-237).
+        #
+        # test_shared_key_detector.py::test_normalize_key was on this list and PASSES
+        # now, so CI was skipping working coverage. Removed.
+        #
+        # 2026-07-30: four more came off. The three scenario-builder files and
+        # test_image_domain_mapper.py::test_map_image_domains were all one defect —
+        # tests still asserting the API that merge 42ed66d8 replaced — and they now
+        # collect and pass. CI runs 21 rewritten tests over builders that
+        # nlp_correlation.py and analysis_sessions.py call on every intake.
+        #
+        # One deselect remains, and it is the only one that needs a decision rather
+        # than a rewrite: the document mapper's table-content branch genuinely
+        # disagrees with its test about what it should return.
         run: |
-          pytest --cov=app --cov-report=xml --cov-report=term \
-            --ignore=tests/test_document_scenario_builder.py \
-            --ignore=tests/test_image_scenario_builder.py \
-            --ignore=tests/test_cross_file_scenario_builder.py \
-            --deselect tests/test_document_domain_mapper.py::test_map_section_to_domain_table_content \
-            --deselect tests/test_image_domain_mapper.py::test_map_image_domains \
-            --deselect tests/test_shared_key_detector.py::test_normalize_key
+          # RAISED 2026-07-31 to 59 (FS-260), from 54.
+          #
+          #   set originally   55% measured  -> 54 (1-point margin)
+          #   measured today   61%, TWICE, with these exact flags -> 59
+          #
+          # It had drifted 7 points below reality, which is the direction nobody
+          # checks: the gate would have sat through coverage falling from 61 to 54
+          # and still reported green. Most of the rise is FS-284b unblocking 393
+          # database-backed tests that could not run before.
+          #
+          # WHY A 2-POINT MARGIN AND NOT THE USUAL 1. This was measured locally; the
+          # number CI computes cannot be observed from a workstation, and this job
+          # differs from a local run (its own postgres/redpanda services, and the
+          # db-backed tests spin their own containers via testcontainers, which is
+          # pinned in requirements-dev.txt and installed above). Two runs here also
+          # differed by 2 statements out of 29147, so the measurement is not exactly
+          # reproducible either. One point of margin would be a guess; two is the
+          # smallest honest one.
+          #
+          # This is a ratchet: it cannot be met by deleting tests, and it fails if
+          # new untested code dilutes the total. Raise it as coverage improves; do
+          # NOT lower it to make a build pass.
+          # No deselects. The last quarantine entry was released 2026-08-04 (FS-415):
+          # the mapper's vocabulary was genuinely incomplete, not the test's expectation.
+          pytest --cov=app --cov-report=xml --cov-report=term --cov-fail-under=59
 
       - name: Upload coverage
         uses: codecov/codecov-action@v3
@@ -184,6 +224,13 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          # See the note on the other checkout steps: backend/dataset is a
+          # 1.5 GB corpus no job reads.
+          sparse-checkout: |
+            /*
+            !/backend/dataset/
+          sparse-checkout-cone-mode: false
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -287,6 +334,13 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          # See the note on the other checkout steps: backend/dataset is a
+          # 1.5 GB corpus no job reads.
+          sparse-checkout: |
+            /*
+            !/backend/dataset/
+          sparse-checkout-cone-mode: false
 
       - name: Configure kubectl
         uses: azure/setup-kubectl@v3
@@ -348,14 +402,14 @@ jobs:
 
           echo "::group::monitoring (no operator required)"
           kustomize build --load-restrictor LoadRestrictionsNone \
-            infrastructure/k8s/monitoring \
-            | python3 tests/k8s/strip_placeholder_secrets.py | kubectl apply -n omniusgrid-staging -f -
+            infrastructure/k8s/platform/staging/monitoring \
+            | python3 tests/k8s/strip_placeholder_secrets.py | kubectl apply -f -
           echo "::endgroup::"
 
           if kubectl get crd scaledobjects.keda.sh >/dev/null 2>&1; then
             echo "::group::autoscaling (KEDA present)"
             kustomize build --load-restrictor LoadRestrictionsNone \
-              infrastructure/k8s/autoscaling | kubectl apply -n omniusgrid-staging -f -
+              infrastructure/k8s/platform/staging/autoscaling | kubectl apply -f -
             echo "::endgroup::"
           else
             echo "SKIP autoscaling: KEDA CRDs not installed in this cluster."
@@ -365,8 +419,8 @@ jobs:
           if kubectl get crd clusters.postgresql.cnpg.io >/dev/null 2>&1; then
             echo "::group::database-ha (CloudNativePG present)"
             kustomize build --load-restrictor LoadRestrictionsNone \
-              infrastructure/k8s/database-ha \
-              | python3 tests/k8s/strip_placeholder_secrets.py | kubectl apply -n omniusgrid-staging -f -
+              infrastructure/k8s/platform/staging/database-ha \
+              | python3 tests/k8s/strip_placeholder_secrets.py | kubectl apply -f -
             echo "::endgroup::"
           else
             echo "SKIP database-ha: CloudNativePG CRDs not installed in this cluster."
@@ -394,6 +448,13 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          # See the note on the other checkout steps: backend/dataset is a
+          # 1.5 GB corpus no job reads.
+          sparse-checkout: |
+            /*
+            !/backend/dataset/
+          sparse-checkout-cone-mode: false
 
       - name: Configure kubectl
         uses: azure/setup-kubectl@v3
@@ -448,14 +509,14 @@ jobs:
 
           echo "::group::monitoring (no operator required)"
           kustomize build --load-restrictor LoadRestrictionsNone \
-            infrastructure/k8s/monitoring \
-            | python3 tests/k8s/strip_placeholder_secrets.py | kubectl apply -n omniusgrid -f -
+            infrastructure/k8s/platform/production/monitoring \
+            | python3 tests/k8s/strip_placeholder_secrets.py | kubectl apply -f -
           echo "::endgroup::"
 
           if kubectl get crd scaledobjects.keda.sh >/dev/null 2>&1; then
             echo "::group::autoscaling (KEDA present)"
             kustomize build --load-restrictor LoadRestrictionsNone \
-              infrastructure/k8s/autoscaling | kubectl apply -n omniusgrid -f -
+              infrastructure/k8s/platform/production/autoscaling | kubectl apply -f -
             echo "::endgroup::"
           else
             echo "SKIP autoscaling: KEDA CRDs not installed in this cluster."
@@ -465,8 +526,8 @@ jobs:
           if kubectl get crd clusters.postgresql.cnpg.io >/dev/null 2>&1; then
             echo "::group::database-ha (CloudNativePG present)"
             kustomize build --load-restrictor LoadRestrictionsNone \
-              infrastructure/k8s/database-ha \
-              | python3 tests/k8s/strip_placeholder_secrets.py | kubectl apply -n omniusgrid -f -
+              infrastructure/k8s/platform/production/database-ha \
+              | python3 tests/k8s/strip_placeholder_secrets.py | kubectl apply -f -
             echo "::endgroup::"
           else
             echo "SKIP database-ha: CloudNativePG CRDs not installed in this cluster."
@@ -505,10 +566,36 @@ jobs:
     runs-on: ubuntu-latest
     needs: deploy-production
     if: startsWith(github.ref, 'refs/tags/v')
+    permissions:
+      contents: write
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          # See the note on the other checkout steps: backend/dataset is a
+          # 1.5 GB corpus no job reads.
+          sparse-checkout: |
+            /*
+            !/backend/dataset/
+          sparse-checkout-cone-mode: false
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Build and smoke-test agent wheel
+        working-directory: ./edge-agent
+        run: |
+          python -m pip install build==1.2.2.post1
+          TAG_VERSION="${GITHUB_REF_NAME#v}"
+          PACKAGE_VERSION="$(python -c 'import opsgrid_agent; print(opsgrid_agent.__version__)')"
+          test "${TAG_VERSION}" = "${PACKAGE_VERSION}"
+          python -m build --wheel
+          mkdir -p /tmp/opsgrid-agent-smoke
+          python -m pip install --no-deps --target /tmp/opsgrid-agent-smoke dist/*.whl
+          PYTHONPATH=/tmp/opsgrid-agent-smoke python -c 'import opsgrid_agent, opsgrid_agent.main; print(opsgrid_agent.__version__)'
 
       - name: Generate release notes
         run: |
@@ -522,5 +609,6 @@ jobs:
           body_path: RELEASE_NOTES.md
           files: |
             infrastructure/k8s/base/*.yaml
+            edge-agent/dist/*.whl
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

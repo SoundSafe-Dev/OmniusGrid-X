@@ -1,0 +1,1886 @@
+# Part 1 — the first twenty-nine classes
+
+Classes 1–29, each swept across its whole population, from a response model stricter than its columns to a verdict computed from emptiness. The era in which the method was being found rather than applied.
+
+*One part of [Defect-class sweeps](../defect-class-sweeps.md), which carries the index of every class and links to the other parts.*
+
+---
+
+## 1. A response model stricter than its columns — **49 real, now zero; the sweep was wrong twice**
+
+A required response field over a nullable, defaultless column means a valid row cannot be
+serialised: pydantic raises inside the handler and FastAPI returns 500, naming a
+validation error in *our schema* rather than the data. It cost four ERP endpoints at once,
+because create, list, get and update all built the same model.
+
+**Swept:** every response model in `app/api/` paired to its own ORM model.
+
+**This sweep was reported clean, and that was wrong.** It found 11 pairs across 7
+routers; the corrected version finds **40 pairs across 16 routers, 603 fields, and 158
+offenders**. Two exclusions were at fault, and both looked reasonable:
+
+- It skipped any column with a **Python-side ORM default**, on the reasoning that the
+  ORM fills it. It fills it only for rows written *through SQLAlchemy* — a migration, a
+  seeder or any raw `INSERT` leaves NULL. 148 of the 158 are this shape.
+- It required `obj.__module__ == module.__name__`, which skipped every response model a
+  router imports from `app/models/schemas.py` — where a large share of them live.
+
+**The class is real, not theoretical.** A raw-inserted dock door made
+`GET /api/v1/yard/dock/doors` return a live 500: *"equipment_capabilities: Input should
+be a valid dictionary"* — a validation error naming our schema rather than the data, so
+nobody would think to look at the row. `DockDoorResponse` now mirrors its columns, with
+the overrides on the response model so create/update keep their stricter types.
+
+A pydantic default does not rescue this either: the ORM hands the field an explicit
+`None` rather than omitting it, so the default never applies. The corrected check tests
+optionality of the annotation, not `is_required()`.
+
+**Then the corrected sweep was wrong in the other direction, by a factor of three.** It
+read `column.server_default` off the ORM metadata — and **109 of the 158 columns already
+have a database default**, added by migration 044 and never mirrored back into the ORM
+declaration. The application's opinion of the schema is not the schema. Those columns can
+never be NULL from any INSERT, so they were never at risk.
+
+The check now reads `information_schema` from the migrated database. **The true count was
+49**, and it is now **zero**:
+
+- **39 were given server defaults by migration 050** — all in the logistics/yard tables
+  that 044 did not reach, each default taken from the ORM's own `default=` so the
+  database now enforces exactly what the application already assumed. Unlike 044, these
+  backfill existing NULLs: a NULL `is_active` or `status` is a missing value, not an
+  unknown moment, so writing the documented default is a correction rather than an
+  invention.
+- **10 are nullable with no default anywhere** — mostly optional foreign keys
+  (`dock_door_id`, `trailer_id`, `driver_id`, `shipment_id`). Their response fields now
+  mirror the columns, overridden on the response model so create/update keep the
+  stricter types.
+
+The shrink-only baseline is gone with them. It was the right instrument for what the
+evidence looked like at the time, and the wrong one once the evidence was measured
+properly — most of what it recorded described columns that were never broken.
+
+**The first scan was wrong, and the error is worth remembering.** It reported 8 defects.
+Testing one against real Postgres returned HTTP 200, not the predicted 500 — the
+optionality check tested only `typing.get_origin(a) is typing.Union`, but PEP 604
+`str | None` produces `types.UnionType`, a different object. Every field in modern syntax
+was misread as required. The same flaw sat in the ERP guard, where it would have failed a
+*correct* model. Both now test the detector before anything that depends on it.
+
+Reachability is part of the check: a nullable column with a default can never hand
+pydantic a `None`, so it is excluded.
+
+## 2. Pagination truncation — **3 endpoints fixed**
+
+Returning one page and presenting it as the whole set. This bit three ERP *connectors*
+(NetSuite, Dynamics via `@odata.nextLink`, Odoo), and then turned up on our own API.
+
+The ERP hub's three list endpoints returned exactly `limit` rows and nothing else, and the
+UI passed no limit — so a tenant with 5,000 entities would have been shown the first 200
+as everything. They also **clamped silently**: `min(limit, 1000)` with no bound declared on
+the parameter, so `limit=5000` returned 1,000 with nothing saying the request had been
+changed.
+
+Fixed: the bound is on the query parameter (an over-limit request gets 422 rather than a
+quiet substitution), truncation is reported in `X-Result-Truncated` via a `limit + 1`
+probe rather than a COUNT, the API client returns `ListResult<T>` so the flag cannot be
+dropped, and the hub's Entities/Events/AI tabs render it as
+*"showing the most recent N of more than N."*
+
+Those tabs did not exist when the endpoints were fixed, which made the fix latent. Building
+them was the other half of the work.
+
+## 3. Invented vendor endpoints — **ERP only**
+
+All seven original connectors POSTed to a `/webhooks`-shaped URL with byte-identical
+`{name, url, event_type}` payloads across seven unrelated vendors — so at most one could
+have been right. None was.
+
+Against a real Odoo it returned `True` for a subscription that was never created:
+`/xmlrpc/2/<anything>` matches, and Odoo answers **HTTP 200 with a fault in the body**,
+while the connector checked only the status. 379 lines removed; connectors now declare the
+real mechanism in `EVENT_SUBSCRIPTION_MECHANISM`.
+
+This class is inherently vendor-integration-specific, so there was nowhere else to sweep.
+
+## 4. Silent success — **1 real, and live**
+
+A handler that swallows an exception and still reports success. The caller has no way to
+know, which makes it the worst-consequence class of the four.
+
+**Swept:** every `try/except` in `app/` whose handler neither re-raises nor returns an
+error, inside a function returning something success-shaped. **12 candidates, inspected
+individually rather than counted.**
+
+**Eleven were legitimate** and were left alone: connector cleanup in a `finally`, handlers
+that swallow then `return False`, an `ImportError` fallthrough, and one that deliberately
+reports the failure as `status="error"` rather than raising a 500. The three ERP
+`extract_all_entities` loops already record `{"status": "failed"}` per entity and count
+failures.
+
+**The twelfth was real.** `get_sync_dashboard` analysed each dock appointment in a `try`
+and, on failure, incremented **no bucket at all** — the appointment vanished from the
+breakdown while remaining in `total_appointments`, the denominator of
+`production_dock_sync_percent`. So every failed analysis pushed the reported sync
+percentage *down*, making dock-production performance look worse than it was, with nothing
+saying an analysis had failed.
+
+Failures now get their own bucket and leave the denominator — counting an unanalysable
+appointment as "not on time" asserts precisely what we failed to determine. An *unlinked*
+appointment is treated differently on purpose: `no_operation` is a real status we know, not
+a measurement failure, so it stays in the denominator.
+
+## 5. A name that claims a side effect — **1, in the autonomous control path**
+
+The previous class lies in a return value. This one lies in the identifier, so no
+log-scanning or response-shape guard would ever see it: the call site reads exactly as
+though the work happened, and nothing at runtime contradicts it.
+
+**Found in ERP.** `sap_webhook_integration` had `_create_alert_for_po_anomaly`,
+`_create_alert_for_po_status_change` and `_create_alert_for_low_inventory`. None created
+an alert; each was a single `logger.warning` under a comment reading *"This would
+integrate with the alarm/alert system."* What made it genuinely misleading rather than
+merely optimistic is that `_create_task_for_work_order`, in the same class twenty lines
+away, **does** create a `Task`. Now `_log_*`.
+
+**Swept:** every function in `app/` whose name starts with a side-effect verb —
+create/send/persist/store/write/save/publish/emit. **129 helpers, 2 log-only bodies.**
+
+`utils/signed_urls._emit_fallback_warning` is honest: emitting a warning *is* logging.
+It is excluded by name, not by judgement — a helper whose object is a log line
+(`_warning`, `_error`, `_log`) cannot be lying about it.
+
+**The other was `tactical_engine._send_command`, and it is the worst instance of any of
+these five classes.** Its whole body assembled a command dict and logged
+`command_queued` at DEBUG, publishing nothing. `execute_decision` — whose docstring
+reads *"Returns True if executed, False if blocked"* — then logged
+`tactical_decision_executed` and returned **True**:
+
+```python
+await self._send_command(decision)            # built a dict, logged at DEBUG
+logger.info("tactical_decision_executed")     # ...for a command never sent
+return True
+```
+
+The trap is the same as the SAP one, with actuation of industrial assets behind it. The
+two safety gates immediately above the dispatch are implemented properly and carefully —
+maintenance-mode and a 0.7 confidence floor — and the maintenance check even fails SAFE,
+under a comment reading *"a broken control command is worse than a skipped one."* Anyone
+reading that had every reason to assume the dispatch below it was equally real.
+
+It is currently unreachable: `execute_decision` is only called from `_inference_loop`,
+and `start()` is absent from `main.py`'s startup list. That is the only reason it has
+never mattered, and it is one line from mattering — the other seven engines are all
+started there.
+
+**It now refuses instead of dispatching, and that is deliberate.** The real sink exists
+and is already running: `command_executor`, backed by the `Command` model, and
+`api/commands.py` already documents `"tactical"` as a command type. Wiring it would
+switch on autonomous actuation of industrial assets, which is a decision with a safety
+review attached rather than a side effect of a naming fix. So `_dispatch_command`
+returns `False`, `execute_decision` returns `False` with it, and the module says what it
+would take to wire — the same posture as `erp_database_replication.start_replication`.
+
+**A second-order defect fell out of it.** `execute_decision` queues a
+`tactical_decision` event to the cloud as *training feedback*. A decision that never
+reached the asset produced no outcome to learn from, so feeding it in as though it had
+actuated teaches the model from something that never happened. The payload now carries
+`dispatched`.
+
+**The detector had to be rewritten before it was worth trusting**, and how it failed is
+the useful part. The first version asked *"does this call something from a list of
+doing-verbs?"* and produced three false positives immediately, in three different
+flavours of delegation it could not see: `create_from_config` constructs an object,
+`_persist_rotated_refresh_token` calls an injected callable, `_send_alert` calls a
+notification service. All three are honest; the detector was not — and a longer verb
+list would only have moved the boundary. Asking the opposite question, *"is logging ALL
+it does?"*, needs no list of approved verbs, so delegation of any shape passes, while
+still catching the real ones exactly, because they were a `logger.warning` and nothing
+else. Two detector tests pin this: one that a log-only body is caught, one that
+assembling a payload before logging is **not** mistaken for dispatch.
+
+## 6. Data reported as kept, but discarded — **1, live, on the ingestion path**
+
+Found by following a loose end from class 5 rather than by pattern-matching, which is
+the more interesting part of how it turned up. `tactical_engine` had a `start()` that
+`main.py` never calls, so the obvious next question was whether it was alone.
+
+**Swept:** every module-level service singleton in `app/` exposing a `start()`, checked
+against every process that could start one — `main.py`, the workers, and the edge agent.
+**12 singletons; 5 are started nowhere at all:** `cloud_gateway`, `egress_scheduler`,
+`mlops_pipeline`, `strategic_engine`, `tactical_engine`. `main.py` even works around one
+of them, at line 82: *"Offline demo: the cloud strategic listener never connects, so
+seed a few…"*.
+
+`cloud_gateway` is the one that matters, because six call sites queue into it. It is an
+in-memory list capped at 10,000 that sheds the oldest, and `_flush_loop` — the only
+thing that drains it — is started nowhere. Following its callers reached
+`schema_registry._persist_to_dlq`, *"Persist quarantined record to dead letter queue"*,
+whose comment reads *"Persist to dead letter queue (SQLite or file)"* and which is
+neither. **That one is not live** — nothing in the running app imports
+`schema_registry`, so it is unwired rather than broken, and it is recorded below rather
+than fixed.
+
+**But the search pattern found a second quarantine path that IS live.**
+`EdgeIngestGateway.ingest` validated each reading and, on failure, called a sink and
+incremented an integer. `api/edge_ingest.py` constructs the gateway with no sink, so the
+default ran:
+
+```python
+def _default_quarantine(self, agent_id, reading, reason):
+    logger.warning("edge_ingest_quarantined", agent_id=agent_id, reason=reason)
+```
+
+`reading` is accepted and never used. The payload went nowhere — no table, no topic, not
+even the log line — and `POST /api/v1/edge/ingest` then answered `quarantined: 47`.
+
+**The count was true and the word was not.** "Quarantined" means set aside for
+inspection, and the module docstring promised these were *"diverted to a dead-letter
+sink."* An operator had no way to learn the number described 47 readings that no longer
+existed anywhere, and no way to find out what the agent producing them was doing wrong —
+which is the entire reason to look.
+
+The fix has two halves, because either alone leaves the hole open:
+
+- **Retention moved into `IngestResult.quarantined`**, which now holds the readings
+  themselves rather than a count — mirroring `accepted`, and for the same reason: the
+  caller has to be able to do something with them. Every caller gets them whether or not
+  it injects a sink, which is what the API configuration needed. A reading that is not
+  even a dict is kept as its `repr` rather than dropped for being the wrong shape; "it
+  was not a reading at all" is exactly what an investigation needs.
+- **A real dead-letter topic hop** in the endpoint, so they outlive the request, using
+  the `RedpandaForwarder` already constructed there and sharing its circuit breaker.
+
+`summary["quarantined"]` still returns the count, so the API response shape is untouched.
+
+**The DLQ topic keys on `agent_id`, not `asset_id`, and that is load-bearing.** These
+readings failed validation, so nothing inside them can be trusted for routing — the
+malformed field may well *be* `asset_id`. Keying on it would scatter dead letters under
+bug- or attacker-controlled topic names and discard the one identity that was actually
+verified, the client certificate. A test asserts a reading carrying
+`asset_id: "../../evil"` still lands on `telemetry.dlq.<agent>`.
+
+## 7. A test double that reimplements what it stands in for — **1, and it was hiding an RLS bug**
+
+Two tests had been failing for a while, in other people's lanes, and were assumed
+independent. They had the same cause, and the cause explains why nothing caught it.
+
+**The bug.** `get_tenant_db` set `app.current_org_id` once, before yielding the session,
+with `set_config(..., false)`. The docstring justified the `false`: a session-scoped
+value survives an endpoint that commits mid-request, where a transaction-local one would
+not.
+
+It does not survive. `commit()` ends the transaction **and returns the connection to the
+pool**; the next statement checks out a connection that was never configured. The GUC
+reads empty, `NULLIF` makes it NULL, and every RLS policy fails closed — so an endpoint
+that wrote a row and read it back got nothing, for data it had just committed itself.
+`create_rollout` in `api/agent_rollouts.py` returned **404 for a rollout sitting in the
+table**.
+
+Part of this had already been diagnosed. An inline comment, right below the docstring
+that contradicts it, warns against `db.refresh()` after `commit()` for exactly this
+reason, and twenty such calls were removed. That was worth doing, but it treated the
+symptom: *any* query after a mid-request commit was affected, not just a refresh.
+
+**Fixed at the cause:** the GUC is now re-established per transaction from an
+`after_begin` hook, so any number of commits is fine. Because it re-runs per transaction
+it is written *transaction-locally*, so it also cannot leak onto a pooled connection —
+which removes a second hazard the old code needed a cleanup block to manage.
+
+**Why every RLS test we had was blind to it.** `conftest` must point endpoints at the
+testcontainers engine, and did so with an override that hand-copied the body of
+`get_tenant_db`, under a comment reading *"Mirrors the production get_tenant_db."* It
+mirrored the bug as well as the behaviour — and being a copy, it could not do otherwise.
+The suite was exercising the duplicate, so a defect in the original was undetectable, and
+fixing the original would not have reached the tests either.
+
+A test double that reimplements the thing it stands in for can only prove the double
+works. The override now delegates to a shared `tenant_session`, with only the session
+maker injected, and a guard asserts it keeps delegating — checking source text rather
+than behaviour on purpose, because a reimplementation that happens to be correct today
+is still the failure mode.
+
+**And then the sweep found three more.** The first version of that guard read `conftest`
+only. Sweeping every file that overrides `get_tenant_db` turned up byte-identical copies
+of the same buggy body in `test_rul_api`, `test_twin_optimizer_api` and
+`test_historian_api` — **four copies in total**, so the RUL, twin-optimizer and historian
+suites were all still asserting against the defect rather than against production. All
+four now delegate, and the guard sweeps rather than spot-checks: it enumerates every
+overriding file, fails naming the offender, and has a vacuity check because a broken
+discovery would pass while checking nothing — which is precisely how three of the four
+survived the first pass.
+
+**The guard needed a second pass, and this is the part worth remembering.** Written the
+obvious way it *passed against the reintroduced bug*. With a normal pool, `commit()`
+returns the connection and the very next statement checks the same one straight back
+out, so the GUC appears to survive — which is exactly why the defect read as
+intermittent and needed contention to appear. The fixture now uses `NullPool`, making
+every checkout a fresh connection: the worst case a loaded server produces routinely.
+Under mutation it fails the four commit assertions and nothing else. **A guard that
+fails only when the pool happens to cooperate is not a guard.**
+
+**A second, unrelated race surfaced in the same test.** `test_compliance_report_scheduling_e2e`
+also failed with `KafkaConnectionError: Unable to bootstrap` — but only in a full run,
+never in isolation, the classic shape of a readiness check that returns too early. The
+Redpanda fixture waited for the log line *"Started Kafka API server"*, which Redpanda
+prints when it binds **inside the container**; the host's published port can take
+meaningfully longer to forward, and that gap widens with the number of running
+containers. It now waits for a connection to actually succeed. Wait for the thing you
+need, not for a log line that correlates with it.
+
+## 8. Frontend calling endpoints the backend does not serve — **4, one live**
+
+`src/test/setup.ts` forces `VITE_USE_MOCK='true'` before any module evaluates, and
+`src/api/mockMode.ts` reads it into a module-level `const USE_MOCK`. So every frontend
+unit test has always taken the mock branch of the **213 `if (USE_MOCK)` forks across 33
+files**. The real branch — the code that actually ships — is executed by no test at all.
+
+Same shape as class 7 at a much larger scale: the suite exercises a double instead of the
+thing that runs. And the same shape as class 3, "invented endpoints", moved from vendor
+APIs to our own seam.
+
+**Swept:** every `api.get/post/put/patch/delete` call in `src/api/` — **183 calls across
+22 modules** — against the backend's live route table.
+
+**Found four the backend does not serve**, each confirmed by issuing the request
+in-process rather than trusting the diff:
+
+| Call | Result | |
+|---|---|---|
+| `PATCH /api/v1/fleet/security/events/{id}` | **404** | **live — wired to a UI button** |
+| `PATCH /api/v1/fleet/dtcs/{code}` | 404 | uncalled |
+| `GET /api/v1/transportation/vehicles/{id}` | 404 | uncalled |
+| `GET /api/v1/yard/moves` | 405 | uncalled (POST-only path) |
+
+**The live one had a second failure stacked on it.** `HealthSecurityPanel` awaited the
+call with no `catch`, so the 404 rejected the promise, the optimistic state update never
+ran, and the rejection went unhandled — an operator clicked "acknowledge" on a fleet
+security event and saw nothing happen, with nothing on screen saying why. The endpoint now
+exists (everything else was already there: `geotab_exceptions` carries `acknowledged`,
+`acknowledged_by`, `acknowledged_at`, and the GET already filtered on the flag — only the
+write was missing), and the component reports failures instead of swallowing them.
+`acknowledged_by` comes from the token, not the body, matching `alarms.acknowledge_alarm`.
+
+The other three were **uncalled**, and their only working branch returned fabricated mock
+data. Implementing three endpoints nobody calls would be speculative; the client functions
+were removed instead, so the next person to want the feature writes both halves together.
+
+**A previous fix of this exact class had already run, and missed these.** This router's
+docstring says it was created (FS-15) to serve "/api/v1/fleet/* routes that never existed
+(dead real branch)" — and it left both PATCH routes behind. That is the argument for
+sweeping rather than fixing by hand.
+
+**The guard checks route existence, deliberately and only.** Request bodies and response
+shapes need real-mode tests per module (`src/test/realMode.ts`, which today has exactly
+one adopter of 34 API modules); this is the cheap total-coverage check for the failure mode
+that actually occurred.
+
+**Its first run reported 185 failures against a backend that serves all of them.** The
+route table was read from `app.routes`, but this app includes routers lazily behind an
+`_IncludedRouter` wrapper, so at import time that list holds 74 entries covering none of
+the API. `app.openapi()` resolves the wrappers (373 paths). The extractor was wrong twice
+over: it had also read `` `/x/entities${q}` `` — a query string glued to a path — as a
+path segment, inventing a fifth missing endpoint. A path parameter is always preceded by a
+slash; the glued form is a suffix. `TestTheExtractor` runs first for exactly this reason.
+
+## 9. Query parameters the endpoint does not declare — **4, and they exposed 4 more**
+
+Class 8 checks that the path exists. This checks what is sent to it, and the failure is
+quieter: **FastAPI ignores unknown query parameters silently.** A misspelled or invented
+filter does not error — the endpoint returns the UNFILTERED set, and the caller renders it
+as a filtered result. No stack trace; just the wrong rows.
+
+**Swept:** every frontend call that sends query parameters. **52 calls checked, 0
+skipped** — see *Reopened* below; the first pass reported 37 checked and 1 skipped, and
+both numbers were wrong.
+
+**Found two, wrong in different ways.** `yard.getDockDoors` sent `workcell_id`, which the
+endpoint does not declare — and `dock_doors` has no workcell column, so it could never
+have been honoured. Only the mock branch, filtering fixture data on a field the real model
+lacks, made the feature look implemented.
+
+`nlpCorrelation.chat` sent `conversation_history` as a query parameter with a `null` body.
+The handler declares it `Optional[List[Dict[str, str]]]`, and FastAPI reads complex types
+from the **body** — so the server received `None` every time, while the endpoint's
+docstring promised it "maintains conversation context for multi-turn queries". It had no
+context to maintain. Now sent as the body; `message` genuinely is a query parameter and
+stayed.
+
+**The sweep then exposed something bigger than what it asserts.** Four yard GETs —
+`/trailers`, `/dock/doors`, `/dock/appointments`, `/dwell-times` — took `organization_id`
+as a **required, client-supplied query parameter** and used it directly in the `WHERE`
+clause. That is the IDOR shape `app/core/tenant.py` exists to forbid ("endpoints must
+NEVER trust a client-supplied organization_id"), with RLS the only thing standing between
+it and a cross-tenant read — defence in depth doing the whole job rather than backing
+something up.
+
+They were also simply broken: the parameter was required and **no frontend call sent it**,
+so all four returned 422 to every request the UI made. Four endpoints the yard page calls,
+none of which could ever have answered. They now derive the org from the token;
+`test_yard_tenant_scoping_realdb.py` pins that supplying someone else's `organization_id`
+changes nothing in either direction.
+
+**And fixing them surfaced class 1 all over again.** Seeding a dock door with a raw
+`INSERT` — the case a Python-side ORM default does not cover — made the endpoint return a
+live 500 on `equipment_capabilities`. That is what exposed the two holes in the class-1
+detector, and the reason its "clean" result above is now a correction.
+
+### Reopened: the guard's coverage number was itself a defect
+
+The first version matched two shapes — an object literal and a bare variable — and
+counted only the second as skipped. Everything else fell through both branches: it was
+neither checked **nor counted**. Nine calls sat in that gap while the sweep printed "37
+checked, 1 skipped" and looked complete. This is the class-4 failure (silent success)
+applied to a detector, which is worse than an ordinary instance of it, because the whole
+point of the guard is to be believed.
+
+Two live defects were in the gap.
+
+**`workcellsApi.list` sent `organization_id`** to `GET /api/v1/workcells/`, which declares
+only `skip` and `limit`. The parameter was dropped silently, so the call returned the
+caller's own workcells either way — a filter that had never filtered, in a query key that
+could not affect the result. The organisation comes from the JWT; the argument is gone
+from both the client and `useWorkcells`. It was invisible because the params were a
+**ternary**, `params: organizationId ? { … } : undefined`.
+
+**`authApi.getUsers` sent `skip` and `limit`** to `GET /api/v1/auth/users`, which declared
+**no query parameters at all**. Both were discarded, so a caller asking for the first 25
+of 300 users received all 300 — and read `hasMore` as `undefined`, which is falsy, meaning
+"you have seen everything". It had, which is exactly why nobody noticed: the bug only
+becomes visible as an organisation grows. Three of the five fields the declared
+`PaginatedResponse<User>` type promises were never sent. It was invisible because the
+params were the shorthand **`{ params }`**.
+
+The handler now paginates for real, and `total` became a `COUNT` over the organisation
+rather than `len(items)` — as a paginated field, the page length tells a 300-user
+organisation it has 25 users and stops the caller from paging. Eleven real-DB assertions
+in `test_auth_users_pagination_realdb.py`; reverting the handler fails eight of them.
+
+**Fixing the server would have been half a fix.** The handler now defaults to 50, so the
+admin table would have shown one page and given no sign that anyone was missing — the
+same silent truncation wearing a different hat. `AdminPages` requests an explicit page
+size, reports "Showing 20 of 120 users", and states the server's 200-row ceiling instead
+of quietly ending the list.
+
+**The guard now resolves variables** — from a local `const`, from later `params.x =`
+assignments, from an inline parameter type, or from a named interface — scoped to the
+enclosing function, because three functions in `analysisSessions.ts` each build their own
+`params` and merging them would invent parameters no single call sends.
+
+**The last skipped call turned out to be a detector bug too.** `platformCorrelation.attach`
+posts `{ source_type, params }` — that is the axios **body**, since `post` takes
+`(url, body, config)` while `get` takes `(url, config)`. The extractor read every
+argument, so a body field named `params` was a query string as far as it was concerned.
+Reading the config argument *by position* both removed that false-positive risk and closed
+the last gap: **46 checked, 0 skipped**.
+
+**And it had to learn about the casing seam, or it would have reported a fabricated
+defect.** `historian.query` sends `assetId` to an endpoint declaring `asset_id`. That is
+correct: `transformRegistry.ts` converts request params to snake_case for registered URL
+prefixes. Keys under a registered prefix are now compared in both forms, and the prefix
+list is read from the frontend source rather than hardcoded, so removing a registration
+tightens the check instead of leaving a stale exemption. `_t` — a deliberate cache-buster
+that the server is *supposed* to ignore — is the one named exemption.
+
+### Reopened a second time: six calls the extractor could not see at all
+
+Writing a real-mode test for `workcellsApi` — the fix from the first reopening — turned
+up a third gap, and it had been hiding a fifth live defect.
+
+`AssetListParams` declared `organizationId?: string` and `assetsApi.list` forwarded the
+caller's object verbatim. `GET /api/v1/assets/` declares `workcell_id`, `asset_type_id`,
+`is_active`, `skip` and `limit` — **no organisation**. So the parameter was dropped in
+silence, in a type that read as a tenant filter, on the client every asset page uses.
+
+The guard had reported "46 calls checked, 0 skipped" and could not see it. Its call
+pattern required `<[^;{]*?>` between `api.get` and the parenthesis, and this call is:
+
+```ts
+api.get<{ items: Asset[]; meta: { total: number; … } }>('/api/v1/assets/', { params })
+```
+
+Braces and a semicolon inside the type argument, so the pattern matched **nothing** — the
+call was not checked and not counted, exactly the failure mode the first reopening was
+supposed to have closed. **Six calls were invisible that way.** The extractor now finds
+`api.<method>` and *scans* for the opening parenthesis past a balanced type argument,
+rather than pattern-matching up to it: 46 → 52.
+
+**And fixing it produced a false positive out of my own comment.** The note added to
+`AssetListParams` explaining the removal quoted that very call, and the field extractor
+read `items` and `meta` from inside the comment as query parameters — while swallowing
+the field that followed, because a key needs a `,`, `;` or `{` before it and a comment
+line supplies none. Comments are now stripped before parsing, anchored to line starts so
+a `https://` inside a string literal survives. That is method rule 14 again, one file
+over from where it was written.
+
+**A third gap, found while testing the audit page.** `AuditLogs.tsx` does not use the
+shared axios client at all — it calls `fetch('/api/v1/audit/logs')` with a hand-built
+`Authorization` header. The guard scanned only `src/api/*.ts`, so that page sat outside
+**every** frontend-contract sweep in this repo: not skipped, not counted, never looked at.
+Both of its endpoints turned out to be real, which is luck rather than coverage. The scan
+now walks the whole `src` tree for raw `fetch` as well: 194 → 196.
+
+**Rule 18 paid immediately.** The sibling guard, `test_frontend_calls_real_endpoints.py`,
+carried the *identical* pattern and therefore the identical hole — while its docstring
+claimed to check "183 real-mode calls across 22 modules". With the scanner it sees **194**:
+fourteen calls had never been checked by the sweep that exists to prove every path is
+real. All 194 pass, so nothing was hiding there, but the coverage claim was false and only
+became true after looking. The third sibling, `test_frontend_response_shapes_match.py`,
+was checked too and does NOT share the flaw — its pattern tolerates braces because there
+is no `>` inside one. Verified rather than assumed.
+
+**The fix is runtime, not just type-level.** Deleting the field from the interface is a
+compile-time guarantee; forwarding the caller's object still puts any extra key on the
+wire. `assetsApi.list` now builds the five declared parameters explicitly, and
+`assets.realmode.test.ts` passes an organisation id in anyway and asserts it does not
+reach the request.
+
+*That test's first version was worthless and is worth recording as such:* it called
+`list()` with no argument, and the pre-fix code only attached `organization_id` when
+given one — so it passed against the defect. Passing the argument is the whole test.
+
+## 10. An org-scoped table with neither a filter nor RLS — **1 live cross-tenant leak**
+
+Tenant isolation here is meant to be two layers: an explicit `organization_id` filter in
+the handler, and RLS as defence in depth (`app/core/tenant.py` says so in as many words).
+This class is what happens when a table has **neither**.
+
+```python
+query = select(Vehicle).where(Vehicle.is_active == True)   # get_db, no org filter
+```
+
+`vehicles` carries `organization_id` but has no row-level security, so nothing caught it.
+**Every authenticated user listed every tenant's fleet.** Proven before fixing: a probe
+seeded one vehicle per org, and org A's client saw both.
+
+**Why the existing guards could not see it.** `test_route_auth_walk.py` asserts routes
+require authentication — this one does; authentication was never the issue. And the
+RLS-based isolation tests exercise policies, of which this table has none. A table
+outside RLS is outside their reach entirely, which is the part worth remembering: the
+absence of a policy silently removes a table from the suite that would otherwise cover
+it.
+
+**Swept:** every `get_db` handler touching a model with an `organization_id`, classified
+by whether its table has RLS and whether the query filters. Most hits were `User`
+appearing as a `Depends()` annotation rather than a cross-tenant query — a false-positive
+class worth naming, since a careless reading gives 68 "leaks".
+
+The real surface is three files: `transportation.get_vehicles` (**fixed** — filter added,
+`vehicles.organization_id` is a `String(36)`, so the comparison is against `str(org_id)`),
+`api_keys.verify_api_key` (**correct as written** — the key is the credential and the org
+comes from it), and **`fleet_logistics.py`, 23 handlers of the same shape** across
+`geofence_zones`, `geofence_alerts`, `maintenance_schedules` and `repair_orders` — all
+org-scoped, none under RLS. `create_zone` additionally takes `organization_id` **from the
+client payload**.
+
+`transportation.py` has two further variants beyond the one fixed: `get_carriers` and
+`get_drivers` take `organization_id` as a client-supplied query parameter, and
+`get_carrier` fetches by id with no org check at all.
+
+**`fleet_logistics.py` is now fixed too**, in a following pass rather than bolted onto
+the sweep. Its 23 handlers were confirmed leaking in two distinct shapes before being
+touched: the zone list returned every tenant's zones, and **fetch-by-id returned another
+tenant's zone outright** — the list filter and the by-id lookup are separate code paths,
+and a guard covering one says nothing about the other.
+
+Every handler moved to `get_tenant_db`, and every query on the four unprotected tables
+is wrapped in a `_scope(...)` helper. Both halves are needed: the tenant session sets a
+GUC that no policy on these tables reads, so the session alone protects nothing here.
+
+The four create paths took `organization_id` **from the request payload**, letting a
+caller file a record under any organization they named — with no RLS to question it.
+They now take it from the token.
+
+**The same move fixed the opposite failure in the same file.** Endpoints reading
+`Shipment`/`Carrier`/`Driver` — tables that DO have RLS — were on `get_db`, which sets no
+GUC, so they were returning **zero** rows. One dependency, two failure modes, depending
+only on whether the table happened to have a policy.
+
+****Command dispatch and the emergency stop were unreachable.** `assets` is FORCE RLS, and
+three handlers in `commands.py` looked the asset up through a session with no GUC —
+`submit_command` and `emergency_stop` via an inline `AsyncSessionLocal()`,
+`get_asset_commands` via `get_db`. Each then hits
+`if not asset: raise HTTPException(404, "Asset not found")`, so all three answered **404
+for every asset, including the caller's own**: submission impossible, history empty, and
+the admin-gated emergency stop dead. A 404 is the least suspicious symptom available — it
+reads as "that asset does not exist", which nobody investigates.
+
+**The guard under-counted this file, and that is the lesson.**
+`test_tenant_session_guard.py` keys on `Depends(get_db)` and recorded **one** site here.
+Two of the three handlers open a session inline, which the guard cannot see. A static
+check keyed on one idiom under-reports any file that uses two — the same failure as
+reading ORM metadata instead of the schema, one level up. They now use
+`tenant_session(org_id)`, the context-manager form extracted earlier for exactly this
+case.
+
+**The ERP webhook receiver was broken, and needed a policy rather than a dependency
+swap.** Verified against a real database: every inbound webhook was rejected 404, because
+`integration_configurations` is FORCE RLS and the candidate lookup returned nothing. This
+endpoint is an unauthenticated vendor callback — there is no user to derive a tenant from,
+and by design the tenant is *whoever holds the secret that verifies these exact bytes*, so
+the lookup must span organizations before any tenant is known. `get_tenant_db` cannot
+apply, and moving the tenant into the URL would mean trusting a caller-supplied
+identifier to choose whose secret to check against — strictly worse than the design it
+would replace.
+
+**Fixed by migration 052**, which adds a second, deliberately narrow policy:
+`webhook_tenant_resolution` permits **SELECT only**, on **active ERP rows only**, **only
+while `app.erp_webhook_lookup = 'on'`**. The handler sets that GUC transaction-locally
+immediately before the candidate query and clears it in a `finally`, so it is off for the
+event INSERT and every other path. Postgres OR-s permissive policies, so this widens one
+flagged moment and changes nothing else — and it needs no superuser, which matters because
+the application connects as `NOSUPERUSER NOBYPASSRLS` on purpose and
+`SET row_security = off` would have required giving that up.
+
+The narrowness *is* the security argument, so it is tested rather than asserted: the flag
+cannot write, cannot see dormant or non-ERP rows, and does not leak into ordinary tenant
+sessions. Both halves are mutation-verified — removing the flag kills the webhook again
+(4 failures), widening the policy is caught as a security regression (2 failures).
+
+**One test of mine was wrong in a way worth recording:** it expected the disallowed UPDATE
+to raise. RLS does not raise on a write it disallows — it filters the rows the statement
+can see, so the UPDATE simply affects zero rows. The same "fails quiet" property that made
+every defect in this sweep hard to notice was present in the guard written against it.
+
+The residual risk is stated in the migration: anything able to set that GUC can list
+active ERP integrations across tenants, including the `configuration` JSON that holds
+webhook secrets. That is the same trust boundary as the database credentials themselves,
+and it is as narrow as a table-level policy can be — RLS cannot restrict columns.
+
+**The whole ERP surface was then verified end to end**, not just the webhook: all 12
+routes the app serves (create, list, get, update, delete, sync, sync-status, entities,
+events, mappings, webhook-config, test, correlations/recent) exercised against a real
+database. Every one responds correctly.
+
+**The NLP analysis-session surface was entirely dead, and it is the one instance that did
+NOT fail quietly.** `analysis_sessions` is RLS-protected and all 22 handlers ran on
+`get_db`, so reads matched nothing — empty list, 404 by id — while **create raised
+`InsufficientPrivilegeError: new row violates row-level security policy`, a 500**, because
+the policy's `WITH CHECK` rejects an INSERT made with no tenant GUC.
+
+That split is the useful part: under RLS **a read fails silently and a write fails
+loudly**. Every other defect in this sweep was the quiet kind, which is precisely why they
+survived for so long.
+
+A 500 on create would normally be noticed at once. It was not, because the correlation
+model and its LoRA adapter are **deliberately unloaded right now** — that surface is meant
+to be dormant, so nobody exercising it is the expected state rather than evidence of
+neglect. An earlier draft of this note drew the opposite conclusion and was wrong.
+
+**Restoring the surface exposed a second, latent defect, and that is worth stating as a
+rule.** With the model unloaded, `correlation_ai_engine` serves a heuristic and marks it
+`simulated: True` with confidence dropped to 0.4 — honestly. Both chat handlers read the
+fallback's *text* and discarded the flag, so heuristic output reached the caller
+indistinguishable from a real inference. That was harmless while the RLS defect kept the
+endpoints unreachable; fixing the RLS made it live. **A change that turns a dead path into
+a working one owns whatever that path then does** — so the provenance
+(`simulated`, `simulation_reason`, `confidence`, `model_version`) is now carried through
+to the response, with a guard that forces a non-simulated result to prove the flag is not
+hardcoded.
+
+Note what that guard does *not* establish: it patches the engine, so it proves the
+plumbing forwards the flag and nothing about whether a loaded adapter would set it. The
+`simulated: false` branch has never run for real. `docs/CORRELATION_AI_ENGINE.md` carries
+the check to perform when the model is switched back on — if a real inference still
+reports `simulated: true`, the adapter did not load and the engine is quietly serving
+heuristics under a model-version string that says otherwise.
+
+The application layer was correct throughout (`organization_id=current_user.organization_id` was already set on
+create); only the GUC was missing.
+
+(Kanban RLS and `/nlp/correlation/intake/{id}` are items #16 and #17 in the current task
+pool and were left alone.)
+
+**The two remaining correlation routers were the same shape, with an extra twist.**
+`logistics_correlation.py` (12 handlers on `dock_appointments`) and
+`platform_correlation.py` (1 on `analysis_sessions`) both queried RLS tables through
+`get_db` and returned empty results — `logistics_correlation` even filtered on
+`organization_id` correctly itself, which changed nothing, exactly as in `gdpr.py`. Nine
+of its handlers additionally took `organization_id` as a **required client-supplied query
+parameter**: the IDOR shape, and a 422 for any client that omitted it. Both now derive the
+org from the token.
+
+**One thing there is deliberately NOT fixed.** `logistics_correlation` declares
+`prefix="/logistics"` while `main.py` mounts it at `/api/v1/logistics`, so every route
+serves at `/api/v1/logistics/logistics/…` — the double-prefix bug already corrected in the
+yard and transportation routers. Correcting it here would **collide** with
+`fleet_logistics.logistics_router`, which serves `/delivery-efficiency` and
+`/compliance/summary` at the single prefix — and those are the two paths the frontend
+actually calls. Since `logistics_correlation` registers first it would silently win,
+changing the payload the frontend receives. Choosing a canonical implementation per path
+is a product decision, not a routing edit, so the tests use the real doubled paths rather
+than pretending otherwise.
+
+**Real-mode frontend coverage went from 1 module to 3, chosen by what the backend guards
+cannot see.** `src/test/setup.ts` forces `VITE_USE_MOCK=true`, so every ordinary unit test
+exercises the mock branch; `src/test/realMode.ts` re-imports a module with the flag off and
+stubs axios, so the assertion is about *which request the client builds*.
+
+The three now covered are the contracts changed in this sweep, and the choice matters:
+
+- **`nlpCorrelation.chat`** is the one no backend guard can reach. `message` is a query
+  parameter and `conversation_history` is the **body**, because the handler declares it
+  `Optional[List[Dict[str, str]]]` and FastAPI reads complex types from the body. The
+  query-param guard flagged it while it was in the query — and could say nothing about
+  whether it subsequently landed in the body. Only a test that inspects the outgoing
+  request can.
+- **`transportation`** — `organization_id` gone from carriers, drivers and shipments.
+- **`yard.getDockDoors`** — no `workcell_id`, and no parameter at all, since the column
+  it filtered on does not exist.
+
+All three are mutation-tested by reinstating the old request shape. Backend guards catch
+a reintroduction from the server's side; these catch it in the suite where the change
+would actually be made.
+
+**The third leg of the frontend/backend contract — response shape — came back clean.**
+Its siblings check the path exists and the query parameters are declared; neither says
+anything about what comes back. An endpoint returning `{items, meta}` to a call typed
+`Carrier[]` is a runtime `.map is not a function`; the reverse reads `.items` as
+`undefined` and renders an empty list. TypeScript cannot catch either, because the type
+argument to `api.get<T>` is an assertion about JSON rather than a checked fact.
+
+**86 typed calls, zero mismatches** — the FS-99 envelope migration evidently landed on
+both sides. The guard exists so the next one cannot half-land.
+
+Its first run reported one mismatch that was not real: it treated any object with an
+`items` property as a paginated envelope, and `SuggestedQuestionsResponse` legitimately
+has `questions`, `items`, `context_summary` and `intelligence`. An envelope now requires
+`items` **plus** a pagination sibling. Third detector in this document to need correcting
+before its output was worth anything.
+
+**`health.py` was split rather than converted, and the distinction is the point.**
+`/admin/system/status` is admin-gated with a real user and was on `get_db`, so its
+`assets` and `alarms` counts — both FORCE RLS — came back **zero** regardless of what
+existed. An engineer's status page reporting no active assets on a running platform reads
+as an idle system, not a broken query. It is now tenant-scoped.
+
+The other four sites stay on `get_db` deliberately: `/health/live`, `/health/ready` and
+`/health/startup` are unauthenticated probes and cannot resolve a tenant from a user they
+do not have, so they read only tables without a policy. A uniform conversion would have
+turned three working probes into 500s. Pinned in both directions.
+
+**The core product surfaces were then swept for the same failure, and came back clean.**
+One organisation seeded with an asset, an alarm and an operation, then every main
+authenticated read exercised against a real database: `dashboard/overview` reports
+`total_assets: 1, active_alarms: 1`, `alarms/active` and `operations/active` each count 1,
+and the remaining zeros are tables that were not seeded. So the empty-page class does not
+extend past the routers already fixed — worth recording, because "swept and clean" and
+"never checked" are indistinguishable afterwards.
+
+**One honesty gap did come out of it, in `health.py`.** `_check_ingestion` read
+`MAX(assets.last_seen)` and published it as `latest_asset_seen_at`. It runs from the
+**public** readiness probe, which has no authenticated user and therefore no tenant
+context, so on a `NOBYPASSRLS` role that query returned NULL regardless of how much data
+existed. The report then said `latest_asset_seen_at: null` — which reads as "no asset has
+ever been seen", a different and false statement from "this figure is not obtainable
+here". A monitoring endpoint is the worst place to blur those. `telemetry` has no policy
+and was already the primary signal, so the asset read is gone and no verdict changes; a
+per-tenant asset figure belongs on an endpoint where a caller, and therefore a GUC,
+exists.
+
+**The audit trail and the GDPR records were blank for the same reason.** `audit_logs`
+and `data_processing_records` have carried tenant policies since migration 011, and every
+handler in `audit.py` and `gdpr.py` ran on `get_db` — so both surfaces returned **zero
+rows, including for the caller's own organization**. An audit trail reporting no activity
+is the one thing an audit trail must never do, and from outside it is indistinguishable
+from a quiet system: HTTP 200, empty list.
+
+`gdpr.py` is the sharper illustration of why the application layer alone cannot save you:
+its handlers filtered on `current_user.organization_id` **correctly**, and it made no
+difference, because RLS had already removed the row.
+
+Fixing `audit.py` also settled a design question rather than just a dependency. It carried
+an unreachable branch — `if current_user.role != "admin"` under a `require_admin` gate —
+written for a cross-organization admin view. One tenant's admin reading another's audit
+trail is precisely what an audit trail should preclude, so scoping is now the caller's own
+organization; genuine cross-org access needs the super-admin role that does not exist yet.
+
+RLS on the four unprotected tables is now in place** — migration 051, ENABLE + FORCE
+with a `tenant_isolation` policy each, so the application filter and the database policy
+finally line up with the two-layer model `app/core/tenant.py` describes. Two details
+mattered: the policy does **not** cast to `::uuid` (unlike 011/033) because
+`organization_id` is `character varying` on these four and casting would raise on every
+row; and FORCE is set because without it the table owner bypasses the policy, which makes
+`relrowsecurity = true` read as protected while the application's own connection is
+exempt.
+
+The writer audit that gates this came out clean: nothing outside `app/api/` touches these
+tables except `seed_demo_data.py`, which sets no tenant GUC — but it already writes
+`assets` (ENABLE + FORCE since 011) and defaults to SQLite, so it does not work against
+Postgres RLS today and this changes nothing for it.
+
+**The transportation endpoints turned out to fail the OTHER way.** `get_carriers`,
+`get_drivers`, `get_shipments`, `get_routes` and `geotab.get_fleet_summary` all took
+`organization_id` as a required client-supplied query parameter — the IDOR shape — but
+never leaked, because their tables have ENABLE **and FORCE** RLS and the handlers set no
+GUC. The policy filtered every row, so **each returned an empty list to every caller,
+including for its own organization**. Verified against a real database: listing carriers
+with the caller's own org id returned nothing while the row sat in the table.
+
+That is the same mistake as `get_vehicles` — one wrong dependency — producing the exact
+opposite result, decided only by whether the table happened to carry a policy. A leak and
+a permanently-empty page are indistinguishable from a status code, which is why both are
+now pinned by tests that assert the caller sees its OWN rows as well as not seeing
+anyone else's. The frontend stopped sending the removed parameter, and the
+`organization_id`-from-localStorage helper it needed went with it.
+
+## 11. A globally-keyed table read as if tenant-scoped — **1 live PII disclosure**
+
+Every tenant sweep so far chased **reads on tenant-partitioned tables**. This one is the
+opposite shape: a table deliberately NOT partitioned, whose contents are nonetheless
+tenant-sensitive.
+
+**Swept:** write paths (POST/PUT/PATCH/DELETE) touching org-scoped tables that have no
+RLS to fall back on — the gap left after migration 051 covered the fleet tables. Four
+tables qualify: `api_keys`, `error_events`, `users`, `vehicles`.
+
+`api_keys.revoke_api_key` is **correctly scoped** (`APIKey.organization_id ==
+current_user.organization_id`), and most apparent `users` hits were the same
+`Depends()`-annotation false positive that has recurred throughout this document.
+
+**`error_events` is the real one, and it is not a missing filter.** `fingerprint` is the
+PRIMARY KEY — one row per distinct error for the entire platform — so the triage view is
+cross-tenant *by construction*, and `require_admin` means a **tenant** admin, since no
+platform-admin role exists. Any tenant's admin could therefore read any other tenant's
+`message_sample` and `traceback_sample`, and PATCH its status.
+
+Verified against a real database: org A retrieved a row owned by org B whose message
+carried a customer identifier and whose traceback carried a payment-card value. Exception
+text and tracebacks are the two fields most likely to contain customer data, precisely
+because nobody chooses what goes into them.
+
+**The module already flagged the question** — *"the API is not tenant-filtered (open
+question flagged to the manager)"*. What it lacked was evidence of what was exposed, which
+is the difference between a design question and a disclosure. A question can wait; a
+disclosure of another tenant's PII should not.
+
+**Fixed by redaction, not by scoping**, and the distinction matters. Filtering the view by
+`organization_id` would be wrong: with `fingerprint` as the key, one row is shared by every
+tenant hitting that bug and its `organization_id` names only one of them, so a filter would
+hide errors that genuinely are the caller's. Only the two payload-bearing fields are
+withheld, only from a viewer in a different organisation. Counts, route, method and status
+stay visible — that is the triage value, and it carries no payload. A row with no
+`organization_id` is platform-level and stays visible to everyone. The list endpoint was
+already safe; it returns no samples at all, now pinned.
+
+If a platform-admin role is added, gate the samples on that rather than dropping the check.
+
+**A guard of this document's own making was also found blind.** `test_tenant_session_guard`
+derives its RLS table set by grepping migrations for a literal
+`ALTER TABLE <name> ENABLE ROW LEVEL SECURITY` — and migration 051 enables RLS through
+`EXECUTE format('ALTER TABLE %I …')` over a table array. All four tables that migration
+protects were invisible to it, so a `get_db` regression on any of them would not have been
+flagged. Parsing SQL text is a proxy for asking the database, and this was the cost of the
+proxy; the parser now understands both forms and a test pins it. Same lesson as rule 6, in
+a place that had already learned it.
+
+## 12. A worker branch that writes without binding a tenant — **1 live silent no-op**
+
+Every tenant sweep so far looked at API handlers. A worker has no request and no user, so
+it sets `app.current_org_id` by hand from the message it is processing — and nothing in
+the API guards checks that.
+
+**Swept:** all five workers. Three bind a tenant; `ota_rollouts` and `health_server` touch
+no tenant data. Two findings, one live.
+
+**LIVE: the edge-agent heartbeat updated nothing.** `_process_agent_heartbeat` runs
+`update(Asset)` to record fleet-version fields. `_process_message` binds the tenant for the
+telemetry/state/alarm branch — but the agent-status branch **returns before reaching that
+code**, so this path ran with no GUC at all. RLS filters a WRITE silently rather than
+raising, so the UPDATE matched zero rows on every heartbeat and the worker logged
+`updated_assets=0`: an accurate log of total failure, which nobody reads because nothing
+looks wrong. Verified against a real database — `agent_version` stayed NULL after a
+heartbeat naming the asset directly. The binding now lives inside the handler, next to the
+`organization_id` it derives from, so it cannot be lost to another early return.
+
+**LATENT: `export_delivery` bound the tenant session-scoped (`false`).** That value stays
+on the connection after the session closes and rides it back into the pool, so the next
+task inherits a stale tenant unless it sets its own. Every operation there does set its
+own, so nothing was leaking — but that is a property of today's code rather than of the
+mechanism, and it is the same footgun `get_tenant_db` had to be fixed for. Both sites are
+transaction-local now.
+
+**HOW THE LIVE ONE WAS FOUND is the part worth keeping.** A guard written to assert
+something else — that the ingestion message path commits exactly once, so a
+transaction-local GUC cannot be dropped mid-message — failed on a count of 2. The second
+commit was a different branch, so the assertion was too crude. But reading that branch to
+correct the test is what exposed the missing binding. **The wrong assertion pointed at the
+right place**, which is an argument for writing the crude version early rather than
+waiting to write the precise one.
+
+Also checked and clean: the compliance worker has 14 sessions and 13 `_set_org` calls, and
+the one without hands its session to `build_report_payload`, which binds the tenant itself.
+That exception is now asserted, along with the delegation it depends on, so the two cannot
+drift apart.
+
+## 13. A rule enforced on one route and leaked by its neighbour — **2 public probes**
+
+`test_route_auth_walk.py` already proves no route answers 2xx without a token, with 18
+public routes allowlisted and reasoned. What nothing checked was **what those 18 return**.
+
+**Swept:** every allowlisted public route, read as an anonymous caller. Two disclosed
+internal topology:
+
+```
+/health/kafka  503  "error: KafkaConnectionError: Unable to bootstrap from
+                     [('redpanda', 29092, <AddressFamily.AF_UNSPEC: 0>)]"
+/health/ready  503  same string, inside the per-component checks
+```
+
+Internal broker hostname, port, and the technology in use — to anybody who can reach the
+endpoint, and precisely when the broker is down, which is when someone probing would be
+looking.
+
+**What makes this a defect rather than a choice** is that the rule was already written,
+one function away, on `/health/detailed`: *"Auth-gated for the same reason as
+/health/system: the per-component report (broker/redis/ingestion state, connection error
+strings) is recon-useful. Probes use /health/live|ready, which stay public."* The gating
+was right and the reasoning explicit. The same strings simply escaped through the routes
+named as the safe alternative. **A rule enforced in one place and leaked by its neighbour**
+is the recurring shape of this entire document — the class-8 endpoint that a hand fix had
+already visited, the class-11 disclosure flagged in a docstring, the class-12 branch that
+returned before reaching the binding its sibling had.
+
+**The fix withholds nothing from anyone entitled to it.** A probe consumer needs the
+status — Kubernetes reads the code, not the body. An operator reads the logs or
+`/health/detailed`, both of which still carry the full exception text. Statuses that are
+already coarse pass through; anything carrying a payload after a colon collapses to its
+first word, so `error` survives and the hostname does not.
+
+**A second inconsistency fell out of it.** The readiness probe's *cached* not-ready branch
+returned a bare `"Service not ready"` while the uncached branch returned per-component
+checks — so the probe's response shape depended on whether the cache had expired, and an
+operator hitting it twice got two different answers, the second saying nothing about which
+component was down. Both branches now return the same sanitised structure.
+
+## 14. App-permitted values a CHECK constraint rejects — **clean, and only half guardable**
+
+The write-side twin of class 1. There, a response model was stricter than its column; here,
+the application permits a value the database refuses. A column defaulting to `"queued"`
+under a constraint allowing `('pending', 'running', 'done')` rejects every insert that
+omits the field — an IntegrityError from a value the application chose for itself.
+
+Migration 050 made this newly relevant: it copied 39 ORM defaults into SERVER defaults, so
+a bad default is no longer one insert path's problem but the column's.
+
+**Swept in two halves, and only one of them is shippable.**
+
+**ORM defaults vs CHECK — clean, and now guarded.** Every scalar `default=` on a column
+carrying a value-list constraint, compared against the live schema. Zero violations. This
+half is precise because an ORM column names its own table.
+
+**Pydantic `Literal`s vs CHECK — clean, and deliberately NOT guarded.** The broad version
+matched request-model fields to constrained columns by NAME, and produced six findings,
+every one false. `StatusUpdateRequest.status` was flagged against `agent_releases`,
+`agent_rollouts`, `model_registry` and two others — tables it never writes to, which merely
+also have a `status` column. `ScheduledComplianceReportCreate.frequency` was flagged
+against `scheduled_exports`, a different feature's table; its real target
+(`scheduled_compliance_reports`, migration 017) allows all five values, and the handler
+validates against the matching five-value set.
+
+Making that half trustworthy needs a request-model-to-table mapping, and unlike
+`FooResponse -> Foo` there is no naming convention to derive one from. **So it was run,
+found nothing, and was not shipped.** A guard with six known false positives trains people
+to ignore it, which costs more than the coverage is worth — and this document already
+records three detectors that had to be corrected before their output meant anything.
+Recording the negative result keeps the work from being repeated without pretending it is
+enforced.
+
+## 15. A naive datetime crossing an API boundary — **9 calls, one module**
+
+**Swept:** every `datetime.now()` and `datetime.utcnow()` in `app/`. Nine were naive, all
+in `model_monitoring.py` — the only such island against 483 timezone-aware constructions
+elsewhere.
+
+**Inside Python it was harmless, and that is why it survived.** The drift and performance
+histories are in-memory, both sides of every comparison were naive, and nothing raised.
+
+**The hazard is at the boundary.** Those calls serialise to ISO strings with no offset,
+while every other endpoint emits `+00:00`. `new Date("2026-07-28T02:15:00")` is parsed by
+JavaScript as LOCAL time; the same string with `+00:00` is UTC. The same instant would
+render hours apart depending on which endpoint returned it — silently, with no error
+anywhere. No frontend consumes those routes today, which is the only reason it never
+showed, and exactly the kind of "only reason" this document keeps finding.
+
+The louder failure mode already has a scar in the codebase: `fleet_logistics._aware()`
+exists to coerce naive/aware mismatches away, because Postgres returns aware timestamps
+and SQLite returns naive ones, so the same code path differs by backend.
+
+**The detector had to be corrected twice, in both directions.**
+
+A grep for `datetime.now()` found the nine — and *missed nothing*, but a grep-based guard
+would have flagged its own explanatory prose, so the guard uses the AST instead. The AST
+version then immediately flagged **four uses of SQLAlchemy's `func.now()`** in
+`app/db/models.py`, which renders SQL `NOW()` and returns an aware `timestamptz` on
+Postgres — entirely correct. It matched on the method name without reading what it was
+called on. Flagging those would have meant "fixing" working code.
+
+So the guard now reads the receiver, and both mistakes are pinned as tests: prose is not a
+call, and `func.now()` is not `datetime.now()`. That is the fifth detector in this document
+to need correcting before its output was worth anything — which is no longer a surprising
+result and is why rule 3 exists.
+
+## 16. A channel the route-walk cannot see — **2 live defects on the websocket**
+
+Every tenant sweep in this document looked at HTTP handlers. `/ws` is not one, and the
+guard that enforces authentication everywhere else **skips it by construction** — its own
+comment reads *"skips WebSocketRoute (/ws) + mounts"*.
+
+Two live defects, both confirmed against the running app before the fix.
+
+**Anyone could subscribe to any organisation, with no token at all.** The handler opened
+with `if token:`. With no token, `user` stayed `None`, control fell through to the
+client-supplied `organization_id`, and the connection was accepted as "anonymous" — the
+log line even says so. A caller who could reach the endpoint received another
+organisation's telemetry, alarms, state changes and command statuses **continuously**.
+
+**An authenticated user could name someone else's organisation.** The binding read
+*"default to the user's organization if not specified"*, so a supplied value took
+**precedence**. Org A's user passing `?organization_id=<org B>` was added to org B's
+broadcast set. This is the same IDOR shape already removed from yard, transportation and
+logistics_correlation — on a channel that streams rather than answering once.
+
+**The manager was never the problem.** `active_connections` is keyed by organisation and
+`broadcast_to_organization` writes only to that key. It was correct, and it was told the
+wrong key. Which is the sharper version of a pattern this document keeps recording: the
+mechanism is sound and the caller supplies the wrong input, so nothing downstream can
+detect it.
+
+A mismatched `organization_id` is now **refused** rather than silently replaced.
+Substituting the correct organisation would leave a caller believing it had subscribed to
+something it had not — and this codebase already had enough silently-ignored parameters.
+
+**The same sweep found the HTTP ingest endpoint forwarding nothing.** `/api/v1/edge/ingest`
+resolves each reading's organisation to pick a Redpanda topic, and that lookup reads
+`assets` — FORCE RLS — through a session with no tenant context. It returns `None` for
+every asset, so `by_org` stays empty, nothing is published, and the response still reported
+`accepted: N`. Verified: `_resolve_org` returns None for an asset that demonstrably exists.
+
+**It is not a live outage, and checking that mattered.** The edge agent publishes straight
+to the broker; nothing calls this endpoint. So the proportionate fix was honesty rather
+than machinery: `accepted` and `forwarded` are now separate counts, and an unresolved
+reading logs loudly. Building a policy migration for a path nobody calls would have been
+speculative work; leaving a success response that implies delivery would have been the
+class this whole document is about.
+
+**A second, latent defect there is recorded rather than fixed**, because fixing it needs a
+decision. The organisation comes from the ASSET a reading names, with no check that the
+asset belongs to the submitting agent — so a valid agent could route readings into another
+tenant's stream. `assets.agent_id` exists and looks like the binding to enforce against,
+but **nothing ever populates it**: it is NULL for every row. Keying a policy on it would
+have replaced one silent failure with another, which is why the column was checked before
+the design rather than after.
+
+**A note on the mutation test.** A hand-written reconstruction of the old code caught
+nothing: the later `user_org` lookup still refused the connection, so anonymous access
+stayed blocked for a different reason and the test passed. Reverting to the **actual**
+pre-fix file failed exactly the two assertions naming the two defects. Reconstructing a
+defect is a guess about what it was; restoring it is not.
+
+## 17. SQL built by interpolating a value into quotes — **8 sites, all dormant**
+
+`text(f"... WHERE id = '{asset_id}'")` assembles a quoted literal by string formatting. An
+apostrophe in the value breaks the statement; a crafted one rewrites it. The codebase has
+paid for this once already — `tactical_engine._is_maintenance_mode` carries a comment
+recording that `' OR '1'='1` used to match every row.
+
+**The check is "interpolated INSIDE quotes", not "f-string in SQL", and the distinction is
+what makes it shippable.** Sixteen `text(f"…")` calls in `app/` are entirely correct,
+because identifiers and intervals *cannot* be bound:
+
+| Interpolated | Source |
+|---|---|
+| `{_HISTORIAN_POLICY_COLUMNS}` | a module constant |
+| `{sort_col}`, `{order_sql}` | dict lookup and a ternary |
+| `INTERVAL '{seconds} seconds'` | an int from `AGGREGATION_SECONDS` |
+| `FROM {view_name}` | three hardcoded call sites |
+
+Banning f-strings outright would flag all sixteen, and a guard with sixteen false positives
+is one nobody reads — the same reasoning that kept class 14's `Literal` half unshipped.
+Quotes are the signal: they mean the value is *data*, and data can be bound.
+
+**Found eight, all now parameterised:**
+
+- **`device_provisioning` (5)** — an INSERT interpolating `certificate_pem` and
+  `json.dumps(metadata)` as quoted literals, plus approve, revoke and two lookups.
+- **`feature_extraction` (3)** — `asset_id` and timestamps, where `asset_id` arrives from
+  edge telemetry: the same untrusted source the tactical-engine fix was about.
+
+**Both modules are dormant, and one is worse than dormant.** `device_provisioning` is
+referenced by nothing *and cannot be imported*: it reads `settings.CA_KEY_PATH`, which does
+not exist — the setting is `EDGE_CA_KEY_PATH`. That was verified against the pre-existing
+file before claiming it, since it would have been easy to mistake for damage from this
+change.
+
+They were fixed anyway. The cost is small, and a dormant injection is precisely what gets
+woken up when somebody wires a feature back on — which this document has already watched
+happen once, when restoring the analysis-session surface made a latent
+`simulated`-flag-dropping bug live.
+
+---
+
+## 18. A provenance flag left to its default — **1, live, on the error path**
+
+`SessionChatResponse.simulated` defaults to `False`, and that default is a **claim**:
+*this was a genuine inference*. Two of the three constructions in `session_chat` carried
+the engine's real value through, under a comment saying exactly why — "never defaulted to
+False here". The third was the exception handler, and it built the response without those
+fields at all.
+
+So the one reply that is not an analysis in any sense — the engine raised, nothing was
+inferred — was the only one asserting that it was. Its text made that worse: *"the
+correlation AI integration is being set up"* describes a deployment state, not an
+exception, so an operator reading it had no way to know anything had failed.
+
+This is live rather than theoretical: the correlation model and its LoRA adapter are
+**deliberately not loaded**, which is what makes the failure paths the ordinary ones.
+
+**Why a default is the wrong place for this.** A default is what you get when nobody
+thought about the field, and the moment nobody thinks about it is precisely the handler
+written in a hurry to stop a 500. `False` is not neutral here — it is the strongest claim
+the model can make.
+
+**Fixed:** the fallback sets `simulated=True` with a reason naming the exception TYPE, not
+`str(e)` — an exception message is the field most likely to carry internal detail or
+customer data, which is why `/admin/errors` redacts message samples across tenants. The
+reply now says the analysis failed and reports no risk score, because a risk score implies
+an analysis happened. Reverting the handler fails 4 of the 7 new assertions.
+
+**Swept:** every model annotating any of nine provenance field names, and every
+construction of one. **1 model, 1 omission, 0 skipped.** The guard keys on field NAMES
+rather than that one model, so adding `degraded` or `availability_only` anywhere brings it
+under the rule without further work.
+
+**The same broken link, found by asking where else provenance was carried.** OEE has
+flagged its own honesty since FS-234: `quality` reads 1.0 when an asset has no part
+counters, `performance` reads 1.0 without an ideal cycle time, and the endpoint returns
+`quality_measured` / `performance_measured` with a comment saying a consumer "should
+render '—' rather than '100%' when this is false". **Nothing in the frontend read either
+flag** — the fields were not in `OEEMetrics`, so an uninstrumented asset displayed
+flawless quality, and OEE, being the product of the three, was reported as a result when
+it could only be an upper bound.
+
+1.0 is the correct arithmetic — it is the neutral multiplier — and the wrong thing to
+print, because "100%" is a measurement and this is the absence of one. The panel now shows
+`—` for an unmeasured factor with the reason underneath, labels the product **"OEE (upper
+bound)"** when either factor was stood in for, and shows the good/total part counts when
+they exist. An older response carrying no flags is treated as measured, so a deployment
+that predates them is not covered in dashes. Six page tests; reverting the page fails five,
+and the sixth is the negative control.
+
+These flags live in a dict, not a Pydantic model, so the AST sweep above cannot see them
+— the detector found the class and a human found the second instance of it. Worth stating
+plainly: the guard covers response MODELS, and provenance carried in a plain dict is
+outside it.
+
+**And the chain was broken again one link further on.** `SessionChatResponse` in
+`analysisSessions.ts` did not declare `simulated`, `simulation_reason`, `confidence` or
+`model_version`, so the server's "do not read this as an inference" was dropped by the
+client that had asked for it — nothing downstream could label the reply because nothing
+downstream could see the field. A flag the operator never sees is the same as no flag.
+
+The type now declares all four, `appendAssistantMessage` carries them onto the rendered
+message, and the chat pane shows a **"Not a model inference"** badge whose tooltip is the
+reason. The mock branch sets `simulated: true` as well — mock output is simulated by
+definition, and returning `false` there would have made the demo the most confident
+surface in the product. `test_provenance_flags_are_always_set.py` pins all four links, so
+removing any one of them fails rather than quietly restoring the confident version.
+
+**The sweep it came out of found nothing else.** 28 broad `except` handlers wrap a
+database write; **all 28 log at ERROR or WARNING**, and the audit writers — the subset
+where a swallowed failure is a compliance control failure rather than an inconvenience —
+already record an outcome rather than assuming one. `record_audit` confines its failure to
+a `SAVEPOINT` (a rejected audit INSERT would otherwise roll back the very change it
+describes) and returns a boolean; the audit middleware binds the tenant GUC before
+inserting into `audit_logs`, which is `FORCE ROW LEVEL SECURITY`. The one handler that
+turned a failure into a confident success was the one above.
+
+## 19. A qualifier the frontend never reads — **3 fields, 2 defects, both live**
+
+Classes 4, 5 and 18 are all about a system describing itself untruthfully. This is the
+seam version: the backend describes itself **correctly**, and the description is dropped
+one layer up.
+
+A *qualifier* is a boolean whose whole job is to say how far to trust the value beside it.
+Sending one and ignoring it is worse than never sending it, because the backend author
+then believes the caveat is being shown — the code review passes, the field is in the
+payload, and the reader still sees a confident number with its footnote removed.
+
+Two instances, both found by hand before this sweep existed, and both would have been
+caught by it:
+
+* **`simulated`** — the correlation chat's error fallback returns a reply that is not an
+  analysis at all, and says so. `analysisSessions.ts` did not declare the field.
+* **`quality_measured` / `performance_measured`** — `quality` reads 1.0 for an asset with
+  no part counters, the neutral multiplier for OEE and not a measurement. The endpoint has
+  flagged this since FS-234, with a comment telling consumers to render `—` rather than
+  `100%`. `OEEMetrics` did not carry the fields.
+
+**Swept:** every boolean qualifier the API can emit, from two sources — the OpenAPI
+schemas AND the raw dicts handlers return. That second source is the whole reason the
+sweep works: about half these endpoints declare no `response_model`, so nothing about
+them reaches `components.schemas`, and `/dashboard/assets/{id}/oee` — where
+`quality_measured` lives — is one of them. **Reading only the schemas made the first
+version look clean while missing the defect it was written for.** Its own vacuity check
+caught that, which is the strongest argument for writing vacuity checks: it failed with
+"the OEE flags are not being swept" before a human noticed.
+
+**The detector was wrong twice more, in opposite directions.**
+
+*Too loose:* keying on name stems alone matched `estimated_duration_hours`,
+`estimated_seconds` and `total_estimated_cost` — business QUANTITIES, none of them a
+statement about trust. `estimated_X` names a number; the qualifier form is a flag.
+Requiring `boolean` removed the whole family without an allowlist, which is the better
+repair: an allowlist of false positives is a list of checks that no longer run.
+
+*Too generous:* matching raw source made `simulated` look read, because `fleetTracker.ts`
+carries the comment *"Mock vehicle positions (simulated GeoTab data)"*. An English
+sentence about an unrelated feature was standing in for code that consumed the field, and
+the mutation run proved the cost — against the real pre-fix frontend the sweep flagged the
+OEE pair and **missed the correlation flag**. Comments are now stripped before matching,
+and a test pins that the strip removes prose without removing code.
+
+**What it deliberately cannot prove:** that the value is *displayed*, only that the code
+names it. Parsing TSX for rendered output would mismodel enough to manufacture defects, so
+the display half is pinned per instance instead — six OEE page tests and the four-link
+chain in `test_provenance_flags_are_always_set.py`.
+
+## 20. A cache key that omits what the fetch varies on — **clean, and nearly broken by this work**
+
+React Query caches on the key alone. If the fetch depends on a value the key does not
+name, changing that value serves the PREVIOUS result straight from cache — no refetch, no
+loading state, no error. The screen updates its controls and not its data. It reads as
+"the filter doesn't work", and clicking around rarely finds it, because the first render
+is always right.
+
+**This one is recorded because of how it arrived.** Making `/api/v1/auth/users` paginate
+meant `AdminPages` had to send an explicit page size, and the first version of that change
+kept `queryKey: ['users']` while the fetch became `getUsers({ limit })`. "Show more" would
+have re-read the same 50 rows forever. Caught before commit — but nothing in the type
+system or the existing suite would have caught it after, which is the argument for the
+guard. It costs one line to make this mistake.
+
+**Swept:** every `useQuery` in the frontend, 30+ of them. **Zero offenders.** The whole
+value is in staying that way, so the guard lives in the frontend suite rather than in a
+document.
+
+**The detector was wrong first, in the usual direction.** Reading identifiers out of the
+call arguments flagged seven sites, all of them correct:
+
+* six pass an object literal such as `{ limit: 500 }` — `limit` is a KEY with a constant
+  value and varies with nothing. Object keys are stripped before matching, exactly the
+  correction the backend's query-parameter sweep needed for the same reason;
+* one passes `startTime`, derived one line above from `timeRange`, which IS in the key. A
+  derived value is covered transitively, so a dependency whose declaration mentions a key
+  variable is not reported.
+
+Both corrections are pinned as tests. Seven false positives would have trained the reader
+to skip the output, and the one real finding would have gone with them.
+
+## 21. A write whose result the UI never re-reads — **3 live**
+
+Class 20 is about a cache key that is too narrow. This is the other half: the write
+succeeds, the server changes, and nothing tells the screen to look again. It is
+particularly quiet where the work happens **off the request path**, because there the
+success response is honest and still insufficient — "triggered" is the whole truth, and
+the result arrives later with nothing watching for it.
+
+**`erpApi.triggerSync`.** `POST /erp/integrations/{id}/sync` hands the work to FastAPI
+`BackgroundTasks` and returns immediately. The page reported *"Sync triggered for N entity
+type(s)"*, which reads as done, and never refetched `erp-sync-status` — so the Status tab
+sat on the previous run's counts for as long as anyone cared to watch.
+
+*A plain invalidate would not have fixed it,* and this is the part that needed reading the
+handler rather than pattern-matching the page: a single refetch on success lands
+milliseconds after the trigger, re-reads the row the sync has not written yet, and never
+fires again. It would have passed review and changed nothing on screen. The Status tab now
+polls while mounted; the invalidate only gives an immediate first read to whoever is
+already there. The backend writes no "running" marker at the start of a sync, so there is
+no in-flight state to poll until it clears — polling while the tab is open is the honest
+version of what is knowable here.
+
+**The command panel, a cluster of four.** Both mutations invalidated
+`['commands', assetId]`; **no query in the codebase declared that key**, so the refetch
+went nowhere. The panel told the operator to *"view command history in the asset details
+page"* — the page that renders this panel and no history. `GET /api/v1/commands/asset/{id}`
+worked and had **zero callers**. And emergency stop did not invalidate at all, so the one
+command an operator most needs to see land was the one guaranteed missing.
+
+The consequence is bigger than a missing list. `command_executor` dispatches off the
+request path, so *"Command submitted successfully"* only ever meant a row was written —
+whether the machine did anything was not observable **anywhere in the product**. The panel
+now renders recent commands with their status, polls while any is in flight and stops when
+they settle, and says so instead of pointing at a page that has no history.
+
+**The sweep found this only after the detector stopped vouching for itself.** The first
+version collected query roots from every `queryKey:` in the tree — including the ones
+*inside* the `invalidateQueries` calls it was checking. Every invalidation registered its
+own key as a valid target, so all 18 matched and the sweep reported zero. Roots now come
+only from query DECLARATIONS (`useQuery` and friends), and `'commands'` surfaced
+immediately. A detector whose input includes its own subject proves nothing, and it fails
+in the most convincing way available: clean.
+
+It was wrong in the other direction too. Reading only each mutation's body reported the
+three `AlarmRules` mutations as never refreshing; they call a local `const invalidate = ()
+=> queryClient.invalidateQueries(...)` declared a few lines above. Resolving local helpers
+took the false positives from 8 to 5, and the 3 that remain are correct — `testConnection`,
+`optimize` and `analyze` produce a result rather than changing a list.
+
+## 22. A capped list that cannot say it was capped — **12 found, 1 fixed, the rest recorded**
+
+An endpoint that returns a bare JSON array capped at `limit` gives the caller no way to
+tell a full page from the complete set. The convention for fixing it already existed —
+`X-Result-Truncated` from a `limit + 1` probe, added to the three ERP list endpoints — so
+the sweep was really asking where else it belonged.
+
+**Twelve bare-array endpoints cap without a signal.** On most that is ambiguity.
+`/api/v1/rul` is different, and it is the one that got fixed.
+
+Remaining useful life is computed **per asset in Python** by `rul_service.assess_asset`,
+so risk is not a column and cannot be ordered on in SQL. The page is therefore ordered by
+asset **NAME**, which means the cap keeps the alphabetically-FIRST `limit` assets. An asset
+three days from failure whose name begins with W is absent from the risk view entirely —
+and Predictive Maintenance's tiles counted "Assets Assessed" and "High / Critical Risk"
+over the survivors as though the fleet had been fully assessed. The one page whose purpose
+is finding machines about to fail was quietly excluding some of them.
+
+Fixed on both sides: the endpoint reports the header, `rulApi.listAssessments` returns
+`ListResult` so the flag cannot be dropped on the way in, and the page carries a notice
+naming what is missing and why. `ListResult` and the `mark_truncated` helper moved to
+shared modules when this became their second consumer — the ERP copy now delegates rather
+than keeping a second version of a convention that would drift the moment either was
+edited.
+
+**The other eleven are recorded, not fixed, and the reason is class 19.** Adding a header
+no client reads would create exactly the defect that class exists to catch — the caveat
+sent and dropped. Each needs its consumer wired at the same time, which is per-endpoint
+work; four are in other lanes.
+
+**The detector's second category had to be thrown away.** It also flagged 26 endpoints as
+"an envelope with no total", which turned out to mean *no `response_model`* — the schema
+was empty, so it could see nothing either way. It listed `/api/v1/auth/users`, which had
+been given `total`, `skip`, `limit` and `hasMore` an hour earlier. Only the declared-type
+half of the result says anything, and the rest is *unknown* rather than clean.
+
+### What the log noise gave up: a function that had never once returned a row
+
+Running the new `/rul` tests printed `health_index_oee_unavailable` for every asset, with
+`'>=' not supported between instances of 'str' and 'datetime.datetime'`. Every column
+reference in `oee_calculator.get_historical_oee` was a **Python string literal**:
+
+```python
+func.avg("oee_metrics.availability")      # averages a string
+"oee_metrics.asset_id" == asset_id        # str == uuid -> False
+"oee_metrics.timestamp" >= start_time     # str >= datetime -> TypeError
+```
+
+The third raised before the statement was ever compiled. `health_index` calls it inside a
+broad `except` and logged a warning per asset per request; `/api/v1/oee/historical/{asset_id}`
+has no such handler and returned a **500**.
+
+It could not have worked in any case: **no migration creates an `oee_metrics` table**. Its
+writer passed the same string to `insert()` and swallowed the failure in its own broad
+`except` — and `oee_calculator` is one of the services `main.py` actually starts, so that
+error fired on every asset on every pass of the loop. A permanent error stream, for a write
+that could never land, into a table that does not exist.
+
+Both halves are now honest. The reader aggregates `packml_states` — real, populated, and
+already the basis of `/api/v1/dashboard/oee/trend` — which makes it **availability only**,
+declared per row, with `None` rather than `1.0` for the two factors it cannot measure.
+
+The writer was first rewritten as a no-op that explained itself, **and class 5's own guard
+rejected it**: a helper named `_store_*` must store. That was the right call, so it is
+deleted rather than renamed, and the explanation moved to the call site — where someone
+wondering "why isn't this persisted?" will actually look. OEE here is *derived* from data
+already persisted, so a rollup table would be a cache; building one needs a migration, a
+model, RLS scoping and a retention policy rather than a string. A test asserts no migration
+creates that table, so the day someone adds one it fails and asks for a real write.
+
+Satisfying: a guard written for an earlier class caught a defect introduced while fixing a
+later one, in the same run, without anyone looking for it.
+
+**Two broad excepts, one on each side, are what kept this alive.** Class 4 covered a
+handler returning success after a failure; this is the same shape applied to a service —
+and it survived longer precisely because it *did* log. A warning nobody reads is not a
+signal, it is a place for a defect to live.
+
+## 23. An audit write with no tenant bound — **4 of 8 writers, all silently lost**
+
+`audit_logs` is `ENABLE` + **FORCE** `ROW LEVEL SECURITY`. FORCE means the policy binds
+the table owner too, so an INSERT is rejected outright unless `app.current_org_id` is set
+on the connection — and `AsyncSessionLocal` never sets it.
+
+Four writers opened their own session, inserted, and caught the rejection in a broad
+`except` that logged and moved on: `record_audit`'s standalone path, and `_audit` in
+`export_processor`, `bulk_processor` and `feature_flags`. **Every export, every bulk job
+and every feature-flag change recorded nothing**, while the operation itself reported
+success.
+
+For a compliance surface that is the worst failure available: the action happened, the
+evidence that it happened did not, and the only trace is a log line nobody reads. Four of
+the eight writers were already correct, which is what makes the class worth a guard rather
+than a fix — the convention exists and is simply easy to omit.
+
+**Found in log noise, not by a sweep.** `export_audit_failed ... new row violates
+row-level security policy for table "audit_logs"` scrolled past three times during an
+unrelated real-DB run while the `/rul` tests were being written. The same run gave up
+`get_historical_oee`, which had never returned a row. Both had been failing continuously,
+on every request, for as long as they had existed; both were caught, logged, and forgotten.
+That is method rule 16, and it earned its place twice in one afternoon.
+
+**Why writes and not reads, again.** Under RLS a read with no GUC returns zero rows in
+silence; a write is rejected *loudly*. That should make writes the easy case — and it does
+not, because the loud error is caught two lines later and what reaches a human is
+identical to the quiet one. A `try/except` around a write is where the distinction that
+RLS gives you for free gets thrown away.
+
+**The detector needed the same correction as three before it.** Reading each writer's own
+body reported `report_scheduler._audit_enqueue` as an offender; it binds through
+`self._set_org`, one call away. Following one level of same-module helpers took the list
+from five to four, and the correction is pinned as a test — four false positives out of
+eight would have made the file worth ignoring.
+
+The static guard proves a `set_config` call is present. Only the real database proves the
+policy accepts what follows it, so three assertions write an actual row and count it
+through a superuser connection.
+
+**That was still only half the property, and the file said so before it tested it.**
+Counting through a superuser connection bypasses RLS entirely — it proves the INSERT is no
+longer *rejected*, not that the entry is *visible*. What the compliance desk depends on is
+the row coming back from `GET /api/v1/audit/logs`, read through the tenant-scoped session
+as their own organisation; a row that lands and is then filtered out on read is, from that
+desk, identical to one that was never written. Three further assertions read the trail
+back, including one confirming the other organisation cannot see it — binding the GUC made
+these rows writable and readable, and the audit trail is the one table where a
+cross-tenant read is itself the incident.
+
+Reverting the four services fails five of the ten, with the RLS rejections printed in the
+output.
+
+## 24. A handler that builds its own unbound session — **5 live**
+
+Class 10 swept handlers taking `Depends(get_db)` on an RLS-protected table. This is the
+same defect reached by a different route: a handler that takes no session dependency at
+all and opens `AsyncSessionLocal()` inline. It binds no `app.current_org_id`, so a read
+of `assets` — FORCE ROW LEVEL SECURITY — matches nothing.
+
+**The guard had already written down its own blind spot and nobody acted on it.** The
+note explaining why its `commands.py` count was wrong ends: *"A static guard keyed on one
+idiom under-counts a file that uses two."* The second idiom was named, the sentence was
+committed, and the sweep was never extended to it. Five more handlers were sitting in
+that gap the whole time.
+
+Verified against a real database, with an asset that plainly existed:
+
+| | | |
+|---|---|---|
+| `GET /api/v1/oee/current/{id}` | **404** | "Asset not found" |
+| `GET /api/v1/oee/historical/{id}` | **404** | "Asset not found" |
+| `GET /api/v1/oee/losses/{id}` | **404** | "Asset not found" |
+| `GET /api/v1/health-index` | 200 | `[]` |
+| `GET /api/v1/simulation/fleet-summary` | 200 | `{"asset_count": 0, …}` |
+
+Both halves of the RLS failure mode on one screen. Three endpoints that **404 on an asset
+you own**, and two that answer 200 with a confident, empty lie — and the quiet pair is
+worse, because "asset_count: 0" on a running plant reads as an idle factory rather than a
+broken query. Nobody files a bug against a number.
+
+**`health_index` and `simulation` are the sharpest version of the class.** Both filtered
+on `current_user.organization_id`, and both were right to. It changed nothing: RLS had
+already removed the rows before the filter ran. A reviewer reading those handlers sees a
+correct tenant check and no reason to look at the session — which is why this survives
+review, and why it needs a static guard rather than more care.
+
+The guard now sweeps both idioms. Setting the GUC by hand still counts as binding, since
+that is what the ingestion worker and the audit writers legitimately do. `kanban.py` is
+the one remaining offender and is **recorded, not fixed** — the kanban RLS defect is
+another lane's open ticket, and one root cause behind it also 500s `/kanban/board`,
+`/metrics` and `/workload`. The exemption carries its reason, and a second test fails if
+the file stops offending, so a paid debt cannot sit on the allowlist pretending to be
+owed.
+
+## 25. A request body field the endpoint does not declare — **called clean on 2026-08-02; wrong, and guarded on 2026-08-04**
+
+The third leg of the frontend/backend contract. Class 8 checks the path exists, class 9
+checks the query parameters are declared, and `test_frontend_calls_real_endpoints.py` says
+in its own docstring that it "deliberately does NOT check request bodies". Rule 17 says a
+limitation written into a comment is a finding waiting to be re-found, so it was swept.
+
+**The sweep reported clean and recorded the class as deliberately unguarded. It was not
+clean.** The correction is kept here in full, because how a wrong "clean" gets reached is
+more useful than the finding it missed.
+
+### What the original sweep concluded, and why each part was wrong
+
+**"15 request bodies; 7 statically resolvable."** There are **70** bodied writes. The
+resolver only read inline object literals, and 61% of the writes in this codebase pass a
+variable — a typed parameter, a named interface, a local object. The query-param sibling
+already traced all four of those shapes; borrowing that machinery takes the count to 31
+resolved, all 31 matched to a schema. A sweep that reads a seventh of its subject and
+reports "clean" is reporting on the seventh.
+
+**"The failure mode is loud — a body missing a required field is a 422 on the first
+call."** True, and it answers a different question. The class is not *missing* fields; it
+is fields the endpoint **does not declare**, which Pydantic drops in silence. And the
+defect actually present was neither: `POST /transportation/shipments/{id}/dispatch`
+declared **no body at all**, having named its two ids as bare parameters — which FastAPI
+reads as query parameters. The client sent a body. **422 on every call since the day it was
+written**, in a feature with a button on the Transportation page.
+
+**"After the detector was wrong twice."** It was wrong twice — `twinOptimizer`'s casing and
+`erpApi.createIntegration`'s nested `rate_limit`. The new detector hit **the same two**, in
+the same order, and needed the same two corrections. That is the part worth sitting with:
+the corrections were real, and the conclusion drawn *from* them — that the class was clean —
+was not. **Fixing a detector's false positives tells you nothing about whether it has found
+everything.** Both sweeps arrived at an empty result set for the same reason: a reader too
+narrow to see the case that mattered.
+
+### What the guard actually found
+
+Underneath the transport defect, a second one that would have outlived it: the client sent
+a **vehicle** id, and `Shipment.trailer_id` is a foreign key to `yard_trailers` — a shipment
+has no vehicle column. The dispatch modal offered a vehicle picker for a value the schema
+cannot hold; accepted silently by SQLite, refused by Postgres now that foreign keys are
+enforced — see *An insert order no test can see* in the table above.
+
+And a third, visible only once the first two were fixed: the call reached the HOS check and
+was refused with `Driver not compliant:` — nothing after the colon. `check_compliance`
+separates a violation from missing data; the dispatch path read only `violations`.
+
+### The `Partial<T>` argument still stands
+
+Eight bodies are `createZone(zone: Partial<GeofenceZoneExtended>)` and the like. `Partial`
+makes every field optional, so the type permits `{}` and a static comparison cannot say
+whether a required server field will be present. Reporting those would be true of every
+`Partial<T>` by construction. They are outside the guard's reach and its coverage numbers
+say so out loud — 31 of 70 resolved — rather than letting an empty result imply a full one.
+
+## 26. An endpoint the README documents but the app never served — **22 of 124**
+
+Class 8 asserts that a path the frontend calls is served. The README's API Reference is
+the **other client** — the one a new engineer or an integrator reads before writing any
+code — and nothing checked it at all.
+
+**22 of 124 documented rows were wrong.** Not stylistic drift; paths that 404 for anyone
+who follows them:
+
+* `/api/v1/commands/{command_id}/status` and `…/cancel` — the real routes put the verb
+  *before* the id: `/commands/status/{id}`, `/commands/cancel/{id}`.
+* `/api/v1/telemetry/latest/{id}` — really `/telemetry/{asset_id}/latest`.
+* `/api/v1/kanban/boards` and three siblings — **there is no boards surface**. One board
+  per organisation, at `/kanban/board`.
+* `/api/v1/registries/{id}/compliance-score` and `/risk-score` — two invented variants of
+  a single real `/score`.
+* five `/api/v1/correlations*` rows that actually live under `/registries/correlations`.
+* five logistics rows missing a path segment — and this is the interesting one.
+
+**The logistics rows document an intention and hid a defect.** `logistics_correlation`
+carries its own `/logistics` prefix *and* is mounted under `/api/v1/logistics`, so its
+routes really are at `/api/v1/logistics/logistics/…`. That doubling is recorded elsewhere
+in this document as deliberately unfixed — removing the inner prefix collides with
+`fleet_logistics`, which owns the single-prefix path. The README showed the *tidy* path,
+so the one artefact that would have told a reader about the collision instead concealed
+it, and every one of those rows was a 404 waiting to be found by hand.
+
+**Why this class is worth a guard rather than a proofread.** Documentation that cannot be
+executed rots silently, and the rot is invisible *because nobody runs a README*. The
+guard parameterises over every row, so a wrong path fails by name. Reverting the README
+fails exactly 22 assertions.
+
+Path-parameter NAMES are deliberately not compared — `{id}` in the docs and `{asset_id}`
+in the code are the same endpoint, and comparing them literally would fail on nearly every
+row and teach the reader to ignore the file.
+
+## 27. A source file the docs point at that is not in the repo — **1 fiction, 5 omissions**
+
+The companion to class 26. That one checks the API Reference; this checks every
+source filename the prose names. A reader who goes looking for a named file and cannot
+find it has no way to tell whether it moved, was renamed, or never existed.
+
+**The ERP project-structure listing named sap_correlation_patterns.py** between its
+Oracle and Dynamics siblings, both of which exist. It never has. SAP correlation runs
+through the generic `app/services/erp_correlation_patterns.py`, and **the symmetry of the
+list is what hid it** — three vendors, three bullets, one of them fiction. Nothing about
+the shape of the document invited a check.
+
+The same pass found the quieter half: five real files the inventory omitted
+(`intuit_connector.py`, `intuit_qbo.py`, `netsuite_auth.py`, `oauth2.py`, `sap_batch.py`),
+including the eighth ERP connector the README describes at length elsewhere. An inventory
+is only useful if it is complete in **both** directions.
+
+**`docs/**` was swept by hand and is clean**, and is deliberately left outside the guard.
+Its 50 files use three idioms a static check cannot distinguish from a broken reference:
+*"Create `configs/lora_config.json`:"* is an instruction, not a claim; *"there is no
+network-policies.yaml"* is a deliberate absence note — the same shape as the SAP one
+above, arrived at independently; and unchecked checklist items name files that are not
+meant to exist yet. Automating it would report eleven false positives against correct
+prose, which is the fastest way to make a check worth ignoring.
+
+**Resolution is deliberately loose.** Exact path first, then a suffix match against
+`git ls-files`, because the docs legitimately write `sap_connector.py` for a file six
+directories down. Only existence is asserted, never location — tightening that would fail
+on nearly every prose mention and teach the reader to skip the file.
+
+### The first version of this guard had a hole with a comment attached
+
+The fictional name was put on the exemption list, alongside the genuinely
+deliberate absences (the README's "superseded paths" table compares another branch, so
+its left column is *supposed* to be missing here). The mutation run then **passed**: the
+name was excused by the exemption, so re-adding it as a bullet in the ERP listing was
+invisible — the exemption excused the exact fiction it had been written to record.
+
+Fixed by removing the exemption and spelling the name **without backticks** in the
+sentence noting its absence, so the citation pattern never sees it. Now re-adding the
+bullet fails two assertions. An exemption keyed on a bare name is not a record; it is a
+hole that reads like one.
+
+Both directions of the exemption list are also pinned: an entry that starts resolving is
+a stale claim hiding a real file, and an entry no longer cited anywhere is dead weight
+outliving whatever it protected.
+
+**It has now caught this document three times.** Writing *about* an absent file is
+itself the hazard: every sentence recording that something does not exist is, formatted as
+a citation, indistinguishable from a claim that it does. The convention that fell out of
+it — name an absent file in plain text, never in backticks — is the whole reason the
+`docs/**` idioms above cannot be automated, and the reason this section spells two
+filenames without them.
+
+**And it failed its own first full run, correctly.** Resolution went through
+`git ls-files`, so the guard could not see a file added in the same commit as the sentence
+describing it — it called the documentation broken while the documentation was right. A
+check that cannot see uncommitted work punishes exactly the change it exists to encourage.
+It now falls back to the working tree, and that case is pinned by name.
+
+## 28. A frontend catch that swallows a failure — **clean**
+
+Class 4 is a backend handler returning success after a failure. This is its frontend
+form: a `catch` that neither tells the user, retries, nor rethrows, so a failed request
+renders as an empty list or an unchanged screen — and an empty list is a claim.
+
+**Swept:** every `catch` block in `src`. **10 found that neither report nor rethrow, and
+all 10 are correct.** Three are `formatters.ts` returning `'Invalid date'`, which *is* the
+report. Two are auth paths where the recovery is the point — a failed logout still logs
+out locally, a failed refresh clears the session and redirects to `/login`. One defaults
+the theme to dark when the stored preference will not parse. One keeps a default export
+message when the error body is a Blob that will not decode, and the outer handler shows it.
+`Login.tsx` deliberately swallows because the store holds the error, which
+`Login.test.tsx` now pins.
+
+**One false positive, and it is the same shape as every other detector correction here:**
+`ERPIntegrations.tsx` reports through `setTestResult`, which was missing from the list of
+names that count as reporting. A reporting sweep that does not know all the ways this
+codebase reports will accuse correct code, and four false positives out of ten would have
+made the output worth skipping.
+
+**Not guarded.** The remaining risk is not a silent `catch` — it is a handler that reports
+correctly into a state the page then renders as ordinary emptiness, and distinguishing
+those two statically means knowing what each screen does with its error state. That is
+per-page work, and it is what the page tests added this week actually assert: `AuditLogs`
+must not render a fetch failure as an empty trail, and `ErrorTriageDetail` must not render
+a redaction as a missing traceback.
+
+## 29. A verdict computed from emptiness — **14 live: 13 in the UI, 1 in the API**
+
+Class 28 came back clean: no frontend `catch` swallows a failure. This is where the
+failures actually go instead. React Query does not need a `catch` to lose one — on error
+`data` is simply `undefined`, so `data?.items ?? []` renders an empty list and the
+component never mentions that anything went wrong.
+
+The consequence is not a missing error message. It is a **claim about the world**:
+
+* **`YardManagement`** — a failed trailer query rendered *"No trailers found"*. A yard
+  manager reads that as an operational fact and dispatches on it.
+* **`TelemetryHistoryChart`** — a failed history query rendered *"No history for this
+  metric"*, which an engineer diagnosing a machine reads as *"this sensor produced
+  nothing in that window"*, concluding something about the equipment from a failure of
+  the request.
+
+Both now say a failure is a failure, and both offer a retry rather than a dead end. The
+empty states stay, because "the yard is empty" and "the sensor is quiet" are real and
+useful answers — they simply are not the same answer.
+
+**The count grew from 2 to 13 as the detector was sharpened**, and the worst of them was
+found last:
+
+| | |
+|---|---|
+| `TransportationManagement` | **"No HOS violations detected"**, under a green tick |
+| `TacticalEngine` | "No safety thresholds reported by the engine." |
+| `MLOpsPipeline` | "No model deployed" |
+| `AdminPages` | "No edge agents have reported yet. Agents appear here once they enroll…" |
+| `Historian` | "No assets" in the picker; "No data points in this window." |
+| `ERPIntegrations` | "No syncs recorded yet."; "No mappings configured." |
+| `OEE` | a failed fleet load rendered **nothing at all** — no rows, no message |
+| `YardManagement` | "No trailers found"; "No appointments found" |
+| `TelemetryHistoryChart` | "No history for this metric" |
+
+**The HOS one is the sharpest defect in this document.** On a failed drivers query
+`drivers` is `[]`, so `drivers.filter(d => d.hosDriveHoursRemaining === 0).length === 0`
+is true and the page rendered a **green checkmark** reading *"No HOS violations
+detected"*. Hours of Service is DOT-regulated. A compliance officer reads a green tick as
+clearance, and it was produced by a request that never returned. Unknown is not clear.
+
+`TacticalEngine` is the same shape with a twist: it already showed a failure banner at the
+top of the page, and the thresholds panel *underneath it* still asserted that the engine
+reported no safety limits. Two contradictory statements on one screen, and the more
+specific one was the false one.
+
+`OEE` failed in the opposite direction and is worth separating: with `fleetOEE` undefined,
+`fleetOEE?.assets?.length === 0` is **false**, so even the empty state did not render. The
+page showed a table with no rows and no explanation. Silently empty is worse than wrongly
+labelled — there is nothing for the reader to disbelieve.
+
+**And the server had the same defect on the same data.**
+`get_carrier_compliance_summary` returns
+`overall_compliant = ctpat_certified and insurance_on_file and hos_violations == 0`,
+counting violations by looping over the carrier's drivers. **`hos_violations == 0` is
+trivially true when there are no drivers**, so a carrier whose driver records had never
+been entered — a new carrier, a failed sync, a partial migration — was cleared on Hours of
+Service. One is an empty table and the other is an empty response; both produced
+clearance from nothing having been inspected.
+
+**A third mechanism, and a fourth surface, found by sweeping the coercion itself.** A
+detector for "a threshold check made on a null-coerced value" returned ten sites. Two were
+already fixed; the rest split into two more live defects and a handful of correct uses.
+
+`/logistics/logistics/compliance/summary` reached the same wrong answer through **SQL
+three-valued logic**. Its violation query filters on
+`hos_drive_hours_today > 11 OR ... OR medical_cert_expires < now()`, and **a NULL never
+satisfies a comparison** — it evaluates to UNKNOWN, which `WHERE` discards exactly as it
+discards FALSE. A driver who has never reported, or has no certificate on file, is
+therefore not counted as a violation and not counted as anything else, so `hos_count == 0`
+and the endpoint returned `"COMPLIANT"`. It now reports `INCOMPLETE_DATA` as a third
+status, because "your fleet has a problem" and "we could not check your fleet" send an
+operator to different places.
+
+`/logistics/logistics/delivery-efficiency` failed the **opposite** way. With no shipments
+in the period `on_time_percent` is 0, which is below every threshold, so `efficiency_grade`
+came out **"D"** — a failing mark awarded for a week with nothing to deliver. Pessimism
+from absence is no more true than optimism from it. The grade is now `None` with a
+`graded` flag.
+
+`yard_management` had the mild version: `float(detention_charge or 0)` turned "not yet
+calculated" into "nothing owed", so `is_detention` read as a settled answer on billable
+time nobody had worked out.
+
+**A fifth mechanism: the average of an empty set.** `sum(xs) / len(xs) if xs else 0`
+reports a number for a fleet nobody measured. `/dashboard/fleet/oee` returned **0
+availability for a fleet with no assets** — which renders as 0%, a fleet-wide outage,
+produced by having nothing to average. `/logistics/…/compliance/summary` did the same with
+`(ctpat_count or 0) / (total or 1)`: the invented denominator exists so the expression
+cannot raise, and the 0% it yields is indistinguishable from an organisation whose
+carriers are all uncertified. Both now return `None`, with `assets_measured` alongside.
+
+**And fixing the API alone would have been invisible**, which is the part worth keeping.
+Both consumers wrote `(value || 0) * 100`, so an honest `null` was coerced straight back
+into `0.0%` one layer up — the defect recreated by the code reading the fix. The OEE page
+now renders `—`, and the analytics chart plots no point rather than a bar at zero. This is
+class 19 again from the other side: it is not enough for the server to stop lying if the
+client restores the lie.
+
+**So the class has now appeared through five distinct mechanisms** — Python `or 0`
+coercion, iteration over an empty collection, SQL `NULL` in a comparison, and a threshold
+applied to a percentage of nothing. That is what makes it worth a name rather than a
+handful of fixes.
+
+**Sweeping the class properly found its root, one level further down.** A detector for
+"a positive verdict that hinges on a count being zero" returned exactly two hits: the
+carrier roll-up above, and `HOSComplianceMonitor.check_compliance`, which produces the
+per-driver verdict the roll-up counts.
+
+That one is worse in two ways. Every HOS column is read as `float(x or 0)`, so a driver
+who has **never reported** becomes a driver who has driven zero hours — no violations,
+therefore compliant. And the medical-certificate check had both branches guarded on the
+field being SET:
+
+```python
+if driver.medical_cert_expires and driver.medical_cert_expires < now:      # expired
+elif driver.medical_cert_expires and driver.medical_cert_expires < now+30d: # expiring
+```
+
+so a driver with **no certificate on file at all** produced neither a violation nor a
+warning and came back clean. A current medical certificate is a condition of driving; its
+absence is a finding, not the lack of one.
+
+**Fixing it required not over-correcting.** Marking unassessed drivers as violations would
+trade a false clearance for a false accusation, and an operator chasing a phantom HOS
+breach stops trusting the number in both directions. Missing inputs are now collected
+separately (`missing_data`, `assessable`), the carrier roll-up counts
+`unassessable_drivers` apart from `hos_violations`, and `compliant_drivers` is
+`total − violations − unassessable` rather than `total − violations`, which had been
+putting the unjudged on the compliant side of the ledger.
+
+The verdict now requires that something was assessed, and reports `drivers_assessed` so
+the reason is legible rather than inferred from a count. The C-TPAT and insurance checks
+are deliberately untouched: they read fields on the carrier itself, which either hold a
+valid date or do not. **Emptiness is only ambiguous where a COUNT stands in for an
+inspection** — that is the line worth remembering, and it is what makes this a class
+rather than two bugs.
+
+**How it was found, which is the part worth keeping.** Not by this sweep. It came out of
+writing a page test whose first version asserted only that a known trailer was *absent* —
+true in the empty state AND the error state, so it passed against the defect while
+claiming to guard it. Asserting each branch by its own text is what made the page's
+silence visible; the sweep was written afterwards, and found the second one immediately.
+
+That is the third time this week a weak assertion has hidden a live defect from a test
+written specifically to catch it. The pattern is always the same shape: asserting that
+something is *not there* is satisfied by every reason it might not be there.
+
+**The detector took five corrections, each one found by the false positive it produced.**
+v1 asked whether the FILE mentions `isError` — `TransportationManagement` has seven
+queries, three of them handled, so it looked safe. v2 counted queries against handlers,
+which found four more but could not settle `AdminPages`, a file holding five separate page
+components. v3 asks the real question, per empty state: does a failure branch precede this
+one in its own chain?
+
+Then the idioms. Keying on the ternary alone accused `AlarmRules` (`{isError && …}`),
+`AssetDetail` (`if (isError) return`), and `Dashboard` (`isError={q.isError}` passed to a
+widget). And an early return guards everything after it however far away, which a
+proximity window cannot express — `OEE` returns at the top and renders its empty states
+hundreds of lines below.
+
+Comments are stripped, for the third time in this document: a comment *explaining this
+very defect* quoted the empty-state text, so the quoted-string pattern reported a phantom
+second occurrence, and that same comment sat between the failure branch and the real JSX
+node and pushed them apart. The window is 2500 rather than 900 because what separates a
+real failure branch from the empty state is that branch's own markup — an alert, an icon,
+a retry button — which on two pages ran past 900 characters. Erring small produces false
+positives on exactly the pages that took the trouble to explain themselves.
+
+**Scope.** A component qualifies when it queries AND renders a literal "No …" empty
+state. Both halves are load-bearing: the query is what can fail, and the empty string is
+where the failure lands. A presentational list handed its rows as props has nothing to
+distinguish and is correctly ignored.
+
+### A sixth mechanism, on the other side of a boundary the sweep never crossed (FS-461)
+
+Every instance above is in the backend or the frontend. **The same class was sitting in the
+edge agent, in the same metric**, and no sweep had ever run there.
+
+`LocalOEECalculator.calculate_quality` returned `0.0` when no parts had been counted, and
+`calculate_performance` returned `0.0` when `production_count` was zero — the numerator
+`parts × cycle_time` came out at zero and divided into a real operating time. OEE is the
+product of three factors, so either one pinned it to zero.
+
+This was not a rare edge case. Part counts arrive through **optional** telemetry
+(`payload.get("total_parts", payload.get("parts_total"))`), and a PackML feed that reports
+state without counts — which is most of them — never populates it. So every asset on such a
+site published `edge_oee = 0` from agent start, forever. Reproduced before the fix: a machine
+that ran a solid hour in Execute reported `availability 12.5, performance 0.0, quality 0.0,
+oee 0.0`.
+
+The two undefined factors now return `None`, OEE is `None` when either is, and `set_oee`
+does not publish a gauge for a value it does not have — **a gauge that stops advancing is
+what absence looks like in Prometheus**, and `absent()` and staleness are written for it,
+both of which a hardcoded zero defeats.
+
+Availability stays a number on purpose. Its denominator is the window itself, which always
+exists, so a machine that sat idle really was available 0% of the time. The line from the
+HOS work holds here too: **emptiness is only ambiguous where a count stands in for a
+measurement.**
+
+The lesson is about coverage, not arithmetic. The backend's version of this exact defect was
+found and fixed months ago, in a file called `test_oee_failure_is_not_zero.py`. The edge
+agent computes the same metric, and the class had never been carried across — a defect class
+does not stop at a repository boundary just because the sweep did.
+

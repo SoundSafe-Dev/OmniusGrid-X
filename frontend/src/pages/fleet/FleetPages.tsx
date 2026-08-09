@@ -5,11 +5,19 @@ import { Card, Badge, SkeletonCard } from '../../components';
 import { Tooltip, TooltipTrigger, TooltipContent } from '../../components/ui';
 import { GeoTabIntegration } from '../../components/fleet/GeoTabIntegration';
 import { workcellsApi, assetsApi, organizationsApi } from '../../api';
+import { AgentOperationsPanel } from './AgentOperationsPanel';
 
 export const FleetOverview: FC = () => {
   const { data: workcells, isLoading: workcellsLoading, isError: workcellsError } = useQuery({ queryKey: ['fleet-workcells'], queryFn: () => workcellsApi.list() });
   const { data: assetsPage, isLoading: assetsLoading, isError: assetsError } = useQuery({ queryKey: ['fleet-assets'], queryFn: () => assetsApi.list({ limit: 500 }) });
-  const { data: orgs } = useQuery({ queryKey: ['fleet-orgs'], queryFn: () => organizationsApi.list() });
+  // THE THIRD QUERY IS THE ONE THAT MATTERED. It was destructured for `data` alone,
+  // and its result gates the live vehicle map below — `{orgId && <GeoTabIntegration …>}`.
+  // On a failed request `orgs` is undefined, `orgId` is undefined, and the map simply
+  // is not rendered: no error, no gap, no explanation. The page looks complete without
+  // the telematics it exists to show, which is the same failure-as-emptiness the other
+  // two queries here already guard against — it just took a different form, absence of
+  // a whole widget rather than an empty list.
+  const { data: orgs, isLoading: orgsLoading, isError: orgsError } = useQuery({ queryKey: ['fleet-orgs'], queryFn: () => organizationsApi.list() });
   const orgId = orgs?.[0]?.id;
 
   const assets = assetsPage?.items ?? [];
@@ -45,6 +53,8 @@ export const FleetOverview: FC = () => {
 
   return (
     <div className="space-y-6">
+      <AgentOperationsPanel />
+
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         {tiles.map(({ icon: Icon, value, label, tip }) => (
           <Tooltip key={label}>
@@ -88,8 +98,22 @@ export const FleetOverview: FC = () => {
       </Card>
 
       {/* Live vehicle tracking (FS-62): GeoTab telematics map — vehicles,
-          geofences, and websocket position updates. Renders its own Card. */}
-      {orgId && <GeoTabIntegration organizationId={orgId} height={480} />}
+          geofences, and websocket position updates. Renders its own Card.
+
+          Three outcomes, not two. A missing map has to say why it is missing: an
+          operator who cannot see a vehicle needs to know whether that is because the
+          vehicle is not there or because nothing was asked. */}
+      {orgId ? (
+        <GeoTabIntegration organizationId={orgId} height={480} />
+      ) : orgsLoading ? null : (
+        <Card title="Live Vehicle Tracking">
+          <p role="alert" className="text-status-alarm text-sm">
+            {orgsError
+              ? 'Could not load your organization, so vehicle tracking is not shown. This is a failed request — not an empty fleet.'
+              : 'No organization is associated with this account, so vehicle tracking cannot be shown.'}
+          </p>
+        </Card>
+      )}
     </div>
   );
 };

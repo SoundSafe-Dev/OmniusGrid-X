@@ -70,3 +70,53 @@ def test_map_document_domains_pdf_pages():
     mapping = map_document_domains(structure)
     assert mapping.section_domains[1] == DomainType.SAF
     assert mapping.section_domains[2] == DomainType.PROD
+
+
+# ------------------------------------------------------------------------------------
+# FS-415. `test_map_section_to_domain_table_content` had NEVER PASSED — it was written on
+# 2026-06-08 in the same commit as the mapper, expecting an `asset_id` / `failed` table to
+# resolve to maintenance, against a keyword map that contained no asset or failure word at
+# all. It sat red for two months, read as another lane's problem.
+#
+# The test's expectation was right and the vocabulary was incomplete, and the consequence
+# was not a red test: `document_scenario_builder` does `if domain is None: continue`, so a
+# table keyed on asset_id produced no correlation scenario while the page still reported
+# as processed. Silent omission, which is the shape this repository keeps finding.
+#
+# Widening a keyword list can misroute, so these pin the property that makes it safe.
+
+def test_a_stronger_signal_still_wins_over_the_new_asset_words():
+    """Scoring takes the HIGHEST-scoring domain, not the first hit.
+
+    Without this, adding `asset_id` to maintenance would quietly pull quality, production
+    and energy sheets into MNT — trading a silent omission for a silent misroute, which is
+    worse because it produces a confident wrong answer instead of nothing.
+    """
+    section = {
+        "heading": "General",
+        "paragraphs": [],
+        "tables": [[["asset_id", "defect", "inspection", "scrap"],
+                    ["ASSET-001", "3", "failed", "2"]]],
+    }
+    assert map_section_to_domain(section) == DomainType.QUA
+
+
+def test_an_asset_keyed_table_no_longer_resolves_to_nothing():
+    """The case the builder was skipping."""
+    section = {
+        "heading": "General",
+        "paragraphs": [],
+        "tables": [[["asset_id", "status"], ["ASSET-001", "failed"]]],
+    }
+    assert map_section_to_domain(section) is not None
+
+
+def test_an_unrelated_table_still_resolves_to_nothing():
+    """The widening must not turn the mapper into one that always answers. A table with no
+    operational vocabulary has no domain, and saying so is the correct answer."""
+    section = {
+        "heading": "General",
+        "paragraphs": [],
+        "tables": [[["colour", "notes"], ["blue", "see attached"]]],
+    }
+    assert map_section_to_domain(section) is None

@@ -30,6 +30,22 @@ export interface OEEMetrics {
   oee: number;
   stateDurations: Record<string, number>;
   totalPlannedTimeSeconds: number;
+  /** Whether each factor was MEASURED, or stood in for.
+   *
+   * `quality` reads 1.0 when an asset has no part counters and `performance` reads 1.0
+   * without an ideal cycle time. 1.0 is the neutral multiplier for OEE, which is the
+   * right arithmetic and the wrong thing to print: "100%" is a measurement, and this
+   * is the absence of one. The server has sent these flags since FS-234 — its own
+   * comment says a consumer "should render '—' rather than '100%' when this is false"
+   * — and nothing read them, so every unmeasured factor showed as perfect.
+   *
+   * OEE inherits it: with either factor unmeasured the product is an upper bound, not
+   * a result.
+   */
+  qualityMeasured?: boolean;
+  performanceMeasured?: boolean;
+  totalParts?: number;
+  goodParts?: number;
 }
 
 /** Fleet-wide AVAILABILITY, not full OEE.
@@ -43,7 +59,12 @@ export interface OEEMetrics {
 export interface FleetOEE {
   timeRange: string;
   assetCount: number;
-  fleetAverageAvailability: number;
+  /** `null` when the fleet has no assets to average. The API stopped reporting 0 for
+   *  an unmeasured fleet — 0% availability reads as a fleet-wide outage — so callers
+   *  must render the absence rather than coercing it back into a number. */
+  fleetAverageAvailability: number | null;
+  /** How many assets the average rests on. */
+  assetsMeasured?: number;
   availabilityOnly: boolean;
   assets: Array<{
     assetId: string;

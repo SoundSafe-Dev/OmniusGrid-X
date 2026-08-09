@@ -66,6 +66,7 @@ CREDENTIALLESS_PREFIXES = (
     "/api/v1/fleet/releases/",       # public_router signed bundle download
     "/api/v1/models/",               # public_router signed model download
     "/api/v1/compliance/reports/",   # public_router signed download
+    "/api/v1/auth/invitations/",     # one-time invitation token in body
 )
 
 # Explicit contract: these mounted routes must retain the canonical admin
@@ -80,7 +81,19 @@ ADMIN_ROUTE_INVENTORY = {
     ("DELETE", "/api/v1/exports/schedules/{schedule_id}"),
     ("DELETE", "/api/v1/exports/templates/{template_id}"),
     ("DELETE", "/api/v1/feature-flags/{key}"),
+    # Admin user management (FS-221). Every route on the router carries
+    # require_admin; these entries are the deliberate review of that.
+    ("DELETE", "/api/v1/users/{user_id}"),
+    ("DELETE", "/api/v1/fleet/cohorts/{cohort_id}"),
+    ("DELETE", "/api/v1/fleet/groups/{group_id}"),
+    ("DELETE", "/api/v1/fleet/groups/{group_id}/assets/{asset_id}"),
+    ("DELETE", "/api/v1/fleet/maintenance-windows/{window_id}"),
+    ("DELETE", "/api/v1/fleet/sites/{site_id}"),
+    ("DELETE", "/api/v1/fleet/tags/{tag_id}"),
+    ("DELETE", "/api/v1/fleet/tags/{tag_id}/assets/{asset_id}"),
     ("DELETE", "/api/v1/gdpr/admin/users/{user_id}/data-delete"),
+    ("DELETE", "/api/v1/auth/users/{user_id}"),
+    ("DELETE", "/api/v1/auth/users/invitations/{invitation_id}"),
     ("DELETE", "/api/v1/kanban/rules/{rule_id}"),
     ("DELETE", "/api/v1/registries/correlations/{correlation_id}"),
     ("DELETE", "/api/v1/registries/items/{item_id}"),
@@ -132,13 +145,27 @@ ADMIN_ROUTE_INVENTORY = {
     ("GET", "/api/v1/exports/templates/{template_id}"),
     ("GET", "/api/v1/feature-flags/"),
     ("GET", "/api/v1/feature-flags/{key}"),
+    ("GET", "/api/v1/users/"),
+    ("GET", "/api/v1/users/{user_id}"),
     ("GET", "/api/v1/gdpr/admin/users/{user_id}/data-export"),
+    ("GET", "/api/v1/auth/users"),
+    ("GET", "/api/v1/auth/users/{user_id}"),
+    ("GET", "/api/v1/auth/users/invitations"),
     ("GET", "/api/v1/registries/{registry_id}/score"),
     ("PATCH", "/api/v1/admin/errors/{fingerprint}"),
+    ("PATCH", "/api/v1/auth/users/{user_id}"),
+    ("PATCH", "/api/v1/fleet/cohorts/{cohort_id}"),
+    ("PATCH", "/api/v1/fleet/groups/{group_id}"),
+    ("PATCH", "/api/v1/fleet/maintenance-windows/{window_id}"),
+    ("PATCH", "/api/v1/fleet/sites/{site_id}"),
+    ("PATCH", "/api/v1/fleet/tags/{tag_id}"),
+    ("PATCH", "/api/v1/fleet/workcells/{workcell_id}/site"),
     ("POST", "/admin/assets/{asset_id}/maintenance"),
-    ("POST", "/admin/collectors/{collector_id}/restart"),
     ("POST", "/admin/database/vacuum"),
     ("POST", "/api/v1/api-keys/generate"),
+    ("POST", "/api/v1/auth/users/{user_id}/reactivate"),
+    ("POST", "/api/v1/auth/users/invitations"),
+    ("POST", "/api/v1/auth/users/invitations/{invitation_id}/resend"),
     ("POST", "/api/v1/assets/"),
     ("POST", "/api/v1/bulk/assets/import"),
     ("POST", "/api/v1/bulk/jobs/{job_id}/cancel"),
@@ -160,14 +187,25 @@ ADMIN_ROUTE_INVENTORY = {
     ("POST", "/api/v1/exports/schedules"),
     ("POST", "/api/v1/exports/templates"),
     ("POST", "/api/v1/feature-flags/"),
+    ("PATCH", "/api/v1/users/{user_id}"),
+    ("POST", "/api/v1/users/"),
     ("POST", "/api/v1/fleet/model-releases"),
+    ("POST", "/api/v1/fleet/cohorts"),
+    ("POST", "/api/v1/fleet/groups"),
+    ("POST", "/api/v1/fleet/maintenance-windows"),
+    ("POST", "/api/v1/fleet/maintenance-windows/preview"),
     ("POST", "/api/v1/fleet/releases"),
+    ("POST", "/api/v1/fleet/releases/agent"),
     ("POST", "/api/v1/fleet/releases/{release_id}/publish"),
     ("POST", "/api/v1/fleet/releases/{release_id}/yank"),
     ("POST", "/api/v1/fleet/rollouts"),
     ("POST", "/api/v1/fleet/rollouts/{rollout_id}/cancel"),
     ("POST", "/api/v1/fleet/rollouts/{rollout_id}/pause"),
     ("POST", "/api/v1/fleet/rollouts/{rollout_id}/resume"),
+    ("POST", "/api/v1/fleet/sites"),
+    ("POST", "/api/v1/fleet/tags"),
+    ("POST", "/api/v1/fleet/tags/bulk-assignments"),
+    ("POST", "/api/v1/fleet/target-previews"),
     ("POST", "/api/v1/gdpr/processing-records"),
     ("POST", "/api/v1/kanban/rules"),
     ("POST", "/api/v1/kanban/rules/{rule_id}/test"),
@@ -186,6 +224,8 @@ ADMIN_ROUTE_INVENTORY = {
     ("PUT", "/api/v1/exports/schedules/{schedule_id}"),
     ("PUT", "/api/v1/exports/templates/{template_id}"),
     ("PUT", "/api/v1/feature-flags/{key}"),
+    ("PUT", "/api/v1/fleet/groups/{group_id}/assets/{asset_id}"),
+    ("PUT", "/api/v1/fleet/tags/{tag_id}/assets/{asset_id}"),
     ("PUT", "/api/v1/kanban/rules/{rule_id}"),
     ("PUT", "/api/v1/registries/correlations/{correlation_id}"),
     ("PUT", "/api/v1/registries/items/{item_id}"),
@@ -219,6 +259,8 @@ SELF_SERVICE_MUTATIONS = {
 }
 
 CREDENTIAL_MUTATIONS = {
+    ("POST", "/api/v1/auth/invitations/accept"),
+    ("POST", "/api/v1/auth/invitations/validate"),
     ("POST", "/api/v1/auth/login"),
     ("POST", "/api/v1/auth/refresh"),
     ("POST", "/api/v1/auth/register"),
@@ -267,6 +309,12 @@ AUTHENTICATED_OPERATIONAL_MUTATIONS = {
     ("POST", "/api/v1/rag/ingest"),
     ("POST", "/api/v1/rag/query"),
     ("DELETE", "/api/v1/rag/documents/{doc_id}"),
+    # Presigns a document the caller was already shown as a citation, so it is a
+    # POST only to keep the S3 key out of URLs and access logs — it mutates
+    # nothing. Any authenticated member of the org may open their own org's
+    # documents; the handler rejects a key outside the caller's `{org_id}/`
+    # prefix before it reaches the store.
+    ("POST", "/api/v1/rag/documents/link"),
     # model-monitoring (Harsh, MLOps drift) is authenticated. The admin
     # query-performance mutations + org-settings PUT moved to the
     # ADMIN_ROUTE_INVENTORY when their gate was consolidated onto the canonical
@@ -298,24 +346,12 @@ def client():
     app.dependency_overrides.pop(get_tenant_db, None)
 
 
-def _flatten(routes, prefix=""):
-    """Recursively expand router containers, carrying include prefixes.
-
-    fastapi >=0.130 keeps include_router() results as lazy _IncludedRouter
-    entries in app.routes (child Route.path is RELATIVE; the prefix lives on
-    the container's include_context) — without recursion + prefix carrying
-    the walk silently visits ~6 routes and passes vacuously.
-    """
-    for route in routes:
-        ctx = getattr(route, "include_context", None)
-        if ctx is not None:
-            child_prefix = prefix + (getattr(ctx, "prefix", "") or "")
-            yield from _flatten(ctx.included_router.routes, child_prefix)
-        elif getattr(route, "routes", None) is not None and not isinstance(route, Route):
-            # Mount containers carry their own path prefix; plain routers don't
-            yield from _flatten(route.routes, prefix + (getattr(route, "path", "") or ""))
-        else:
-            yield route, prefix
+# The traversal moved to tests/_route_tree.py when a second guard
+# (test_response_model_coverage_ratchet) needed it. Copying it would have given
+# the two walks freedom to regress independently — defect class 7, a test double
+# that reimplements what it stands in for — and the failure mode here is silent:
+# a walk that stops recursing sees 2 routes of 453 and passes.
+from tests._route_tree import flatten as _flatten  # noqa: E402
 
 
 def _http_routes():

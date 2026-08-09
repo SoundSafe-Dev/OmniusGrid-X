@@ -8,13 +8,14 @@ from types import SimpleNamespace
 from typing import Any, Dict, List, Optional
 from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Query
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
 
 from app.api.auth import get_current_active_user
-from app.core.pagination import PaginatedResponse, paginate
+from app.core.pagination import MAX_OFFSET, PaginatedResponse, paginate
 from app.db.database import get_db
+from app.middleware.tenant_isolation import get_tenant_db, get_tenant_org_id
 from app.db.models import Carrier, Driver, Shipment, Route, LoadPlan, FreightCharge
 from app.models.schemas import (
     CarrierCreate, CarrierUpdate, CarrierResponse,
@@ -50,8 +51,73 @@ async def _resolve_carrier_names(carrier_ids, db: AsyncSession) -> Dict[str, Any
     return {str(cid): name for cid, name in rows}
 
 
+#: A shipment in one of these has been handed over; the driver is no longer on it.
+_TERMINAL_SHIPMENT_STATUSES = ("delivered", "cancelled", "completed")
+
+
+async def _resolve_driver_assignments(driver_ids, db: AsyncSession) -> Dict[str, Dict[str, Any]]:
+    """Map {driver_id -> {vehicle_id, shipment_id}} in two queries.
+
+    `drivers` holds neither association: a vehicle names its driver
+    (`vehicles.current_driver_id`) and a shipment names its driver
+    (`shipments.driver_id`). So the driver's side of both is a reverse lookup, and a
+    column-by-column comparison of the table against the client's type reports
+    `currentVehicleId`/`currentShipmentId` as having no source — which is how the panel ended
+    up with two rows that never rendered.
+
+    Two queries for the whole page rather than two per driver; the N+1 is easy to write here
+    and this endpoint is the fleet list.
+    """
+    from app.db.logistics_models import Vehicle
+
+    ids = {str(d) for d in driver_ids if d}
+    if not ids:
+        return {}
+
+    out: Dict[str, Dict[str, Any]] = {}
+    vehicles = (await db.execute(
+        select(Vehicle.id, Vehicle.current_driver_id).where(
+            Vehicle.current_driver_id.in_(ids)
+        )
+    )).all()
+    for vehicle_id, driver_id in vehicles:
+        out.setdefault(str(driver_id), {})["vehicle_id"] = str(vehicle_id)
+
+    shipments = (await db.execute(
+        select(Shipment.id, Shipment.driver_id).where(
+            Shipment.driver_id.in_(ids),
+            # A delivered shipment is not what the driver is on NOW. Without this the panel
+            # would name whichever historical load the query happened to return first.
+            Shipment.status.notin_(_TERMINAL_SHIPMENT_STATUSES),
+        ).order_by(Shipment.scheduled_pickup.desc())
+    )).all()
+    for shipment_id, driver_id in shipments:
+        out.setdefault(str(driver_id), {}).setdefault("shipment_id", str(shipment_id))
+
+    return out
+
+
 # ---- Small response schemas for stable dict-shaped endpoints (FS-100). ----
 # Shapes are unchanged; these only document/type what the handlers already return.
+
+class ShipmentDispatchRequest(BaseModel):
+    """Who and what a shipment is dispatched with (FS-420).
+
+    A BODY, not two bare parameters. Declared as bare `driver_id: UUID, trailer_id: UUID`,
+    FastAPI reads them as QUERY parameters — and the client sent them in the body, so every
+    dispatch returned 422 and the feature had never worked once. Same shape as FS-379, where
+    Strategic approve/reject sent `operator_id` in a body the server declared as a query
+    parameter.
+
+    `trailer_id`, not `vehicle_id`: `Shipment.trailer_id` is a foreign key to
+    `yard_trailers`, and there is no vehicle column on a shipment. The picker on the
+    Transportation page offered vehicles, so even a well-formed call would have written a
+    vehicle id into a trailer FK — accepted silently by SQLite and refused by Postgres.
+    """
+
+    driver_id: UUID
+    trailer_id: UUID
+
 
 class ShipmentDispatchResponse(BaseModel):
     message: str
@@ -76,11 +142,22 @@ class VehicleCreatedResponse(BaseModel):
 @router.post("/carriers", response_model=CarrierResponse, dependencies=[Depends(require_operator_or_admin)])
 async def create_carrier(
     data: CarrierCreate,
-    db: AsyncSession = Depends(get_db)
+    organization_id: UUID = Depends(get_tenant_org_id),
+    db: AsyncSession = Depends(get_tenant_db)
 ):
     """Create new carrier profile"""
     carrier = await transportation_management_service.create_carrier(
-        organization_id=data.organization_id,
+    # FROM THE TOKEN, NEVER THE REQUEST. This read `data.organization_id`, a field the
+    # client supplies, so a caller could file the row under any organisation they named.
+    # Removed by hand six times already in this codebase — the yard list, dock doors, dock
+    # schedule, maintenance schedule, geofence zones and dashboard overview each carry a
+    # comment saying so — which is why it is now a guard
+    # (test_no_handler_takes_its_tenant_from_the_body.py) rather than a seventh comment.
+    #
+    # The `*Create` schema still declares the field, so an existing client may keep sending
+    # one; it is ignored. Making it optional there is a separate change with its own readers
+    # to check.
+        organization_id=organization_id,
         carrier_name=data.carrier_name,
         dot_number=data.dot_number,
         mc_number=data.mc_number,
@@ -97,9 +174,14 @@ async def create_carrier(
 
 @router.get("/carriers", response_model=List[CarrierResponse])
 async def get_carriers(
-    organization_id: UUID,
+    # organization_id comes from the TOKEN. As a required client-supplied query
+    # parameter it was the IDOR shape app/core/tenant.py forbids — and it did not
+    # even work: on get_db no tenant GUC is set, and these tables have FORCE row
+    # level security, so the policy filtered EVERY row. This endpoint returned an
+    # empty list to every caller, including for its own organization.
+    organization_id: UUID = Depends(get_tenant_org_id),
     is_active: Optional[bool] = Query(True),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_tenant_db)
 ):
     """Get carriers for organization"""
     query = select(Carrier).where(
@@ -115,7 +197,7 @@ async def get_carriers(
 @router.get("/carriers/{carrier_id}", response_model=CarrierResponse)
 async def get_carrier(
     carrier_id: UUID,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_tenant_db)
 ):
     """Get carrier details"""
     result = await db.execute(
@@ -131,7 +213,7 @@ async def get_carrier(
 async def update_carrier(
     carrier_id: UUID,
     data: CarrierUpdate,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_tenant_db)
 ):
     """Update carrier profile"""
     result = await db.execute(
@@ -150,10 +232,141 @@ async def update_carrier(
     return carrier
 
 
-@router.get("/carriers/{carrier_id}/compliance")
+class CertificationStatus(BaseModel):
+    """Shared by C-TPAT and insurance: held, until when, and whether that is still true
+    today. `is_valid` is the AND of the other two against `now` — a certification on file
+    with a past expiry is on file and not valid, and the tile needs to say which."""
+
+    certified: Optional[bool] = None
+    on_file: Optional[bool] = None
+    expires_at: Optional[str] = None
+    is_valid: Optional[bool] = None
+
+
+class CarrierDriverCompliance(BaseModel):
+    total_drivers: int
+    hos_violations: int
+    expired_medical_certs: int
+    #: Drivers whose HOS could not be judged for want of data. A missing figure is NOT a
+    #: violation — counting it as one trades a false clearance for a false accusation.
+    unassessable_drivers: int
+    #: Judged AND passed. Subtracting only violations counted the unassessable as
+    #: compliant, which is the same error one level up.
+    compliant_drivers: int
+
+
+class CarrierComplianceOut(BaseModel):
+    """`transportation_management_service.get_carrier_compliance_summary`.
+
+    `drivers_assessed` is the field that makes the rest readable: `hos_violations == 0`
+    is trivially true for a carrier with no driver records, so `overall_compliant` used
+    to clear a carrier nobody had entered data for. Hours of Service is DOT-regulated,
+    and the frontend rendered a green tick for it.
+    """
+
+    carrier_id: str
+    carrier_name: Optional[str] = None
+    ctpat_status: CertificationStatus
+    insurance_status: CertificationStatus
+    safety_rating: Optional[str] = None
+    #: NUMERIC column, cast to float by the service. `None` means unscored — 0 is the
+    #: BEST possible CSA score, and a falsy check on it reported a spotless carrier as
+    #: having no score on file.
+    csa_score: Optional[float] = None
+    driver_compliance: CarrierDriverCompliance
+    drivers_assessed: bool
+    overall_compliant: bool
+
+
+class DriverHoursSummary(BaseModel):
+    drive_hours_today: Optional[float] = None
+    on_duty_hours_today: Optional[float] = None
+    cycle_hours: Optional[float] = None
+    drive_hours_remaining: Optional[float] = None
+    on_duty_hours_remaining: Optional[float] = None
+    cycle_hours_remaining: Optional[float] = None
+
+
+class DriverHOSOut(BaseModel):
+    """`HOSComplianceMonitor.check_compliance`. Three lists, kept separate on purpose.
+
+    `missing_data` is not `violations`. A driver with no medical certificate on file has
+    not broken a rule; nobody knows whether they have. `is_compliant` requires both an
+    empty violations list AND an empty missing-data list, and `assessable` reports the
+    second on its own so a consumer can render "unknown" rather than "clear".
+    """
+
+    driver_id: str
+    is_compliant: bool
+    assessable: bool
+    missing_data: List[str] = Field(default_factory=list)
+    violations: List[str] = Field(default_factory=list)
+    warnings: List[str] = Field(default_factory=list)
+    hours_summary: DriverHoursSummary
+
+
+class LinehaulCharge(BaseModel):
+    charge_type: str
+    rate_basis: str
+    distance_miles: Optional[float] = None
+    weight_lbs: Optional[float] = None
+    mileage_charge: float
+    weight_charge: float
+    amount: float
+
+
+class FuelSurchargeAssumptions(BaseModel):
+    """What the surcharge amount rests on (FS-533).
+
+    The previous docstring on `FuelSurchargeCharge` said: "the honest fix is to label a
+    fallback surcharge as one." This is that label, and it is a declared part of the
+    response rather than a note in the source — a consumer reading `amount` can see, in
+    the same payload, whether it came from a contract or from a configured average.
+    """
+
+    basis: str
+    base_fuel_price_usd_per_gallon: float
+    current_fuel_price_usd_per_gallon: float
+    average_mpg: float
+    rate_per_mile: float
+    note: str
+
+
+class FuelSurchargeCharge(BaseModel):
+    """NOT A MEASUREMENT unless `assumptions.basis` says so.
+
+    Without a contract fuel-surcharge table the engine derives `amount` from configured
+    fleet assumptions — the current fuel price and MPG that `optimize_route` uses, plus a
+    base price the surcharge is measured above. Those were three hardcoded default
+    arguments that no caller ever supplied, numerically identical to the settings and
+    disconnected from them (FS-533).
+
+    `assumptions` now travels with the figure and names its `basis`, so "billed against our
+    contract" and "estimated from a fleet average" are distinguishable by a consumer rather
+    than only by reading the service."""
+
+    charge_type: str
+    rate_basis: str
+    distance_miles: Optional[float] = None
+    base_fuel_price: Optional[float] = None
+    current_fuel_price: Optional[float] = None
+    assumptions: Optional[FuelSurchargeAssumptions] = None
+    amount: float
+
+
+class ShipmentCostsOut(BaseModel):
+    shipment_id: str
+    linehaul: LinehaulCharge
+    fuel_surcharge: FuelSurchargeCharge
+    total_cost: float
+    distance_miles: Optional[float] = None
+    weight_lbs: Optional[float] = None
+
+
+@router.get("/carriers/{carrier_id}/compliance", response_model=CarrierComplianceOut)
 async def get_carrier_compliance(
     carrier_id: UUID,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_tenant_db)
 ):
     """Get carrier compliance summary"""
     try:
@@ -171,11 +384,22 @@ async def get_carrier_compliance(
 @router.post("/drivers", response_model=DriverResponse, dependencies=[Depends(require_operator_or_admin)])
 async def create_driver(
     data: DriverCreate,
-    db: AsyncSession = Depends(get_db)
+    organization_id: UUID = Depends(get_tenant_org_id),
+    db: AsyncSession = Depends(get_tenant_db)
 ):
     """Create new driver profile"""
     driver = await transportation_management_service.create_driver(
-        organization_id=data.organization_id,
+    # FROM THE TOKEN, NEVER THE REQUEST. This read `data.organization_id`, a field the
+    # client supplies, so a caller could file the row under any organisation they named.
+    # Removed by hand six times already in this codebase — the yard list, dock doors, dock
+    # schedule, maintenance schedule, geofence zones and dashboard overview each carry a
+    # comment saying so — which is why it is now a guard
+    # (test_no_handler_takes_its_tenant_from_the_body.py) rather than a seventh comment.
+    #
+    # The `*Create` schema still declares the field, so an existing client may keep sending
+    # one; it is ignored. Making it optional there is a separate change with its own readers
+    # to check.
+        organization_id=organization_id,
         first_name=data.first_name,
         last_name=data.last_name,
         carrier_id=data.carrier_id,
@@ -192,12 +416,42 @@ async def create_driver(
     return driver
 
 
+# 49 CFR 395, from `app.core.hos_limits` (FS-475). These used to be re-declared here, with
+# a comment explaining that importing them from the compliance service "would drag its
+# session dependencies into this module" — true, and the reason the copy survived review.
+#
+# The copy was the problem, not the import. This module computes hours REMAINING, which a
+# dispatcher reads before assigning a load; the compliance service decides VIOLATIONS,
+# which is read afterwards. Two copies meant those two answers could disagree about the
+# same driver while both looked authoritative. `hos_limits` has no imports at all, so the
+# original objection no longer applies to it.
+from app.core.hos_limits import MAX_DRIVE_HOURS_DAY, MAX_ON_DUTY_HOURS_DAY  # noqa: E402
+
+
+def _hours_remaining(stored, consumed, limit):
+    """Remaining HOS, preferring a stored figure and deriving it when there is none.
+
+    Returns None when neither is known — the caller must render that as "unknown", not as
+    a full tank and not as zero. Both readings are verdicts, and neither was earned.
+    """
+    if stored is not None:
+        return stored
+    if consumed is None:
+        return None
+    return round(max(0.0, limit - float(consumed)), 2)
+
+
 @router.get("/drivers", response_model=List[Dict[str, Any]])
 async def get_drivers(
-    organization_id: UUID,
+    # organization_id comes from the TOKEN. As a required client-supplied query
+    # parameter it was the IDOR shape app/core/tenant.py forbids — and it did not
+    # even work: on get_db no tenant GUC is set, and these tables have FORCE row
+    # level security, so the policy filtered EVERY row. This endpoint returned an
+    # empty list to every caller, including for its own organization.
+    organization_id: UUID = Depends(get_tenant_org_id),
     carrier_id: Optional[UUID] = None,
     is_active: Optional[bool] = Query(True),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_tenant_db)
 ):
     """Get drivers for organization (adds carrierName + MISSING UI columns)."""
     query = select(Driver).where(
@@ -215,15 +469,44 @@ async def get_drivers(
     carrier_names = await _resolve_carrier_names(
         {d.carrier_id for d in drivers if d.carrier_id}, db
     )
+    assignments = await _resolve_driver_assignments({str(d.id) for d in drivers}, db)
 
     items: List[Dict[str, Any]] = []
     for d in drivers:
         row = DriverResponse.model_validate(d).model_dump(mode="json", by_alias=True)
         row["carrierName"] = carrier_names.get(str(d.carrier_id))
+        # `currentVehicleId` and `currentShipmentId` are declared by the client and were
+        # produced by nothing, so the driver panel's "Current Vehicle" and "Current Shipment"
+        # rows never rendered. Neither is a column on `drivers` — the association is held from
+        # the other side (`vehicles.current_driver_id`, `shipments.driver_id`), which is why a
+        # column-by-column comparison of the table against the type reports them as absent
+        # rather than as the reverse lookups they are. Batched, not per-row.
+        assignment = assignments.get(str(d.id), {})
+        row["currentVehicleId"] = assignment.get("vehicle_id")
+        row["currentShipmentId"] = assignment.get("shipment_id")
         row["endorsements"] = d.endorsements or []
         row["licenseExpiry"] = _iso(d.license_expiry)
-        row["hosDriveHoursRemaining"] = d.hos_drive_hours_remaining
-        row["hosDutyHoursRemaining"] = d.hos_duty_hours_remaining
+        # DERIVED WHEN THE STORED COLUMN IS NULL, which it always is. Migration 042 added
+        # `hos_drive_hours_remaining` and `hos_duty_hours_remaining` with no default and
+        # no backfill, and NOTHING in this codebase has ever written to either — no ELD
+        # sync, no ingestion path, no computation. The model comment says what they were
+        # meant to be ("11 - hos_drive_hours_today") and nothing did the subtraction.
+        #
+        # The consequence was on the compliance tab, which counts a violation as
+        # `hosDriveHoursRemaining === 0`. `null === 0` is FALSE, so every fleet came back
+        # with zero violations and a green "No HOS violations detected" tick — on the
+        # SUCCESS path, with the data loaded, for DOT-regulated hours.
+        #
+        # `hos_drive_hours_today` IS populated and is what `check_compliance` already
+        # judges against, so remaining is computed from it. Left NULL when the consumed
+        # figure is missing too: that driver has genuinely not reported, and inventing
+        # "11 hours left" for them would be the same defect pointing the other way.
+        row["hosDriveHoursRemaining"] = _hours_remaining(
+            d.hos_drive_hours_remaining, d.hos_drive_hours_today, MAX_DRIVE_HOURS_DAY
+        )
+        row["hosDutyHoursRemaining"] = _hours_remaining(
+            d.hos_duty_hours_remaining, d.hos_on_duty_hours_today, MAX_ON_DUTY_HOURS_DAY
+        )
         items.append(row)
     return items
 
@@ -231,7 +514,7 @@ async def get_drivers(
 @router.get("/drivers/{driver_id}", response_model=DriverResponse)
 async def get_driver(
     driver_id: UUID,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_tenant_db)
 ):
     """Get driver details"""
     result = await db.execute(
@@ -247,7 +530,7 @@ async def get_driver(
 async def update_driver(
     driver_id: UUID,
     data: DriverUpdate,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_tenant_db)
 ):
     """Update driver profile"""
     result = await db.execute(
@@ -266,10 +549,10 @@ async def update_driver(
     return driver
 
 
-@router.get("/drivers/{driver_id}/hos")
+@router.get("/drivers/{driver_id}/hos", response_model=DriverHOSOut)
 async def get_driver_hos(
     driver_id: UUID,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_tenant_db)
 ):
     """Get driver HOS compliance status"""
     try:
@@ -287,11 +570,22 @@ async def get_driver_hos(
 @router.post("/shipments", response_model=ShipmentResponse, dependencies=[Depends(require_operator_or_admin)])
 async def create_shipment(
     data: ShipmentCreate,
-    db: AsyncSession = Depends(get_db)
+    organization_id: UUID = Depends(get_tenant_org_id),
+    db: AsyncSession = Depends(get_tenant_db)
 ):
     """Create new shipment"""
     shipment = await transportation_management_service.create_shipment(
-        organization_id=data.organization_id,
+    # FROM THE TOKEN, NEVER THE REQUEST. This read `data.organization_id`, a field the
+    # client supplies, so a caller could file the row under any organisation they named.
+    # Removed by hand six times already in this codebase — the yard list, dock doors, dock
+    # schedule, maintenance schedule, geofence zones and dashboard overview each carry a
+    # comment saying so — which is why it is now a guard
+    # (test_no_handler_takes_its_tenant_from_the_body.py) rather than a seventh comment.
+    #
+    # The `*Create` schema still declares the field, so an existing client may keep sending
+    # one; it is ignored. Making it optional there is a separate change with its own readers
+    # to check.
+        organization_id=organization_id,
         shipment_number=data.shipment_number,
         shipment_type=data.shipment_type,
         origin=data.origin,
@@ -314,12 +608,17 @@ async def create_shipment(
 
 @router.get("/shipments", response_model=PaginatedResponse[Dict[str, Any]])
 async def get_shipments(
-    organization_id: UUID,
+    # organization_id comes from the TOKEN. As a required client-supplied query
+    # parameter it was the IDOR shape app/core/tenant.py forbids — and it did not
+    # even work: on get_db no tenant GUC is set, and these tables have FORCE row
+    # level security, so the policy filtered EVERY row. This endpoint returned an
+    # empty list to every caller, including for its own organization.
+    organization_id: UUID = Depends(get_tenant_org_id),
     status: Optional[str] = Query(None),
     carrier_id: Optional[UUID] = None,
-    skip: int = Query(0, ge=0),
+    skip: int = Query(0, ge=0, le=MAX_OFFSET),
     limit: int = Query(100, ge=1, le=1000),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_tenant_db)
 ):
     """Get shipments for organization (FS-99: {items, meta} envelope with a real total).
 
@@ -369,7 +668,7 @@ async def get_shipments(
 @router.get("/shipments/{shipment_id}", response_model=ShipmentResponse)
 async def get_shipment(
     shipment_id: UUID,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_tenant_db)
 ):
     """Get shipment details"""
     result = await db.execute(
@@ -385,7 +684,7 @@ async def get_shipment(
 async def update_shipment(
     shipment_id: UUID,
     data: ShipmentUpdate,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_tenant_db)
 ):
     """Update shipment"""
     result = await db.execute(
@@ -407,16 +706,15 @@ async def update_shipment(
 @router.post("/shipments/{shipment_id}/dispatch", response_model=ShipmentDispatchResponse, dependencies=[Depends(require_operator_or_admin)])
 async def dispatch_shipment(
     shipment_id: UUID,
-    driver_id: UUID,
-    trailer_id: UUID,
-    db: AsyncSession = Depends(get_db)
+    request: ShipmentDispatchRequest,
+    db: AsyncSession = Depends(get_tenant_db)
 ):
     """Dispatch shipment to driver"""
     try:
         shipment = await transportation_management_service.dispatch_shipment(
             shipment_id=shipment_id,
-            driver_id=driver_id,
-            trailer_id=trailer_id,
+            driver_id=request.driver_id,
+            trailer_id=request.trailer_id,
             db=db
         )
         return {
@@ -435,7 +733,7 @@ async def update_shipment_status(
     status: str,
     actual_pickup: Optional[datetime] = None,
     actual_delivery: Optional[datetime] = None,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_tenant_db)
 ):
     """Update shipment status"""
     try:
@@ -455,10 +753,10 @@ async def update_shipment_status(
         raise HTTPException(status_code=404, detail=str(e))
 
 
-@router.get("/shipments/{shipment_id}/costs")
+@router.get("/shipments/{shipment_id}/costs", response_model=ShipmentCostsOut)
 async def get_shipment_costs(
     shipment_id: UUID,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_tenant_db)
 ):
     """Calculate shipment costs"""
     try:
@@ -476,11 +774,22 @@ async def get_shipment_costs(
 @router.post("/routes", response_model=RouteResponse, dependencies=[Depends(require_operator_or_admin)])
 async def create_route(
     data: RouteCreate,
-    db: AsyncSession = Depends(get_db)
+    organization_id: UUID = Depends(get_tenant_org_id),
+    db: AsyncSession = Depends(get_tenant_db)
 ):
     """Create optimized route"""
     route = await transportation_management_service.create_route(
-        organization_id=data.organization_id,
+    # FROM THE TOKEN, NEVER THE REQUEST. This read `data.organization_id`, a field the
+    # client supplies, so a caller could file the row under any organisation they named.
+    # Removed by hand six times already in this codebase — the yard list, dock doors, dock
+    # schedule, maintenance schedule, geofence zones and dashboard overview each carry a
+    # comment saying so — which is why it is now a guard
+    # (test_no_handler_takes_its_tenant_from_the_body.py) rather than a seventh comment.
+    #
+    # The `*Create` schema still declares the field, so an existing client may keep sending
+    # one; it is ignored. Making it optional there is a separate change with its own readers
+    # to check.
+        organization_id=organization_id,
         origin=data.origin,
         destination=data.destination,
         waypoints=data.waypoints,
@@ -493,9 +802,14 @@ async def create_route(
 
 @router.get("/routes", response_model=List[RouteResponse])
 async def get_routes(
-    organization_id: UUID,
+    # organization_id comes from the TOKEN. As a required client-supplied query
+    # parameter it was the IDOR shape app/core/tenant.py forbids — and it did not
+    # even work: on get_db no tenant GUC is set, and these tables have FORCE row
+    # level security, so the policy filtered EVERY row. This endpoint returned an
+    # empty list to every caller, including for its own organization.
+    organization_id: UUID = Depends(get_tenant_org_id),
     is_active: Optional[bool] = Query(True),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_tenant_db)
 ):
     """Get routes for organization"""
     query = select(Route).where(
@@ -513,11 +827,22 @@ async def get_routes(
 @router.post("/load-plans", response_model=LoadPlanResponse, dependencies=[Depends(require_operator_or_admin)])
 async def create_load_plan(
     data: LoadPlanCreate,
-    db: AsyncSession = Depends(get_db)
+    organization_id: UUID = Depends(get_tenant_org_id),
+    db: AsyncSession = Depends(get_tenant_db)
 ):
     """Create load plan for shipment"""
     load_plan = await transportation_management_service.create_load_plan(
-        organization_id=data.organization_id,
+    # FROM THE TOKEN, NEVER THE REQUEST. This read `data.organization_id`, a field the
+    # client supplies, so a caller could file the row under any organisation they named.
+    # Removed by hand six times already in this codebase — the yard list, dock doors, dock
+    # schedule, maintenance schedule, geofence zones and dashboard overview each carry a
+    # comment saying so — which is why it is now a guard
+    # (test_no_handler_takes_its_tenant_from_the_body.py) rather than a seventh comment.
+    #
+    # The `*Create` schema still declares the field, so an existing client may keep sending
+    # one; it is ignored. Making it optional there is a separate change with its own readers
+    # to check.
+        organization_id=organization_id,
         shipment_id=data.shipment_id,
         trailer_id=data.trailer_id,
         load_sequence=data.load_sequence,
@@ -533,7 +858,7 @@ async def create_load_plan(
 @router.get("/shipments/{shipment_id}/load-plan", response_model=LoadPlanResponse)
 async def get_load_plan(
     shipment_id: UUID,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_tenant_db)
 ):
     """Get load plan for shipment"""
     result = await db.execute(
@@ -550,14 +875,25 @@ async def get_load_plan(
 @router.post("/freight-charges", response_model=FreightChargeResponse, dependencies=[Depends(require_operator_or_admin)])
 async def create_freight_charge(
     data: FreightChargeCreate,
-    db: AsyncSession = Depends(get_db)
+    organization_id: UUID = Depends(get_tenant_org_id),
+    db: AsyncSession = Depends(get_tenant_db)
 ):
     """Create freight charge"""
     from app.services.transportation_management import FreightBillingEngine
     billing_engine = FreightBillingEngine()
     
     charge = await billing_engine.create_freight_charge(
-        organization_id=data.organization_id,
+    # FROM THE TOKEN, NEVER THE REQUEST. This read `data.organization_id`, a field the
+    # client supplies, so a caller could file the row under any organisation they named.
+    # Removed by hand six times already in this codebase — the yard list, dock doors, dock
+    # schedule, maintenance schedule, geofence zones and dashboard overview each carry a
+    # comment saying so — which is why it is now a guard
+    # (test_no_handler_takes_its_tenant_from_the_body.py) rather than a seventh comment.
+    #
+    # The `*Create` schema still declares the field, so an existing client may keep sending
+    # one; it is ignored. Making it optional there is a separate change with its own readers
+    # to check.
+        organization_id=organization_id,
         shipment_id=data.shipment_id,
         charge_type=data.charge_type,
         amount=data.amount,
@@ -574,7 +910,7 @@ async def create_freight_charge(
 @router.get("/shipments/{shipment_id}/freight-charges", response_model=List[FreightChargeResponse])
 async def get_shipment_charges(
     shipment_id: UUID,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_tenant_db)
 ):
     """Get freight charges for shipment"""
     result = await db.execute(
@@ -588,14 +924,30 @@ async def get_shipment_charges(
 @router.get("/vehicles", response_model=PaginatedResponse[Dict[str, Any]])
 async def get_vehicles(
     carrier_id: Optional[UUID] = None,
-    skip: int = Query(0, ge=0),
+    skip: int = Query(0, ge=0, le=MAX_OFFSET),
     limit: int = Query(100, ge=1, le=1000),
-    db: AsyncSession = Depends(get_db)
+    org_id: UUID = Depends(get_tenant_org_id),
+    db: AsyncSession = Depends(get_tenant_db)
 ):
-    """List fleet vehicles (FS-99: {items, meta} envelope; items stay legacy-camelCase)."""
+    """List fleet vehicles (FS-99: {items, meta} envelope; items stay legacy-camelCase).
+
+    SCOPED TO THE CALLER'S ORG. This was `get_db` with no organization filter at all,
+    on a table that carries `organization_id` but has NO row-level security — so the
+    two mechanisms that normally catch this both missed. Verified against a real
+    database before the fix: org A's client listed org B's vehicle. That is a
+    cross-tenant read of live data, not a theoretical one.
+
+    `vehicles.organization_id` is a `String(36)`, not a UUID column, so the comparison
+    is made against `str(org_id)`.
+    """
     from app.db.logistics_models import Vehicle
 
-    query = select(Vehicle).where(Vehicle.is_active == True)  # noqa: E712
+    # ORDERED so the cap and the offset mean something (FS-429): an unordered paged
+    # list can repeat rows on one page and skip them on the next.
+    query = select(Vehicle).order_by(Vehicle.vehicle_number).where(
+        Vehicle.organization_id == str(org_id),
+        Vehicle.is_active == True,  # noqa: E712
+    )
     if carrier_id:
         query = query.where(Vehicle.carrier_id == str(carrier_id))
 
@@ -650,13 +1002,25 @@ async def get_vehicles(
 @router.post("/vehicles", response_model=VehicleCreatedResponse)
 async def create_vehicle(
     payload: dict,
-    db: AsyncSession = Depends(get_db)
+    organization_id: UUID = Depends(get_tenant_org_id),
+    db: AsyncSession = Depends(get_tenant_db)
 ):
     """Register a fleet vehicle."""
     from app.db.logistics_models import Vehicle
 
     vehicle = Vehicle(
-        organization_id=payload.get("organization_id"),
+        # FROM THE TOKEN, NEVER THE PAYLOAD. This read `payload.get("organization_id")`,
+        # which let any caller file a vehicle under any organisation they named — the IDOR
+        # shape this codebase forbids and has already removed from the yard, dock-door,
+        # dock-schedule, maintenance-schedule and geofence handlers, each with a comment
+        # saying so. Every sibling handler in THIS file already takes the org from
+        # `get_tenant_org_id`; only the create missed it.
+        #
+        # It was also broken when the field was simply absent: `payload.get` returns None,
+        # and a vehicle with no organisation belongs to no tenant — invisible to its own
+        # creator through any scoped read, and picked up by anything that scans the table
+        # unscoped.
+        organization_id=organization_id,
         carrier_id=payload.get("carrier_id"),
         vehicle_number=payload.get("vehicle_number") or payload.get("vehicleNumber"),
         vin=payload.get("vin"),

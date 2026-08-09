@@ -12,6 +12,7 @@ Correlation patterns for ERP-specific scenarios:
 """
 
 from typing import Dict, Any, List, Optional
+from uuid import UUID
 from datetime import datetime, timedelta, timezone
 import structlog
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -419,56 +420,158 @@ class ERPCorrelationPatterns:
         self,
         db: AsyncSession,
         domain: str,
-        sap_data: Dict[str, Any]
-    ) -> List[str]:
+        sap_data: Dict[str, Any],
+        organization_id: Any,
+    ) -> List[UUID]:
+        """Create actionable-registry items from a SAP event. Returns their IDs.
+
+        THIS FUNCTION USED TO REPORT WORK IT NEVER DID (FS-231). It built a list of
+        dicts, appended their ``item_code`` strings to ``created_ids``, logged
+        ``sap_registry_items_created`` with a count, and returned — having written
+        nothing. The comment said "This would call the correlation registry
+        integration". Both SAP webhook paths (manufacturing order created, work
+        order created) called it and believed registry items existed.
+
+        Four further defects were in the same twenty lines:
+
+        * it had no ``organization_id``, so it could not have attached an item to a
+          tenant's registry even in principle — which is likely why it was stubbed;
+        * it returned ``item_code`` strings where the caller's type said IDs;
+        * it branched on ``"PROCUREMENT"``, which is NOT a key in
+          ``DOMAIN_REGISTRY_MAPPING`` — that branch was dead;
+        * ``"PRODUCTION_OEE"`` — one of the two live call sites — had no branch at
+          all, so it logged success with ``item_count=0``.
+
+        The honesty rule now: ``sap_registry_items_created`` is logged ONLY when
+        rows were actually persisted. Every path that cannot create an item says so
+        at WARNING and returns an empty list. A caller that gets ``[]`` knows
+        nothing happened; previously it could not tell.
         """
-        Create registry items for SAP data in operational domains.
-        
-        Args:
-            db: Database session
-            domain: Operational domain
-            sap_data: SAP data
-            
-        Returns:
-            List of created registry item IDs
-        """
-        # Use the existing correlation registry integration
-        # to create registry items based on SAP data
-        
-        registry_items = []
-        
-        # Map SAP data to registry items
-        if domain == "PROCUREMENT":
-            registry_items.append({
-                "item_code": "PO_MONITORING",
-                "item_name": f"PO {sap_data.get('po_number')} Monitoring",
-                "severity": "medium",
-                "completion_criteria": "PO delivered on time without issues"
-            })
-        
-        elif domain == "MAINTENANCE":
-            registry_items.append({
-                "item_code": "WO_TRACKING",
-                "item_name": f"WO {sap_data.get('wo_number')} Tracking",
-                "severity": sap_data.get("priority", "medium"),
-                "completion_criteria": "Work order completed within SLA"
-            })
-        
-        # Create registry items using the integration service
-        created_ids = []
-        for item in registry_items:
-            # This would call the correlation registry integration
-            # to create the actual registry item
-            created_ids.append(item["item_code"])
-        
+        from app.db.models import ActionableRegistry, ActionableRegistryItem
+        from app.services.correlation_registry_integration import (
+            DOMAIN_REGISTRY_MAPPING,
+        )
+
+        registry_config = DOMAIN_REGISTRY_MAPPING.get(domain)
+        if not registry_config:
+            # Loud, and it names the domain: this is how the dead "PROCUREMENT"
+            # branch would have been noticed years earlier.
+            logger.warning(
+                "sap_registry_items_skipped_unknown_domain",
+                domain=domain,
+                reason="domain is not in DOMAIN_REGISTRY_MAPPING",
+            )
+            return []
+
+        result = await db.execute(
+            select(ActionableRegistry).where(
+                and_(
+                    ActionableRegistry.organization_id == organization_id,
+                    ActionableRegistry.registry_name == registry_config["registry_name"],
+                )
+            )
+        )
+        registry = result.scalar_one_or_none()
+        if registry is None:
+            # Registries are provisioned per organization by
+            # initialize_registries_for_organization(). Missing one is a real
+            # condition to report, not a reason to claim success.
+            logger.warning(
+                "sap_registry_items_skipped_no_registry",
+                domain=domain,
+                organization_id=str(organization_id),
+                registry_name=registry_config["registry_name"],
+            )
+            return []
+
+        specs = self._sap_registry_item_specs(domain, sap_data)
+        if not specs:
+            logger.warning(
+                "sap_registry_items_skipped_no_mapping",
+                domain=domain,
+                reason="no item template defined for this domain",
+            )
+            return []
+
+        stamp = datetime.now(timezone.utc)
+        created_ids: List[UUID] = []
+        for spec in specs:
+            item = ActionableRegistryItem(
+                registry_id=registry.id,
+                # Timestamped so repeated webhooks for the same order do not
+                # collide on item_code.
+                item_code=f"SAP-{spec['code']}-{stamp.strftime('%Y%m%d%H%M%S')}",
+                item_name=spec["name"],
+                item_description=spec.get("description") or spec["name"],
+                severity_level=spec.get("severity", "medium"),
+                is_active=True,
+                is_required=spec.get("severity") in ("high", "critical"),
+                completion_criteria=spec["completion_criteria"],
+                verification_method="inspection",
+                estimated_effort_minutes=30,
+                meta_data={
+                    "source": "sap_webhook",
+                    "domain": domain,
+                    "sap_reference": spec.get("reference"),
+                },
+                created_at=stamp,
+            )
+            db.add(item)
+            created_ids.append(item.id)
+
+        await db.commit()
+
+        # Logged only now — after the rows exist.
         logger.info(
             "sap_registry_items_created",
             domain=domain,
-            item_count=len(created_ids)
+            organization_id=str(organization_id),
+            item_count=len(created_ids),
         )
-        
         return created_ids
-    
+
+    def _sap_registry_item_specs(
+        self, domain: str, sap_data: Dict[str, Any]
+    ) -> List[Dict[str, Any]]:
+        """Item templates per domain.
+
+        Separate from the persistence above so an unmapped domain is a visible
+        empty list rather than a silently skipped branch.
+        """
+        if domain == "MAINTENANCE":
+            wo = sap_data.get("wo_number") or sap_data.get("order_number")
+            return [{
+                "code": "WO",
+                "name": f"WO {wo} tracking",
+                "description": f"Track SAP work order {wo} to completion within SLA.",
+                "severity": sap_data.get("priority", "medium"),
+                "completion_criteria": "Work order completed within SLA",
+                "reference": wo,
+            }]
+        if domain in ("PRODUCTION_OEE", "PRODUCTION_OUTPUT"):
+            mo = sap_data.get("mo_number") or sap_data.get("order_number")
+            return [{
+                "code": "MO",
+                "name": f"MO {mo} production monitoring",
+                "description": f"Monitor SAP manufacturing order {mo} for OEE impact.",
+                "severity": "medium",
+                "completion_criteria": "Order completed without unplanned downtime",
+                "reference": mo,
+            }]
+        if domain in ("SUPPLY_CHAIN", "MATERIAL_REPLENISHMENT", "SUPPLIER_RELATIONSHIP"):
+            # Replaces the dead "PROCUREMENT" branch: these are the real
+            # DOMAIN_REGISTRY_MAPPING keys a purchase order belongs to.
+            po = sap_data.get("po_number") or sap_data.get("order_number")
+            return [{
+                "code": "PO",
+                "name": f"PO {po} monitoring",
+                "description": f"Monitor SAP purchase order {po} for on-time delivery.",
+                "severity": "medium",
+                "completion_criteria": "PO delivered on time without issues",
+                "reference": po,
+            }]
+        return []
+
     async def _create_correlation(
         self,
         db: AsyncSession,

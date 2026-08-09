@@ -7,16 +7,22 @@ const delay = (ms: number) => new Promise((r) => setTimeout(r, ms))
 export interface ERPIntegration {
   id: string
   integration_name: string
-  erp_type: string
+  // Nullable to match the columns. `erp_type`, `sync_schedule` and
+  // `sync_frequency_minutes` are all nullable on integration_configurations, and the
+  // API response model used to declare them required -- which meant a row holding
+  // NULL in any of them returned 500 from create, list, get AND update rather than
+  // being rendered. The backend now mirrors the columns, so these can genuinely
+  // arrive as null and the UI has to cope.
+  erp_type?: string | null
   erp_version?: string | null
   auth_type: string
   base_url: string
   is_active: boolean
-  sync_schedule: string
-  sync_frequency_minutes: number
+  sync_schedule?: string | null
+  sync_frequency_minutes?: number | null
   last_successful_sync?: string | null
-  created_at: string
-  updated_at: string
+  created_at?: string | null
+  updated_at?: string | null
 }
 
 export interface ERPIntegrationCreate {
@@ -36,10 +42,25 @@ export interface SyncStatus {
   entity_type: string
   last_sync_at?: string | null
   last_sync_status?: string | null
-  records_synced: number
-  records_failed: number
+  // Also nullable: `records_synced` / `records_failed` carry only a Python-side
+  // default, which does not apply to rows written by a migration or a raw insert.
+  records_synced?: number | null
+  records_failed?: number | null
   sync_duration_seconds?: number | null
   next_sync_at?: string | null
+  /**
+   * Whether correlation had a route for this vendor and entity on the last sync (FS-562).
+   *
+   * THREE STATES, and the third is the point. `true` means the records were analysed;
+   * `false` means no analyzer is registered for this vendor's field names, so nothing was
+   * looked at; `null`/absent means the sync recorded no correlation attempt — every row
+   * written before the column existed. Without this the correlations tab renders an empty
+   * list for the first two alike, which is the same defect as a failed read showing as "no
+   * results", one layer further back.
+   */
+  correlation_routed?: boolean | null
+  /** Why correlation produced nothing, when it produced nothing. */
+  correlation_reason?: string | null
 }
 
 export interface FieldMapping {
@@ -144,7 +165,12 @@ const mockIntegrations: ERPIntegration[] = [
 const mockSyncStatus: Record<string, SyncStatus[]> = {
   'erp-sap-1': [
     { entity_type: 'PurchaseOrder', last_sync_at: new Date(Date.now() - 3600_000).toISOString(), last_sync_status: 'success', records_synced: 128, records_failed: 0, sync_duration_seconds: 12 },
-    { entity_type: 'Invoice', last_sync_at: new Date(Date.now() - 3600_000).toISOString(), last_sync_status: 'success', records_synced: 74, records_failed: 2, sync_duration_seconds: 8 },
+    { entity_type: 'Invoice', last_sync_at: new Date(Date.now() - 3600_000).toISOString(), last_sync_status: 'success', records_synced: 74, records_failed: 2, sync_duration_seconds: 8, correlation_routed: true },
+    // A SUCCESSFUL SYNC THAT WAS NEVER ANALYSED. In the mock deliberately, because this is
+    // the state the UI got wrong: 41 records in, no correlations out, and nothing on the
+    // screen distinguishing that from "we looked and found nothing". A mock that only
+    // carries the happy path is a mock that agrees with the bug (rule 28).
+    { entity_type: 'Shipment', last_sync_at: new Date(Date.now() - 3600_000).toISOString(), last_sync_status: 'success', records_synced: 41, records_failed: 0, sync_duration_seconds: 5, correlation_routed: false, correlation_reason: 'no correlation route for this erp_type/entity_type' },
   ],
 }
 const mockMappings: Record<string, FieldMapping[]> = {
@@ -179,6 +205,23 @@ const mockCorrelations: ERPCorrelationRecord[] = [
     sensor_event_id: 'asset-8:vibration_rms', correlation_score: 0.82,
     created_at: new Date(Date.now() - 1200_000).toISOString() },
 ]
+
+/**
+ * A list result that says whether it is the whole set.
+ *
+ * These endpoints return at most `limit` rows, so a full page is indistinguishable from
+ * the complete set — the same silent-truncation shape that bit three ERP connectors. The
+ * API now reports it in `X-Result-Truncated`; this type exists so a caller has to receive
+ * the flag rather than a bare array it will assume is everything.
+ *
+ * None of these methods has a production caller yet (the hub's Entities/Events/AI tabs
+ * are not built). That is exactly why the shape is worth fixing now: the person who
+ * builds them should not have to rediscover the problem.
+ */
+// Moved to ./listResult when /api/v1/rul became the second consumer; re-exported so
+// this module's existing importers are unaffected.
+export type { ListResult } from './listResult'
+import { toListResult, type ListResult } from './listResult'
 
 export const erpApi = {
   async listIntegrations(): Promise<ERPIntegration[]> {
@@ -243,23 +286,38 @@ export const erpApi = {
     if (USE_MOCK) { await delay(150); const arr = mockMappings[id] ?? []; const idx = arr.findIndex((m) => m.id === mappingId); if (idx >= 0) arr.splice(idx, 1); return }
     await api.delete(`/api/v1/erp/integrations/${id}/mappings/${mappingId}`)
   },
-  async listEntities(id: string, entityType?: string): Promise<ERPEntity[]> {
+  async listEntities(id: string, entityType?: string): Promise<ListResult<ERPEntity>> {
     if (USE_MOCK) {
       await delay(200)
-      return entityType ? mockEntities.filter((e) => e.entity_type === entityType) : [...mockEntities]
+      const items = entityType ? mockEntities.filter((e) => e.entity_type === entityType) : [...mockEntities]
+      return { items, truncated: false, limit: items.length }
     }
     const q = entityType ? `?entity_type=${encodeURIComponent(entityType)}` : ''
-    return (await api.get<ERPEntity[]>(`/api/v1/erp/integrations/${id}/entities${q}`)).data
+    return toListResult(await api.get<ERPEntity[]>(`/api/v1/erp/integrations/${id}/entities${q}`))
   },
-  async listEvents(id: string): Promise<ERPEvent[]> {
-    if (USE_MOCK) { await delay(200); return [...mockEvents] }
-    return (await api.get<ERPEvent[]>(`/api/v1/erp/integrations/${id}/events`)).data
+  async listEvents(id: string): Promise<ListResult<ERPEvent>> {
+    if (USE_MOCK) { await delay(200); return { items: [...mockEvents], truncated: false, limit: mockEvents.length } }
+    return toListResult(await api.get<ERPEvent[]>(`/api/v1/erp/integrations/${id}/events`))
   },
-  async listCorrelations(): Promise<ERPCorrelationRecord[]> {
-    if (USE_MOCK) { await delay(200); return [...mockCorrelations] }
-    return (await api.get<ERPCorrelationRecord[]>('/api/v1/erp/integrations/correlations/recent')).data
+  async listCorrelations(): Promise<ListResult<ERPCorrelationRecord>> {
+    if (USE_MOCK) { await delay(200); return { items: [...mockCorrelations], truncated: false, limit: mockCorrelations.length } }
+    return toListResult(await api.get<ERPCorrelationRecord[]>('/api/v1/erp/integrations/correlations/recent'))
   },
+  /** The ERP types `ERPConnectorFactory` can actually build.
+   *
+   *  `ERPIntegrations.tsx` builds the create-form dropdown straight from this list, so it
+   *  is the whole surface through which an integration can be created. It has to match the
+   *  factory registry in BOTH directions (FS-486): a type listed here that the factory
+   *  cannot build fails at creation, and one the factory can build but this omits is a
+   *  shipped capability nobody can reach.
+   *
+   *  `intuit` — QuickBooks Online — was the second case. A 384-line connector with a
+   *  sandbox test suite, registered in the factory, and no way to select it.
+   *
+   *  `generic` is in the `ERPType` enum and deliberately NOT here: the factory has no entry
+   *  for it, so offering it would be the first case. `test_supported_erp_types_match.py`
+   *  holds both directions. */
   supportedTypes(): string[] {
-    return ['sap', 'oracle', 'dynamics', 'netsuite', 'odoo', 'infor', 'epicor']
+    return ['sap', 'oracle', 'dynamics', 'netsuite', 'odoo', 'infor', 'epicor', 'intuit']
   },
 }

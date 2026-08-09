@@ -9,17 +9,15 @@ Connector for Oracle Cloud ERP using REST API:
 """
 
 from typing import Dict, Any, Optional, List
-from datetime import datetime, timezone
 import structlog
 import aiohttp
-from requests_oauthlib import OAuth2Session
 
 from app.services.erp_connector_base import (
     ERPConnectorBase,
     ERPConfig,
-    ERPType,
-    AuthType
 )
+
+from app.services.erp_connectors.oauth2 import fetch_client_credentials_token
 
 logger = structlog.get_logger()
 
@@ -31,6 +29,13 @@ class OracleConnector(ERPConnectorBase):
     Connects to Oracle Fusion Cloud ERP via REST API to fetch
     financial data, supply chain data, HR data, and project data.
     """
+
+    #: Oracle Fusion has no generic `/eventSubscriptions` endpoint. Real-time
+    #: integration uses Business Events and REST Atom feeds.
+    EVENT_SUBSCRIPTION_MECHANISM = (
+        "Oracle Fusion exposes no generic /eventSubscriptions endpoint. Use Business "
+        "Events (Integration Cloud) or the REST Atom feeds, or poll with fetch_data."
+    )
     
     def __init__(self, config: ERPConfig, organization_id: str, integration_id: str):
         super().__init__(config, organization_id, integration_id)
@@ -43,7 +48,6 @@ class OracleConnector(ERPConnectorBase):
         self.api_url = f"{config.base_url}/fscmRestApi/resources/{self.api_version}"
         
         # OAuth2 session for authentication
-        self.oauth_session: Optional[OAuth2Session] = None
         
         logger.info(
             "oracle_connector_initialized",
@@ -52,36 +56,32 @@ class OracleConnector(ERPConnectorBase):
         )
     
     async def authenticate(self) -> str:
-        """
-        Authenticate with Oracle using OAuth2.
-        
-        Returns:
-            str: Access token
+        """Authenticate with Oracle Fusion using the client-credentials grant.
+
+        Same two defects as the SAP connector: `requests_oauthlib` was never a
+        declared dependency (so this module raised ImportError and the connector
+        could not be constructed), and the flow was authorization-code, which
+        expects a browser redirect that a scheduled sync does not have.
+
+        Oracle Fusion tenants vary in whether they expect `scope` or `resource`;
+        both are passed through when configured.
         """
         auth_config = self.config.auth_config
-        
-        # Create OAuth2 session
-        self.oauth_session = OAuth2Session(
-            client_id=auth_config.get("client_id"),
-            redirect_uri=auth_config.get("redirect_uri", "urn:ietf:wg:oauth:2.0:oob")
-        )
-        
-        # Fetch token
-        token = self.oauth_session.fetch_token(
+
+        token, expires_in = await fetch_client_credentials_token(
             token_url=auth_config.get("token_url"),
+            client_id=auth_config.get("client_id"),
             client_secret=auth_config.get("client_secret"),
-            authorization_response=auth_config.get("authorization_response")
+            scope=auth_config.get("scope"),
+            resource=auth_config.get("resource"),
+            timeout_seconds=self.config.timeout,
         )
-        
-        access_token = token.get("access_token")
-        
-        logger.info(
-            "oracle_authentication_success",
-            token_type=token.get("token_type")
-        )
-        
-        return access_token
-    
+
+        self._set_token(token, expires_in)
+
+        logger.info("oracle_authentication_success", expires_in=expires_in)
+        return token
+
     async def fetch_data(
         self,
         entity_type: str,
@@ -193,84 +193,18 @@ class OracleConnector(ERPConnectorBase):
         
         return result
     
-    async def subscribe_to_events(self, event_types: List[str]) -> bool:
-        """
-        Subscribe to Oracle events for real-time updates.
-        
-        Args:
-            event_types: List of event types to subscribe to
-            
-        Returns:
-            bool: Success status
-        """
-        # Oracle event subscription via webhook registration
-        webhook_url = self.config.configuration.get("webhook_url")
-        if not webhook_url:
-            logger.warning("oracle_webhook_not_configured")
-            return False
-        
-        token = await self.get_auth_token()
-        
-        # Register webhook for each event type
-        for event_type in event_types:
-            subscription_url = f"{self.api_url}/eventSubscriptions"
-            
-            subscription_data = {
-                "eventType": event_type,
-                "webhookUrl": webhook_url,
-                "filter": self.config.configuration.get("event_filter", {})
-            }
-            
-            async def _subscribe():
-                headers = {
-                    "Authorization": f"Bearer {token}",
-                    "Content-Type": "application/json"
-                }
-                
-                async with aiohttp.ClientSession() as session:
-                    async with session.post(
-                        subscription_url,
-                        headers=headers,
-                        json=subscription_data
-                    ) as response:
-                        if response.status not in [200, 201]:
-                            error_text = await response.text()
-                            raise Exception(f"Oracle event subscription error: {response.status} - {error_text}")
-            
-            await self.execute_with_retry(_subscribe)
-        
-        logger.info(
-            "oracle_event_subscriptions_created",
-            event_types=event_types
-        )
-        
-        return True
-    
+
     async def health_check(self) -> Dict[str, Any]:
+        """Health check that distinguishes a broken connection from a
+        missing module. See ERPConnectorBase.probe_health.
+
+        The probe entity 'invoices' is business-module dependent, so a tenant
+        without it is reported DEGRADED rather than unhealthy — previously any
+        exception here mapped to unhealthy, so a working integration on a
+        tenant that had not licensed that module looked like an outage.
         """
-        Perform health check on Oracle connection.
-        
-        Returns:
-            Dict with health status and details
-        """
-        try:
-            # Try to fetch a small amount of data
-            results = await self.fetch_data("invoices", limit=1)
-            
-            return {
-                "status": "healthy",
-                "message": "Oracle connection successful",
-                "instance_name": self.instance_name,
-                "checked_at": datetime.now(timezone.utc).isoformat()
-            }
-        except Exception as e:
-            return {
-                "status": "unhealthy",
-                "message": str(e),
-                "instance_name": self.instance_name,
-                "checked_at": datetime.now(timezone.utc).isoformat()
-            }
-    
+        return await self.probe_health('invoices', details={})
+
     def _build_filter_string(self, filters: Dict[str, Any]) -> str:
         """
         Build Oracle REST API filter string.

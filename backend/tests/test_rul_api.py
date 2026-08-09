@@ -13,7 +13,6 @@ import pytest_asyncio
 async def app(tenant_async_url, admin_sync_url):
     """Mount the production RUL router without unrelated application modules."""
     from fastapi import Depends, FastAPI
-    from sqlalchemy import text
     from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
     from app.api import rul
@@ -50,22 +49,17 @@ async def app(tenant_async_url, admin_sync_url):
     fastapi_app.include_router(rul.router, prefix="/api/v1/rul")
 
     async def _get_tenant_db(org_id=Depends(get_tenant_org_id)):
-        async with session_maker() as session:
-            try:
-                await session.execute(
-                    text("SELECT set_config('app.current_org_id', :org_id, false)"),
-                    {"org_id": str(org_id)},
-                )
-                yield session
-                await session.commit()
-            except Exception:
-                await session.rollback()
-                raise
-            finally:
-                await session.execute(
-                    text("SELECT set_config('app.current_org_id', '', false)")
-                )
-                await session.commit()
+        # DELEGATES to the production implementation, swapping only the session
+        # maker — it must not reimplement it. This was a byte-identical copy of
+        # get_tenant_db's old body, and it carried the same defect: a single
+        # `set_config(..., false)` does not survive an endpoint's mid-request
+        # commit, because commit returns the connection to the pool. Every
+        # assertion in this file ran against the copy, so the bug was invisible
+        # here. See tests/test_tenant_guc_survives_commit_realdb.py.
+        from app.core.tenant import tenant_session
+
+        async with tenant_session(org_id, session_maker) as session:
+            yield session
 
     fastapi_app.dependency_overrides[get_tenant_db] = _get_tenant_db
     yield fastapi_app

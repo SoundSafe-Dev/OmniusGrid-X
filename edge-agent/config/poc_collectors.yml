@@ -206,6 +206,37 @@ collectors:
           severity: "critical"  # info | warning | error | critical
           message_template: "temperature {value} exceeded {threshold}"
           cooldown_seconds: 300
+      # Local OEE (FS-463). `ideal_cycle_time_seconds` is how long this machine takes to
+      # make one part when it runs at its rated speed — a property of the MACHINE, so
+      # there is deliberately no default.
+      #
+      # Without it the agent reports availability and quality, and reports performance and
+      # OEE as unavailable with a reason, rather than computing them against a guess. It
+      # was hardcoded at 60s for every asset: a 3-second-cycle press came out at 100%
+      # (2000%, clamped) and a 600-second-cycle CNC at 10%, both while running flat out.
+      #
+      # Same key the cloud reads from `asset.connection_config`, so the two agree.
+      oee:
+        ideal_cycle_time_seconds: 45
+      # How hard to retry a device that is not answering (FS-473). Every key is optional
+      # and the defaults below are what ships; a collector without this block uses them.
+      #
+      # They exist because a collector that retries at its poll interval dials a
+      # switched-off PLC ~17,000 times a day. These values are a first-pass guess — the
+      # comment in modbus_collector.py has said so since it was written — and they now live
+      # in ONE place (`ReconnectPolicy` in resilience.py) so the person who eventually has
+      # production telemetry can change them once instead of in eight files.
+      #
+      # An unknown key here is an ERROR, not a default: a typo that silently keeps the
+      # shipped value is a tuning the operator believes they applied.
+      reconnect:
+        initial_delay: 1.0       # first retry, seconds
+        max_delay: 60.0          # ceiling the doubling reaches
+        multiplier: 2.0
+        failure_threshold: 5     # consecutive failures before the breaker opens
+        initial_cooldown: 30.0   # how long it then waits
+        cooldown_cap: 300.0      # must be >= max_delay, or the breaker changes nothing
+        cooldown_multiplier: 2.0
 
   # 13. Network device / UPS / gateway via SNMP (requires pysnmp)
   - asset_id: "switch-001"

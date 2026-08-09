@@ -38,11 +38,15 @@ const getZoneColor = (color: string) => {
   }
 };
 
-const getSeverityColor = (severity: string) => {
+// An UNREPORTED severity is not an informational one. The adapter used to default it to
+// 'info', so an alert whose severity did not arrive was painted the same calm blue as a
+// routine notice; grey says "no severity" without claiming one.
+const getSeverityColor = (severity?: string | null) => {
   switch (severity) {
     case 'critical': return 'text-red-600 bg-red-50';
     case 'warning': return 'text-yellow-600 bg-yellow-50';
-    default: return 'text-blue-600 bg-blue-50';
+    case 'info': return 'text-blue-600 bg-blue-50';
+    default: return 'text-gray-500 bg-gray-100';
   }
 };
 
@@ -70,16 +74,26 @@ export const GeofencingPanel: FC<GeofencingPanelProps> = ({ onAlert }) => {
 
   useEffect(() => {
     loadData();
-    const unsubscribe = geofencingApi.subscribeToAlerts((alert) => {
-      setAlerts(prev => [alert, ...prev]);
-      if (soundEnabled && alert.severity === 'critical') {
-        playAlertSound();
-      }
-      onAlert?.(alert);
-    });
+    const unsubscribe = geofencingApi.subscribeToAlerts(
+      (alert) => {
+        setAlerts(prev => [alert, ...prev]);
+        if (soundEnabled && alert.severity === 'critical') {
+          playAlertSound();
+        }
+        onAlert?.(alert);
+      },
+      (error) => setAlertPollStalled(Boolean(error)),
+    );
     return unsubscribe;
   // eslint-disable-next-line react-hooks/exhaustive-deps -- pre-existing; adding deps changes retrigger behavior (FS-54)
   }, [soundEnabled]);
+
+  // True when the server had more alerts than it returned. See loadData.
+  const [alertsTruncated, setAlertsTruncated] = useState(false);
+  // True when the alert poll is failing (FS-487). Distinct from every other state here
+  // because the display of "no alerts" is an EMPTY LIST, and a poll that has stopped
+  // produces exactly that — silence is the normal case and also the broken one.
+  const [alertPollStalled, setAlertPollStalled] = useState(false);
 
   const loadData = async () => {
     setIsLoading(true);
@@ -90,7 +104,11 @@ export const GeofencingPanel: FC<GeofencingPanelProps> = ({ onAlert }) => {
         geofencingApi.getAlerts(),
       ]);
       setZones(zonesData);
-      setAlerts(alertsData);
+      setAlerts(alertsData.items);
+      // FS-428: the server caps this list and says so in a header. Carried into state so
+      // the panel can say it too — a truncation flag that arrives and is dropped is the
+      // same defect as one that was never sent.
+      setAlertsTruncated(alertsData.truncated);
     } catch (err) {
       console.error('Failed to load geofencing data:', err);
       setError('Failed to load geofence zones and alerts. Please try again.');
@@ -213,8 +231,15 @@ export const GeofencingPanel: FC<GeofencingPanelProps> = ({ onAlert }) => {
           {/* Zone List */}
           <div className="bg-opsgrid-panel border border-opsgrid-border rounded-lg">
             <div className="max-h-[200px] overflow-y-auto">
+              {/* `error` GATES THE EMPTY STATE, not just the banner above. The panel
+                  rendered its failure message AND then "No geofence zones. Use + to create
+                  one." below it — two statements about the same fetch, one of which invites
+                  the operator to create a zone that may already exist. The banner explains
+                  what happened; this stops the list contradicting it. */}
               {isLoading ? (
                 <SkeletonCard lines={3} />
+              ) : error ? (
+                <p className="p-4 text-sm text-gray-500 text-center">Zones unavailable.</p>
               ) : zones.length === 0 ? (
                 <p className="p-4 text-sm text-gray-500 text-center">No geofence zones. Use + to create one.</p>
               ) : zones.map(zone => (
@@ -235,7 +260,15 @@ export const GeofencingPanel: FC<GeofencingPanelProps> = ({ onAlert }) => {
                       <span className="text-xs bg-gray-200 px-2 py-0.5 rounded">Inactive</span>
                     )}
                   </div>
-                  <p className="text-xs text-gray-500 mt-1">{zone.vehiclesInside.length} vehicles inside</p>
+                  {/* WAS an unconditional "{n} vehicles inside". `_zone_out` does not send
+                      `vehiclesInside` and nothing computes it, so the adapter defaulted it to
+                      `[]` and every zone reported "0 vehicles inside" — a count, which reads
+                      as a measurement, not as a blank. */}
+                  {zone.vehiclesInside && (
+                    <p className="text-xs text-gray-500 mt-1">
+                      {zone.vehiclesInside.length} vehicles inside
+                    </p>
+                  )}
                 </div>
               ))}
             </div>
@@ -273,7 +306,18 @@ export const GeofencingPanel: FC<GeofencingPanelProps> = ({ onAlert }) => {
               <p className="text-sm text-gray-600 mb-2">{selectedZone.description}</p>
               <div className="text-xs space-y-1">
                 <p>Type: {selectedZone.type}</p>
-                <p>Radius: {(selectedZone.radius! / 1000).toFixed(1)} km</p>
+                {/* NOT `radius!` (FS-556). This file's own header records that
+                    `zone.center!.latitude` threw on the first centerless zone and, with only
+                    the app-root ErrorBoundary, BLANKED THE ENTIRE APP. `radius` is optional
+                    for exactly the same reason — a polygon zone has neither — and
+                    `(undefined / 1000).toFixed(1)` is the same TypeError twenty lines below
+                    the comment describing it.
+
+                    A polygon zone has no radius to show, so the row is omitted rather than
+                    rendered as NaN. */}
+                {selectedZone.radius != null && (
+                  <p>Radius: {(selectedZone.radius / 1000).toFixed(1)} km</p>
+                )}
                 <p>Alert on Entry: {selectedZone.alertRules.onEntry ? 'Yes' : 'No'}</p>
                 <p>Alert on Exit: {selectedZone.alertRules.onExit ? 'Yes' : 'No'}</p>
               </div>
@@ -316,8 +360,23 @@ export const GeofencingPanel: FC<GeofencingPanelProps> = ({ onAlert }) => {
             </button>
           </div>
           <div className="max-h-[250px] overflow-y-auto">
-            {!isLoading && alerts.length === 0 && (
+            {!isLoading && error && (
+              <p className="p-4 text-sm text-gray-500 text-center">Alerts unavailable.</p>
+            )}
+            {!isLoading && !error && alerts.length === 0 && (
               <p className="p-4 text-sm text-gray-500 text-center">No geofence alerts.</p>
+            )}
+            {alertPollStalled && (
+              <p className="border-b border-status-alarm/50 bg-status-alarm/10 p-3 text-xs text-opsgrid-text" role="alert">
+                Alert checks are failing — new geofence alerts will not appear here. An empty
+                list right now means nobody knows, not that nothing has happened.
+              </p>
+            )}
+            {alertsTruncated && (
+              <p className="border-b border-status-warning/50 bg-status-warning/10 p-3 text-xs text-opsgrid-text" role="status">
+                Showing the most recent {alerts.length} alerts — there are more. Anything
+                older than these is not on this list, including unacknowledged ones.
+              </p>
             )}
             {alerts.slice(0, 20).map(alert => (
               <div 
@@ -330,17 +389,36 @@ export const GeofencingPanel: FC<GeofencingPanelProps> = ({ onAlert }) => {
                   <MapPin className="w-4 h-4" />
                 </div>
                 <div className="flex-1">
+                  {/* THE FALSY BRANCH ASSERTED A VIOLATION. The API sent `eventType`, not
+                      `alertType`, so this matched neither 'entry' nor 'exit' and every
+                      alert — every routine entry into an authorised zone — rendered as
+                      "Violation". The field name is fixed server-side; this now also
+                      refuses to guess when the value is one it does not recognise, because
+                      the next unmapped event type would land in exactly the same place. */}
                   <p className="text-sm font-medium">
-                    {alert.vehicleNumber} - {alert.alertType === 'entry' ? 'Entered' : alert.alertType === 'exit' ? 'Exited' : 'Violation'}
+                    {alert.vehicleNumber ?? 'Unknown vehicle'} —{' '}
+                    {alert.alertType === 'entry'
+                      ? 'Entered'
+                      : alert.alertType === 'exit'
+                        ? 'Exited'
+                        : alert.alertType === 'violation'
+                          ? 'Violation'
+                          : `Event: ${alert.alertType ?? 'unreported'}`}
                   </p>
-                  <p className="text-xs text-gray-600">{alert.geofenceName}</p>
+                  {/* A zone the server could not resolve is not an unnamed zone. */}
+                  <p className="text-xs text-gray-600">
+                    {alert.geofenceName ?? 'Zone name unavailable'}
+                  </p>
                   <p className="text-xs text-gray-500 flex items-center gap-1 mt-1">
                     <Clock className="w-3 h-3" />
-                    {new Date(alert.timestamp).toLocaleString()}
+                    {alert.timestamp
+                      ? new Date(alert.timestamp).toLocaleString()
+                      : 'time unreported'}
                   </p>
                 </div>
                 {!alert.acknowledged ? (
-                  <button 
+                  <button
+                    aria-label={`Acknowledge geofence alert for ${alert.geofenceName ?? 'zone'}`}
                     onClick={() => handleAcknowledge(alert.id)}
                     className="p-1 text-green-600 hover:bg-green-50 rounded"
                   >
@@ -438,31 +516,35 @@ const ZoneFormModal: FC<{
           </button>
         </div>
         <div>
-          <label className="block text-sm text-gray-600 mb-1">Name</label>
+          <label htmlFor="geofencingpanel-name" className="block text-sm text-gray-600 mb-1">Name</label>
           <input
+              id="geofencingpanel-name"
             className="w-full px-3 py-2 bg-opsgrid-bg border border-opsgrid-border rounded-lg text-sm focus:outline-none"
             value={name} onChange={(e) => setName(e.target.value)} placeholder="Downtown Depot"
           />
         </div>
         <div>
-          <label className="block text-sm text-gray-600 mb-1">Description</label>
+          <label htmlFor="geofencingpanel-description" className="block text-sm text-gray-600 mb-1">Description</label>
           <input
+              id="geofencingpanel-description"
             className="w-full px-3 py-2 bg-opsgrid-bg border border-opsgrid-border rounded-lg text-sm focus:outline-none"
             value={description} onChange={(e) => setDescription(e.target.value)} placeholder="Optional details"
           />
         </div>
         <div className="grid grid-cols-2 gap-3">
           <div>
-            <label className="block text-sm text-gray-600 mb-1">Latitude</label>
+            <label htmlFor="geofencingpanel-latitude" className="block text-sm text-gray-600 mb-1">Latitude</label>
             <input
+              id="geofencingpanel-latitude"
               type="number"
               className="w-full px-3 py-2 bg-opsgrid-bg border border-opsgrid-border rounded-lg text-sm focus:outline-none"
               value={latitude} onChange={(e) => setLatitude(e.target.value)} placeholder="39.8283"
             />
           </div>
           <div>
-            <label className="block text-sm text-gray-600 mb-1">Longitude</label>
+            <label htmlFor="geofencingpanel-longitude" className="block text-sm text-gray-600 mb-1">Longitude</label>
             <input
+              id="geofencingpanel-longitude"
               type="number"
               className="w-full px-3 py-2 bg-opsgrid-bg border border-opsgrid-border rounded-lg text-sm focus:outline-none"
               value={longitude} onChange={(e) => setLongitude(e.target.value)} placeholder="-98.5795"
@@ -471,16 +553,18 @@ const ZoneFormModal: FC<{
         </div>
         <div className="grid grid-cols-2 gap-3">
           <div>
-            <label className="block text-sm text-gray-600 mb-1">Radius (km)</label>
+            <label htmlFor="geofencingpanel-radius-km" className="block text-sm text-gray-600 mb-1">Radius (km)</label>
             <input
+              id="geofencingpanel-radius-km"
               type="number"
               className="w-full px-3 py-2 bg-opsgrid-bg border border-opsgrid-border rounded-lg text-sm focus:outline-none"
               value={radiusKm} onChange={(e) => setRadiusKm(e.target.value)} placeholder="5"
             />
           </div>
           <div>
-            <label className="block text-sm text-gray-600 mb-1">Color</label>
+            <label htmlFor="geofencingpanel-color" className="block text-sm text-gray-600 mb-1">Color</label>
             <select
+              id="geofencingpanel-color"
               className="w-full px-3 py-2 bg-opsgrid-bg border border-opsgrid-border rounded-lg text-sm focus:outline-none"
               value={color} onChange={(e) => setColor(e.target.value as GeofenceZoneExtended['color'])}
             >

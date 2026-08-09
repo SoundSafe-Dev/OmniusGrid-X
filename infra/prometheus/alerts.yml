@@ -196,6 +196,23 @@ groups:
           summary: "Edge buffer dropping messages (size cap)"
           description: "{{ $value }} oldest edge messages pruned to stay under the buffer size cap"
 
+      # HIGH: buffer deleting undelivered telemetry for age (FS-458).
+      #
+      # Higher severity than the size-cap drop above, despite being the same
+      # kind of loss, because of what causes it: expiry means the agent has
+      # been unable to reach the cloud for longer than its retention window.
+      # The size cap trips on a busy device; this one trips on a device that
+      # has been cut off long enough to start losing what it buffered.
+      - alert: EdgeBufferExpiring
+        expr: increase(edge_buffer_expired_total[15m]) > 0
+        for: 0m
+        labels:
+          severity: high
+          team: edge
+        annotations:
+          summary: "Edge buffer deleting undelivered messages (retention)"
+          description: "{{ $value }} edge messages passed the retention window without ever being delivered — the agent has been disconnected longer than it can buffer for"
+
       # MEDIUM: sustained collector error rate
       - alert: EdgeCollectorErrors
         expr: sum by (asset_id, collector_type) (rate(edge_collector_errors_total[5m])) > 0.1
@@ -526,6 +543,82 @@ groups:
   # so there was no `up` target to be down and no heartbeat to go stale, and their
   # Deployments carried no probes, so a pod was trivially "Ready" forever and never
   # restarted. These alerts are the monitoring half of that change.
+  # Security + realtime signals. Every rule here needed a METRIC added first
+  # (app/core/http_metrics.py): auth failures and WebSocket lifecycle events were
+  # only structlog lines, which Prometheus never sees. Writing these rules against
+  # the old code would have produced alerts that lint green and can never fire.
+  - name: opsgrid_security
+    rules:
+      # HIGH: a sustained burst of failed logins. Rate-based, not a raw count, so
+      # it scales with fleet size instead of firing on a busy morning.
+      - alert: AuthBruteForceSuspected
+        expr: sum(rate(opsgrid_auth_attempts_total{outcome="failure"}[5m])) > 5
+        for: 5m
+        labels:
+          severity: high
+          team: security
+        annotations:
+          summary: "Sustained authentication failures"
+          description: "More than 5 failed logins per second over 5 minutes. The metric is deliberately not labelled by user or IP (that would let an enumeration attack create unbounded series), so identify the source from the access logs or the audit trail."
+          runbook_url: "https://github.com/SoundSafe-Dev/OmniusGrid-X/blob/main/docs/runbooks/error-triage.md"
+
+      # WARNING: most login attempts are failing. Catches a broken auth dependency
+      # — an expired SSO signing key, an unreachable Redis behind the limiter —
+      # which AuthBruteForceSuspected would miss on a low-traffic deployment
+      # because the absolute rate stays small.
+      - alert: AuthFailureRatioHigh
+        expr: |
+          sum(rate(opsgrid_auth_attempts_total{outcome="failure"}[10m]))
+            /
+          clamp_min(sum(rate(opsgrid_auth_attempts_total[10m])), 0.001)
+            > 0.5
+        for: 10m
+        labels:
+          severity: warning
+          team: platform
+        annotations:
+          summary: "Over half of login attempts are failing"
+          description: "The failure RATIO exceeds 50% for 10 minutes. On a quiet deployment a broken auth path produces a low absolute failure rate, so the ratio is what surfaces it. Check the SSO signing keys, the auth limiter's Redis, and recent auth deploys."
+          runbook_url: "https://github.com/SoundSafe-Dev/OmniusGrid-X/blob/main/docs/runbooks/error-triage.md"
+
+      # HIGH: a client certificate is close to expiry. `edge_agent_cert_expiring`
+      # already covers the 2-day emergency; this is the 14-day window where
+      # rotation can still be scheduled rather than scrambled.
+      - alert: EdgeAgentCertExpiryApproaching
+        expr: min by (agent_id) (edge_agent_cert_expiry_seconds) < 1209600
+        for: 1h
+        labels:
+          severity: warning
+          team: edge
+        annotations:
+          summary: "Edge agent certificate expires within 14 days"
+          description: "Agent {{ $labels.agent_id }} has under 14 days of certificate validity. Rotate now; at under 2 days EdgeAgentCertExpiringSoon escalates this to high."
+          runbook_url: "https://github.com/SoundSafe-Dev/OmniusGrid-X/blob/main/scripts/certificate-rotation.sh"
+
+  # Realtime delivery. The dashboard and alarm views are WebSocket-driven, so a
+  # silent collapse here looks like "nothing is happening in the factory".
+  - name: opsgrid_realtime
+    rules:
+      # HIGH: connections are being torn down abnormally rather than closed by the
+      # client. A ratio, because a busy system produces clean closes constantly and
+      # an absolute count of disconnects is meaningless.
+      - alert: WebSocketDropRateHigh
+        expr: |
+          sum(rate(opsgrid_websocket_events_total{event="disconnect_error"}[10m]))
+            /
+          clamp_min(
+            sum(rate(opsgrid_websocket_events_total{event=~"disconnect_.*"}[10m])),
+            0.001
+          ) > 0.25
+        for: 10m
+        labels:
+          severity: high
+          team: platform
+        annotations:
+          summary: "Over a quarter of WebSocket closes are abnormal"
+          description: "More than 25% of WebSocket disconnects over 10 minutes ended in an error rather than a clean client close. Live telemetry, alarm and PackML updates are degrading. Check backend logs for websocket_closed_with_error and the ingress idle timeout."
+          runbook_url: "https://github.com/SoundSafe-Dev/OmniusGrid-X/blob/main/docs/runbooks/subsystems.md"
+
   - name: opsgrid_workers
     rules:
       # CRITICAL: the ingestion worker has stopped consuming. Its liveness probe
@@ -548,6 +641,102 @@ groups:
           summary: "Ingestion worker has not processed a message in over 10 minutes"
           description: "The ingestion worker's last completed unit of work is more than 10 minutes old and its liveness probe has not recovered it. Telemetry is not being persisted and the topic is backing up. Check the pod's restart count, the Redpanda connection, and consumer-group state."
           runbook_url: "https://github.com/SoundSafe-Dev/OmniusGrid-X/blob/main/docs/runbooks/kafka-consumer-lag.md"
+
+      # HIGH: the ingestion worker is dead-lettering telemetry (FS-464).
+      #
+      # A dead-lettered message was ACCEPTED from a device and acknowledged, so the
+      # agent's buffer has already dropped its copy. The DLQ makes it replayable, but
+      # nothing about it is visible until someone reads the topic — and the equivalent
+      # on the agent side has had a counter and an alert since FS-458. The platform
+      # was watching the edge's data loss and not its own.
+      #
+      # HIGH rather than critical: the data is preserved and replayable. Distinct from
+      # the alert below, where it is not.
+      - alert: IngestionDeadLettering
+        expr: increase(opsgrid_ingestion_dead_lettered_total[15m]) > 0
+        for: 0m
+        labels:
+          severity: high
+          team: platform
+        annotations:
+          summary: "Ingestion worker is dead-lettering telemetry"
+          description: "{{ $value }} messages from {{ $labels.source_topic }} could not be processed in the last 15m and were published to the DLQ. The data is replayable but is not in the database. Check the DLQ topic for the failure reason."
+
+      # CRITICAL: the dead-letter publish itself failed, so the message is neither
+      # processed nor preserved and its offset advances regardless. This is telemetry
+      # leaving the system: the device has been told the data was received, its buffer
+      # has dropped it, and nothing in the cloud holds it.
+      # A side effect on the ingest path is failing and being swallowed (FS-537).
+      #
+      # Swallowing is correct: ingestion must not stop because a WebSocket publish failed
+      # or an OEE counter could not be updated. What was missing is that nothing counted
+      # them, so a rule failing on every message wrote one log line per message and
+      # aggregated nowhere.
+      #
+      # `alarm_rule_evaluation` is the label that matters most. Its failure means
+      # server-side alarm rules are not firing — telemetry still flows, dashboards still
+      # update, and the alerting is off, which is a condition an operator otherwise
+      # discovers by noticing an alarm that never arrived.
+      # CRITICAL: an audit row could not be written (FS-536).
+      #
+      # The middleware continues, correctly — an audit write must not fail a user's
+      # request. But this repository has already shipped a period where EVERY audit
+      # insert failed on an INET/VARCHAR mismatch and the handler swallowed it, so "the
+      # audit trail has been silently empty on real deployments while every write appeared
+      # to succeed" (`db/models.py:1561-1567`). The mismatch was fixed; the invisibility
+      # was not, until this counter and this rule.
+      #
+      # Critical rather than high: an audit gap is a compliance finding, it cannot be
+      # reconstructed after the fact, and every minute it continues is unrecoverable.
+      # Telemetry the edge agent permanently discarded (FS-591).
+      #
+      # DISTINCT FROM EdgeAgentBufferHigh, which watches data WAITING to send. This watches
+      # data that no longer exists: the store-and-forward buffer sheds its oldest rows on a
+      # full disk, those readings are gone from the device, and they never reached the
+      # cloud. FS-504 made the agent count them; nothing consumed the count.
+      #
+      # `increase` over an hour rather than a threshold on the gauge, because the value is
+      # cumulative — a fleet that dropped rows last month should not page forever, and a
+      # fleet dropping them now should page whatever the historical total.
+      - alert: EdgeAgentDroppingTelemetry
+        expr: increase(edge_agent_dropped[1h]) > 0
+        for: 0m
+        labels:
+          severity: critical
+          team: platform
+        annotations:
+          summary: "Agent {{ $labels.agent_id }} is discarding telemetry"
+          description: "{{ $value }} readings were permanently discarded by {{ $labels.agent_id }} in the last hour. Unlike buffer_pending (waiting) and dead_lettered (replayable), this data no longer exists anywhere. The buffer sheds its oldest rows when the disk is full — check disk space and uplink health on the device."
+
+      - alert: AuditWriteFailing
+        expr: increase(opsgrid_audit_write_failed_total[10m]) > 0
+        for: 0m
+        labels:
+          severity: critical
+          team: platform
+        annotations:
+          summary: "Audit rows are not being written ({{ $labels.action }})"
+          description: "{{ $value }} audit writes for action {{ $labels.action }} failed in the last 10m. Requests are still succeeding — this is deliberate — so the only symptom is a gap in the audit trail, which cannot be reconstructed later. Check the audit_logs schema and the middleware log for audit_log_failed."
+
+      - alert: IngestionSideEffectFailing
+        expr: increase(opsgrid_ingestion_side_effect_failed_total[15m]) > 0
+        for: 5m
+        labels:
+          severity: high
+          team: platform
+        annotations:
+          summary: "Ingest side effect {{ $labels.side_effect }} is failing"
+          description: "{{ $value }} failures of {{ $labels.side_effect }} in the last 15m. Telemetry is still being stored — this path is deliberately non-fatal — but the side effect is not happening. If this is alarm_rule_evaluation, server-side alarm rules are NOT firing."
+
+      - alert: IngestionDataLost
+        expr: increase(opsgrid_ingestion_dead_letter_failed_total[15m]) > 0
+        for: 0m
+        labels:
+          severity: critical
+          team: platform
+        annotations:
+          summary: "Ingestion worker LOST telemetry — the dead-letter publish also failed"
+          description: "{{ $value }} messages from {{ $labels.source_topic }} were dropped entirely: unprocessable, and the DLQ publish failed too. The sending device has already been acknowledged and has discarded its copy. Check broker reachability and the DLQ topic's existence."
 
       # HIGH: a worker's metrics endpoint is unreachable — either the process is
       # gone or its health server never came up. Distinct from WorkerStalled, which

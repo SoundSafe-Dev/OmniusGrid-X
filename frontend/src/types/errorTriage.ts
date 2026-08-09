@@ -60,6 +60,11 @@ export interface ErrorEventDetail {
   regression_count: number;
   message_sample: string | null;
   traceback_sample: string | null;
+  /** True when the two samples above were withheld because the row belongs to another
+   *  organisation (FS-477). The withheld value is a SENTENCE, not a traceback, and it is
+   *  indistinguishable from real content by inspection — so the page reads this rather
+   *  than matching the server's prose, which would break the day somebody rewords it. */
+  samples_redacted?: boolean;
   organization_id: string | null;
   status_changed_by: string | null;
   status_changed_at: string | null;

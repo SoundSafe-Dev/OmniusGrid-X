@@ -10,6 +10,7 @@ import { IntakeSelectorDialog } from './IntakeSelectorDialog';
 import { ChatHistoryModal } from './ChatHistoryModal';
 import { ContextPanel } from './ContextPanel';
 import { RealTimeDataPanel } from './RealTimeDataPanel';
+import { ActionableInsight } from './ActionableInsight';
 import { Send, Loader2, CheckCircle, History, Inbox, Plus, Upload } from 'lucide-react';
 
 interface CorrelationAIPaneProps {
@@ -132,6 +133,14 @@ export const CorrelationAIPane: React.FC<CorrelationAIPaneProps> = ({ className 
   const { alert } = useDialog();
   const [currentSession, setCurrentSession] = useState<AnalysisSession | null>(null);
   const [messages, setMessages] = useState<SessionMessage[]>([]);
+  // The messages endpoint caps at `limit` and orders OLDEST FIRST (FS-459), so a session
+  // over the cap loses its most recent turns — the pane shows the beginning of a
+  // conversation and silently omits what was just said, which is the half a user is
+  // actually looking at.
+  const [historyTruncated, setHistoryTruncated] = useState(false);
+  // Why a transcript is missing, when it is missing because the request failed rather than
+  // because the session is new (FS-481). Those two look identical without it.
+  const [transcriptError, setTranscriptError] = useState<string | null>(null);
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [activeProgressStep, setActiveProgressStep] = useState(0);
@@ -221,6 +230,7 @@ export const CorrelationAIPane: React.FC<CorrelationAIPaneProps> = ({ className 
     const session = await analysisSessionsApi.createSession({});
     await analysisSessionsApi.getSession(session.id);
     setCurrentSession(session);
+    setTranscriptError(null);
     setSessionListKey(prev => prev + 1);
     setDataSourcesKey(prev => prev + 1);
     return session;
@@ -252,10 +262,16 @@ export const CorrelationAIPane: React.FC<CorrelationAIPaneProps> = ({ className 
         setCurrentSession(latest);
         const sessionMessages = await analysisSessionsApi.getSessionMessages(latest.id, 100, 0);
         if (!cancelled) {
-          setMessages(sessionMessages);
+          setMessages(sessionMessages.items);
+          setHistoryTruncated(sessionMessages.truncated);
         }
       } catch (error) {
         console.error('[CorrelationAIPane] Failed to bootstrap session:', error);
+        // FS-481. `setCurrentSession(latest)` may already have run, so the pane can show a
+        // named session with no messages — indistinguishable from a session nobody used.
+        if (!cancelled) {
+          setTranscriptError('Your last session could not be loaded — it is not an empty session. Reload to retry.');
+        }
       }
     };
 
@@ -272,6 +288,7 @@ export const CorrelationAIPane: React.FC<CorrelationAIPaneProps> = ({ className 
       const session = await createReplacementSession();
       console.log('[CorrelationAIPane] Session created:', session);
       setMessages([]);
+      setHistoryTruncated(false);
     } catch (error) {
       console.error('[CorrelationAIPane] Error creating session:', error);
       await alert({ title: 'Could not create session', message: 'Failed to create session. Check the console for details.' });
@@ -280,11 +297,22 @@ export const CorrelationAIPane: React.FC<CorrelationAIPaneProps> = ({ className 
 
   const handleSessionSelect = async (session: AnalysisSession) => {
     setCurrentSession(session);
+    setTranscriptError(null);
     try {
       const sessionMessages = await analysisSessionsApi.getSessionMessages(session.id, 100, 0);
-      setMessages(sessionMessages);
+      setMessages(sessionMessages.items);
+      setHistoryTruncated(sessionMessages.truncated);
     } catch (error) {
       console.error('Error loading session messages:', error);
+      // FS-481. The session is switched BEFORE its transcript arrives, so a failure here
+      // used to leave the PREVIOUS session's conversation on screen under the new
+      // session's name — the header, the data-sources panel and the suggested questions
+      // all say session B while the messages are session A's. That is worse than showing
+      // nothing: it is another investigation, read as this one. Clear it, and say why the
+      // pane is empty so it is not mistaken for a session that was never used.
+      setMessages([]);
+      setHistoryTruncated(false);
+      setTranscriptError('This session\'s history could not be loaded — it is not an empty session. Select it again to retry.');
     }
   };
 
@@ -296,6 +324,12 @@ export const CorrelationAIPane: React.FC<CorrelationAIPaneProps> = ({ className 
       setDataSourcesKey(prev => prev + 1);
     } catch (error) {
       console.error('Error adding intake data:', error);
+      // FS-481. Silently, the document simply never appears in the panel — and the next
+      // question is answered from a data set the operator believes contains it.
+      await alert({
+        title: 'Could not attach that document',
+        message: 'The document was not added to this session. Answers will not take it into account.',
+      });
     }
   };
 
@@ -317,6 +351,7 @@ export const CorrelationAIPane: React.FC<CorrelationAIPaneProps> = ({ className 
     try {
       const session = await createReplacementSession();
       setMessages([]);
+      setHistoryTruncated(false);
       return session.id;
     } catch (error) {
       console.error('Error recovering missing session:', error);
@@ -391,7 +426,12 @@ export const CorrelationAIPane: React.FC<CorrelationAIPaneProps> = ({ className 
           domains: response.domains,
           actions: response.actions,
           follow_up_questions: response.follow_up_questions || response.analysis?.follow_up_questions,
-          timestamp: response.timestamp
+          timestamp: response.timestamp,
+          // Carried through, never defaulted: the server sets this when the reply is a
+          // heuristic or an error fallback rather than an inference, and dropping it
+          // here would put the confident version back in front of the operator.
+          simulated: response.simulated,
+          simulation_reason: response.simulation_reason
         }
       ]);
     };
@@ -611,12 +651,35 @@ export const CorrelationAIPane: React.FC<CorrelationAIPaneProps> = ({ className 
                   Auto-integrate
                 </label>
               </TooltipTrigger>
-              <TooltipContent>Automatically create Kanban tasks from AI recommendations</TooltipContent>
+              {/*
+                HONEST LABEL (FS-406). This used to read "Automatically create Kanban tasks
+                from AI recommendations", which claimed an outcome the UI never checked: the
+                background integration reports nothing back, so it can create nothing and
+                this screen looks identical either way. The wording now says what is actually
+                guaranteed, and points at the per-action Activate control, which does report
+                what it created and where each system of record stands.
+              */}
+              <TooltipContent>
+                Asks the analysis to hand its recommendations to the background Kanban
+                integration. It does not report back, so use Activate on an individual
+                recommendation when you need to see what was created.
+              </TooltipContent>
             </Tooltip>
           </div>
         </div>
 
         <div className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden p-4 bg-opsgrid-bg">
+          {/* A transcript that failed to load, said out loud (FS-481). Above the branch
+              below because that branch renders the SAME empty state for a session with no
+              messages and a session whose messages could not be fetched. */}
+          {transcriptError && (
+            <div
+              role="alert"
+              className="mb-3 rounded border border-red-500/40 bg-red-500/10 px-3 py-2 text-sm text-red-500"
+            >
+              {transcriptError}
+            </div>
+          )}
           {!currentSession ? (
             <div className="h-full min-h-0 rounded-xl border border-gray-300 bg-white text-center text-gray-900 flex flex-col items-center justify-center px-8">
               <Plus className="w-12 h-12 mb-4 text-gray-400" />
@@ -651,6 +714,19 @@ export const CorrelationAIPane: React.FC<CorrelationAIPaneProps> = ({ className 
             </div>
           ) : (
             <div className="space-y-4 overflow-x-hidden">
+              {/* Say so when the pane is showing a page (FS-459). The list is oldest
+                  first, so the messages missing are the RECENT ones — a user scrolling to
+                  the bottom of this pane would otherwise believe they had reached the end
+                  of the conversation. */}
+              {historyTruncated && (
+                <div
+                  role="status"
+                  className="rounded border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-300"
+                >
+                  This session has more messages than are shown here. The most recent turns
+                  may be missing — start a new session to continue the conversation.
+                </div>
+              )}
               {messages.map((message, index) => {
                 const followUpQuestions = message.role === 'assistant' ? getFollowUpQuestions(message) : [];
 
@@ -666,6 +742,20 @@ export const CorrelationAIPane: React.FC<CorrelationAIPaneProps> = ({ className 
                         : 'bg-white text-gray-900 border border-gray-200 shadow-sm'
                     }`}
                   >
+                    {message.role === 'assistant' && message.simulated && (
+                      <div className="mb-3">
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <Badge variant="warning">Not a model inference</Badge>
+                          </TooltipTrigger>
+                          <TooltipContent>
+                            {message.simulation_reason ||
+                              'This reply was produced without the correlation model.'}
+                          </TooltipContent>
+                        </Tooltip>
+                      </div>
+                    )}
+
                     {message.role === 'assistant' && (() => {
                       const riskScore = normalizeRiskScore(message.risk_score);
                       if (riskScore === undefined) return null;
@@ -707,12 +797,24 @@ export const CorrelationAIPane: React.FC<CorrelationAIPaneProps> = ({ className 
                     {message.actions && message.actions.length > 0 && (
                       <div className="mt-3 pt-3 border-t border-gray-200">
                         <p className="text-xs font-medium text-gray-700 mb-2">Recommended Actions:</p>
-                        <ul className="text-xs space-y-1">
+                        {/*
+                          Each line is activatable (FS-406). It used to be a bullet with a
+                          green tick — which read as "done" for work that had not been
+                          started and could not be started from here. Activating one creates
+                          the Kanban task and a posting to every system of record its domain
+                          implies, and the row then shows each of those individually,
+                          including the ones that need a person told.
+                        */}
+                        <ul className="text-xs space-y-1.5">
                           {message.actions.map((action, idx) => (
-                            <li key={idx} className="flex items-start gap-2">
-                              <CheckCircle className="w-3 h-3 mt-0.5 text-green-500" />
-                              <span>{action.description || JSON.stringify(action)}</span>
-                            </li>
+                            <ActionableInsight
+                              key={idx}
+                              action={action}
+                              index={idx}
+                              sessionId={message.session_id || currentSession?.id}
+                              messageId={message.id}
+                              domain={message.domains?.[0]}
+                            />
                           ))}
                         </ul>
                       </div>
@@ -799,6 +901,7 @@ export const CorrelationAIPane: React.FC<CorrelationAIPaneProps> = ({ className 
             <Tooltip>
               <TooltipTrigger asChild>
                 <Button
+                  data-testid="correlation-send"
                   onClick={handleSendMessage}
                   disabled={isLoading || !input.trim()}
                   className="px-4"

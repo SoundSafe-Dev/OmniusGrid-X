@@ -3,7 +3,7 @@
 import os
 import sys
 import unittest
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -28,7 +28,9 @@ class OEETrackerTest(unittest.TestCase):
         oee_tracker.reset()
 
     def test_execute_stopped_execute_sequence(self):
-        now = datetime.now()  # LocalOEECalculator uses local now()
+        # Aware UTC since FS-461; _parse_ts converts either form, so this asserts the
+        # aware path that seven of eleven collectors actually emit.
+        now = datetime.now(timezone.utc)
         oee_tracker.record(msg("m1", "Execute", now - timedelta(seconds=100)))
         oee_tracker.record(msg("m1", "Stopped", now - timedelta(seconds=40)))  # Execute lasted 60s
         result = oee_tracker.record(

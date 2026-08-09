@@ -144,9 +144,19 @@ export const KanbanColumn: React.FC<KanbanColumnProps> = ({
                   <TooltipContent>WIP limit exceeded</TooltipContent>
                 </Tooltip>
               )}
-              <button className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300">
-                <ChevronDown className="w-4 h-4" />
-              </button>
+              {/* NOT A BUTTON (FS-551). This was `<button>` with no `onClick` — focusable,
+                  announced as a button, and doing nothing when pressed. A keyboard or
+                  screen-reader user found a control that was not one, which is worse than
+                  no affordance at all: it invites the action and then fails silently.
+
+                  The chevron marks the column header as carrying a description tooltip; it
+                  has never collapsed anything. Made presentational rather than wired up,
+                  because giving it behaviour is a feature decision and removing a false
+                  affordance is not. */}
+              <ChevronDown
+                aria-hidden="true"
+                className="w-4 h-4 text-gray-400"
+              />
             </div>
           </div>
         </TooltipTrigger>

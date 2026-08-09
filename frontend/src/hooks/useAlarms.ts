@@ -15,10 +15,10 @@ export function useAlarms(filters?: AlarmFilters, options?: UseQueryOptions<Pagi
   });
 }
 
-export function useActiveAlarms(organizationId?: string, severity?: string) {
+export function useActiveAlarms(severity?: string) {
   return useQuery<ActiveAlarmsResponse, Error>({
-    queryKey: [ALARMS_QUERY_KEY, 'active', organizationId, severity],
-    queryFn: () => alarmsApi.getActive(organizationId, severity),
+    queryKey: [ALARMS_QUERY_KEY, 'active', severity],
+    queryFn: () => alarmsApi.getActive(severity),
     refetchInterval: 10000, // Refresh every 10 seconds
   });
 }

@@ -1,6 +1,8 @@
 """Dashboard & OEE API Routes"""
 
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
+
+from pydantic import BaseModel, Field
 from uuid import UUID
 from datetime import datetime, timedelta, timezone
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -14,6 +16,67 @@ from app.models.schemas import DashboardOverview, OEEMetrics
 from app.services.oee_calculator import oee_calculator
 
 router = APIRouter(dependencies=[Depends(get_current_active_user)])
+
+
+class WorkcellAssetStatus(BaseModel):
+    id: str
+    name: str
+    current_packml_state: Optional[str] = None
+    is_active: Optional[bool] = None
+    last_seen: Optional[str] = None
+
+
+class WorkcellStatusOut(BaseModel):
+    workcell_id: str
+    asset_count: int
+    assets: List[WorkcellAssetStatus]
+
+
+class AssetOEEOut(BaseModel):
+    """Three real factors, and two flags saying whether two of them were MEASURED.
+
+    This endpoint used to hardcode `performance = quality = 1.0` and serve availability
+    under the name `oee`. It now delegates to `oee_calculator`, and `quality_measured` /
+    `performance_measured` exist because 1.0 is the neutral multiplier for an absent
+    factor — correct arithmetic, and the wrong thing to print as "100%".
+    """
+
+    asset_id: str
+    asset_name: str
+    time_range: str
+    #: 0–1 RATIOS on this endpoint. `oee_calculator` returns percentages and the handler
+    #: divides; `/api/v1/oee/*` serves the same quantities as percentages.
+    availability: float
+    performance: float
+    quality: float
+    oee: float
+    quality_measured: bool
+    performance_measured: bool
+    total_parts: Optional[int] = None
+    good_parts: Optional[int] = None
+    #: PackML state -> summed seconds, keyed by whatever states the asset reported.
+    state_durations: Dict[str, float] = Field(default_factory=dict)
+    total_planned_time_seconds: int
+
+
+class FleetAssetAvailability(BaseModel):
+    asset_id: str
+    asset_name: str
+    availability: float
+    #: Always True. Availability alone is not OEE, and the old code served this exact
+    #: number under the key `oee`, which overstated every asset in the fleet.
+    availability_only: bool
+
+
+class FleetOEEOut(BaseModel):
+    time_range: str
+    asset_count: int
+    #: `None`, not 0, for a fleet with nothing to average — 0% availability renders as a
+    #: fleet-wide outage, and an average of nothing is not zero.
+    fleet_average_availability: Optional[float] = None
+    assets_measured: int
+    availability_only: bool
+    assets: List[FleetAssetAvailability]
 
 
 @router.get("/overview", response_model=DashboardOverview)
@@ -84,7 +147,7 @@ async def get_dashboard_overview(
     )
 
 
-@router.get("/workcells/{workcell_id}/status")
+@router.get("/workcells/{workcell_id}/status", response_model=WorkcellStatusOut)
 async def get_workcell_status(
     workcell_id: UUID,
     db: AsyncSession = Depends(get_tenant_db),
@@ -114,7 +177,7 @@ async def get_workcell_status(
     }
 
 
-@router.get("/assets/{asset_id}/oee")
+@router.get("/assets/{asset_id}/oee", response_model=AssetOEEOut)
 async def get_asset_oee(
     asset_id: UUID,
     hours: int = Query(24, ge=1, le=168),
@@ -166,6 +229,12 @@ async def get_asset_oee(
         "performance": round(metrics.performance / 100, 4),
         "quality": round(metrics.quality / 100, 4),
         "oee": round(metrics.oee / 100, 4),
+        # Whether each factor was actually measured (FS-234). Quality reads 1.0
+        # when an asset has no part counters — a neutral multiplier for OEE, but not
+        # a measurement. A consumer should render "—" rather than "100%" when this
+        # is false.
+        "quality_measured": metrics.quality_measured,
+        "performance_measured": metrics.performance_measured,
         "total_parts": metrics.total_parts,
         "good_parts": metrics.good_parts,
         "state_durations": state_durations,
@@ -173,7 +242,7 @@ async def get_asset_oee(
     }
 
 
-@router.get("/fleet/oee")
+@router.get("/fleet/oee", response_model=FleetOEEOut)
 async def get_fleet_oee(
     hours: int = Query(24, ge=1, le=168),
     org_id: UUID = Depends(get_tenant_org_id),
@@ -226,15 +295,23 @@ async def get_fleet_oee(
             "availability_only": True,
         })
 
+    # AN AVERAGE OF NOTHING IS NOT ZERO. With no assets in the fleet this returned 0,
+    # which renders as 0% availability — a fleet-wide outage, reported because there was
+    # nothing to average. `None` cannot be mistaken for a measurement, and
+    # `assets_measured` says how many rows the figure rests on.
     avg_availability = (
         sum(r["availability"] for r in oee_results) / len(oee_results)
-        if oee_results else 0
+        if oee_results
+        else None
     )
 
     return {
         "time_range": f"Last {hours} hours",
         "asset_count": len(assets),
-        "fleet_average_availability": round(avg_availability, 4),
+        "fleet_average_availability": (
+            round(avg_availability, 4) if avg_availability is not None else None
+        ),
+        "assets_measured": len(oee_results),
         # `fleet_average_oee` used to be this same availability number. Callers
         # wanting a fleet OEE trend should use /api/v1/dashboard/oee/trend,
         # which is explicit about being availability-only.

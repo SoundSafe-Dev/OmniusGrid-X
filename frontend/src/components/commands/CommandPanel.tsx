@@ -1,6 +1,6 @@
 import { FC, useState, useCallback } from 'react';
 import { Send, AlertTriangle, Pause, Play, Thermometer, Gauge } from 'lucide-react';
-import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '../../api';
 import { Button, Card, Badge, Input } from '../ui';
 
@@ -13,6 +13,23 @@ interface CommandPanelProps {
 }
 
 type CommandAction = 'pause_job' | 'resume_job' | 'set_speed' | 'set_temperature' | 'emergency_stop';
+
+/** One row of GET /api/v1/commands/asset/{asset_id}. */
+interface CommandRecord {
+  command_id: string;
+  status: string;
+  action: string;
+  issued_at: string | null;
+  executed_at: string | null;
+  result?: Record<string, unknown> | null;
+}
+
+/** A command that has not reached a terminal state yet. */
+const IN_FLIGHT = new Set(['pending', 'queued', 'sent', 'executing', 'acknowledged']);
+/** Re-read while something is in flight. command_executor dispatches off the request
+ *  path, so the submit response cannot tell you what happened. */
+const HISTORY_POLL_MS = 5_000;
+const HISTORY_SHOWN = 5;
 
 interface CommandOption {
   action: CommandAction;
@@ -85,6 +102,33 @@ export const CommandPanel: FC<CommandPanelProps> = ({
 
   const queryClient = useQueryClient();
 
+  // THE QUERY THE INVALIDATION WAS ALWAYS AIMING AT. Both mutations called
+  // `invalidateQueries({ queryKey: ['commands', assetId] })` and no query in the
+  // codebase declared that key, so it refetched nothing — while the panel told the
+  // operator to "view command history in the asset details page", which renders this
+  // panel and no history. Meanwhile GET /api/v1/commands/asset/{id} worked and had zero
+  // callers.
+  //
+  // It matters more than a missing list: command_executor dispatches off the request
+  // path, so "Command submitted successfully" only means the row was written. Whether
+  // the machine did anything was not observable anywhere in the product.
+  const history = useQuery<CommandRecord[]>({
+    queryKey: ['commands', assetId],
+    queryFn: async () => {
+      const response = await api.get<CommandRecord[]>(
+        `/api/v1/commands/asset/${assetId}`,
+        { params: { limit: HISTORY_SHOWN } },
+      );
+      return response.data;
+    },
+    // Stops on its own once everything reaches a terminal state, rather than polling
+    // an idle asset forever.
+    refetchInterval: (query) =>
+      (query.state.data ?? []).some((c) => IN_FLIGHT.has(c.status))
+        ? HISTORY_POLL_MS
+        : false,
+  });
+
   const submitCommand = useMutation({
     mutationFn: async (data: {
       action: CommandAction;
@@ -123,6 +167,9 @@ export const CommandPanel: FC<CommandPanelProps> = ({
     },
     onSuccess: () => {
       setFeedback({ type: 'success', message: 'EMERGENCY STOP initiated' });
+      // Submit refreshed the history and this did not, so the one command an operator
+      // most needs to see land was the one missing from the list.
+      queryClient.invalidateQueries({ queryKey: ['commands', assetId] });
       setTimeout(() => setFeedback(null), 5000);
     },
     onError: (error: any) => {
@@ -294,11 +341,53 @@ export const CommandPanel: FC<CommandPanelProps> = ({
           </div>
         )}
 
-        {/* Command History Link */}
+        {/* Recent commands. Replaces a line that pointed at a history page which did
+            not exist — this panel IS the asset details page's command surface. */}
         <div className="mt-4 pt-4 border-t border-opsgrid-border">
-          <p className="text-xs text-opsgrid-text-secondary">
-            Commands are logged and tracked. View command history in the asset details page.
-          </p>
+          <p className="text-xs font-medium text-opsgrid-text mb-2">Recent commands</p>
+          {history.isLoading ? (
+            <p className="text-xs text-opsgrid-text-secondary">Loading command history…</p>
+          ) : history.isError ? (
+            <p className="text-xs text-status-alarm">Couldn’t load command history.</p>
+          ) : (history.data ?? []).length === 0 ? (
+            <p className="text-xs text-opsgrid-text-secondary">
+              No commands have been sent to this asset.
+            </p>
+          ) : (
+            <ul className="space-y-1">
+              {(history.data ?? []).slice(0, HISTORY_SHOWN).map((c) => (
+                <li
+                  key={c.command_id}
+                  className="text-xs flex items-center justify-between gap-2"
+                >
+                  <span className="text-opsgrid-text">{c.action}</span>
+                  <span className="flex items-center gap-2 text-opsgrid-text-secondary">
+                    {c.issued_at && (
+                      <span>{new Date(c.issued_at).toLocaleTimeString()}</span>
+                    )}
+                    <Badge
+                      variant={
+                        c.status === 'completed' || c.status === 'executed'
+                          ? 'success'
+                          : c.status === 'failed' || c.status === 'rejected'
+                            ? 'error'
+                            : 'info'
+                      }
+                      size="sm"
+                    >
+                      {c.status}
+                    </Badge>
+                  </span>
+                </li>
+              ))}
+            </ul>
+          )}
+          {(history.data ?? []).some((c) => IN_FLIGHT.has(c.status)) && (
+            <p className="text-xs text-opsgrid-text-secondary mt-2">
+              A command is still in flight — dispatch happens in the background, and this
+              list updates as it settles.
+            </p>
+          )}
         </div>
       </div>
     </Card>

@@ -12,13 +12,17 @@ from typing import Dict, Any, Optional, List
 from datetime import datetime, timezone
 import structlog
 import aiohttp
-from requests_oauthlib import OAuth2Session
 
 from app.services.erp_connector_base import (
     ERPConnectorBase,
     ERPConfig,
-    ERPType,
-    AuthType
+)
+
+from app.services.erp_connectors.oauth2 import fetch_client_credentials_token
+from app.services.erp_connectors.sap_batch import (
+    extract_boundary,
+    parse_batch_response,
+    rows_from_batch,
 )
 
 logger = structlog.get_logger()
@@ -31,6 +35,18 @@ class SAPConnector(ERPConnectorBase):
     Connects to SAP systems via OData API to fetch
     purchase orders, manufacturing orders, inventory, vendors, and work orders.
     """
+
+    #: SAP Event Mesh subscriptions are managed through the Event Mesh service
+    #: instance (its management API or the BTP cockpit), not by POSTing
+    #: `{eventType, webhookUrl, filter}` to `{event_mesh_url}/subscriptions` as the
+    #: old implementation did. That payload was the same one used for six other
+    #: vendors, so it was never validated against Event Mesh.
+    EVENT_SUBSCRIPTION_MECHANISM = (
+        "SAP Event Mesh / Advanced Event Mesh subscriptions are configured on the "
+        "service instance (management API or BTP cockpit). The previous request "
+        "shape here was unvalidated; use polling via fetch_data until a real Event "
+        "Mesh instance is available to verify against."
+    )
     
     def __init__(self, config: ERPConfig, organization_id: str, integration_id: str):
         super().__init__(config, organization_id, integration_id)
@@ -41,11 +57,23 @@ class SAPConnector(ERPConnectorBase):
         self.system_id = config.configuration.get("system_id")
         self.client = config.configuration.get("client", "001")
         
-        # Build base URL for OData service
-        self.odata_url = f"{config.base_url}{self.service_path}/{self.service_name}"
+        # Build base URL for OData service.
+        #
+        # Joined from non-empty segments rather than interpolated, because the naive
+        # f"{base_url}{service_path}/{service_name}" produced an empty path segment
+        # whenever service_path carried a trailing slash or service_name was blank.
+        # `fetch_data` then appends "/{entity_type}", so a single stray slash reached
+        # SAP as "//A_PurchaseOrder" and 404'd in a way that reads as a bad entity
+        # name. `base_url` is already normalized by ERPConfig.__post_init__.
+        self.odata_url = "/".join(
+            part for part in (
+                config.base_url,
+                self.service_path.strip("/"),
+                self.service_name.strip("/"),
+            ) if part
+        )
         
         # OAuth2 session for authentication
-        self.oauth_session: Optional[OAuth2Session] = None
         
         logger.info(
             "sap_connector_initialized",
@@ -55,35 +83,34 @@ class SAPConnector(ERPConnectorBase):
         )
     
     async def authenticate(self) -> str:
-        """
-        Authenticate with SAP using OAuth2.
-        
-        Returns:
-            str: Access token
+        """Authenticate with SAP using the client-credentials grant.
+
+        TWO THINGS WERE WRONG HERE. The import of `requests_oauthlib` was never a
+        declared dependency, so this module raised ImportError and the SAP
+        connector could not be constructed at all. And the flow was
+        `fetch_token(..., authorization_response=...)` — the AUTHORIZATION-CODE
+        grant, which expects a browser redirect carrying a code. A scheduled
+        server-to-server sync has no user and no browser, so it could never have
+        completed even with the package installed.
+
+        Server-to-server is client_credentials, and it is now run over aiohttp
+        rather than a blocking `requests` session inside an async worker.
         """
         auth_config = self.config.auth_config
-        
-        # Create OAuth2 session
-        self.oauth_session = OAuth2Session(
-            client_id=auth_config.get("client_id"),
-            redirect_uri=auth_config.get("redirect_uri", "urn:ietf:wg:oauth:2.0:oob")
-        )
-        
-        # Fetch token
-        token = self.oauth_session.fetch_token(
+
+        token, expires_in = await fetch_client_credentials_token(
             token_url=auth_config.get("token_url"),
+            client_id=auth_config.get("client_id"),
             client_secret=auth_config.get("client_secret"),
-            authorization_response=auth_config.get("authorization_response")
+            scope=auth_config.get("scope"),
+            timeout_seconds=self.config.timeout,
         )
-        
-        access_token = token.get("access_token")
-        
-        logger.info(
-            "sap_authentication_success",
-            token_type=token.get("token_type")
-        )
-        
-        return access_token
+
+        # Cache against SAP's own stated lifetime.
+        self._set_token(token, expires_in)
+
+        logger.info("sap_authentication_success", expires_in=expires_in)
+        return token
     
     async def fetch_data(
         self,
@@ -256,88 +283,18 @@ class SAPConnector(ERPConnectorBase):
         
         return results
     
-    async def subscribe_to_events(self, event_types: List[str]) -> bool:
-        """
-        Subscribe to SAP Event Mesh for real-time events.
-        
-        Args:
-            event_types: List of event types to subscribe to
-            
-        Returns:
-            bool: Success status
-        """
-        # SAP Event Mesh integration
-        # This would typically involve registering a webhook endpoint with SAP Event Mesh
-        
-        event_mesh_url = self.config.configuration.get("event_mesh_url")
-        if not event_mesh_url:
-            logger.warning("sap_event_mesh_not_configured")
-            return False
-        
-        token = await self.get_auth_token()
-        
-        # Register subscription for each event type
-        for event_type in event_types:
-            subscription_url = f"{event_mesh_url}/subscriptions"
-            
-            subscription_data = {
-                "eventType": event_type,
-                "webhookUrl": self.config.configuration.get("webhook_url"),
-                "filter": self.config.configuration.get("event_filter", {})
-            }
-            
-            async def _subscribe():
-                headers = {
-                    "Authorization": f"Bearer {token}",
-                    "Content-Type": "application/json"
-                }
-                
-                async with aiohttp.ClientSession() as session:
-                    async with session.post(
-                        subscription_url,
-                        headers=headers,
-                        json=subscription_data
-                    ) as response:
-                        if response.status not in [200, 201]:
-                            error_text = await response.text()
-                            raise Exception(f"Event Mesh subscription error: {response.status} - {error_text}")
-            
-            await self.execute_with_retry(_subscribe)
-        
-        logger.info(
-            "sap_event_subscriptions_created",
-            event_types=event_types
-        )
-        
-        return True
-    
+
     async def health_check(self) -> Dict[str, Any]:
+        """Health check that distinguishes a broken connection from a
+        missing module. See ERPConnectorBase.probe_health.
+
+        The probe entity 'PurchaseOrder' is business-module dependent, so a tenant
+        without it is reported DEGRADED rather than unhealthy — previously any
+        exception here mapped to unhealthy, so a working integration on a
+        tenant that had not licensed that module looked like an outage.
         """
-        Perform health check on SAP connection.
-        
-        Returns:
-            Dict with health status and details
-        """
-        try:
-            # Try to fetch a small amount of data
-            results = await self.fetch_data("PurchaseOrder", limit=1)
-            
-            return {
-                "status": "healthy",
-                "message": "SAP connection successful",
-                "system_id": self.system_id,
-                "client": self.client,
-                "checked_at": datetime.now(timezone.utc).isoformat()
-            }
-        except Exception as e:
-            return {
-                "status": "unhealthy",
-                "message": str(e),
-                "system_id": self.system_id,
-                "client": self.client,
-                "checked_at": datetime.now(timezone.utc).isoformat()
-            }
-    
+        return await self.probe_health('PurchaseOrder', details={"system_id": self.system_id, "client": self.client})
+
     def _build_filter_string(self, filters: Dict[str, Any]) -> str:
         """
         Build OData filter string from filter dictionary.
@@ -399,46 +356,46 @@ class SAPConnector(ERPConnectorBase):
         
         return "\r\n".join(lines)
     
-    async def _parse_batch_response(self, response_text: str, boundary: str) -> List[Dict[str, Any]]:
+    async def _parse_batch_response(
+        self, response_text: str, boundary: str, content_type: str = ""
+    ) -> List[Dict[str, Any]]:
+        """Parse a multipart/mixed `$batch` response into rows.
+
+        Delegates to `sap_batch.py`. The previous inline implementation split each
+        part on the first blank line and read element [1] as JSON — but that is the
+        HTTP status line and headers, not the body, so `json.loads` raised on every
+        part and a bare `except` swallowed it. `$batch` returned an empty list while
+        reporting success.
+
+        The RESPONSE boundary is used when the server provides one: it is chosen by
+        the server and is usually not the boundary that was sent, and parsing with
+        the wrong one matches nothing — which looks identical to an empty result.
         """
-        Parse multipart/mixed batch response.
-        
-        Args:
-            response_text: Response text
-            boundary: Boundary string
-            
-        Returns:
-            List of parsed results
-        """
-        # Parse multipart response
-        # This is a simplified implementation
-        # In production, use a proper multipart parser
-        
-        results = []
-        parts = response_text.split(f"--{boundary}")
-        
-        for part in parts:
-            if "Content-Type: application/http" in part:
-                # Extract JSON data from HTTP part
-                try:
-                    # Find JSON content between headers and next boundary
-                    lines = part.split("\r\n\r\n")
-                    if len(lines) > 1:
-                        json_part = lines[1]
-                        # Remove boundary suffix if present
-                        json_part = json_part.split(f"--{boundary}")[0]
-                        
-                        import json
-                        data = json.loads(json_part)
-                        results.append(data)
-                except Exception as e:
-                    logger.warning(
-                        "batch_parse_error",
-                        error=str(e)
-                    )
-        
-        return results
-    
+        effective = extract_boundary(content_type) or boundary
+        parts = parse_batch_response(response_text, effective)
+
+        if not parts:
+            logger.warning(
+                "sap_batch_no_parts_parsed",
+                boundary=effective,
+                body_length=len(response_text),
+            )
+            return []
+
+        # strict=False: surface partial failure loudly in the log but still return
+        # the rows that did succeed, because a batch is a convenience wrapper over
+        # independent reads. `rows_from_batch(strict=True)` is available where a
+        # caller needs all-or-nothing.
+        rows = rows_from_batch(parts, strict=False)
+
+        logger.info(
+            "sap_batch_parsed",
+            parts=len(parts),
+            failed=sum(1 for p in parts if not p.ok),
+            rows=len(rows),
+        )
+        return rows
+
     async def fetch_purchase_orders(
         self,
         filters: Optional[Dict[str, Any]] = None,

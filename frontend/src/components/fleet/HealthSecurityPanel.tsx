@@ -67,7 +67,33 @@ export const HealthSecurityPanel: FC = () => {
       setDtcs(dtcsData);
       setSecurityEvents(securityData);
       setDriverMetrics(metricsData);
-      setStats(statsData);
+
+      // DERIVED, NOT ASSIGNED (FS-398). `setStats(statsData)` replaced this object
+      // wholesale with the endpoint's payload — `{totalVehicles, activeDtcs, criticalDtcs,
+      // vehiclesWithIssues}` — which shares NOT ONE of the eight keys the tiles read. So
+      // every figure in this panel rendered blank in real mode: Online, Warnings, Active
+      // DTCs and Avg Safety Score. The mock returned the eight-key shape, so it looked
+      // complete in development, and `avgSafetyScore >= 85` on `undefined` is false, which
+      // pinned the score to its red branch.
+      //
+      // The per-status counts and the safety score come from `vehiclesData`, which this
+      // component already fetched and already renders below — so nothing new is requested
+      // and nothing is invented. The DTC totals are the two figures the statistics endpoint
+      // genuinely computes.
+      const byStatus = (s: string) => vehiclesData.filter(v => v.status === s).length;
+      const scores = vehiclesData.map(v => v.safetyScore).filter(n => typeof n === 'number');
+      setStats({
+        total: vehiclesData.length,
+        online: byStatus('online'),
+        offline: byStatus('offline'),
+        maintenance: byStatus('maintenance'),
+        warning: byStatus('warning'),
+        avgSafetyScore: scores.length
+          ? Math.round(scores.reduce((a, b) => a + b, 0) / scores.length)
+          : 0,
+        totalActiveDTCs: statsData.activeDtcs ?? dtcsData.length,
+        criticalDTCs: statsData.criticalDtcs ?? 0,
+      });
     } catch (err) {
       console.error('Failed to load fleet health data:', err);
       setError('Failed to load fleet health & security data. Please try again.');
@@ -77,8 +103,19 @@ export const HealthSecurityPanel: FC = () => {
   };
 
   const handleAcknowledgeSecurity = async (eventId: string) => {
-    await fleetHealthApi.acknowledgeSecurityEvent(eventId);
-    setSecurityEvents(prev => prev.map(e => e.id === eventId ? { ...e, acknowledged: true } : e));
+    // The state update runs only AFTER the call resolves, and a failure is now
+    // reported. This used to be an unguarded `await` on an endpoint the backend did
+    // not serve: the 404 rejected the promise, the update below never ran, and the
+    // rejection went unhandled — so the operator clicked "acknowledge" and saw
+    // nothing happen, with nothing on screen saying why. The endpoint exists now;
+    // the missing catch would have hidden the next failure just as well.
+    try {
+      await fleetHealthApi.acknowledgeSecurityEvent(eventId);
+      setSecurityEvents(prev => prev.map(e => e.id === eventId ? { ...e, acknowledged: true } : e));
+    } catch (err) {
+      console.error('Failed to acknowledge security event:', err);
+      setError('Could not acknowledge that security event. Please try again.');
+    }
   };
 
   const unacknowledgedSecurity = securityEvents.filter(e => !e.acknowledged);
@@ -265,7 +302,8 @@ export const HealthSecurityPanel: FC = () => {
                       <p className="text-xs text-gray-600">{event.description}</p>
                       <p className="text-xs text-gray-500 mt-1">{event.vehicleNumber} • {new Date(event.timestamp).toLocaleString()}</p>
                     </div>
-                    <button 
+                    <button
+                      aria-label={`Acknowledge security event ${event.eventType ?? ''}`}
                       onClick={() => handleAcknowledgeSecurity(event.id)}
                       className="p-1 text-green-600 hover:bg-green-50 rounded"
                     >
@@ -293,11 +331,16 @@ export const HealthSecurityPanel: FC = () => {
                 <div key={driver.driverId} className="p-3 border-b border-opsgrid-border flex items-center justify-between">
                   <div>
                     <p className="font-medium text-sm">{driver.driverName}</p>
+                    {/* `'declining'` was tested for here and the backend has only ever
+                        sent improving/worsening/stable, so the red styling could not
+                        apply (FS-533). It also could not have mattered: `trend` was
+                        hardcoded `'stable'` server-side for every driver. Two reasons the
+                        branch was dead, which is why neither surfaced. */}
                     <p className={`text-xs ${
                       driver.trend === 'improving' ? 'text-green-500' :
-                      driver.trend === 'declining' ? 'text-red-500' : 'text-gray-500'
+                      driver.trend === 'worsening' ? 'text-red-500' : 'text-gray-500'
                     }`}>
-                      {driver.trend}
+                      {driver.trend ?? 'No prior period'}
                     </p>
                   </div>
                   <div className={`text-lg font-bold ${

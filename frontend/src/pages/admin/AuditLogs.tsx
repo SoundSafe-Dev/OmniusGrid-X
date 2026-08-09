@@ -1,4 +1,5 @@
 import { Fragment, useState, useEffect } from 'react';
+import { api } from '../../api';
 import { Shield, Search, Download, AlertTriangle, CheckCircle } from 'lucide-react';
 import { Card, Button, Input, Select, Table, Badge } from '../../components/ui';
 
@@ -76,20 +77,19 @@ export default function AuditLogs() {
       if (dateFrom) params.append('start_time', dateFrom);
       if (dateTo) params.append('end_time', dateTo);
 
-      const token = localStorage.getItem('accessToken') || localStorage.getItem('devToken');
-      const response = await fetch(`/api/v1/audit/logs?${params}`, {
-        headers: {
-          'Authorization': `Bearer ${token}`,
-        },
-      });
-
-      if (!response.ok) {
-        throw new Error('Failed to fetch audit logs');
-      }
-
-      const data: AuditLogsResponse = await response.json();
-      setLogs(data.items);
-      setTotal(data.total);
+      // Through the shared axios client, NOT raw fetch. This page used to build its own
+      // Authorization header from localStorage, which meant it was the one screen that
+      // could not recover from an expired token: the client's response interceptor
+      // refreshes on 401 and redirects to /login when the refresh fails, and none of
+      // that ran here — the operator just saw "Failed to fetch audit logs". The audit
+      // trail is also where someone is most likely to sit reading long enough to expire.
+      //
+      // It also put this page outside every frontend/backend contract guard, which scan
+      // for calls through the client. `/api/v1/audit` is not on the casing seam's
+      // registry, so the payload arrives snake_case exactly as before.
+      const response = await api.get<AuditLogsResponse>(`/api/v1/audit/logs?${params}`);
+      setLogs(response.data.items);
+      setTotal(response.data.total);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'An error occurred');
     } finally {
@@ -99,19 +99,8 @@ export default function AuditLogs() {
 
   const verifyHashChain = async () => {
     try {
-      const token = localStorage.getItem('accessToken') || localStorage.getItem('devToken');
-      const response = await fetch('/api/v1/audit/verify', {
-        headers: {
-          'Authorization': `Bearer ${token}`,
-        },
-      });
-
-      if (!response.ok) {
-        throw new Error('Failed to verify hash chain');
-      }
-
-      const data = await response.json();
-      setHashChainStatus(data);
+      const response = await api.get('/api/v1/audit/verify');
+      setHashChainStatus(response.data);
     } catch (err) {
       setHashChainStatus({
         verified: false,

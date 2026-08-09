@@ -306,19 +306,27 @@ class ERPWebhookReceiver:
         if not signature or not self._webhook_secret:
             return False
 
-        # Create payload for signature
-        import json
-        payload = json.dumps(event_data, sort_keys=True)
-        
-        # Calculate expected signature
-        expected_signature = hmac.new(
-            self._webhook_secret.encode(),
-            payload.encode(),
-            hashlib.sha256
-        ).hexdigest()
-        
-        # Compare signatures (constant-time comparison)
-        return hmac.compare_digest(expected_signature, signature)
+        # DELEGATED, so the two implementations cannot drift.
+        #
+        # This used to hash `json.dumps(event_data, sort_keys=True)` -- the parsed
+        # payload re-serialised with sorted keys. No ERP vendor signs a canonicalised
+        # re-serialisation of its own payload; they sign the exact bytes they send.
+        # Key order, whitespace and number formatting all differ, so the digest could
+        # never match a real delivery and every genuine webhook was rejected.
+        #
+        # `event_data` here is already parsed, so the raw bytes are gone. Callers must
+        # pass them; a dict is re-encoded compactly as a best effort and will NOT
+        # match a real vendor signature -- which is correct, because at that point we
+        # genuinely cannot verify one.
+        from app.api.erp_webhooks import verify_signature
+
+        raw_body = event_data if isinstance(event_data, (bytes, bytearray)) else None
+        if raw_body is None:
+            import json
+
+            raw_body = json.dumps(event_data, separators=(",", ":")).encode()
+
+        return verify_signature(self._webhook_secret, raw_body, signature)
     
     def _validate_timestamp(self, timestamp: str) -> bool:
         """

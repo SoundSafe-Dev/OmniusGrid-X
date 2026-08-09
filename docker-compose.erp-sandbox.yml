@@ -1,0 +1,62 @@
+# Local ERP systems for connector validation (Tier 3).
+#
+# Odoo is the one ERP in our matrix that is genuinely self-hostable, so it is the
+# only connector we can validate END TO END without vendor access: real
+# authentication, a real database, real JSON-RPC, real access-rights errors, real
+# pagination. Everything else in docs/erp/validating-connectors-without-an-erp.md
+# is a mock or a sandbox.
+#
+# It is worth more than "one of seven" suggests, because it exercises the SHARED
+# machinery every connector depends on — token lifecycle, retry, circuit breaker,
+# rate limiting — against a real server rather than a fake we wrote ourselves. A
+# mock we author cannot disconfirm our own assumptions; a real Odoo can.
+#
+# Separate file, not a profile in docker-compose.yml, so it never starts as part of
+# the normal stack and cannot be confused for a production dependency.
+#
+#   docker compose -f docker-compose.erp-sandbox.yml up -d
+#   cd backend && RUN_ODOO_INTEGRATION=1 venv/bin/python -m pytest tests/test_erp_odoo_integration.py
+#   docker compose -f docker-compose.erp-sandbox.yml down -v
+
+services:
+  odoo-db:
+    image: postgres:15
+    environment:
+      POSTGRES_USER: odoo
+      POSTGRES_PASSWORD: odoo
+      # Odoo requires the maintenance database to be named `postgres`; it creates
+      # its own application database on first run.
+      POSTGRES_DB: postgres
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U odoo"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    networks: [erp-sandbox]
+
+  odoo:
+    image: odoo:17
+    depends_on:
+      odoo-db:
+        condition: service_healthy
+    environment:
+      HOST: odoo-db
+      USER: odoo
+      PASSWORD: odoo
+    ports:
+      # 8069 is Odoo's default; published on 8169 so it cannot collide with a
+      # developer's own Odoo or with the main stack.
+      - "8169:8069"
+    healthcheck:
+      # /web/database/selector answers before Odoo has finished initialising a
+      # database, which is the point: the test harness creates the database itself
+      # so it controls the admin password and the demo dataset.
+      test: ["CMD-SHELL", "curl -sf http://localhost:8069/web/database/selector || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 40
+    networks: [erp-sandbox]
+
+networks:
+  erp-sandbox:
+    driver: bridge

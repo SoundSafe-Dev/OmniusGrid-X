@@ -259,7 +259,11 @@ async def yank_model(
     return _model_response(entry)
 
 
-@public_router.get("/models/{model_id}/download")
+@public_router.get(
+    "/models/{model_id}/download",
+    # A FileResponse of the stored model artifact — weights, not a description of them.
+    responses={200: {"content": {"application/octet-stream": {}}}},
+)
 @rate_limit("60/minute")
 async def download_model_artifact(request: Request, model_id: UUID, token: str):
     try:

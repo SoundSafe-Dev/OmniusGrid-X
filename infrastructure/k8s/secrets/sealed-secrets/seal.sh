@@ -81,3 +81,20 @@ seal cnpg-backup-credentials \
   --from-literal=ACCESS_SECRET_KEY="$CNPG_BACKUP_ACCESS_SECRET_KEY"
 
 echo "Done. Commit $OUT_DIR/ — it is encrypted. NEVER commit $ENV_FILE."
+
+# FS-514. Three secrets the workloads consume were sealed by nothing and had no
+# ExternalSecret either — so an operator who ran this script and applied its output still
+# hit CreateContainerConfigError on a secret no path had ever mentioned.
+seal app-secrets \
+  --from-literal=edge-bootstrap-token="$EDGE_BOOTSTRAP_TOKEN" \
+  --from-literal=erp-encryption-key="$ERP_ENCRYPTION_KEY" \
+  --from-literal=geotab-webhook-secret="$GEOTAB_WEBHOOK_SECRET"
+
+seal smtp-credentials \
+  --from-literal=host="$SMTP_HOST" \
+  --from-literal=port="$SMTP_PORT" \
+  --from-literal=username="$SMTP_USERNAME" \
+  --from-literal=password="$SMTP_PASSWORD" \
+  --from-literal=from-address="$SMTP_FROM_ADDRESS"
+
+seal grafana-admin --from-literal=admin-password="$GRAFANA_ADMIN_PASSWORD"

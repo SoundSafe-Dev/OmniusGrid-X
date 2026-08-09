@@ -240,6 +240,19 @@ spec:
       ports:
         - protocol: TCP
           port: 9092
+    # Trace export to the OTel collector (FS-226). The collector's own ingress
+    # rule is useless without this half — an ingress allow on the destination does
+    # not create egress permission on the source. Same lesson as the S3 egress and
+    # prometheus -> worker :9109 regressions.
+    - to:
+        - podSelector:
+            matchLabels:
+              app: otel-collector
+      ports:
+        - protocol: TCP
+          port: 4317
+        - protocol: TCP
+          port: 4318
 ---
 # FS-116: per-workload egress allow-lists that finish the default-deny egress
 # FS-78 established. default-deny-all sets policyTypes: [Ingress, Egress] with
@@ -326,6 +339,19 @@ spec:
       ports:
         - protocol: TCP
           port: 443
+    # Trace export to the OTel collector (FS-226). The collector's own ingress
+    # rule is useless without this half — an ingress allow on the destination does
+    # not create egress permission on the source. Same lesson as the S3 egress and
+    # prometheus -> worker :9109 regressions.
+    - to:
+        - podSelector:
+            matchLabels:
+              app: otel-collector
+      ports:
+        - protocol: TCP
+          port: 4317
+        - protocol: TCP
+          port: 4318
 ---
 # ingestion-worker: consumes telemetry from Redpanda and writes it to
 # TimescaleDB. No Redis, no outbound 443.
@@ -378,6 +404,19 @@ spec:
           port: 9092
         - protocol: TCP
           port: 9094
+    # Trace export to the OTel collector (FS-226). The collector's own ingress
+    # rule is useless without this half — an ingress allow on the destination does
+    # not create egress permission on the source. Same lesson as the S3 egress and
+    # prometheus -> worker :9109 regressions.
+    - to:
+        - podSelector:
+            matchLabels:
+              app: otel-collector
+      ports:
+        - protocol: TCP
+          port: 4317
+        - protocol: TCP
+          port: 4318
 ---
 # export-worker: consumes export-delivery jobs from Redpanda, reads
 # TimescaleDB, and tracks async export jobs in Redis (export_processor). SMTP
@@ -449,6 +488,19 @@ spec:
       ports:
         - protocol: TCP
           port: 8333
+    # Trace export to the OTel collector (FS-226). The collector's own ingress
+    # rule is useless without this half — an ingress allow on the destination does
+    # not create egress permission on the source. Same lesson as the S3 egress and
+    # prometheus -> worker :9109 regressions.
+    - to:
+        - podSelector:
+            matchLabels:
+              app: otel-collector
+      ports:
+        - protocol: TCP
+          port: 4317
+        - protocol: TCP
+          port: 4318
 ---
 # compliance-reports-worker: consumes report jobs from Redpanda, reads
 # TimescaleDB, and writes generated reports to local storage. SMTP email
@@ -512,6 +564,19 @@ spec:
       ports:
         - protocol: TCP
           port: 8333
+    # Trace export to the OTel collector (FS-226). The collector's own ingress
+    # rule is useless without this half — an ingress allow on the destination does
+    # not create egress permission on the source. Same lesson as the S3 egress and
+    # prometheus -> worker :9109 regressions.
+    - to:
+        - podSelector:
+            matchLabels:
+              app: otel-collector
+      ports:
+        - protocol: TCP
+          port: 4317
+        - protocol: TCP
+          port: 4318
 ---
 # Egress for the nightly logical backup Job (FS-151). Without this the Job is
 # caught by default-deny-all and hangs on DNS, then fails — which is worse than
@@ -719,3 +784,283 @@ spec:
       ports:
         - protocol: TCP
           port: 9109
+---
+# ---------------------------------------------------------------------------
+# Tracing (FS-226). otel-collector and jaeger had NO policy at all.
+# ---------------------------------------------------------------------------
+# `default-deny-all` above uses `podSelector: {}`, so it covers every pod in the
+# namespace — including these two, which are in base/kustomization.yaml. With no
+# allow rule the collector was unreachable, it could not reach jaeger, and the UI
+# answered nothing. Tracing was deployed and dead, and nothing errored.
+#
+# BOTH DIRECTIONS. This is the third time the same mistake has bitten this repo
+# (S3 egress, then prometheus -> worker :9109): an ingress rule on the destination
+# is useless if the source's egress policy does not permit the port. Every pair
+# below is written as a matched set, and the enforcement matrix asserts them.
+#
+# These select on `app:` rather than `app.kubernetes.io/name` because that is the
+# label the Deployments' immutable selectors already use.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-otel-collector
+  namespace: omniusgrid
+spec:
+  podSelector:
+    matchLabels:
+      app: otel-collector
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    # Span producers: the API and the four background workers. Scoped to the two
+    # OTLP ports rather than opened wholesale.
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: backend
+        - podSelector:
+            matchExpressions:
+              - key: app.kubernetes.io/component
+                operator: In
+                values:
+                  - worker
+      ports:
+        - protocol: TCP
+          port: 4317
+        - protocol: TCP
+          port: 4318
+  egress:
+    # Cluster DNS — required to resolve `jaeger` before the exporter can connect.
+    # Omitting this is the classic silent failure: the pipeline looks configured
+    # and every export fails name resolution.
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    # Forward spans to jaeger.
+    - to:
+        - podSelector:
+            matchLabels:
+              app: jaeger
+      ports:
+        - protocol: TCP
+          port: 4317
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-jaeger
+  namespace: omniusgrid
+spec:
+  podSelector:
+    matchLabels:
+      app: jaeger
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    # Spans from the collector.
+    - from:
+        - podSelector:
+            matchLabels:
+              app: otel-collector
+      ports:
+        - protocol: TCP
+          port: 4317
+    # The UI, reached through the ingress controller. Deliberately NOT open to the
+    # whole namespace: traces carry request paths and identifiers, so this is
+    # operator-facing data, not cluster-internal plumbing.
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: ingress-nginx
+      ports:
+        - protocol: TCP
+          port: 16686
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+---
+# ---------------------------------------------------------------------------
+# Coverage gaps found by tests/k8s/check_netpol_coverage.py on its FIRST run.
+# ---------------------------------------------------------------------------
+# Four workloads sat in a `default-deny-all` namespace with no policy in one or
+# both directions. None of them would have errored — they would have started,
+# reported healthy, and silently failed to communicate. This is the same class as
+# the otel/jaeger gap that motivated the guard, which is the point: the guard
+# found instances nobody had thought to write a matrix case for.
+#
+# DNS is the common thread. Under default-deny a pod cannot resolve ANY name until
+# an egress rule permits kube-dns, so "egress to nothing" is not a neutral state —
+# it breaks every hostname-based connection the workload makes.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-edge-agent
+  namespace: omniusgrid
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: edge-agent
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    # The agent exposes collector metrics on 9108 (METRICS_PORT). Prometheus could
+    # not reach it, so the edge fleet was invisible to every edge-* alert in
+    # infra/prometheus/alerts.yml — those rules existed and could never fire.
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: prometheus
+      ports:
+        - protocol: TCP
+          port: 9108
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    # Publish telemetry to Redpanda. Without this the agent is a producer that
+    # cannot produce — the single most load-bearing path in the platform.
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: redpanda
+      ports:
+        - protocol: TCP
+          port: 9092
+        - protocol: TCP
+          port: 9094
+    # Trace export.
+    - to:
+        - podSelector:
+            matchLabels:
+              app: otel-collector
+      ports:
+        - protocol: TCP
+          port: 4317
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-redpanda-egress
+  namespace: omniusgrid
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: redpanda
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    # Inter-broker RPC. This is a 3-replica StatefulSet, so the brokers must reach
+    # each other to form a cluster — without it the cluster cannot elect a
+    # controller and every produce fails, which is not an obvious symptom of a
+    # missing NetworkPolicy.
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: redpanda
+      ports:
+        - protocol: TCP
+          port: 33145
+        - protocol: TCP
+          port: 9092
+        - protocol: TCP
+          port: 29092
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-timescaledb-egress
+  namespace: omniusgrid
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: timescaledb
+  policyTypes:
+    - Egress
+  egress:
+    # DNS only. The database initiates nothing else in this topology — it is a
+    # single instance and the CNPG HA cluster (which does replicate) carries its
+    # own policies in database-ha/.
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-frontend-egress
+  namespace: omniusgrid
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: frontend
+  policyTypes:
+    - Egress
+  egress:
+    # DNS only, and deliberately so. The frontend is nginx serving a static
+    # bundle; the browser calls the API directly at REACT_APP_API_URL, so the pod
+    # itself never needs to reach the backend. nginx still resolves names at
+    # startup, which default-deny was blocking.
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53

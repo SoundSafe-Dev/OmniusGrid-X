@@ -1,5 +1,6 @@
 import { api } from './client';
 import { USE_MOCK } from './mockMode';
+import { toListResult, type ListResult } from './listResult';
 import { registerTransform } from './transformRegistry';
 
 // FS-132: casing handled by the axios seam — TS speaks camelCase, wire speaks
@@ -177,14 +178,21 @@ export const notificationsApi = {
     return response.data;
   },
 
-  deliveryLog: async (limit = 100): Promise<NotificationDeliveryEntry[]> => {
+  // ListResult, not a bare array (FS-485). The endpoint selects `limit + 1` and reports the
+  // cap in `X-Result-Truncated`; this client discarded it. The log is ordered NEWEST FIRST,
+  // so a cap removes the OLDEST deliveries — and the question this page answers is "was that
+  // alert delivered?". An absent row read off a page presented as the whole log says "it was
+  // never sent", which is a claim about the notification system, not about the query.
+  deliveryLog: async (limit = 100): Promise<ListResult<NotificationDeliveryEntry>> => {
     if (USE_MOCK) {
       await delay(MOCK_DELAY);
-      return mockLog.slice(0, limit);
+      // The fixture IS the complete set here, so `truncated: false` is a fact rather than
+      // a default — unless the caller asked for fewer rows than the fixture holds.
+      const items = mockLog.slice(0, limit);
+      return { items, truncated: mockLog.length > limit, limit };
     }
-    const response = await api.get<NotificationDeliveryEntry[]>(`${BASE}/log`, {
-      params: { limit },
-    });
-    return response.data;
+    return toListResult(
+      await api.get<NotificationDeliveryEntry[]>(`${BASE}/log`, { params: { limit } }),
+    );
   },
 };

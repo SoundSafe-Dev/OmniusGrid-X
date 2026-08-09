@@ -8,16 +8,16 @@ Connector for Epicor Kinetic using REST API:
 """
 
 from typing import Dict, Any, Optional, List
-from datetime import datetime, timezone
 import structlog
 import aiohttp
 
 from app.services.erp_connector_base import (
     ERPConnectorBase,
     ERPConfig,
-    ERPType,
     AuthType
 )
+
+from app.services.erp_connectors.oauth2 import fetch_client_credentials_token
 
 logger = structlog.get_logger()
 
@@ -29,6 +29,15 @@ class EpicorConnector(ERPConnectorBase):
     Connects to Epicor Kinetic via REST API to fetch
     financial data, supply chain data, and manufacturing data.
     """
+
+    #: Epicor Kinetic webhook configuration is environment-side; the old
+    #: `{api_url}/webhooks` POST used the same unvalidated shape as six other
+    #: vendors.
+    EVENT_SUBSCRIPTION_MECHANISM = (
+        "Epicor Kinetic webhooks are configured in the environment, not created via "
+        "this API with the shape previously used here. Poll with fetch_data until "
+        "verified against a real Kinetic environment."
+    )
     
     def __init__(self, config: ERPConfig, organization_id: str, integration_id: str):
         super().__init__(config, organization_id, integration_id)
@@ -48,28 +57,84 @@ class EpicorConnector(ERPConnectorBase):
         )
     
     async def authenticate(self) -> str:
-        """
-        Authenticate with Epicor using OAuth2 or Basic auth.
-        
-        Returns:
-            str: Access token
+        """Authenticate with Epicor Kinetic.
+
+        The API-KEY and BASIC paths are legitimate: Epicor Kinetic genuinely
+        accepts a long-lived API key (`X-API-Key`) and HTTP Basic credentials, so
+        those are static by design and there is nothing to refresh.
+
+        The OAuth2 path was NOT. It read a pre-shared `access_token` out of config
+        and returned it, so it worked until the token expired and then every
+        request 401'd with no refresh path. That now runs client_credentials.
         """
         auth_config = self.config.auth_config
         auth_type = self.config.auth_type
-        
+
         if auth_type == AuthType.OAUTH2:
-            # OAuth2 authentication
-            access_token = auth_config.get("access_token")
+            token, expires_in = await fetch_client_credentials_token(
+                token_url=auth_config.get("token_url"),
+                client_id=auth_config.get("client_id"),
+                client_secret=auth_config.get("client_secret"),
+                scope=auth_config.get("scope"),
+                timeout_seconds=self.config.timeout,
+            )
+            self._set_token(token, expires_in)
+            logger.info(
+                "epicor_authentication_success",
+                auth_type=auth_type.value,
+                expires_in=expires_in,
+            )
+            return token
+
+        # Static credential: API key or Basic. Nothing expires, so no lifetime.
+        credential = auth_config.get("api_key") or auth_config.get("password")
+        if not credential:
+            raise ValueError(
+                "Epicor needs `api_key` (or Basic `username`/`password`) in "
+                "auth_config, or OAuth2 client_id/client_secret/token_url."
+            )
+        logger.info("epicor_authentication_success", auth_type=auth_type.value)
+        return credential
+
+    def _auth_headers(self, token: str) -> Dict[str, str]:
+        """Headers for one Epicor request.
+
+        TWO FIXES HERE. `X-API-Key` was being set to `self.company_id` — the
+        COMPANY IDENTIFIER, not a credential. Epicor uses that header for the API
+        key; the company is scoping metadata and belongs in CallSettings.
+
+        And a static API key was being sent as `Authorization: Bearer <key>`.
+        Epicor expects the key in `X-API-Key` and Basic credentials in
+        `Authorization: Basic`; a bearer header carrying an API key is rejected.
+        """
+        import base64
+        import json as _json
+
+        auth_config = self.config.auth_config
+        headers = {
+            "Accept": "application/json",
+            "Content-Type": "application/json",
+        }
+
+        if self.config.auth_type == AuthType.OAUTH2:
+            headers["Authorization"] = f"Bearer {token}"
+        elif auth_config.get("username"):
+            raw = f"{auth_config['username']}:{auth_config.get('password', '')}".encode()
+            headers["Authorization"] = f"Basic {base64.b64encode(raw).decode()}"
         else:
-            # Basic authentication
-            access_token = auth_config.get("api_key")
-        
-        logger.info(
-            "epicor_authentication_success",
-            auth_type=auth_type.value
-        )
-        
-        return access_token
+            headers["X-API-Key"] = token
+
+        # Company/site scoping travels in CallSettings, which is where Epicor
+        # looks for it — not in the API-key header.
+        call_settings = {}
+        if self.company_id:
+            call_settings["Company"] = self.company_id
+        if self.site_id:
+            call_settings["Plant"] = self.site_id
+        if call_settings:
+            headers["CallSettings"] = _json.dumps(call_settings)
+
+        return headers
     
     async def fetch_data(
         self,
@@ -105,12 +170,7 @@ class EpicorConnector(ERPConnectorBase):
         
         # Execute request with retry
         async def _fetch():
-            headers = {
-                "Authorization": f"Bearer {token}",
-                "Accept": "application/json",
-                "Content-Type": "application/json",
-                "X-API-Key": self.company_id
-            }
+            headers = self._auth_headers(token)
             
             async with aiohttp.ClientSession() as session:
                 async with session.get(entity_url, headers=headers, params=params) as response:
@@ -131,85 +191,18 @@ class EpicorConnector(ERPConnectorBase):
         
         return results
     
-    async def subscribe_to_events(self, event_types: List[str]) -> bool:
-        """
-        Subscribe to Epicor events via webhooks.
-        
-        Args:
-            event_types: List of event types to subscribe to
-            
-        Returns:
-            bool: Success status
-        """
-        # Epicor uses webhooks for event subscriptions
-        webhook_url = self.config.configuration.get("webhook_url")
-        if not webhook_url:
-            logger.warning("epicor_webhook_not_configured")
-            return False
-        
-        token = await self.get_auth_token()
-        
-        # Register webhook for each event type
-        for event_type in event_types:
-            subscription_url = f"{self.api_url}/webhooks"
-            
-            subscription_data = {
-                "name": f"OmniusGrid_{event_type}",
-                "url": webhook_url,
-                "event_type": event_type
-            }
-            
-            async def _subscribe():
-                headers = {
-                    "Authorization": f"Bearer {token}",
-                    "Content-Type": "application/json",
-                    "X-API-Key": self.company_id
-                }
-                
-                async with aiohttp.ClientSession() as session:
-                    async with session.post(
-                        subscription_url,
-                        headers=headers,
-                        json=subscription_data
-                    ) as response:
-                        if response.status not in [200, 201]:
-                            error_text = await response.text()
-                            raise Exception(f"Epicor webhook subscription error: {response.status} - {error_text}")
-            
-            await self.execute_with_retry(_subscribe)
-        
-        logger.info(
-            "epicor_event_subscriptions_created",
-            event_types=event_types
-        )
-        
-        return True
-    
+
     async def health_check(self) -> Dict[str, Any]:
+        """Health check that distinguishes a broken connection from a
+        missing module. See ERPConnectorBase.probe_health.
+
+        The probe entity 'Erp.BO.InvoiceSvc' is business-module dependent, so a tenant
+        without it is reported DEGRADED rather than unhealthy — previously any
+        exception here mapped to unhealthy, so a working integration on a
+        tenant that had not licensed that module looked like an outage.
         """
-        Perform health check on Epicor connection.
-        
-        Returns:
-            Dict with health status and details
-        """
-        try:
-            # Try to fetch a small amount of data
-            results = await self.fetch_data("Erp.BO.InvoiceSvc", limit=1)
-            
-            return {
-                "status": "healthy",
-                "message": "Epicor connection successful",
-                "company_id": self.company_id,
-                "checked_at": datetime.now(timezone.utc).isoformat()
-            }
-        except Exception as e:
-            return {
-                "status": "unhealthy",
-                "message": str(e),
-                "company_id": self.company_id,
-                "checked_at": datetime.now(timezone.utc).isoformat()
-            }
-    
+        return await self.probe_health('Erp.BO.InvoiceSvc', details={"company_id": self.company_id})
+
     def _build_filter_string(self, filters: Dict[str, Any]) -> str:
         """
         Build Epicor OData filter string.

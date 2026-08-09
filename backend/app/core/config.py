@@ -3,6 +3,8 @@
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from functools import lru_cache
 
+from pydantic import Field
+
 
 class Settings(BaseSettings):
     """Application settings"""
@@ -29,11 +31,26 @@ class Settings(BaseSettings):
     OTA_SIGNATURE_ALG: str = "ed25519"
     OTA_SIGNING_PRIVATE_KEY_PATH: str = ""
     OTA_SIGNING_PUBLIC_KEY: str = ""
+    OTA_AGENT_ARTIFACT_MAX_BYTES: int = 64 * 1024 * 1024
+    OTA_AGENT_ARTIFACT_MAX_UNCOMPRESSED_BYTES: int = 256 * 1024 * 1024
     OTA_ROLLOUT_DISPATCH_ENABLED: bool = True
     OTA_ROLLOUT_DISPATCH_INTERVAL_SECONDS: int = 30
+
+    # Draining the systems-of-record ledger (FS-427). Slower than the rollout dispatcher on
+    # purpose: a posting is an obligation to a far system, not a device waiting on a
+    # command, and hammering an ERP every 30s to be told again that it has no write path
+    # helps nobody. Five minutes is well inside any operator's patience for "did purchasing
+    # hear about this" and well outside a third party's rate limit.
+    POSTING_DRAIN_ENABLED: bool = True
+    POSTING_DRAIN_INTERVAL_SECONDS: int = 300
+    #: Per organisation, per pass. Bounded so one tenant with a large backlog cannot hold
+    #: the loop while every other tenant waits.
+    POSTING_DRAIN_BATCH_SIZE: int = 50
     OTA_ROLLOUT_DEFAULT_COMMAND_TIMEOUT_SECONDS: int = 120
+    OTA_AGENT_UPDATE_COMMAND_TIMEOUT_SECONDS: int = 600
     OTA_ROLLOUT_DEFAULT_HEALTH_TIMEOUT_SECONDS: int = 300
     OTA_ROLLOUT_DEFAULT_MIN_SUCCESS_RATIO: float = 1.0
+    FLEET_TARGET_PREVIEW_TTL_SECONDS: int = 900
     
     # Security
     JWT_SECRET_KEY: str = "dev_secret_key_change_in_production"
@@ -50,6 +67,12 @@ class Settings(BaseSettings):
     AUTH_REGISTER_RATE_LIMIT: str = "5/hour"
     AUTH_REFRESH_RATE_LIMIT: str = "30/minute"
     AUTH_LOGOUT_RATE_LIMIT: str = "30/minute"
+    AUTH_INVITE_VALIDATE_RATE_LIMIT: str = "30/minute"
+    AUTH_INVITE_ACCEPT_RATE_LIMIT: str = "10/minute"
+    USER_INVITE_PUBLIC_BASE_URL: str = "http://localhost:3000"
+    USER_INVITE_EXPIRE_HOURS: int = Field(default=72, ge=1, le=720)
+    USER_INVITE_EMAIL_MAX_ATTEMPTS: int = Field(default=3, ge=1, le=10)
+    USER_PASSWORD_MIN_LENGTH: int = Field(default=12, ge=12, le=72)
     
     # Security Headers
     SECURITY_HEADERS_ENABLED: bool = True
@@ -77,6 +100,13 @@ class Settings(BaseSettings):
     EDGE_CA_KEY_PATH: str = "/certs/edge-ca.key"
     EDGE_BOOTSTRAP_TOKEN: str = ""   # one-time token agents present to enroll
     EDGE_CERT_TTL_DAYS: int = 30     # validity of issued agent certificates
+    # The tenant enrolling agents are issued certificates for. Server-side and
+    # deliberately NOT a field on the enrolment request: an agent that names its
+    # own organisation is the tenant-from-the-body defect. Blank means "resolve
+    # it", which succeeds only where the answer is unambiguous — exactly one
+    # organisation exists. A multi-tenant deployment must set this per edge
+    # gateway; enrolment refuses rather than guessing.
+    EDGE_ENROLLMENT_ORGANIZATION_ID: str = ""
 
     # Distributed tracing (OpenTelemetry). Off by default; a no-op when disabled.
     OTEL_ENABLED: bool = False
@@ -262,6 +292,24 @@ class Settings(BaseSettings):
     RAG_RERANK_TOP_N: int = 5  # passages kept after rerank, sent to the LLM
     RAG_MAX_CONTEXT_CHARS: int = 12000  # cap on concatenated context
 
+    # Operational context (ERP) blended into the generation prompt.
+    # A SECOND retrieval leg, deliberately not a second corpus: ERP rows are read
+    # live from Postgres at query time and appended to the prompt UNNUMBERED, so
+    # they inform the answer while only document chunks carry [n] citations.
+    # Keeping them out of Qdrant means no re-index on every ERP sync, no synthetic
+    # "documents" with no blob behind them, and no competition for the rerank slots
+    # that belong to policy text.
+    #
+    # CANDIDATE_ROWS is the DB read (most recent rows, filtered in Python because
+    # entity_data is JSON not JSONB - see rag_erp_context); CONTEXT_ROWS/CHARS are
+    # what survives into the prompt. The prompt budget is deliberately ~4x smaller
+    # than RAG_MAX_CONTEXT_CHARS: operational records qualify the documents, they
+    # do not replace them.
+    RAG_ERP_CONTEXT_ENABLED: bool = True
+    RAG_ERP_CANDIDATE_ROWS: int = 300  # rows read from Postgres before filtering
+    RAG_ERP_CONTEXT_ROWS: int = 40  # rows that reach the prompt
+    RAG_ERP_CONTEXT_CHARS: int = 3000  # cap on the rendered operational block
+
     # Application
     ENVIRONMENT: str = "development"   # development | staging | production
     DEBUG: bool = True
@@ -289,6 +337,41 @@ class Settings(BaseSettings):
     ROUTING_PROVIDER: str = "haversine"
     ROUTING_OSRM_URL: str = ""   # e.g. http://osrm:5000
 
+    # FLEET COSTING ASSUMPTIONS (FS-348). These were four literals buried in
+    # `RouteOptimizer.optimize_route` — `total_distance / 50`, `/ 6`, `* 3.50`, `* 0.05` —
+    # whose outputs are PERSISTED onto `routes.fuel_cost_estimate` /
+    # `.toll_cost_estimate` / `.estimated_duration_hours` and served from
+    # `GET /transportation/routes`.
+    #
+    # The distance they multiply is real (haversine, or OSRM road distance when
+    # configured). These four are not measurements of anything: they are a national
+    # average from an unrecorded date, and a fleet of electric vans or a region with no
+    # toll roads gets a confidently wrong number. Deterministic output reads as computed,
+    # which makes this harder to spot than a random one.
+    #
+    # Named and configurable so an operator can set them to their own fleet, and so the
+    # values are visible in one place instead of inline in an arithmetic expression. The
+    # estimate still is not a quote — `optimize_route` returns the assumptions it used
+    # alongside the figures, so a consumer can see what the number rests on.
+    FLEET_AVERAGE_SPEED_MPH: float = 50.0
+    FLEET_STOP_MINUTES: float = 30.0
+    FLEET_AVERAGE_MPG: float = 6.0
+    FUEL_PRICE_USD_PER_GALLON: float = 3.50
+    TOLL_COST_USD_PER_MILE: float = 0.05
+
+    # The baseline a fuel surcharge is measured ABOVE — the price already covered by the
+    # linehaul rate, so the surcharge bills only the difference (FS-533).
+    #
+    # This is the one number the fuel-surcharge calculation needed that the settings above
+    # did not already provide. The other two it uses — the current price and the fleet MPG —
+    # were HARDCODED in `calculate_fuel_surcharge` as `3.50` and `6.0`: numerically identical
+    # to FUEL_PRICE_USD_PER_GALLON and FLEET_AVERAGE_MPG, and completely disconnected from
+    # them. An operator who set their own fuel price moved the route estimate and left every
+    # freight charge on the old figure, with nothing to indicate the two disagreed. A private
+    # copy of a shared value is rule 55, and the copies here were already identical, which is
+    # the state in which divergence is least likely to be noticed.
+    FUEL_SURCHARGE_BASE_PRICE_USD_PER_GALLON: float = 2.50
+
     # Require edge requests to carry a proof-of-possession signature
     # (X-Agent-Timestamp/X-Agent-Signature) in addition to the CA-verified
     # certificate header. The cert is public material — without the signature a
@@ -305,7 +388,7 @@ class Settings(BaseSettings):
     # Dev-only auth conveniences. Both MUST be false in production; the
     # startup hook (validate_settings) hard-fails if they are left on.
     ALLOW_DEV_TOKEN: bool = True   # accept "dev-token" as an admin bypass
-    ALLOW_OPEN_REGISTRATION: bool = True  # unauthenticated POST /auth/register
+    ALLOW_OPEN_REGISTRATION: bool = False  # unauthenticated POST /auth/register
 
     model_config = SettingsConfigDict(env_file=".env")
 
@@ -341,6 +424,25 @@ def validate_settings(s: "Settings" = None) -> list[str]:
     """
     s = s or settings
     problems: list[str] = []
+
+    # NOT gated on production (FS-441). A chunk budget this small shreds every uploaded
+    # document into near-single-character chunks, embeds each one, and reports success —
+    # so the corpus looks indexed and retrieves nothing. That is as wrong in staging as in
+    # production, and the whole point of catching it here is that it is otherwise found by
+    # a user asking a question the document already answered.
+    if s.RAG_CHUNK_TOKENS * s.RAG_CHARS_PER_TOKEN < 32:
+        problems.append(
+            f"RAG_CHUNK_TOKENS={s.RAG_CHUNK_TOKENS} with RAG_CHARS_PER_TOKEN="
+            f"{s.RAG_CHARS_PER_TOKEN} gives a chunk budget under 32 characters; "
+            f"ingestion would shred documents rather than chunk them"
+        )
+    if s.RAG_CHUNK_OVERLAP_TOKENS >= s.RAG_CHUNK_TOKENS:
+        problems.append(
+            f"RAG_CHUNK_OVERLAP_TOKENS={s.RAG_CHUNK_OVERLAP_TOKENS} is not smaller than "
+            f"RAG_CHUNK_TOKENS={s.RAG_CHUNK_TOKENS}; the chunker clamps it and every "
+            f"chunk becomes almost entirely a copy of the one before it"
+        )
+
     if s.ENVIRONMENT.lower() == "production":
         if not s.JWT_SECRET_KEY or s.JWT_SECRET_KEY == _INSECURE_JWT:
             problems.append("JWT_SECRET_KEY is unset or the insecure dev default")

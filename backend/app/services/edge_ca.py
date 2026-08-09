@@ -33,13 +33,26 @@ logger = structlog.get_logger()
 class AgentPrincipal:
     """The verified identity extracted from an agent certificate."""
 
-    def __init__(self, agent_id: str, serial: int, not_after: datetime):
+    def __init__(
+        self,
+        agent_id: str,
+        serial: int,
+        not_after: datetime,
+        organization_id: Optional[str] = None,
+    ):
         self.agent_id = agent_id
         self.serial = serial
         self.not_after = not_after
+        #: The tenant this agent enrolled into, read from the certificate's O.
+        #: ``None`` for certificates issued before agents carried one — those
+        #: agents heartbeat fine and stay unattributed until they re-enroll.
+        self.organization_id = organization_id
 
     def __repr__(self) -> str:  # pragma: no cover - debug aid
-        return f"AgentPrincipal(agent_id={self.agent_id!r}, serial={self.serial})"
+        return (
+            f"AgentPrincipal(agent_id={self.agent_id!r}, serial={self.serial}, "
+            f"organization_id={self.organization_id!r})"
+        )
 
 
 class CertificateVerificationError(Exception):
@@ -105,11 +118,30 @@ class EdgeCA:
 
     # --- signing (task 3) ----------------------------------------------------
 
-    def sign_csr(self, csr_pem: str, expected_agent_id: str) -> bytes:
+    def sign_csr(
+        self,
+        csr_pem: str,
+        expected_agent_id: str,
+        organization_id: Optional[str] = None,
+    ) -> bytes:
         """Sign an agent CSR, returning the certificate PEM.
 
         The CSR's CN must equal ``expected_agent_id`` (the enrolling agent's id)
         so an agent cannot request a certificate for a different identity.
+
+        ``organization_id`` is the tenant the SERVER decided this agent belongs
+        to; it becomes the subject's O and is what
+        :meth:`verify_agent_certificate` reports on every later request.
+
+        THE SUBJECT IS REBUILT HERE, NOT COPIED. This used to be
+        ``.subject_name(csr.subject)`` — the CSR's whole subject, signed by the
+        CA, with only the CN checked. Nothing read the other attributes, so it
+        was harmless right up until something did: the moment an agent's tenant
+        lives in O, copying the CSR's subject means the agent names its own
+        tenant and the CA notarises it. That is the tenant-from-the-body defect
+        wearing a certificate, and it is the one class this codebase keeps
+        finding. The subject is now exactly two attributes, both server-chosen;
+        anything else in the CSR is discarded.
         """
         self._load_or_bootstrap()
         csr = x509.load_pem_x509_csr(csr_pem.encode())
@@ -123,10 +155,16 @@ class EdgeCA:
                 f"CSR CN '{cn}' does not match agent_id '{expected_agent_id}'"
             )
 
+        subject_attrs = [x509.NameAttribute(NameOID.COMMON_NAME, expected_agent_id)]
+        if organization_id:
+            subject_attrs.append(
+                x509.NameAttribute(NameOID.ORGANIZATION_NAME, str(organization_id))
+            )
+
         now = datetime.now(timezone.utc)
         cert = (
             x509.CertificateBuilder()
-            .subject_name(csr.subject)
+            .subject_name(x509.Name(subject_attrs))
             .issuer_name(self._ca_cert.subject)
             .public_key(csr.public_key())
             .serial_number(x509.random_serial_number())
@@ -217,7 +255,17 @@ class EdgeCA:
         cn_attrs = cert.subject.get_attributes_for_oid(NameOID.COMMON_NAME)
         if not cn_attrs:
             raise CertificateVerificationError("certificate has no CN / agent_id")
-        return AgentPrincipal(cn_attrs[0].value, cert.serial_number, cert.not_valid_after_utc)
+
+        # The O is trustworthy only because this CA builds the subject itself —
+        # see the note in sign_csr. Absent on certificates issued before agents
+        # carried a tenant.
+        org_attrs = cert.subject.get_attributes_for_oid(NameOID.ORGANIZATION_NAME)
+        return AgentPrincipal(
+            cn_attrs[0].value,
+            cert.serial_number,
+            cert.not_valid_after_utc,
+            organization_id=org_attrs[0].value if org_attrs else None,
+        )
 
 
 # Global instance (lazy — CA material is loaded on first use).

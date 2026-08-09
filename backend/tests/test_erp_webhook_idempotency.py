@@ -17,9 +17,12 @@ idempotent insert that treats a conflict as a duplicate.
 import asyncio
 from uuid import uuid4
 
+import json
 import pytest
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from tests._sqlite import create_all, minimal_organization, sqlite_engine
 from sqlalchemy.orm import sessionmaker
 
 from app.api import erp_webhooks
@@ -35,22 +38,30 @@ def run(coro):
 
 
 ORG = uuid4()
+#: The integration events are attributed to. A module constant rather than an inline
+#: `uuid4()` per row, because with foreign keys enforced an event must point at an
+#: integration that exists — and the dedup guarantee under test is about the event's own
+#: unique constraint, not about inventing a parent.
+INTEGRATION = uuid4()
 SECRET = "sek"
 
 
 async def _factory():
-    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
-    async with engine.begin() as conn:
-        await conn.run_sync(
-            Base.metadata.create_all,
-            tables=[IntegrationConfiguration.__table__, ERPIntegrationEvent.__table__],
-        )
+    engine = sqlite_engine()
+    # FK-enforcing engine, and a `create_all` that closes over the tables these
+    # reference (FS-410). `create_all(tables=[X])` builds X's foreign keys pointing at
+    # tables it does not create, so with enforcement on every insert into X is refused.
+    await create_all(engine, Base.metadata, [IntegrationConfiguration.__table__, ERPIntegrationEvent.__table__])
     return engine, sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 
 
 async def _seed_integration(session):
+    # See FS-410: the integration references an organisation, so the organisation has to
+    # exist. It did not, and SQLite simply let the row through.
+    session.add(minimal_organization(ORG))
+    await session.flush()
     session.add(IntegrationConfiguration(
-        id=uuid4(), organization_id=ORG, integration_type="erp", erp_type="sap",
+        id=INTEGRATION, organization_id=ORG, integration_type="erp", erp_type="sap",
         integration_name="SAP-test", configuration={"webhook_secret": SECRET},
         is_active=True,
     ))
@@ -63,7 +74,12 @@ def test_model_declares_unique_event_constraint():
     async def scenario():
         engine, Session = await _factory()
         async with Session() as s:
-            row = dict(organization_id=ORG, integration_id=uuid4(),
+            # This test never seeded the organisation or the integration its events point
+            # at. It passed because SQLite does not enforce foreign keys — the rows were
+            # orphans, and the constraint under test is on the event, so the assertion held
+            # anyway. On Postgres the first insert would have been refused (FS-410).
+            await _seed_integration(s)
+            row = dict(organization_id=ORG, integration_id=INTEGRATION,
                        event_type="po.created", source_system="sap",
                        entity_type="PurchaseOrder", event_data={})
             s.add(ERPIntegrationEvent(event_id="E1", **row))
@@ -76,10 +92,37 @@ def test_model_declares_unique_event_constraint():
     run(scenario())
 
 
+class _FakeRequest:
+    """Minimal stand-in for Starlette's Request.
+
+    The route now verifies the signature over `await request.body()` — the RAW bytes
+    the vendor signed — rather than over a re-serialisation of the parsed payload, so
+    a test must supply those bytes. `request=None` used to be enough precisely
+    because the raw body was never consulted.
+    """
+
+    def __init__(self, raw: bytes, headers: dict | None = None):
+        self._raw = raw
+        # The route reads the credential out of the full header map now, because
+        # which header carries it is per-vendor: Intuit uses `intuit-signature`,
+        # Dataverse a static header of the operator's choosing.
+        self.headers = headers or {}
+
+    async def body(self) -> bytes:
+        return self._raw
+
+    @property
+    def client(self):
+        return None
+
+
 def _call(session, event_id, event_data):
-    sig = erp_webhooks.compute_signature(SECRET, event_data)
+    # Bytes first, then the parsed form — the direction a real delivery travels.
+    raw = json.dumps(event_data).encode()
+    sig = erp_webhooks.compute_signature(SECRET, raw)
     return erp_webhooks.receive_erp_webhook(
-        erp_type="sap", event_data=event_data, request=None,
+        erp_type="sap", event_data=event_data,
+        request=_FakeRequest(raw, {"x-webhook-signature": sig}),
         x_webhook_signature=sig, x_event_type="po.created",
         x_event_id=event_id, x_source_system="sap", db=session,
     )

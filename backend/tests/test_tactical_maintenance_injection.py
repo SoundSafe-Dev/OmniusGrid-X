@@ -2,9 +2,17 @@
 
 The method built `WHERE id = '{asset_id}'` by f-string, and asset_id flows from
 the feature vector (edge/ingestion data). A value like `' OR '1'='1` matched
-every row. It also queried assets.maintenance_mode, a column that does not exist
+every row. It also queried assets.maintenance_mode, a column that did not exist
 in the schema — so on a real DB the method errored; the fix parameterizes the
-value and fails safe.
+value and fails safe. Migration 053 has since added the column, and the method
+now distinguishes "no readable row" (suppress) from "the row says false".
+
+THAT CHANGED WHAT THIS TEST HAS TO ASSERT. An id matching nothing no longer
+returns falsy, so `assert not injected` would now hold for an injection that
+worked as well as one that failed. The fixture is inverted instead: the FIRST
+row is not in maintenance, so an injection that matched it returns False and a
+parameterized lookup that matched nothing returns True. The two outcomes are
+distinguishable again, which is the only reason the assertion means anything.
 """
 
 import asyncio
@@ -34,7 +42,7 @@ async def _install_assets_table():
         await conn.execute(text(
             "CREATE TABLE assets (id TEXT PRIMARY KEY, maintenance_mode INTEGER)"
         ))
-        await conn.execute(text("INSERT INTO assets VALUES ('a1', 1), ('a2', 0)"))
+        await conn.execute(text("INSERT INTO assets VALUES ('a1', 0), ('a2', 1)"))
     Session = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 
     def _factory():
@@ -50,14 +58,19 @@ def test_injection_string_matches_nothing():
     async def scenario():
         engine = await _install_assets_table()
         eng = LocalTacticalEngine()
-        # a1 is in maintenance, a2 is not — parameterized lookups are correct.
-        assert bool(await eng._is_maintenance_mode("a1")) is True
-        assert bool(await eng._is_maintenance_mode("a2")) is False
+        # a1 is NOT in maintenance, a2 is. Both are read correctly, which is also the
+        # control for everything below: without it, every `is True` here is satisfied by
+        # the except branch, which returns True for a database that never answered.
+        assert await eng._is_maintenance_mode("a1") is False
+        assert await eng._is_maintenance_mode("a2") is True
         # The classic injection: on the old f-string code this became
-        # WHERE id = '' OR '1'='1' -> matched a1 -> truthy. Parameterized, it is a
-        # literal id that matches no row -> falsy.
+        # WHERE id = '' OR '1'='1' -> matched a1 -> False, a1's own value. Parameterized,
+        # it is a literal id matching no row -> True, the suppression.
         injected = await eng._is_maintenance_mode("' OR '1'='1")
-        assert not injected, "SQL injection still changes the result"
+        assert injected is True, (
+            "SQL injection still changes the result: the predicate matched a1 and "
+            "returned another asset's maintenance state"
+        )
         await engine.dispose()
 
     run(scenario())

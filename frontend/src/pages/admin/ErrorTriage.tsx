@@ -150,6 +150,16 @@ export const ErrorTriage: FC = () => {
   );
 
   const summary = useErrorSummary(range);
+
+  // An em dash for "no figure", never a zero. A tile that cannot distinguish "none" from
+  // "not known" is worse than a blank one, because a zero is an answer.
+  const summaryFigure = (value: number | undefined) =>
+    value === undefined ? '—' : formatNumber(value, 0);
+  const summaryHint = summary.isError
+    ? 'Could not load — this is not a count of zero'
+    : summary.isLoading
+      ? 'Loading…'
+      : undefined;
   const list = useErrorList(listParams);
 
   const total = list.data?.total ?? 0;
@@ -202,14 +212,25 @@ export const ErrorTriage: FC = () => {
       </div>
 
       {/* Summary cards */}
+      {/* ZERO IS A NUMBER, AND `?? 0` INVENTS IT (FS-489).
+          All four tiles read `summary.data?.x ?? 0`, so a summary that had not arrived —
+          loading, retrying, or failed — rendered "Open errors 0" on the page an engineer
+          checks to find out whether a deploy broke anything. That is the FS-191 shape
+          exactly: a complete, error-free dashboard of zeros. And because react-query retries
+          by default, the window where `isError` is still false lasts seconds.
+          `summaryFigure` shows an em dash instead, and the hint says which state it is. */}
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        <SummaryCard label="Open errors" value={formatNumber(summary.data?.open_count ?? 0, 0)} tone="danger" />
-        <SummaryCard label="Events (range)" value={formatNumber(summary.data?.events_in_range ?? 0, 0)} />
-        <SummaryCard label="Regressions (range)" value={formatNumber(summary.data?.regressions_in_range ?? 0, 0)} />
+        <SummaryCard label="Open errors" value={summaryFigure(summary.data?.open_count)} tone="danger" hint={summaryHint} />
+        <SummaryCard label="Events (range)" value={summaryFigure(summary.data?.events_in_range)} hint={summaryHint} />
+        <SummaryCard label="Regressions (range)" value={summaryFigure(summary.data?.regressions_in_range)} hint={summaryHint} />
         <SummaryCard
           label="Most frequent"
           value={summary.data?.top_error ? formatNumber(summary.data.top_error.count_in_range, 0) : '—'}
-          hint={summary.data?.top_error ? `${summary.data.top_error.exception_type} · ${summary.data.top_error.route}` : 'No errors in range'}
+          hint={
+            summary.data?.top_error
+              ? `${summary.data.top_error.exception_type} · ${summary.data.top_error.route}`
+              : (summaryHint ?? 'No errors in range')
+          }
           to={summary.data?.top_error ? `/admin/errors/${summary.data.top_error.fingerprint}` : undefined}
         />
       </div>

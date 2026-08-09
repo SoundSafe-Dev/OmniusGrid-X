@@ -24,11 +24,12 @@ Every endpoint is tenant-scoped through ``get_tenant_db`` (sets the
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
-from typing import Optional
+from typing import Any, Dict, List, Optional
 from uuid import UUID
 
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from pydantic import BaseModel
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -48,6 +49,79 @@ from app.services.health_index import health_index_calculator
 logger = structlog.get_logger()
 
 router = APIRouter(dependencies=[Depends(get_current_active_user)])
+
+
+# ---- Response schemas (pool #43). These document what the handlers already
+# return; no shape changed. snake_case on the wire — `/api/v1/dashboard` is
+# registered with the frontend casing seam, so `asset_count` arrives as
+# `assetCount`.
+
+
+class AlarmTrendResponse(BaseModel):
+    bucket: str
+    hours: int
+    severities: List[str]
+    #: Each point is `{timestamp, total, <severity>: count, ...}` — the severity
+    #: names are KEYS, discovered per query, so this cannot be a fixed model. The
+    #: frontend types it as an index signature for the same reason.
+    series: List[Dict[str, Any]]
+    #: Returned but absent from the frontend's `AlarmTrend`. Declared because the
+    #: handler sends it: the model must match the payload, not the consumer.
+    asset_count: int
+
+
+class ThroughputTotals(BaseModel):
+    total_parts: int
+    good_parts: int
+    #: None when no part counters were reported — NOT 0% quality. The handler is
+    #: explicit about this and the frontend comment repeats it.
+    quality_pct: Optional[float] = None
+
+
+class ThroughputResponse(BaseModel):
+    bucket: str
+    hours: int
+    series: List[Dict[str, Any]]
+    asset_count: int
+    totals: ThroughputTotals
+
+
+class AvailabilityTrendResponse(BaseModel):
+    bucket: str
+    hours: int
+    availability_only: bool
+    asset_count: int
+    series: List[Dict[str, Any]]
+    #: Optional because the no-assets early return omits it entirely. Declaring it
+    #: required would turn that branch into a 500; declaring it optional makes the
+    #: branch emit `null`, which `fmtNum` on the dashboard already renders as "—",
+    #: identical to the absent key it sends today.
+    average_availability_pct: Optional[float] = None
+
+
+class HealthBandItem(BaseModel):
+    band: str
+    #: FLOATS, not ints. HEALTH_BANDS' top band is (…, 100.01) — an exclusive
+    #: upper bound expressed as a fraction — and pydantic rejects a float with a
+    #: fractional part for an int field, so `int` turned this endpoint into a 500.
+    #: Caught only once the 393 database-backed tests could run.
+    min: float
+    max: float
+    count: int
+
+
+class HealthDistributionResponse(BaseModel):
+    hours: int
+    asset_count: int
+    bands: List[HealthBandItem]
+    average_health: Optional[float] = None
+
+
+class AtRiskResponse(BaseModel):
+    hours: int
+    asset_count: int
+    #: Rows built by the health scorer; passed through as scored.
+    items: List[Dict[str, Any]]
 
 # Part-counter metric names, mirroring oee_calculator._extract_part_counters so
 # throughput and OEE agree on what "a part" is.
@@ -77,7 +151,7 @@ async def _org_asset_ids(db: AsyncSession, org_id: UUID) -> list[UUID]:
     return [row[0] for row in result.all()]
 
 
-@router.get("/alarms/trend", summary="Alarm counts over time, by severity")
+@router.get("/alarms/trend", response_model=AlarmTrendResponse, summary="Alarm counts over time, by severity")
 async def alarms_trend(
     hours: int = Query(24, ge=1, le=720),
     bucket: Optional[str] = Query(None, description=f"one of {sorted(BUCKET_SECONDS)}"),
@@ -134,15 +208,27 @@ async def alarms_trend(
         default={**{s: 0 for s in ordered}, "total": 0},
     )
 
+    # HOW MANY ASSETS THIS WAS COMPUTED OVER. `oee/trend`, `health/distribution` and
+    # `assets/at-risk` all report it and these two did not — so an all-zero alarm trend was
+    # indistinguishable between a fleet of fifty with nothing wrong (good news) and an
+    # organisation with no assets at all (nothing was examined). Three of five reporting it is
+    # the state in which the other two look fine.
+    asset_count = (
+        await db.execute(
+            select(func.count(Asset.id)).where(Asset.organization_id == org_id)
+        )
+    ).scalar() or 0
+
     return {
         "bucket": bucket_name,
         "hours": hours,
         "severities": ordered,
         "series": series,
+        "asset_count": asset_count,
     }
 
 
-@router.get("/throughput", summary="Produced-part throughput over time")
+@router.get("/throughput", response_model=ThroughputResponse, summary="Produced-part throughput over time")
 async def throughput_trend(
     hours: int = Query(24, ge=1, le=720),
     bucket: Optional[str] = Query(None, description=f"one of {sorted(BUCKET_SECONDS)}"),
@@ -202,10 +288,19 @@ async def throughput_trend(
     total = sum(p["total_parts"] for p in series)
     good = sum(p["good_parts"] for p in series)
 
+    # See the note in `alarms_trend`: a throughput series of zeroes says nothing about
+    # whether anything was there to produce parts.
+    asset_count = (
+        await db.execute(
+            select(func.count(Asset.id)).where(Asset.organization_id == org_id)
+        )
+    ).scalar() or 0
+
     return {
         "bucket": bucket_name,
         "hours": hours,
         "series": series,
+        "asset_count": asset_count,
         "totals": {
             "total_parts": total,
             "good_parts": good,
@@ -215,7 +310,7 @@ async def throughput_trend(
     }
 
 
-@router.get("/oee/trend", summary="Fleet availability over time")
+@router.get("/oee/trend", response_model=AvailabilityTrendResponse, summary="Fleet availability over time")
 async def oee_trend(
     hours: int = Query(24, ge=1, le=720),
     bucket: Optional[str] = Query(None, description=f"one of {sorted(BUCKET_SECONDS)}"),
@@ -367,7 +462,7 @@ HEALTH_BANDS = (
 )
 
 
-@router.get("/health/distribution", summary="Asset-health histogram for the fleet")
+@router.get("/health/distribution", response_model=HealthDistributionResponse, summary="Asset-health histogram for the fleet")
 async def health_distribution(
     hours: int = Query(24, ge=1, le=720),
     org_id: UUID = Depends(get_tenant_org_id),
@@ -393,7 +488,7 @@ async def health_distribution(
     }
 
 
-@router.get("/assets/at-risk", summary="Lowest-health assets, worst first")
+@router.get("/assets/at-risk", response_model=AtRiskResponse, summary="Lowest-health assets, worst first")
 async def assets_at_risk(
     hours: int = Query(24, ge=1, le=720),
     limit: int = Query(10, ge=1, le=100),

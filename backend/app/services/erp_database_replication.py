@@ -1,11 +1,31 @@
-"""
-ERP Database Replication Service
+"""ERP Database Replication Service — SCAFFOLDING, NOT IMPLEMENTED (FS-232).
 
-Service for replicating ERP database changes using CDC:
-- Change Data Capture (CDC) integration
-- Real-time replication of ERP tables
-- Conflict resolution and deduplication
-- Replication lag monitoring
+This module's docstring used to advertise "Real-time replication of ERP tables",
+"Conflict resolution and deduplication" and "Replication lag monitoring". None of
+that exists. What is actually here:
+
+    _get_last_lsn          "In production, this would query a replication
+                           state table" — returns nothing useful
+    _update_last_lsn       `pass`
+    _check_replication_lag `pass` — the lag monitoring the docstring promised
+    _replicate_table       an infinite `while True` loop over the above, polling
+                           every 10 seconds
+    start_replication      returned {"status": "replication_started"} and spawned
+                           one of those loops per table
+
+So calling it produced a success response and a set of tasks that burned a slot
+every 10 seconds forever while replicating nothing. It also DISCARDED the task
+references (`tasks` was built and never stored), so the event loop was free to
+garbage-collect them mid-flight.
+
+`get_replication_status` is real — it queries `ERPSyncStatus` — but nothing in this
+module ever writes those rows, so a caller reading a non-empty status here would be
+seeing another subsystem's work and attributing it to replication.
+
+Nothing imports this module. Rather than delete the scaffolding, `start_replication`
+now REFUSES, so it cannot be wired up on the assumption that it works. Implementing
+it means real CDC (a logical replication slot or an ERP-side change table), durable
+LSN state, and lag metrics — none of which should be inferred from these stubs.
 """
 
 from typing import Dict, Any, Optional, List
@@ -63,30 +83,23 @@ class ERPDatabaseReplicationService:
         Returns:
             Dict with replication status
         """
-        logger.info(
-            "starting_erp_database_replication",
+        # Refuses instead of returning {"status": "replication_started"} and
+        # spawning infinite no-op polling loops. See the module docstring: the CDC
+        # helpers this would drive are `pass` statements, so the previous behaviour
+        # was a success response for work that could not happen.
+        logger.error(
+            "erp_database_replication_not_implemented",
             tables=tables,
-            erp_type=self.erp_type
+            erp_type=self.erp_type,
+            reason="CDC helpers are unimplemented stubs; see module docstring",
         )
-        
-        # Initialize CDC for each table
-        for table in tables:
-            await self._initialize_cdc_for_table(db, table, cdc_config)
-        
-        # Start replication tasks
-        tasks = []
-        for table in tables:
-            task = asyncio.create_task(
-                self._replicate_table(db, table, cdc_config)
-            )
-            tasks.append(task)
-        
-        return {
-            "status": "replication_started",
-            "tables": tables,
-            "erp_type": self.erp_type,
-            "started_at": datetime.now(timezone.utc).isoformat()
-        }
+        raise NotImplementedError(
+            "ERP CDC replication is not implemented. The LSN tracking and lag "
+            "monitoring this depends on are stubs (see the module docstring in "
+            "app/services/erp_database_replication.py). Use the polling ERP sync "
+            "path instead, or implement CDC properly — do not re-enable this by "
+            "deleting the raise."
+        )
     
     async def _initialize_cdc_for_table(
         self,
@@ -392,8 +405,11 @@ class ERPDatabaseReplicationService:
             table: Table name
             lsn: Last processed LSN
         """
-        # In production, this would update a replication state table
-        pass
+        # Unimplemented, and says so. A silent `pass` here is what let
+        # _replicate_table loop forever believing it was making progress.
+        raise NotImplementedError(
+            "durable LSN state is not implemented; see the module docstring"
+        )
     
     async def _check_replication_lag(
         self,
@@ -407,13 +423,11 @@ class ERPDatabaseReplicationService:
             db: Database session
             table: Table name
         """
-        # In production, this would:
-        # 1. Get the current timestamp from the source database
-        # 2. Get the last replicated timestamp
-        # 3. Calculate the lag
-        # 4. Alert if lag exceeds threshold
-        
-        pass
+        # The "Replication lag monitoring" the module docstring advertised. It was
+        # a `pass`, so ERP replication lag has never been measured or alerted on.
+        raise NotImplementedError(
+            "replication lag monitoring is not implemented; see the module docstring"
+        )
     
     async def get_replication_status(
         self,

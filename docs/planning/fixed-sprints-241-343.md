@@ -1,0 +1,704 @@
+# Fixed sprints FS-241 → FS-343
+
+> **Superseded in part by [`fixed-sprints-344-393.md`](fixed-sprints-344-393.md)
+> (2026-08-01).** That document carries the next 50, and its preamble records why this one
+> could not be used as an inventory: it was written from the task pools rather than from the
+> codebase, so **five of eight platform items examined described work already delivered** by
+> FS-200/214/230/240 — all of which predate it. Entries here have been corrected in place
+> with dates. Verify a premise before starting it.
+
+Written 2026-07-31 on `hamad/converged-pre-main`. Continues the FS series (highest prior: FS-240).
+
+**Every number here was measured today, not carried forward.** The previous pool drifted in one
+direction — `data_retention` was recorded as 8 routes and has 12; the contract floor was
+recorded as 290 and is 350; `response_model` was recorded as 195/458 and was 203/453. Each
+drift made the written state look *better* than reality. Re-derive before starting; if a claim
+does not reproduce, correct the entry in place with the date.
+
+---
+
+## The weighting
+
+Five waves, in order, because the order is the argument: build, harden what was built, prove
+it, audit the proof, then build again on ground that holds.
+
+| Wave | Kind | Count | Why here |
+|---|---|---:|---|
+| A | **Buildout** | 25 | Capability the platform lacks. Front-loaded so later waves have something real to harden. |
+| B | **Fixes** | 21 | Known defects and debt, mostly enumerated backlogs where the work is countable. |
+| C | **Testing** | 22 | Coverage where the code that runs in production is the code nothing exercises. |
+| D | **Review** | 16 | Audits and decisions. Cheap to run, and each unblocks or deletes downstream work. |
+| E | **Buildout II** | 20 | The second build wave, deliberately after C and D — these are the items that are unsafe to attempt until the guards exist. |
+
+**45 of 104 are build.** It was 100 before four items were added from a review of this
+session's own findings — FS-303/304/305 (the three defect *classes*, since the instances are
+fixed and the classes are not), FS-284b (393 tests that cannot run locally) and ~~FS-317~~
+**FS-319** (the planning docs' numbers drifting in one direction; corrected 2026-08-01 — FS-317
+is the ERP → Kafka decision). Those five are the highest-leverage entries
+in the document, which is an argument for reviewing a plan before executing it. Sizes: **S** under half a day · **M** 1–2 days · **L** 3+ days.
+
+## Lane discipline
+
+Derived from each dev's own commits, not branch tips. **Hands off**: `auth.py` (all 6 branches),
+`kanban.py`, `telemetry.py`, `analysis_sessions.py` (htreinen ×9), `nlp_correlation.py`,
+`model_monitoring.py`, `logistics_correlation.py`, `engines.py`, `rag_*.py` internals.
+
+Tasks below marked **⚠ coordinate** touch another lane and need the owner's agreement first.
+Everything unmarked is clear.
+
+---
+
+# Wave A — Buildout (FS-241 … FS-265)
+
+### RAG / Compliance Assistant
+
+The pipeline is complete and now has one consumer. These are the gaps that consumer exposed.
+
+- **FS-241 · Document metadata record** · L · ⚠ coordinate (htreinen)
+  There is no document row anywhere — everything lives in the Qdrant payload and S3 object
+  metadata. That is why `is_form` is a filename regex, why `GET /rag/documents` can only return
+  raw S3 keys, and why ingestion has no status. One table unblocks four separate items.
+  *Done when:* a `documents` row exists per ingest with `doc_type`, `status`, `filename`,
+  `uploaded_by`, `uploaded_at`, and `GET /rag/documents` returns it instead of keys.
+
+- **FS-242 · `doc_type` at ingest** · M · needs FS-241
+  Replace `_FORM_PATTERN` with a stored classification (`policy | sop | form | standard |
+  agreement`), declared by the uploader and defaulted by the current heuristic.
+  *Done when:* `SourceDoc.is_form` reads a field, and the Compliance Assistant can group by type.
+
+- **FS-243 · Async ingestion (202 + status)** · L · ⚠ coordinate (htreinen)
+  Pool #27 item 1. Parse→chunk→embed→upsert all run inside the POST; a large document exceeds
+  the ingress read timeout and the caller cannot tell whether indexing finished.
+  *Done when:* ingest returns 202 with a `doc_id`, the worker indexes, and
+  `GET /rag/documents/{doc_id}/status` reports pending/indexing/indexed/failed.
+
+- **FS-244 · Streaming answers** · M
+  `LLMClient.stream_generate()` exists and no route uses it, so the Compliance Assistant shows
+  nothing for the whole generation.
+  *Done when:* an SSE route streams tokens and the page renders them as they arrive.
+
+- **FS-245 · Answer feedback loop** · M
+  Nothing records whether an answer was useful, so retrieval quality has no signal outside the
+  eval suite.
+  *Done when:* thumbs up/down persists with the query, the citations shown, and the ERP row
+  count — the last one is what makes the operational leg's contribution measurable.
+
+- **FS-246 · Saved questions** · S
+  Compliance questions repeat across shifts. The suggestion chips are hardcoded.
+  *Done when:* an org can save a question, and saved ones replace the hardcoded chips.
+
+### ERP
+
+- **FS-247 · ERP export definition** · M — pool #34
+  `EXPORT_DEFINITIONS` has telemetry, kanban_tasks, registries. ERP entities are what an
+  operator actually reconciles against and there is no way to get them out.
+  *Done when:* ERP entities export tenant-scoped, with a test proving a second tenant's rows are
+  absent from the file.
+
+- **FS-248 · ERP events over WebSocket** · M — pool #35
+  No ERP event reaches `websocket_manager`, so the hub needs a manual refresh.
+  *Done when:* an inbound webhook produces a WebSocket message to that tenant only.
+
+- **FS-249 · Dataverse purchase-order transformer** · M — pool #33
+  `CORRELATION_ROUTES` routes only SAP. Do **not** reuse the SAP transformer — it reads SAP
+  field names and would produce empty records and a confident report of zero anomalies.
+  *Done when:* a synced Dataverse PO produces a correlation and the routing test covers the pair.
+
+- **FS-250 · Odoo purchase-order transformer** · M — pool #33, same shape as FS-249.
+
+- **FS-251 · ERP entity search API** · M
+  `GET /entities` returns up to 1000 raw rows with no filter beyond `entity_type`. Anything
+  operator-facing needs predicate search.
+  *Done when:* status/date/supplier filters are server-side and the truncation header still tells
+  the truth.
+
+### Platform
+
+> **READ THIS BEFORE STARTING ANY PLATFORM OR INFRASTRUCTURE ITEM BELOW.**
+>
+> Audited 2026-08-01. **Five of the eight items examined had premises that did not
+> reproduce**, and every one of them described work that was *already delivered*:
+>
+> | item | recorded as | actually |
+> |---|---|---|
+> | FS-252 | "generated, committed, free to drift" | not committed; nothing to drift; generator works |
+> | FS-260 | "no coverage thresholds exist" | they existed — the real defect was the inverse |
+> | FS-261 | "run nowhere but a kind cluster" | `ci-cd.yml` applies all three, CRD-gated |
+> | FS-262 | "without probes a wedged worker is never restarted" | probes shipped in FS-214 |
+> | FS-263 | "a comment is not a control" | the control shipped in FS-200 |
+>
+> **The cause is structural, not clerical.** This plan was written from the task pools
+> rather than from the codebase, so it inherited every claim the pools had already
+> outgrown — FS-200, FS-214, FS-230 and FS-240 had each closed one of these before this
+> document was authored. The header's instruction to re-derive was aimed at *numbers*
+> drifting in the flattering direction; these drift the other way, describing work that no
+> longer exists and inflating what is left.
+>
+> Neither is harmless. A plan that overstates remaining work gets the estimate wrong, and
+> worse, invites re-implementing something that already exists beside the original.
+>
+> **So: verify the premise before starting, and correct the entry in place with the date if
+> it does not hold.** Two of the five were still worth the visit — FS-260's thresholds were
+> 7 and 20 points below reality, and FS-263's gate was blind to base64 Secrets — so
+> "already done" is a reason to *check the delivered thing*, not to skip it.
+
+- **FS-252 · Adopt the generated SDK** · S — pool #42
+  ~~Generated, committed, zero importers — so neither used nor verified, and free to drift.~~
+  **PREMISE CORRECTED 2026-08-01.** It is *not* committed — `frontend/src/api/generated/`
+  holds a README and nothing else — so it cannot drift, and there is no stale artifact to
+  delete. The generation path was run end to end and **works**: `scripts/generate_sdk.sh`
+  dumps 375 paths and `openapi-typescript` produces a 2.3 MB `schema.d.ts` in ~0.5s.
+
+  So this is a live decision, not a blocked one, and both outcomes remain open. Still zero
+  importers. `schema.d.ts` is now gitignored (an untracked 2.3 MB artifact is the same
+  `git status` noise `backend/openapi.json` is ignored to prevent) — that is a tidiness
+  choice, **not** a decision against adoption; adopting-and-committing means removing that
+  line. *Needs a decision, not implementation.*
+
+- **FS-253 … FS-258 · `response_model` burn-down, six batches** · M each
+  ~~**184 undeclared remain** (from 250).~~ **DONE 2026-07-31/08-01. 250 → 53**, and all 53
+  remaining are in another dev's lane (`engines` 11, `model_monitoring` 9,
+  `logistics_correlation` 8, `analysis_sessions` 7, `nlp_correlation` 6, `auth` 4,
+  `correlation_integration` 3, `telemetry` 3, `kanban` 2). Nothing in-lane is left to declare.
+  The "184" was this document's own figure taken mid-session; the per-file batch list below is
+  fully superseded — every file it names is complete. Method and tally in
+  `docs/planning/hamad-response-model-burndown.md`.
+  - FS-253 `compliance_reports` (9) + `compliance` (8)
+  - FS-254 `audit` (5) + `feature_flags` (6)
+  - FS-255 `bulk_operations` (6) + `data_residency` (6)
+  - FS-256 `geotab` (8) + `fleet_logistics` first half
+  - FS-257 `fleet_logistics` second half (23 total in that file — the largest single offender)
+  - FS-258 `health` (17) — note these are probes; check what k8s reads before declaring.
+
+- **FS-259 · Contract-gate ratchet raise** · M — **DONE 2026-07-31.**
+  ~~~92 operations still non-conforming…~~ Floor **350 → 360**. Pre-fix 363/367, post-fix
+  369/370 — disjoint ranges, gain of 6 over a spread of 4, all of it in `ServerError` while the
+  other four checks stayed identical across all four runs. The fix was a **class**, not an
+  endpoint: schemathesis could only ever have found one of thirteen identical unbounded `skip`
+  declarations, so `MAX_OFFSET` bounds all sixteen and a sweep catches the fourteenth.
+  A follow-up fixed six more 500s and **conformance did not move** (368/370) — two moved
+  sideways into the `AcceptedNegativeData` policy bucket, which is why the per-check breakdown
+  of FS-264 exists. See `docs/engineering/api-contract-gate.md`.
+
+- **FS-259b · Give the contract job a reachable broker** · S — split out 2026-07-31
+  Redis is now a service on the `api-contract` job and recovered ~14 operations (368-370 →
+  383) that were never API defects. The broker's remaining ~4 (383 → 387) cannot be had the
+  same way: Redpanda needs `--advertise-kafka-addr`, and a GitHub service container takes no
+  `command`. Pointed at a broker advertising its internal hostname, the client hangs on the
+  redirect and the suite collects 1 operation instead of 452 — observed, not predicted.
+  *Done when:* a `docker run` step starts Redpanda with an advertised address the runner can
+  reach, the suite still collects ~452, and the floor is raised from CI's measurement.
+
+- **FS-260 · Coverage thresholds** · S — pool #41
+  ~~None exist, and `vitest.config.ts` narrows coverage `include` to three paths, so the reported
+  number is decorative and cannot regress.~~
+  **CORRECTED IN PLACE 2026-07-31, per this document's own header — neither half reproduced.**
+  FS-240 had already widened the `include` to five real paths and set thresholds from a
+  measured baseline. The defect was the *inverse* and worse in the direction nobody checks:
+  both gates had drifted far BELOW reality, so each would have sat through a large fall and
+  still reported green.
+
+  | gate | recorded | measured 2026-07-31 | now |
+  |---|---|---|---|
+  | frontend (vitest) | 19 / 15 / 14 / 19 | 39.01 / 42.78 / 35.21 / 40.23 | 38 / 41 / 34 / 39 |
+  | backend (`--cov-fail-under`) | 54 | 61, measured twice with CI's exact flags | 59 |
+
+  Frontend coverage had roughly doubled since FS-240; the backend rose mostly because
+  FS-284b unblocked 393 database-backed tests that could not run before. Both raises are
+  mutation-verified (each gate fails when the threshold is set above the real number).
+  *Done.*
+
+### Infrastructure
+
+- **FS-261 · Wire `monitoring/`, `autoscaling/`, `database-ha/` into an overlay** · M — pool #50
+  ~~Reviewed YAML that has run nowhere but a kind cluster.~~
+  **CORRECTED IN PLACE 2026-08-01 — already delivered** via the second branch of its own
+  done-when. `ci-cd.yml` applies all three stacks to staging and production in documented
+  steps, each gated on the operator's CRDs being present and printing an explicit SKIP with
+  install instructions when they are not, and the monitoring/database-ha applies are piped
+  through `strip_placeholder_secrets.py`. *Done.*
+
+- **FS-262 · Probes, limits and `securityContext` for the seven workloads** · M — pool #54
+  ~~Four workers, otel and jaeger. Without probes a wedged worker is never restarted.~~
+  **CORRECTED IN PLACE 2026-08-01 — already delivered**, mostly by FS-214, which gave the
+  workers `/healthz` and `/readyz` through `app/workers/health_server.py`. All six
+  deployments plus the otel collector carry probes, resources and `securityContext`;
+  verified that every probe port resolves to a declared `containerPort`, not merely that
+  the stanzas exist.
+
+  **Added the guard that check implies:** `tests/k8s/check_probe_ports.py`, wired into the
+  `k8s-manifests` job. It asserts both halves against the BUILT overlays — every workload
+  has a probe, and every probe addresses a port its container declares. `kubeconform`
+  cannot catch the second: a probe naming a nonexistent port is schema-valid YAML, and the
+  kubelet then restart-loops a healthy workload, so a wrong probe is worse than no probe
+  because it reads like the fix. 108 probes across base and three overlays, all resolving;
+  mutation-verified against both failure modes. *Done.*
+
+- **FS-263 · Placeholder-secret gate** · M — pool #53
+  ~~`base/object-store.yaml` and the two monitoring manifests ship DEV-ONLY credentials, honestly
+  labelled in comments. **A comment is not a control.**~~
+  **CORRECTED IN PLACE 2026-07-31 — already delivered by FS-200**, which builds each overlay,
+  checks the platform stacks post-strip, and asserts `ci-cd.yml` actually invokes the strip
+  filter (a filter nobody calls is not enforcement).
+
+  **But the gate had a blind spot, found by mutation-testing it rather than trusting it.**
+  Injecting a `secretGenerator` placeholder into the production overlay produced
+  *"OK: no placeholder credentials reachable"* — `secretGenerator` emits base64 `data` and the
+  plaintext markers were matched against the encoded string. That is the idiomatic kustomize
+  way to create a Secret, so the gate was blind to the most likely route a placeholder takes
+  into an overlay. Values are now decoded before matching, and a `--self-test` mode runs in CI
+  ahead of the three environment checks — if the matcher is broken, its OKs mean nothing.
+  *Done.*
+
+- **FS-264 · Contract-gate observability** · S
+  ~~The gate's score is in a JUnit file nobody reads between runs.~~
+  **Done 2026-08-01.** `scripts/contract_summary.py` writes conformance, the floor, the
+  **headroom** between them, a per-check breakdown (marked defect vs policy), the
+  undeclared-route count against its own ratchet, and the 5xx operation list to
+  `$GITHUB_STEP_SUMMARY` on every run. Runs before the ratchet and with `if: always()`, so the
+  numbers are present exactly when the build is red. Warns when headroom falls to ≤3 — the
+  early signal a floor 8–9 points down cannot give.
+
+  The per-check breakdown is the substance, not decoration: on 2026-07-31 six verified fixes
+  moved the total 369 → 368 while `ServerError` fell 41→38 and `AcceptedNegativeData` rose
+  25→27, because a fixed endpoint reaches the negative-data check for the first time. A trend
+  of the total alone reports real work as nothing happening.
+
+- **FS-265 · Compliance Assistant: ERP context admin view** · M
+  The operational leg is invisible by design and traceable only in structlog. An admin-only view
+  of what it contributed to a given answer closes the auditability gap without exposing it to
+  ordinary users.
+  *Done when:* an admin can see, for one answer, the rows the ERP leg supplied.
+
+---
+
+# Wave B — Fixes (FS-266 … FS-285)
+
+- **FS-266 · `DELETE /rag/documents/{doc_id}` deletes vectors with no org filter** · S · ⚠ coordinate
+  `rag_ingestion.py:513`. Cross-tenant if a doc_id is guessed; only the blob delete is scoped.
+  The Compliance Assistant never calls it, so it is unreached — not fixed.
+
+- **FS-267 · GeoTab presents fabricated HOS figures as measured** · M — pool #44
+  16 `random.uniform` sites, including **DOT-regulated hours-of-service numbers**. Being a stub
+  is defensible; presenting invented compliance figures as real is not.
+  *Done when:* nobody can mistake a generated HOS figure for a measured one.
+
+- **FS-268 · Migration chain hygiene** · M — pool #45
+  Test fixtures (005/006/008/009) sit in the production chain, prefixes duplicate at
+  004/005/007/009, 019 is missing, and not every migration is idempotent.
+  *Done when:* the chain applies cleanly twice on an empty database.
+
+- **FS-269 · Rotate the three development credentials** · S — pool #30
+  SAP key, Intuit client secret, Dataverse client secret were all shared in conversation. None is
+  in the repo; all three should be treated as compromised.
+
+- **FS-270 · Rotate `HAMAD_IDE.pem`** · S — pool #49
+  Untracked in FS-01 but **still in git history on both remotes**. Untracking does not revoke a
+  key. Rotate first; decide the history purge separately.
+
+- **FS-271 · `erp_database_replication.py`** · M — pool #36, *verify first*
+  491 lines reported as entirely no-op. *Done when:* it does something with a test proving it, or
+  it is deleted.
+
+- **FS-272 … FS-279 · Contract non-conformance, eight batches** · M each
+  > **RESCOPED TO ONE SPRINT, 2026-08-01 — see FS-272 in `fixed-sprints-344-393.md`.**
+  > Measured against a throwaway database with the job's dependencies reachable: **65 failing
+  > operations, not ~92**. Of those, **42 are the documented policy disagreements**
+  > (`AcceptedNegativeData` 28 + `UnsupportedMethodResponse` 14 — re-audited that day, the
+  > characterisation holds), and only **9 `ServerError`s are in lane**. Six of the nine share
+  > one cause: `pg_stat_statements` needs `shared_preload_libraries`, which a GitHub service
+  > container cannot set because it accepts no `command` — the same blocker that stopped the
+  > broker in FS-259b. So this is one infrastructure sprint plus three endpoints, not eight
+  > batches of per-endpoint validation.
+
+  ~~The ~92 remaining operations, grouped by router. Each batch is per-endpoint input
+  validation:~~
+  a generated value reaching Postgres unvalidated becomes a 500 where the contract promises 4xx.
+  Each batch raises the ratchet by its own measured amount.
+
+- **FS-280 · The two unfixable `ruff` errors** · S — pool #57
+  `pre-commit run --all-files` rewrites 781 files; 260 of 262 ruff errors auto-fix. The two that
+  do not are the only non-mechanical part and need reading before the freeze window.
+
+- **FS-281 · `test_document_domain_mapper` table-content mapping** · S · ⚠ coordinate (Harsh)
+  The last quarantined test. `map_section_to_domain` returns `None` for a table whose header is
+  `["asset_id","status"]` with a `"failed"` cell where the test expects `MNT`. A taxonomy
+  decision, not a rewrite — it has been failing every run of this suite all session.
+
+- **FS-282 · Frontend `USE_MOCK` drift audit** · M
+  190 forks, and until FS-238 none was exercised in real mode. Sweep for mock branches whose
+  shape no longer matches the real client.
+
+- **FS-283 · Nullable-response audit on the pages that render blank** · M
+  The `info`-badge class (defect 60) was one instance of "renders nothing, reports nothing".
+  Sweep for others: fields the UI reads that the API never sends.
+
+- **FS-284 · `GET /rag/documents` returns raw S3 keys** · S · needs FS-241
+  No filenames, dates, or status. Callers must parse `key.split("/")[1]`.
+
+- **FS-284b · 393 tests cannot run locally** · M · ✅ **DONE 2026-07-31** — see status section
+  Every `*_realdb*` and testcontainers-backed test errors at setup on a Mac/colima host:
+  `error while creating mount source path '/Users/…/.colima/default/docker.sock': operation not
+  supported` — Ryuk cannot bind-mount the socket. **1975 tests pass and 393 never execute**, and
+  the ones that do not are precisely the tenant-isolation, RLS and real-schema tests: the suite
+  is strongest exactly where a developer cannot run it.
+  That gap has a history here. `test_audit_hash` passed for months against a `conftest`-created
+  pgcrypto extension no migration installed, and the whole class was "the tests were not wrong
+  about the code, they were wrong about the database". A local suite that silently skips its
+  database half invites the same mistake.
+  *Done when:* `TESTCONTAINERS_RYUK_DISABLED` (or a documented colima socket path) makes them run
+  on a developer machine, **or** `make test` states plainly how many tests it is not running and
+  why — the honest fallback, since a green run over 83% of the suite reads as a green suite.
+
+- **FS-285 · Export delivery failure surfacing** · M
+  `ExportDeliveryJob.error` is stored and the deliveries list returns it; confirm a failed
+  scheduled export is visible to the operator who scheduled it rather than only in the row.
+
+---
+
+# Wave C — Testing (FS-286 … FS-307)
+
+*(range corrected 2026-08-01: the header said FS-305, but FS-306 and FS-307 are in this wave.)*
+
+- **FS-286 … FS-291 · Real-mode frontend tests, six batches** · M each — pool #46
+  `test/setup.ts` stubs `VITE_USE_MOCK=true`, so **the branch that runs in production is the
+  branch nothing covers**. `loadInRealMode` exists and four clients use it.
+  Batches: dashboard · assets/alarms · ERP · logistics · admin · analytics.
+  *Done when:* each page's real path has coverage and new API clients are expected to have it.
+
+- **FS-292 · `rag_eval` in CI** · S · ⚠ coordinate (htreinen) — pool #26
+  Excluded from the default run, so the suite validating retrieval quality never runs on a PR.
+  *Done when:* it runs, or the exclusion carries a written reason and an expiry.
+
+- **FS-293 · Compliance Assistant end-to-end against the live stack** · M
+  The presign path and the ERP leg are verified; the full query path through embeddings,
+  reranking and generation is **not** — `rag-inference` needs ~5 GB of weights and the local
+  Docker VM had 2.7 GB free.
+  *Done when:* a real question returns a real cited answer, and the A/B with
+  `RAG_ERP_CONTEXT_ENABLED` on and off is recorded. If the answers do not differ, the routing
+  keywords are not earning their place.
+
+- **FS-294 · Contrast/legibility guard beyond `STATUS_COLORS`** · M
+  Rule 67: the suite has no opinion about what the screen looks like. Defect 60 reached ten call
+  sites because nothing compares a foreground to its background.
+  *Done when:* the rule covers buttons and badges, not just the status palette.
+
+- **FS-295 · Visual regression on the five highest-traffic pages** · L
+  Follows FS-294. The screenshot harness in `frontend/e2e/compliance-assistant.visual.ts` is the
+  prototype.
+
+- **FS-296 · RTO/RPO drill** · M — pool #51
+  `docs/runbooks/rto-rpo-checklist.md` still has `[DURATION]` where the measured figures belong.
+  **Measured numbers or it is not a DR plan.** Needs a drill, not a doc edit.
+
+- **FS-297 · KEDA scale drill** · M — pool #52
+  Thresholds have never been observed against real load. Schedule with FS-296.
+
+- **FS-298 · `overlays/dr` against a second cluster** · M — pool #55
+  The overlay exists and lints; its own header says it is unverified against a real cluster. Note
+  it does not create cross-region replication — that is pgBackRest's job and it is what
+  determines the RPO.
+
+- **FS-299 · Cross-org RAG isolation test, unskipped** · S · ⚠ coordinate (htreinen)
+  `test_isolation.py` skips the cross-org case unless `RAG_TEST_ORG_B_TOKEN` is supplied, because
+  there is no create-org endpoint. That is the test that matters most.
+
+- **FS-300 · ERP webhook end-to-end with a real vendor** · M — pool #32
+  The raw-body HMAC scheme is proven against our own sender only. Intuit's sandbox sends genuine
+  webhooks.
+
+- **FS-301 · Migration idempotency test** · S · pairs with FS-268.
+
+- **FS-302 · Tenant-isolation test for every new `response_model` route** · M
+  63 routes were declared this session. Declaring what a route returns is not the same as
+  proving it returns only your org's rows.
+
+- **FS-303 · A response model's field TYPES must accept what the handler returns** · M
+  *Closes the class behind the `SubscriptionDeleted` defect.*
+  `test_response_models_match_their_returns` compares **key names** and would have passed the
+  bug that nearly shipped: `DELETE /notifications/subscriptions/{id}` returns the path parameter
+  — already a `UUID` — into a field typed `str`, and pydantic v2 does not coerce, so every
+  successful delete would have 500'd on a route that worked the day before. The key was named
+  correctly; only the type was wrong.
+  *Done when:* the sweep also instantiates each model against representative values from its
+  handler, and a `str` field fed a UUID fails. Mutation-verify by re-typing that field.
+
+- **FS-304 · A declared media type must match what the handler actually returns** · M
+  *Closes the class behind the `text/csv` defect, in both directions.*
+  #38 fixed nine routes whose schema promised JSON while the handler sent xlsx/PDF/CSV. The
+  inverse survived it: `GET /exports/jobs/{job_id}` declared `text/csv` and has only ever
+  returned JSON, because that sweep looked for handlers *returning* binaries and not for
+  declarations *claiming* one. It then fooled the new coverage ratchet, which believed the
+  declaration and excluded a JSON route from its count — **a guard that reads a lie inherits
+  it**, and that is the reusable lesson.
+  *Done when:* one sweep checks both directions — every declared non-JSON content type has a
+  handler returning a `Response`, and every handler returning one declares it.
+
+- **FS-305 · Extend the returned-keys sweep to helper-built returns** · M
+  The AST sweep sees only literal `return {...}`. `exports`, `fleet_health` and `data_retention`
+  build payloads in shaping helpers, so they are covered by hand-written pairings in
+  `test_declared_models_do_not_drop_fields` — which does not scale to the 184 routes left, and
+  is exactly where the `count` defect hid (seven `query_performance` lists returning
+  `{<items>, "count"}` against models declaring only the items key).
+  *Done when:* a handler returning `_helper(...)` is resolved to that helper's literal dict, so
+  the two files' coverage stops depending on which shape a route happened to use.
+
+- **FS-306 · Worker restart/idempotency tests** · M
+  Four workers with no probes (FS-262) and no test that a mid-job restart does not double-write.
+
+- **FS-307 · Contract gate against a non-superuser role** · S
+  The gate connects as a superuser, and **a superuser bypasses RLS even where FORCE is set** — so
+  its results are not evidence about tenant isolation, and `api-contract-gate.md` says so.
+  `conftest.py:139` already creates a `NOSUPERUSER NOBYPASSRLS` role for the real-DB suite.
+
+---
+
+# Wave D — Review (FS-308 … FS-323)
+
+Cheap to run. Each either unblocks work or deletes it.
+
+- **FS-308 · Decide the eight stale branches** · S — pool #62
+  Eight branches, 28–112 commits ahead, none moved since 17 July while converged took 70+. The
+  `origin` and `backup` copies have drifted apart from each other.
+  *Done when:* each has a recorded decision — merge, re-cut, or delete. A branch nobody will
+  merge should be deleted, not left as a decision somebody keeps re-making.
+
+- **FS-309 · Strip `node_modules` from four branches** · M — pool #61
+  19,048 files each. Any merge tries to bring 2.3M lines; `git diff` reports 20,000 changed files,
+  so nobody can review what the branch contains. **Preserve first, clean second, let the owner
+  do the cleaning.**
+
+- **FS-310 · `main` promotion window** · S — pool #3/#39
+  Every dev is told to branch from `main`, which is well behind converged, so each new branch
+  starts from a stale base and inherits fixed bugs.
+
+- **FS-311 · The `super_admin` role** · M — pool #4
+  Two features need a cross-tenant role; `roles.py:48` documents the need and nothing implements
+  it. Real blast radius, which is why neither shipped. *Done when:* scope is written into
+  `roles.py` as the spec.
+
+- **FS-312 · Correlation-AI honesty decision** · S · ⚠ coordinate (Harsh) — pool #1
+  `CORRELATION_MODEL_ENABLED` defaults False, so **every deployment shows heuristics styled as AI
+  output**. The engine labels itself `simulated: true`; nothing carries or displays it.
+
+- **FS-313 · Collapse the two quarantine registers** · S — pool #2b
+  `test_quarantine.py` and `test_ci_quarantine_expires.py` both hold the list and both must be
+  hand-edited. Two sources of truth for "what is CI skipping" is the exact drift they exist to
+  prevent.
+
+- **FS-314 · Audit the 14 flapping contract operations** · M
+  Named in `api-contract-gate.md`; four read live Postgres statistics the suite itself perturbs.
+  Reducing the spread lets the ratchet's 9-point margin shrink.
+
+- **FS-315 · i18n scope decision** · S — pool #47
+  Full scaffold, 0 `useTranslation` call sites, ~560 hardcoded strings. Decide languages and
+  surfaces, or remove the scaffold so it stops implying support.
+
+- **FS-316 · Review the 190 `USE_MOCK` forks for deletion** · M
+  Some exist only because there was no backend when they were written.
+
+- **FS-317 · ERP → Kafka architectural decision** · M — pool #37
+  Whether ERP belongs on the bus beside telemetry is an architecture question, not only an
+  implementation one. *Done when:* the decision is recorded either way.
+
+- **FS-318 · Security review of the 63 newly-declared routes** · M
+  A declared schema is a published one. Confirm nothing now documents a field that should not
+  leave the tenant.
+
+- **FS-319 · Make the planning docs' own numbers checkable** · M
+  **Every drift found this week made the written state look better than reality**, never worse:
+  `data_retention` recorded as 8 routes and it has 12 across two routers; the contract floor
+  recorded as 290 and it is 350; `response_model` recorded as 195/458 and it was 203/453. Drift
+  in one direction is not noise — it is what happens when numbers are written once, by whoever
+  did the work, and never re-derived.
+  The repository already solves this for one document: `test_method_rules_are_indexed` fails when
+  `defect-class-sweeps.md` and the README disagree about the rule count, and it caught me this
+  week doing exactly that.
+  *Done when:* the figures these planning docs quote — undeclared routes, contract floor and
+  total, route count, quarantined tests — are asserted against the live measurement by a test, so
+  a stale plan fails the build instead of misleading the next reader. Numbers a machine cannot
+  check should be marked as estimates rather than stated as facts.
+
+- **FS-320 · Dependency and supply-chain review** · S
+  pip-audit/npm-audit/Trivy run in CI; nobody has read the accepted findings recently.
+
+- **FS-321 · Read the `rag_ingestion_followups` list for deletion** · S · ⚠ coordinate (htreinen)
+  Six items now. The list should not outlive its usefulness — pool #27's own framing.
+
+- **FS-322 · Ownership-table rebalance** · S
+  The pool noted Hamad holds 28 of 56 because the table gives him backend platform, frontend,
+  deploy/CI, schema, observability and docs. That is still true and still the most obvious thing
+  to rebalance.
+
+- **FS-323 · Post-mortem: the commit-sweep incident** · S
+  A concurrent session ran broad `git add` three times and swept an entire feature into commits
+  labelled for unrelated work. Recoverable, and recovered — but worth a written rule about
+  `git add -A` on a shared branch.
+
+---
+
+# Wave E — Buildout II (FS-324 … FS-343)
+
+Deliberately after C and D: each needs a guard, a decision, or a measurement that Waves B–D
+produce.
+
+- **FS-324 · CNPG cutover and a real PITR** · L — pool #56 · needs FS-296
+  The runbook still says *"Restoring PITR (not yet done)"*. Point-in-time recovery is a plan, not
+  a capability. *Done when:* three healthy instances, a PITR restore performed, and that runbook
+  section deleted because it is finally false.
+
+- **FS-325 · Cross-region replication for the DR overlay** · L · needs FS-298
+  Applying the overlay to an empty cluster gives running pods with no data.
+
+- **FS-326 · Flip `pre-commit` to blocking** · M · needs FS-280 + FS-306
+  The reformat touches every lane's files at once, so it must land as ONE commit in an agreed
+  freeze window with every open branch rebasing after.
+
+- **FS-327 · `super_admin` implementation** · L · needs FS-309.
+
+- **FS-328 · Data-retention enforcement on a schedule** · M
+  `/enforce` exists and nothing calls it. Same shape as the ERP `sync_schedule` gap — a cron
+  string stored and never read.
+
+- **FS-329 · ERP sync scheduler** · M
+  `sync_schedule` and `sync_frequency_minutes` are stored on the integration row and **nothing
+  reads them**. Sync is manual/API-triggered only, which is not what the UI implies.
+
+- **FS-330 · Compliance Assistant: multi-turn follow-ups** · M · needs FS-244
+  Strictly single-shot today, deliberately. A follow-up that keeps the prior citations in scope is
+  the smallest useful step beyond it, and is still not a chat.
+
+- **FS-331 · Cited-passage highlighting in the source document** · L · needs FS-241
+  Open the PDF at the cited page with the passage highlighted, rather than at page 1.
+
+- **FS-332 · Compliance corpus admin** · M · needs FS-241/242
+  Upload, retire, and re-index from the UI — currently curl only.
+
+- **FS-333 · ERP reconciliation report** · M · needs FS-247
+  The export is the input; the report is what an operator actually wants.
+
+- **FS-334 · Alarm-rule templates** · M
+  Rules are defined one at a time; a fleet of identical assets needs a template.
+
+- **FS-335 · Asset-health explainability** · M
+  The score is computed by a pure function nobody can inspect from the UI.
+
+- **FS-336 · Frontend SDK adoption, second consumer** · M · needs FS-252.
+
+- **FS-337 · i18n first surface** · L · needs ~~FS-313~~ **FS-315** (corrected 2026-08-01 — FS-313 is *Collapse the two quarantine registers*; the i18n scope decision is FS-315).
+
+- **FS-338 · Contract conformance to 400+** · L · needs FS-272…279
+  The practical ceiling is ~412 of 451 without a policy change (Pydantic strict mode, typed path
+  converters). Getting there is the endgame of #38 and #43 together.
+
+- **FS-339 · `response_model` coverage to zero undeclared** · L · ~~needs FS-253…258~~
+  **RE-DERIVED 2026-08-01: 53 undeclared remain, not 184, and every one is in another dev's
+  lane.** This is no longer gated on effort — it is gated on `engines`, `model_monitoring`,
+  `logistics_correlation`, `analysis_sessions`, `nlp_correlation`, `auth`,
+  `correlation_integration`, `telemetry` and `kanban` owners. ⚠ coordinate, all lanes.
+  184 remain. Zero is reachable because 204s and binary routes are already excluded from the
+  count — the target is real, not aspirational.
+
+- **FS-340 · Observability for the RAG pipeline** · M
+  Retrieval latency, rerank scores, and generation time per query. The eval suite measures
+  quality offline; nothing measures it live.
+
+- **FS-341 · Edge-agent OTA staged rollout dashboard** · M · ⚠ coordinate (Hridyansh).
+
+- **FS-342 · Tenant self-service org creation** · M · needs FS-309
+  Also unblocks FS-299 — the cross-org isolation test skips because there is no way to make a
+  second org.
+
+- **FS-343 · Demo-path hardening** · M
+  `seed_demo_data.py` covers every page; confirm it still does after 100 sprints of change, and
+  make that a CI check rather than a manual one.
+
+---
+
+## Execution status — 2026-07-31
+
+**Done, verified, pushed:**
+
+| Sprint | Result |
+|---|---|
+| **FS-284b** | 393 tests unblocked. `make test` went 1975 → 2715. Found and fixed two 500s introduced by the FS-253… work — a float band bound typed `int`, a numeric priority typed `str`. |
+| **FS-254** | `audit` ×5 declared. |
+| **FS-253** | `compliance_reports` ×7 + `compliance` ×8. Seven needed only pointing at models the code already returned. |
+| **FS-255** | `bulk_operations` ×6, `data_residency` ×6, `feature_flags` ×6. |
+| **FS-256** | `geotab` ×7. |
+| **FS-257** | `fleet_logistics` ×23 — geofencing 7, maintenance 14, logistics 2. Every route in the file builds its payload through a helper, so none was visible to the AST sweep; six shaper-level assertions were added to `test_declared_models_do_not_drop_fields.py` to cover them. Found two client/server name mismatches on `/logistics/delivery-efficiency` and on polygon zones — recorded in the burn-down doc, not fixed here (both are frontend-side). |
+| **FS-258** | `health` ×16 (17 routes; `/metrics` already declared `text/plain`). The probes were checked against the deployment first: all three are `httpGet`, which reads the status code and never the body, so the hazard here is the inverse of the usual one — a model that REJECTS a payload turns a readiness 200 into a 500 and pulls a healthy pod out of the Service. `/health/db|redis|kafka` use `extra="allow"` envelopes so the checker-owned detail keys are documented without being filterable. Recorded that `POST /admin/collectors/{id}/restart` restarts nothing. |
+| **FS-258** *(beyond plan)* | `erp_integrations` ×8. Two shapes owned by a service rather than the route — the connector's `health_check()` payload and `describe_scheme()` — declared as open/`extra="allow"` envelopes for the same reason as the health checkers. |
+| **FS-258** *(beyond plan, tail)* | `alarms` ×4, `api_keys` ×3, `assets` ×3, `commands` ×3, `dashboard` ×3, `oee` ×3, `sso` ×3, `main` ×2. `GET /alarms/active` stopped serving raw ORM rows and no longer puts `organization_id` on the wire — the other two alarm reads never did. |
+| **FS-259** | Contract-gate floor **350 → 360**, justified by fixes. Pre-fix 363/367, post-fix 369/370 — disjoint ranges, gain of 6 over a spread of 4, and all of it in `ServerError` while the other four checks stayed identical across all four runs. The fix is a class, not an endpoint: schemathesis could only ever have found one of thirteen identical unbounded `skip` declarations, so `MAX_OFFSET` bounds all sixteen offset params and a new sweep fails if a fourteenth lands unbounded. Also `upcoming` (date overflow) and two non-UUID path ids reaching UUID columns. Documented: the ~20 `503`s are the job's own missing Redis/broker, and the seven remaining in-lane 500s with the input that triggers each. |
+| **FS-259** *(follow-up)* | Six more 500s from the gate's list fixed and verified individually — `user/goals` (never worked once: `str(UUID())` raises), the cross-field validation handler (a `ValueError` in `ctx` broke JSON encoding, so every cross-field rule answered 500 — one fix, three operations), `commands/submit`, `load-plans`, `bulk/assets/import`. **Conformance did not move (368/370 vs 369/370) and the floor stayed at 360** — two fixes moved sideways from `ServerError` into the `AcceptedNegativeData` policy bucket, and the known flappers fired. Recorded in the gate doc: "conformance went up" is not a proxy for "the code got better". |
+| **FS-258** *(beyond plan, close-out)* | Five file downloads that promised JSON in the schema given their real media types (pool #38's defect, five routes it missed), plus `text/plain` added to the ratchet's `_NON_JSON` so `/metrics` stops counting as debt. Then the last nine in-lane routes: `transportation` ×3, `workcells` ×2, `fleet_agents`, `data_retention`, `erp_webhooks`, `geotab`. **250 → 53, and every route left is in another dev's lane.** |
+| *(pre-plan)* | The coverage ratchet, the shared route walker, the AST returned-keys sweep, and 105 routes declared across `fleet_health`, `notifications`, `dashboard_analytics`, `exports`, `query_performance`, `gdpr`, `data_retention`, `audit`, `compliance`, `compliance_reports`, `bulk_operations`. **250 → 100 undeclared.** |
+
+**FS-284b changed how the rest of this plan should be executed.** It was written as
+a testing item and it belongs first, ahead of Wave A: every `response_model` batch
+before it was landing unverified against a real database, and two of them were
+broken. Any remaining batch (FS-253, 255–258) should now be run with the full
+suite, not the hermetic one.
+
+> **This section was dated 2026-07-31 and missed five closures. Corrected 2026-08-01.**
+> Also **done**, and absent from the table above: **FS-260** (both coverage gates had
+> drifted *below* reality — frontend 19/15/14/19 against a measured 39/43/35/40, backend
+> 54 against 61; now 38/41/34/39 and 59, mutation-verified), **FS-261** (already delivered
+> — `ci-cd.yml` applies all three operator stacks, CRD-gated), **FS-262** (already
+> delivered by FS-214; a new guard `tests/k8s/check_probe_ports.py` asserts 108 probes
+> resolve to declared ports), **FS-263** (already delivered by FS-200 — and its matcher was
+> blind to base64 `secretGenerator` Secrets, now fixed with a `--self-test`), **FS-264**
+> (`scripts/contract_summary.py`).
+>
+> **FS-259b is partially done**: Redis landed and recovered ~14 operations (368-370 → 383);
+> the broker and `pg_stat_statements` halves remain, both blocked on the same GitHub
+> limitation. **FS-252's premise was wrong in both directions** — the SDK is not committed
+> and the generator works; it is a live decision, not blocked work.
+
+**Not started.** Everything else. The realistic constraints, recorded so the next
+session does not rediscover them:
+
+- **Needs a second cluster** — FS-296, FS-297, FS-298, FS-324, FS-325. The DR
+  overlay's own header says it: *"UNVERIFIED AGAINST A REAL CLUSTER. There is no
+  second cluster to try it on."* No amount of local effort changes that.
+- ~~**Needs disk** — FS-293.~~ **UN-GATED 2026-08-01.** Re-measured: the VM is at 96%
+  with 2.5 GB free, so the headline still holds — but **13 GB of that is 23 stopped
+  containers at 99% reclaimable**, four of them `timescaledb` left by contract-gate
+  runs (Ryuk is disabled on this host, so nothing reaps them). `docker container
+  prune` recovers it **without touching a single image**, which is what the original
+  entry ruled out. Tracked as FS-371 in `fixed-sprints-344-393.md`.
+- **Needs external access** — FS-269, FS-270 (credential rotation), FS-300 (Intuit
+  sandbox consent). ~~FS-322 (cross-region replication)~~ — **corrected 2026-08-01:
+  FS-322 is *Ownership-table rebalance*, a conversation, not an external-access item.
+  Cross-region replication is FS-325, already counted under "needs a second cluster"
+  above.**
+- **Needs another person's decision** — FS-308, FS-309, FS-311, FS-312, FS-315,
+  FS-317, FS-320. The plan already called these *conversations, not sprints*.
+- **Needs a coordinated freeze window** — FS-326. The reformat touches every lane's
+  files at once and all eleven outstanding branches would have to rebase through it.
+
+Roughly 60 of the 104 are executable by one person without any of the above. The
+rest are gated on something a session cannot supply.
+
+> **Counting note, 2026-08-01.** This document has **105** numbered entries, not 104:
+> Wave A carries 26 against a claimed 25 because FS-259b was split out and never added
+> to the count, while Wave B's FS-284b was. The successor plan starts at FS-344.
+
+---
+
+## Sequencing that actually matters
+
+- **FS-241 before 242, 284, 328, 329** — the document record unblocks four items.
+- **FS-280 + FS-308 before FS-326** — do not flip `pre-commit` until the freeze window is agreed
+  and the branches are decided.
+- **FS-296 before FS-324** — measure the RTO before claiming PITR works.
+- **FS-311 before FS-327 and FS-342**.
+- **FS-244 before FS-330**.
+- **FS-253…258 before FS-339**, **FS-272…279 before FS-338** — the burn-downs are the endgames.
+- **FS-294 before FS-295** — the rule before the screenshots, or the baseline bakes in the bug.
+
+## What needs a decision before it can be scheduled
+
+FS-312 (Harsh), FS-315, FS-317, FS-311, FS-320, and the freeze window for FS-326. Five of the six
+are conversations, not sprints.

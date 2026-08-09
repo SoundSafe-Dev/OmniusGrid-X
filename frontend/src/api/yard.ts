@@ -19,6 +19,33 @@ import { USE_MOCK } from './mockMode';
 // (/api/v1/geotab is registered in transportation.ts alongside geoTabApi.)
 registerTransform('/api/v1/yard', { inAliases: YARD_ALIASES, outAliases: YARD_OUT_ALIASES });
 
+/** One row of `GET /api/v1/yard/dwell-times` (`DwellTimeAnalytics`), after the casing
+ *  seam. Declared locally because the shared types describe the SUMMARY this module
+ *  derives, and the wire shape had no type at all — which is how the mismatch in
+ *  `getDwellTimes` survived (FS-393). */
+interface DwellTimeRow {
+  trailerId: string;
+  trailerNumber: string;
+  // Null when the trailer has no recorded check-in (FS-465). An unknown dwell, not a
+  // zero one — see the aggregation below, which excludes these rather than averaging
+  // them in at zero.
+  dwellHours: number | null;
+  // `isDetention` and `detentionCharge` are DELIBERATELY NOT DECLARED, and the omission is
+  // load-bearing. The endpoint sends `detention_charge: null` until a charge has been
+  // ASSESSED, and a sibling `detention_assessed` flag saying which — because
+  // `float(None or 0)` turns "not yet worked out" into "nothing owed" on billable time.
+  //
+  // `test_qualifiers_reach_the_frontend.py` exempts that flag only while nothing here reads
+  // the field it qualifies, and declaring the charge tripped it immediately. It was right
+  // to: this summary does not consume the charge, so claiming it would be the first half of
+  // rendering an unassessed trailer as owing nothing. Whoever wires the charge into the UI
+  // wires `detentionAssessed` with it, and that guard will say so again.
+}
+
+/** The page's stated target ("Target: 120 min"), named so the count and the label cannot
+ *  drift apart. */
+const DWELL_TARGET_MINUTES = 120;
+
 const MOCK_DELAY = 500;
 
 const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
@@ -27,11 +54,18 @@ const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 // `metadata` blob (whose inner keys the casing seam deliberately does not
 // rename), but the trailer components read top-level trailer.contents /
 // trailer.poNumber. Lift them onto each trailer.
-const adaptTrailer = (t: any): YardTrailer => ({
-  ...t,
-  contents: t?.contents ?? t?.metadata?.contents,
-  poNumber: t?.poNumber ?? t?.metadata?.po_number,
-});
+// NOTHING IS SYNTHESISED HERE ANY MORE. This read
+//   contents: t?.contents ?? t?.metadata?.contents
+//   poNumber: t?.poNumber ?? t?.metadata?.po_number
+// — two fields `yard_trailers` has no column for, fished out of the free-form `meta_data`
+// blob, which nothing writes either key into. Both are gone from `YardTrailer` now.
+//
+// TYPESCRIPT DID NOT CATCH THE ORPHANS. Excess-property checking is relaxed for an object
+// literal that spreads an `any`, so `{ ...t, contents: … }` kept compiling after the type
+// stopped declaring `contents`. That is exactly why an adapter's inventions are invisible to
+// a static sweep over the types, and why `maintenance.realmode.test.ts` and this module's
+// real-mode tests assert the adapter's OUTPUT rather than its declarations.
+const adaptTrailer = (t: any): YardTrailer => ({ ...t });
 
 // Mock Data
 const mockTrailers: YardTrailer[] = [
@@ -48,8 +82,6 @@ const mockTrailers: YardTrailer[] = [
     checkedInAt: new Date(Date.now() - 2 * 3600000).toISOString(),
     detentionRisk: 'low',
     detentionCost: 0,
-    contents: 'Electronics - Batch #4521',
-    poNumber: 'PO-78234',
     sealNumber: 'SL-998877',
     driverName: 'John Smith',
     driverPhone: '+1-555-0101',
@@ -66,11 +98,8 @@ const mockTrailers: YardTrailer[] = [
     status: 'yard',
     yardLocation: 'ZONE-B-12',
     checkedInAt: new Date(Date.now() - 4 * 3600000).toISOString(),
-    expectedDuration: 180,
     detentionRisk: 'medium',
     detentionCost: 75,
-    contents: 'Frozen Foods - Temperature Sensitive',
-    poNumber: 'PO-78235',
     sealNumber: 'SL-998878',
     driverName: 'Maria Garcia',
     driverPhone: '+1-555-0102',
@@ -88,14 +117,6 @@ const mockTrailers: YardTrailer[] = [
     checkedInAt: new Date(Date.now() - 1 * 3600000).toISOString(),
     detentionRisk: 'low',
     detentionCost: 0,
-    contents: 'Steel Components',
-    poNumber: 'PO-78236',
-    lastLocation: {
-      latitude: 40.7128,
-      longitude: -74.0060,
-      speed: 55,
-      timestamp: new Date().toISOString(),
-    },
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
   },
@@ -109,11 +130,8 @@ const mockTrailers: YardTrailer[] = [
     status: 'yard',
     yardLocation: 'ZONE-A-05',
     checkedInAt: new Date(Date.now() - 6 * 3600000).toISOString(),
-    expectedDuration: 240,
     detentionRisk: 'high',
     detentionCost: 450,
-    contents: 'Automotive Parts',
-    poNumber: 'PO-78237',
     sealNumber: 'SL-998879',
     driverName: 'Robert Johnson',
     driverPhone: '+1-555-0103',
@@ -126,52 +144,34 @@ const mockDockDoors: DockDoor[] = [
   {
     id: 'door-1',
     doorNumber: 'DOCK-A1',
-    workcellId: 'workcell-1',
-    workcellName: 'Assembly Line A',
     status: 'occupied',
     currentTrailerId: 'trailer-1',
     trailerLicensePlate: 'ABC-1234',
-    supportedEquipment: ['forklift', 'pallet_jack', 'conveyor'],
-    hasLoadingEquipment: true,
-    maxWeightCapacity: 45000,
-    currentAppointmentId: 'appt-1',
-    estimatedReleaseAt: new Date(Date.now() + 1 * 3600000).toISOString(),
+    equipmentCapabilities: { 'forklift': true, 'pallet_jack': true, 'conveyor': true },
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
   },
   {
     id: 'door-2',
     doorNumber: 'DOCK-A2',
-    workcellId: 'workcell-1',
-    workcellName: 'Assembly Line A',
     status: 'available',
-    supportedEquipment: ['forklift', 'pallet_jack'],
-    hasLoadingEquipment: true,
-    maxWeightCapacity: 45000,
+    equipmentCapabilities: { 'forklift': true, 'pallet_jack': true },
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
   },
   {
     id: 'door-3',
     doorNumber: 'DOCK-B1',
-    workcellId: 'workcell-2',
-    workcellName: 'Assembly Line B',
     status: 'reserved',
-    supportedEquipment: ['forklift', 'crane'],
-    hasLoadingEquipment: true,
-    maxWeightCapacity: 60000,
+    equipmentCapabilities: { 'forklift': true, 'crane': true },
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
   },
   {
     id: 'door-4',
     doorNumber: 'DOCK-B2',
-    workcellId: 'workcell-2',
-    workcellName: 'Assembly Line B',
     status: 'maintenance',
-    supportedEquipment: ['forklift'],
-    hasLoadingEquipment: false,
-    maxWeightCapacity: 45000,
+    equipmentCapabilities: { 'forklift': true },
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
   },
@@ -184,17 +184,13 @@ const mockAppointments: DockAppointment[] = [
     carrierName: 'Swift Transportation',
     trailerId: 'trailer-1',
     trailerLicensePlate: 'ABC-1234',
-    doorId: 'door-1',
+    dockDoorId: 'door-1',
     doorNumber: 'DOCK-A1',
-    workcellId: 'workcell-1',
-    workcellName: 'Assembly Line A',
     appointmentType: 'delivery',
     scheduledArrival: new Date(Date.now() - 2 * 3600000).toISOString(),
     actualArrival: new Date(Date.now() - 2 * 3600000).toISOString(),
     scheduledDeparture: new Date(Date.now() + 2 * 3600000).toISOString(),
     status: 'docked',
-    poNumber: 'PO-78234',
-    loadDescription: 'Electronics - Batch #4521',
     priority: 'normal',
     driverName: 'John Smith',
     driverPhone: '+1-555-0101',
@@ -207,14 +203,10 @@ const mockAppointments: DockAppointment[] = [
     carrierName: 'Schneider National',
     trailerId: 'trailer-2',
     trailerLicensePlate: 'XYZ-5678',
-    workcellId: 'workcell-2',
-    workcellName: 'Assembly Line B',
     appointmentType: 'pickup',
     scheduledArrival: new Date(Date.now() + 1 * 3600000).toISOString(),
     scheduledDeparture: new Date(Date.now() + 3 * 3600000).toISOString(),
     status: 'scheduled',
-    poNumber: 'PO-78235',
-    loadDescription: 'Frozen Foods - Temperature Sensitive',
     priority: 'high',
     driverName: 'Maria Garcia',
     driverPhone: '+1-555-0102',
@@ -232,7 +224,6 @@ const mockYardMoves: YardMove[] = [
     toLocation: 'DOCK-A1',
     moveType: 'dock',
     performedBy: 'Yard Jockey - Mike Wilson',
-    equipmentUsed: 'Yard Truck #3',
     startTime: new Date(Date.now() - 2 * 3600000).toISOString(),
     endTime: new Date(Date.now() - 1.9 * 3600000).toISOString(),
     status: 'completed',
@@ -246,7 +237,6 @@ const mockYardMoves: YardMove[] = [
     toLocation: 'ZONE-B-12',
     moveType: 'check_in',
     performedBy: 'Yard Jockey - Sarah Lee',
-    equipmentUsed: 'Yard Truck #2',
     startTime: new Date(Date.now() - 4 * 3600000).toISOString(),
     endTime: new Date(Date.now() - 3.9 * 3600000).toISOString(),
     status: 'completed',
@@ -357,15 +347,19 @@ export const yardApi = {
   },
 
   // Dock Doors
-  getDockDoors: async (workcellId?: string): Promise<DockDoor[]> => {
+  //
+  // No workcell filter. This took a `workcellId` and sent it as `workcell_id`, which
+  // the endpoint does not declare — FastAPI ignores unknown query parameters silently,
+  // so a filtered request would have returned every door and looked like a filtered
+  // result. `dock_doors` has no workcell column at all, so the filter could never have
+  // been honoured; only the mock branch, filtering fixture data on a field the real
+  // model lacks, made it look implemented. The one caller passes nothing.
+  getDockDoors: async (): Promise<DockDoor[]> => {
     if (USE_MOCK) {
       await delay(MOCK_DELAY);
-      if (workcellId) {
-        return mockDockDoors.filter(d => d.workcellId === workcellId);
-      }
       return mockDockDoors;
     }
-    const response = await api.get<DockDoor[]>('/api/v1/yard/dock/doors', { params: { workcell_id: workcellId } });
+    const response = await api.get<DockDoor[]>('/api/v1/yard/dock/doors');
     return response.data;
   },
 
@@ -375,7 +369,6 @@ export const yardApi = {
       await delay(MOCK_DELAY);
       let filtered = [...mockAppointments];
       if (filters?.status) filtered = filtered.filter(a => a.status === filters.status);
-      if (filters?.workcellId) filtered = filtered.filter(a => a.workcellId === filters.workcellId);
       if (filters?.carrierId) filtered = filtered.filter(a => a.carrierId === filters.carrierId);
       if (filters?.priority) filtered = filtered.filter(a => a.priority === filters.priority);
       return {
@@ -407,18 +400,6 @@ export const yardApi = {
     return response.data;
   },
 
-  // Yard Moves
-  getYardMoves: async (trailerId?: string): Promise<YardMove[]> => {
-    if (USE_MOCK) {
-      await delay(MOCK_DELAY);
-      if (trailerId) {
-        return mockYardMoves.filter(m => m.trailerId === trailerId);
-      }
-      return mockYardMoves;
-    }
-    const response = await api.get<YardMove[]>('/api/v1/yard/moves', { params: { trailer_id: trailerId } });
-    return response.data;
-  },
 
   recordMove: async (data: Partial<YardMove>): Promise<YardMove> => {
     if (USE_MOCK) {
@@ -438,36 +419,84 @@ export const yardApi = {
   },
 
   // Analytics
-  getDwellTimes: async (): Promise<{ avgDwellTime: number; maxDwellTime: number; trailersExceedingTarget: number }> => {
+  getDwellTimes: async (): Promise<{
+    avgDwellTime: number | null;
+    maxDwellTime: number | null;
+    trailersExceedingTarget: number;
+    trailersUnmeasured: number;
+  }> => {
     if (USE_MOCK) {
       await delay(MOCK_DELAY);
       return {
         avgDwellTime: 180,
         maxDwellTime: 420,
         trailersExceedingTarget: 2,
+        // The mock's rows are all measured, so this is a fact about the fixture rather
+        // than a placeholder (FS-465).
+        trailersUnmeasured: 0,
       };
     }
-    const response = await api.get('/api/v1/yard/dwell-times');
-    return response.data;
+    // THE ENDPOINT RETURNS A LIST, NOT THIS SUMMARY (FS-393).
+    //
+    // `GET /api/v1/yard/dwell-times` is `response_model=List[DwellTimeAnalytics]` — one row
+    // per trailer with `dwell_hours`. This function declared, and returned, a summary
+    // OBJECT. `response.data` was therefore an array, and `YardManagement` reads
+    // `dwellTimes.trailersExceedingTarget` on it: `undefined`, so `undefined > 0` is false
+    // and THE DWELL WARNING BANNER NEVER RENDERED IN REAL MODE. The mock returned the
+    // summary shape, so it rendered in development and only there.
+    //
+    // Verified against a running backend: the endpoint returned a list whose first row was
+    // TRL-9017 at 23 dwell hours — a trailer eleven times past the target, on a page whose
+    // banner exists to say so.
+    //
+    // Summarised here rather than adding a backend endpoint: every figure is derivable
+    // from the rows already sent, and the per-trailer detail is what the API is for.
+    const response = await api.get<DwellTimeRow[]>('/api/v1/yard/dwell-times');
+    const rows = Array.isArray(response.data) ? response.data : [];
+    // `dwell_hours` is hours; the page formats minutes and compares against a 120-minute
+    // target, so the conversion belongs here and not in the component.
+    // MEASURED ROWS ONLY (FS-465). `dwell_hours` is null for a trailer with no recorded
+    // check-in, and this used to coerce it with `?? 0` — so a trailer of unknown age
+    // counted as zero minutes and pulled the average DOWN, on a page whose banner exists
+    // to say when trailers have been sitting too long. It was also excluded from
+    // `trailersExceedingTarget`, which is the number the banner is built on.
+    //
+    // Averaging over what was measured, and reporting how many were not, is the same
+    // shape as `assets_measured` on the OEE surfaces.
+    const measured = rows.filter((r) => typeof r.dwellHours === 'number');
+    const minutes = measured.map((r) => (r.dwellHours as number) * 60);
+    return {
+      // Null rather than 0 for an empty set: "average dwell 0 minutes" is a claim about
+      // a yard, and no rows is the absence of one.
+      avgDwellTime: minutes.length
+        ? Math.round(minutes.reduce((a, b) => a + b, 0) / minutes.length)
+        : null,
+      maxDwellTime: minutes.length ? Math.round(Math.max(...minutes)) : null,
+      trailersExceedingTarget: minutes.filter((m) => m > DWELL_TARGET_MINUTES).length,
+      trailersUnmeasured: rows.length - measured.length,
+    };
   },
 
   getDetentionAlerts: async (): Promise<DetentionAlert[]> => {
     if (USE_MOCK) {
       await delay(MOCK_DELAY);
+      // The mock now matches `/api/v1/yard/detention-alerts` exactly. It used to describe a
+      // richer alert — an id, a severity, a driver name — none of which the endpoint sends,
+      // so the mock path rendered a banner the real path could not (rule 50).
       return [
         {
-          id: 'alert-1',
           trailerId: 'trailer-4',
-          trailerLicensePlate: 'GHI-3456',
-          driverName: 'Robert Johnson',
+          trailerNumber: 'TRL-4409',
+          status: 'detention',
+          licensePlate: 'GHI-3456',
+          yardLocation: 'ZONE-A-05',
           carrierName: 'Swift Transportation',
-          location: 'ZONE-A-05',
-          checkInTime: new Date(Date.now() - 6 * 3600000).toISOString(),
-          currentDurationMinutes: 360,
-          freeTimeMinutes: 120,
-          excessMinutes: 240,
-          estimatedCost: 450,
-          severity: 'high',
+          checkInAt: new Date(Date.now() - 6 * 3600000).toISOString(),
+          elapsedMinutes: 360,
+          freeMinutes: 120,
+          detentionMinutes: 240,
+          currentCharge: 450,
+          hourlyRate: 112.5,
         },
       ];
     }

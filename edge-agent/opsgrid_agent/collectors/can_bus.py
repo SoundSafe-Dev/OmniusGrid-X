@@ -21,6 +21,7 @@ import asyncio
 import structlog
 
 from .base import BaseCollector
+from ..resilience import ReconnectPolicy
 
 logger = structlog.get_logger()
 
@@ -39,6 +40,14 @@ class CANBusCollector(BaseCollector):
 
     def __init__(self, config: Dict[str, Any]):
         super().__init__(config)
+        # Reconnect discipline, from the ONE policy (FS-473). FS-472 gave five collectors
+        # a backoff and a breaker by copying the same four constants into each, which made
+        # sixteen occurrences across eight files of a number `modbus` documents as a
+        # first-pass guess. `ReconnectPolicy` owns them now, and `reconnect:` in this
+        # collector's config overrides them per site without editing this file.
+        self._backoff, self._breaker = ReconnectPolicy.from_config(config).instruments(
+            f"can_bus:{config.get('asset_id')}"
+        )
         # "bustype" is accepted as an alias for backwards compatibility.
         self.interface = config.get("interface") or config.get("bustype", "socketcan")
         self.channel = config.get("channel", "can0")
@@ -141,8 +150,23 @@ class CANBusCollector(BaseCollector):
     async def _poll_loop(self) -> None:
         """Receive CAN frames in batches."""
         while self._running:
+            # The breaker is checked BEFORE the attempt (FS-472): once it opens, the
+            # loop waits out the cooldown instead of hammering a device that has
+            # already refused five times.
+            if not self._breaker.allow():
+                wait = self._breaker.time_until_retry()
+                logger.info(
+                    "can_bus_circuit_open", asset_id=self.asset_id, wait_seconds=wait
+                )
+                await asyncio.sleep(wait)
+                continue
+
             try:
                 await self._collect()
+                # A clean poll resets the curve, so a brief blip does not leave the
+                # next outage starting from a 60-second delay.
+                self._backoff.reset()
+                self._breaker.record_success()
             except Exception as exc:
                 logger.error(
                     "can_bus_poll_error",
@@ -151,6 +175,15 @@ class CANBusCollector(BaseCollector):
                     error=str(exc),
                 )
                 await self._disconnect()
+                self._breaker.record_failure()
+                delay = self._backoff.next_delay()
+                logger.info(
+                    "can_bus_reconnect_backoff",
+                    asset_id=self.asset_id,
+                    delay_seconds=delay,
+                )
+                await asyncio.sleep(delay)
+                continue
 
             await asyncio.sleep(self.poll_interval)
 

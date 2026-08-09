@@ -53,6 +53,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.services.export_store import get_export_store, export_object_key
+from app.core.tenant import tenant_session
 from app.db.database import AsyncSessionLocal
 from app.db.models import (
     ActionableRegistry,
@@ -273,22 +274,22 @@ class ExportProcessor:
     async def _tenant_session(self, organization_id: Any):
         """Yield a session bound to the caller's tenant via the RLS GUC.
 
-        Mirrors :func:`app.core.tenant.get_tenant_db` for use outside the request
-        lifecycle (background tasks / streaming generators). The GUC is reset in
-        ``finally`` so it cannot leak onto a pooled connection.
+        DELEGATES rather than mirrors. This was a hand-rolled copy under a docstring
+        reading *"Mirrors app.core.tenant.get_tenant_db"* — the same phrase the test
+        harness's copies carried, and the same reason
+        :func:`app.core.tenant.tenant_session` was extracted: a mirror reproduces the
+        original's defects and then keeps them after the original is fixed.
+
+        The copy also differed in a way that mattered. It used a SESSION-scoped GUC
+        (``set_config(..., false)``) so the binding would survive intermediate commits,
+        and reset it in ``finally`` so it could not leak onto a pooled connection —
+        which holds only as long as that reset runs. ``tenant_session`` re-asserts the
+        tenant on every ``after_begin`` instead, so the binding survives commits with a
+        TRANSACTION-scoped GUC. Nothing can outlive the transaction, so there is nothing
+        to reset and no path where a leak depends on cleanup running.
         """
-        async with AsyncSessionLocal() as session:
-            await session.execute(
-                text("SELECT set_config('app.current_org_id', :org, false)"),
-                {"org": str(organization_id)},
-            )
-            try:
-                yield session
-            finally:
-                await session.execute(
-                    text("SELECT set_config('app.current_org_id', '', false)")
-                )
-                await session.commit()
+        async with tenant_session(organization_id) as session:
+            yield session
 
     # --- Telemetry ------------------------------------------------------------
     @staticmethod
@@ -602,10 +603,20 @@ class ExportProcessor:
             "Asset", "OEE %", "Availability %", "Performance %", "Quality %",
             "Runtime (min)", "Status",
         ]
+        # NOT `_cell`, which is the CSV/Excel normaliser and maps None to "". A blank in
+        # a spreadsheet reads as missing; a blank in a printed table reads as an
+        # omission, and the reader supplies the zero themselves. An em dash refuses that.
+        # A real 0 still prints as 0 — an asset that genuinely produced nothing is a
+        # finding, and hiding it behind a dash is the opposite defect, so the
+        # substitution is keyed on None and never on falsiness.
+        def _report_cell(value):
+            return "\u2014" if value is None else value
+
         data = [header] + [
             [
-                r.get("asset_name"), r.get("oee"), r.get("availability"),
-                r.get("performance"), r.get("quality"), r.get("runtime_minutes"),
+                r.get("asset_name"), _report_cell(r.get("oee")),
+                _report_cell(r.get("availability")), _report_cell(r.get("performance")),
+                _report_cell(r.get("quality")), _report_cell(r.get("runtime_minutes")),
                 r.get("status"),
             ]
             for r in rows
@@ -811,6 +822,22 @@ class ExportProcessor:
         }
         try:
             async with AsyncSessionLocal() as session:
+                # audit_logs is ENABLE + FORCE ROW LEVEL SECURITY (migrations 011/033),
+                # and FORCE means the policy applies to the table owner too — so this
+                # INSERT is REJECTED unless app.current_org_id is set on the connection.
+                # AsyncSessionLocal never sets it, and the `except` below swallowed the
+                # rejection, so this entry has never been written on a real deployment
+                # while every caller saw its own work succeed. Found in the log noise of
+                # a real-DB run: `export_audit_failed ... new row violates row-level
+                # security policy for table "audit_logs"`, three times, passing by.
+                #
+                # is_local=true (transaction-scoped): there is no teardown here to reset
+                # a session-scoped value before the connection returns to the pool.
+                if organization_id and session.bind.dialect.name == "postgresql":
+                    await session.execute(
+                        text("SELECT set_config('app.current_org_id', :org, true)"),
+                        {"org": str(organization_id)},
+                    )
                 # audit_logs.id and .timestamp are NOT NULL with no server default
                 # (the model's default=uuid4 is Python-side only), so a raw INSERT
                 # must supply them explicitly; the BEFORE INSERT trigger fills hash_chain.

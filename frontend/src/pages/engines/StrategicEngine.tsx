@@ -54,6 +54,25 @@ export const StrategicEngine: FC = () => {
   const pendingRecs = recommendations?.filter((r) => !r.status || r.status === 'pending') || [];
   const historyRecs = recommendations?.filter((r) => r.status && r.status !== 'pending') || [];
 
+  // WHETHER DECISION HISTORY IS OBTAINABLE AT ALL (FS-366).
+  //
+  // `historyRecs` is empty BY CONSTRUCTION, not because nothing has been decided:
+  // `GET /engines/strategic/recommendations` calls `get_pending_recommendations()` and its
+  // response model declares nine fields, none of them `status`, `approved_at` or
+  // `rejected_at`. `strategic_engine.get_recommendation_history()` exists and no route
+  // exposes it.
+  //
+  // The distinction matters because rendering `0 approved` asserts something about the
+  // world, and it is false the moment anyone approves anything — the approve endpoint
+  // works and returns 200 (verified 2026-08-01, after the query-param fix in
+  // `api/engines.ts`). A user who approves three recommendations and watches the counter
+  // stay at zero has been told their action did nothing. `—` is the convention this page
+  // already uses for `isError`, and it says the true thing: not obtainable here.
+  //
+  // DERIVED FROM THE PAYLOAD, not hardcoded — so on the day a route starts sending
+  // `status`, the counters and the list populate with no further change to this file.
+  const decisionHistoryAvailable = (recommendations ?? []).some((r) => r.status !== undefined);
+
   return (
     <div className="space-y-6">
       {isError && (
@@ -80,7 +99,9 @@ export const StrategicEngine: FC = () => {
               <div className="flex items-center gap-3">
                 <Lightbulb className="w-8 h-8 text-opsgrid-primary" />
                 <div>
-                  <p className="text-2xl font-bold">{pendingRecs.length}</p>
+                  {/* 0 Pending, 0 Approved and 0 Rejected sat beside the failure
+                      banner — three counts of nothing, from nothing. */}
+                  <p className="text-2xl font-bold">{isError ? '—' : pendingRecs.length}</p>
                   <p className="text-sm text-opsgrid-text-secondary">Pending Recommendations</p>
                 </div>
               </div>
@@ -95,7 +116,9 @@ export const StrategicEngine: FC = () => {
                 <CheckCircle className="w-8 h-8 text-status-running" />
                 <div>
                   <p className="text-2xl font-bold">
-                    {historyRecs.filter((r) => r.status === 'approved').length}
+                    {isError || !decisionHistoryAvailable
+                      ? '—'
+                      : historyRecs.filter((r) => r.status === 'approved').length}
                   </p>
                   <p className="text-sm text-opsgrid-text-secondary">Approved</p>
                 </div>
@@ -111,7 +134,9 @@ export const StrategicEngine: FC = () => {
                 <XCircle className="w-8 h-8 text-status-alarm" />
                 <div>
                   <p className="text-2xl font-bold">
-                    {historyRecs.filter((r) => r.status === 'rejected').length}
+                    {isError || !decisionHistoryAvailable
+                      ? '—'
+                      : historyRecs.filter((r) => r.status === 'rejected').length}
                   </p>
                   <p className="text-sm text-opsgrid-text-secondary">Rejected</p>
                 </div>
@@ -175,7 +200,17 @@ export const StrategicEngine: FC = () => {
       {/* Pending Recommendations */}
       <Card title="Pending Recommendations" subtitle="Cloud-derived optimization suggestions">
         <div className="space-y-4">
-          {pendingRecs.length === 0 ? (
+          {isError ? (
+            /* The banner at the top of the page marks the failure; it does not guard
+               anything below it. `recommendations` is undefined on a failed query, so
+               `pendingRecs` is [] and this said "No pending recommendations. Check back
+               later" — an instruction to stop looking, given to someone whose
+               recommendations could not be fetched. Rule 24. */
+            <p role="alert" className="text-status-alarm text-center py-8">
+              Recommendations could not be loaded. This is a failed request — it does not
+              mean the strategic engine has nothing to suggest.
+            </p>
+          ) : pendingRecs.length === 0 ? (
             <p className="text-opsgrid-text-secondary text-center py-8">
               No pending recommendations. Check back later for new suggestions from the cloud strategic engine.
             </p>
@@ -195,6 +230,33 @@ export const StrategicEngine: FC = () => {
       {/* History */}
       <Card title="History" subtitle="Past recommendations and outcomes">
         <div className="divide-y divide-opsgrid-border">
+          {/* ORDER MATTERS, and `failureIsNotEmptiness` caught the first draft of this.
+              On a failed query `recommendations` is undefined, so
+              `decisionHistoryAvailable` is false and the API-contract message below would
+              render — blaming the endpoint's shape for what was actually a request that
+              did not complete. Both statements are only true once the query succeeded. */}
+          {isError && (
+            <p className="py-3 text-sm text-opsgrid-text-secondary">
+              History could not be loaded — the recommendations request failed.
+            </p>
+          )}
+          {!isError && !decisionHistoryAvailable && (
+            // An untitled empty div under a card headed "History" reads as "nothing has
+            // happened yet". What is true is that this view cannot see what happened:
+            // the endpoint returns pending recommendations only and omits the decision
+            // fields, so approvals made here are real but invisible to this pane.
+            <p className="py-3 text-sm text-opsgrid-text-secondary">
+              Decision history is not available from the API — the recommendations
+              endpoint returns pending items only and omits approval status. Approvals and
+              rejections you make here are recorded by the engine, but cannot be listed
+              until an endpoint exposes them.
+            </p>
+          )}
+          {!isError && decisionHistoryAvailable && historyRecs.length === 0 && (
+            <p className="py-3 text-sm text-opsgrid-text-secondary">
+              No recommendations have been approved or rejected yet.
+            </p>
+          )}
           {historyRecs.slice(0, 10).map((rec) => (
             <div key={rec.recommendationId} className="py-3 flex items-center justify-between">
               <div className="flex items-center gap-3">
@@ -279,6 +341,34 @@ interface RecommendationCardProps {
   onReject: () => void;
 }
 
+
+// `expectedImpact` is an open-ended dict — the engine sends a different set of keys per
+// recommendation type (`oee_improvement`, `cost_reduction`, `throughput_gain`,
+// `rul_extension_days`) — so the card labels whatever arrives rather than naming three slots
+// in advance. `costSavings` and `timeSavings` were two of those three names and matched
+// nothing the server sends.
+const IMPACT_LABELS: Record<string, string> = {
+  oeeImprovement: 'OEE Impact',
+  costReduction: 'Cost Reduction',
+  throughputGain: 'Throughput Gain',
+  rulExtensionDays: 'RUL Extension',
+};
+
+const impactLabel = (key: string): string =>
+  IMPACT_LABELS[key] ??
+  // camelCase -> "Camel Case", so an impact nobody has named yet still reads as words.
+  key.replace(/([A-Z])/g, ' $1').replace(/^./, (c) => c.toUpperCase());
+
+const impactValue = (key: string, value: unknown): string => {
+  if (typeof value !== 'number') return String(value);
+  if (key === 'costReduction') return `$${value.toLocaleString()}`;
+  if (key === 'rulExtensionDays') return `${value.toLocaleString()} days`;
+  // The remaining known impacts are fractions; anything unrecognised is shown as sent rather
+  // than multiplied by a hundred on a guess.
+  if (key in IMPACT_LABELS) return `+${formatPercentage(value)}`;
+  return value.toLocaleString();
+};
+
 const RecommendationCard: FC<RecommendationCardProps> = ({ rec, onApprove, onReject }) => {
   return (
     <div className="p-4 bg-opsgrid-bg rounded-lg border border-opsgrid-border">
@@ -299,35 +389,45 @@ const RecommendationCard: FC<RecommendationCardProps> = ({ rec, onApprove, onRej
 
       <p className="font-medium mb-2">{rec.description}</p>
 
+      {/* THE CAVEAT GOES ABOVE THE NUMBERS, not below them (FS-434). A recommendation that
+          was not computed from this deployment's data carries a confidence and an expected
+          impact that read exactly like a measured one; the only thing distinguishing them
+          is this line, so it has to be seen before the figures are believed. */}
+      {rec.simulated && (
+        <p className="text-xs text-status-warning mb-2">
+          Demo recommendation — not computed from this deployment's data.
+        </p>
+      )}
+
+      {rec.simulationBasis && (
+        <p className="text-xs text-opsgrid-text-secondary mb-2">
+          Basis: {rec.simulationBasis}
+        </p>
+      )}
+
       {rec.assetName && (
         <p className="text-sm text-opsgrid-text-secondary mb-3">Asset: {rec.assetName}</p>
       )}
 
+      {/* THREE FIXED SLOTS, TWO OF WHICH COULD NEVER FILL. `expectedImpact` is free-form —
+          the engine documents it as `{'oee_improvement': ..., 'cost_reduction': ...}` and
+          sends a different set per recommendation type — and this grid named `costSavings`
+          (the key is `costReduction`) and `timeSavings` (nothing produces it). So a
+          recommendation whose impact was a throughput gain or forty-five days of extra RUL
+          showed an empty box, and the cost figure never appeared at all.
+
+          Rendered from what arrives instead. The two known keys keep their formatting; the
+          rest are labelled from the key, which is the only honest thing to do with an
+          open-ended dict. */}
       <div className="grid grid-cols-3 gap-4 mb-4 p-3 bg-opsgrid-panel rounded">
-        {rec.expectedImpact.oeeImprovement !== undefined && (
-          <div>
-            <p className="text-xs text-opsgrid-text-secondary">OEE Impact</p>
-            <p className="font-medium text-status-running">
-              +{formatPercentage(rec.expectedImpact.oeeImprovement)}
-            </p>
-          </div>
-        )}
-        {rec.expectedImpact.costSavings !== undefined && (
-          <div>
-            <p className="text-xs text-opsgrid-text-secondary">Cost Savings</p>
-            <p className="font-medium text-status-running">
-              ${rec.expectedImpact.costSavings.toLocaleString()}
-            </p>
-          </div>
-        )}
-        {rec.expectedImpact.timeSavings !== undefined && (
-          <div>
-            <p className="text-xs text-opsgrid-text-secondary">Time Savings</p>
-            <p className="font-medium text-status-running">
-              {rec.expectedImpact.timeSavings}h
-            </p>
-          </div>
-        )}
+        {Object.entries(rec.expectedImpact ?? {})
+          .filter(([, value]) => value !== undefined && value !== null)
+          .map(([key, value]) => (
+            <div key={key}>
+              <p className="text-xs text-opsgrid-text-secondary">{impactLabel(key)}</p>
+              <p className="font-medium text-status-running">{impactValue(key, value)}</p>
+            </div>
+          ))}
       </div>
 
       <div className="flex items-center gap-3">

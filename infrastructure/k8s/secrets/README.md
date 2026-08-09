@@ -15,7 +15,7 @@ Pick one per environment:
 | **External Secrets Operator** (`external-secrets/`) | **No** — only references | ESO + a backing store (Vault / AWS SM / GCP SM) | you already run a central secret store |
 
 Both produce the **same** in-cluster `Secret` objects the workloads already
-consume (`database-credentials`, `jwt-secret`, `signed-url-secret`,
+consume (`database-credentials`, `jwt-secret`, `app-secrets`, `signed-url-secret`,
 `s3-credentials`, `alertmanager-secrets`, `cnpg-app-credentials`,
 `cnpg-backup-credentials`, `backup-credentials`, `smtp-credentials`) — so no
 Deployment/StatefulSet needs to change. You swap only *how* the Secret is
@@ -27,6 +27,7 @@ created.
 |--------|------|-------------|
 | `database-credentials` | `url`, `username`, `password`, `database` | backend, all workers, migration Job, TimescaleDB |
 | `jwt-secret` | `secret` | backend, workers |
+| `app-secrets` | `edge-bootstrap-token`, `geotab-webhook-secret`, `erp-encryption-key` | backend |
 | `signed-url-secret` | `secret` | backend, export + compliance workers |
 | `s3-credentials` | `access-key`, `secret-key`, `s3config.json` | backend, export + compliance workers, SeaweedFS |
 | `alertmanager-secrets` | `slack-webhook-url`, `pagerduty-service-key` | Alertmanager |

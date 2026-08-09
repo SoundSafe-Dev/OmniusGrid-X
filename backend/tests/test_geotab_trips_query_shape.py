@@ -14,7 +14,9 @@ from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 
 from sqlalchemy import event
-from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from tests._sqlite import create_all, minimal_organization, sqlite_engine
 from sqlalchemy.orm import sessionmaker
 
 from app.db.models import Base, GeoTabTrip, GeoTabException
@@ -30,12 +32,11 @@ def run(coro):
 
 
 async def _session_factory():
-    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
-    async with engine.begin() as conn:
-        await conn.run_sync(
-            Base.metadata.create_all,
-            tables=[GeoTabTrip.__table__, GeoTabException.__table__],
-        )
+    engine = sqlite_engine()
+    # FK-enforcing engine, and a `create_all` that closes over the tables these
+    # reference (FS-410). `create_all(tables=[X])` builds X's foreign keys pointing at
+    # tables it does not create, so with enforcement on every insert into X is refused.
+    await create_all(engine, Base.metadata, [GeoTabTrip.__table__, GeoTabException.__table__])
     return engine, sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 
 
@@ -44,6 +45,10 @@ T0 = datetime(2026, 7, 1, 8, 0, tzinfo=timezone.utc)
 
 
 async def _seed(session, org_id):
+    # The organisation the rows below belong to. With foreign keys enforced (FS-410) a bare
+    # `organization_id = uuid4()` is refused, exactly as Postgres refuses it.
+    session.add(minimal_organization(org_id))
+    await session.flush()
     # Three trips, newest last; the service returns them start_time DESC.
     trips = [
         GeoTabTrip(

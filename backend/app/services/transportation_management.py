@@ -10,6 +10,8 @@ import structlog
 from sqlalchemy import text, select, and_, or_, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core import hos_limits
+from app.core.config import settings
 from app.db.database import AsyncSessionLocal
 from app.db.models import (
     Carrier, Driver, Shipment, Route, LoadPlan,
@@ -19,19 +21,61 @@ from app.db.models import (
 logger = structlog.get_logger()
 
 
+def _as_utc(value):
+    """Coerce a stored timestamp to timezone-aware UTC; naive is assumed UTC (FS-400).
+
+    THE CRASH THIS PREVENTS, and it is the third instance of this class found today —
+    after `_check_ingestion` in health.py and the yard detention calculators:
+
+        TypeError: can't compare offset-naive and offset-aware datetimes
+
+    `carriers.ctpat_expires_at`, `carriers.insurance_expires_at` and
+    `drivers.medical_cert_expires` are compared against `datetime.now(timezone.utc)` to
+    decide C-TPAT validity, insurance validity, and whether a medical certificate has
+    expired. Postgres returns those columns aware; SQLite cannot preserve tzinfo, so on the
+    documented local dev path every one of them is naive and
+    `GET /transportation/carriers/{id}/compliance` returned 500.
+
+    UTC is assumed rather than local, and on a compliance verdict the choice matters: a
+    host offset would move an expiry across midnight and flip `is_valid` for a carrier whose
+    certificate expires today. Everything writing these columns writes UTC.
+    """
+    if value is None or value.tzinfo is not None:
+        return value
+    return value.replace(tzinfo=timezone.utc)
+
+
 class HOSComplianceMonitor:
     """Monitor driver Hours of Service compliance"""
     
-    # FMCSA HOS limits
-    MAX_DRIVE_HOURS_DAY = 11.0
-    MAX_ON_DUTY_HOURS_DAY = 14.0
-    MAX_CYCLE_HOURS = 70.0  # 8-day cycle
-    REQUIRED_REST_HOURS = 10.0
+    # FMCSA HOS limits (49 CFR 395), from `app.core.hos_limits` — the one place they are
+    # written (FS-475). Kept as class attributes because callers reach them that way
+    # (`HOSComplianceMonitor.MAX_CYCLE_HOURS` in fleet_logistics), so both access paths
+    # give the same number by construction rather than by two people agreeing.
+    MAX_DRIVE_HOURS_DAY = hos_limits.MAX_DRIVE_HOURS_DAY
+    MAX_ON_DUTY_HOURS_DAY = hos_limits.MAX_ON_DUTY_HOURS_DAY
+    MAX_CYCLE_HOURS = hos_limits.MAX_CYCLE_HOURS
+    REQUIRED_REST_HOURS = hos_limits.REQUIRED_REST_HOURS
     
     def check_compliance(self, driver: Driver) -> Dict[str, Any]:
         """Check driver's current HOS compliance status"""
         violations = []
         warnings = []
+
+        # WHAT IS MISSING, BEFORE WHAT IS WRONG.
+        #
+        # `float(x or 0)` turns "never reported" into "has driven zero hours", which
+        # then produces no violations and reads as a fresh, legal driver. The same
+        # coercion is why the carrier-level roll-up cleared carriers with no drivers at
+        # all: absence kept arriving as a clean result. Missing inputs are collected
+        # first so the verdict can say it had nothing to judge.
+        missing_data: List[str] = []
+        if driver.hos_drive_hours_today is None:
+            missing_data.append("No drive-hours reported")
+        if driver.hos_on_duty_hours_today is None:
+            missing_data.append("No on-duty hours reported")
+        if driver.hos_cycle_hours is None:
+            missing_data.append("No cycle hours reported")
 
         # Numeric columns come back as Decimal; coerce once so the float
         # arithmetic below never mixes Decimal and float (TypeError).
@@ -57,15 +101,25 @@ class HOSComplianceMonitor:
         elif cycle_hours >= self.MAX_CYCLE_HOURS - 10:
             warnings.append(f"Cycle time nearing limit: {cycle_hours}h")
 
-        # Check medical cert
-        if driver.medical_cert_expires and driver.medical_cert_expires < datetime.now(timezone.utc):
+        # Check medical cert. A NULL expiry is not a pass: both branches below are
+        # guarded on the field being set, so a driver with NO certificate on file
+        # produced no violation and no warning and came back compliant. A current
+        # medical certificate is a condition of driving, and its absence is a finding
+        # rather than the lack of one.
+        if driver.medical_cert_expires is None:
+            missing_data.append("No medical certificate on file")
+        elif _as_utc(driver.medical_cert_expires) < datetime.now(timezone.utc):
             violations.append("Medical certificate expired")
-        elif driver.medical_cert_expires and driver.medical_cert_expires < datetime.now(timezone.utc) + timedelta(days=30):
+        elif _as_utc(driver.medical_cert_expires) < datetime.now(timezone.utc) + timedelta(days=30):
             warnings.append("Medical certificate expiring soon")
 
         return {
             'driver_id': str(driver.id),
-            'is_compliant': len(violations) == 0,
+            # Compliance requires having been ASSESSED. `len(violations) == 0` alone is
+            # satisfied by a driver nobody has any data for.
+            'is_compliant': len(violations) == 0 and len(missing_data) == 0,
+            'assessable': len(missing_data) == 0,
+            'missing_data': missing_data,
             'violations': violations,
             'warnings': warnings,
             'hours_summary': {
@@ -158,32 +212,87 @@ class FreightBillingEngine:
     async def calculate_fuel_surcharge(
         self,
         distance_miles: float,
-        base_fuel_price: float = 2.50,
-        current_fuel_price: float = 3.50,
-        mpg: float = 6.0,
+        base_fuel_price: Optional[float] = None,
+        current_fuel_price: Optional[float] = None,
+        mpg: Optional[float] = None,
         contract_rates: Optional[Dict] = None
     ) -> Dict[str, Any]:
-        """Calculate fuel surcharge"""
-        if contract_rates and 'fuel_surcharge_table' in contract_rates:
-            # Use contract-specific fuel surcharge table
-            fsc_table = contract_rates['fuel_surcharge_table']
-            # Implementation would look up based on current fuel price
-            rate_per_mile = fsc_table.get('default', 0.45)
+        """Fuel surcharge from configured fleet assumptions, or a contract table (FS-533).
+
+        THIS IS A MONEY FIGURE AND IT WAS NOT MEASURED. The three inputs were hardcoded
+        default arguments — `2.50`, `3.50`, `6.0` — and the only caller
+        (`calculate_shipment_costs`) passes none of them, so every fuel surcharge the product
+        has ever produced came from a dollar-a-gallon differential written in this signature.
+        The response then echoed `base_fuel_price` and `current_fuel_price` back beside the
+        amount, where they read as the prices a real calculation had looked up.
+        `FuelSurchargeCharge`'s own docstring recorded this and said the honest fix was to
+        label a fallback surcharge as one. This is that.
+
+        WORSE THAN A STALE CONSTANT: A DUPLICATE ONE. `optimize_route` in this same class
+        already reads `settings.FUEL_PRICE_USD_PER_GALLON` and `settings.FLEET_AVERAGE_MPG`,
+        whose values are **3.50 and 6.0** — numerically identical to the literals here and
+        entirely disconnected from them. An operator setting their own fuel price moved the
+        route estimate and left every freight charge behind, with nothing indicating the two
+        disagreed. Identical copies are the state in which divergence is least likely to be
+        noticed (rule 55).
+
+        THE ARITHMETIC WAS DECORATIVE. `rate_per_mile` was
+        `(fuel_diff * (distance / mpg)) / distance` — distance cancels exactly, so the rate
+        is always `fuel_diff / mpg` and the whole surcharge is `distance * fuel_diff / mpg`.
+        Written to look like a per-mile calculation over the trip. Left algebraically
+        equivalent and stated plainly, because the shape mattered more than the value: it is
+        what made the figure read as derived from the shipment.
+        """
+        base_fuel_price = (
+            settings.FUEL_SURCHARGE_BASE_PRICE_USD_PER_GALLON
+            if base_fuel_price is None else base_fuel_price
+        )
+        current_fuel_price = (
+            settings.FUEL_PRICE_USD_PER_GALLON
+            if current_fuel_price is None else current_fuel_price
+        )
+        mpg = settings.FLEET_AVERAGE_MPG if mpg is None else mpg
+
+        table = (contract_rates or {}).get('fuel_surcharge_table')
+        if table:
+            # A CONTRACT TABLE IS NOT YET READ BY PRICE. The intended behaviour is to index
+            # the table by the current fuel price; what happens is a single `default` entry.
+            # Unchanged here — implementing a price-indexed lookup is a billing decision, not
+            # a defect fix — but `basis` below now says so, rather than the caller inferring
+            # from the presence of a table that their contract rate was applied.
+            rate_per_mile = table.get('default', 0.45)
+            basis = 'contract_table_default_entry'
         else:
-            # Standard calculation
-            fuel_diff = max(0, current_fuel_price - base_fuel_price)
-            gallons_needed = distance_miles / mpg
-            rate_per_mile = (fuel_diff * gallons_needed) / distance_miles if distance_miles > 0 else 0
-        
+            fuel_diff = max(0.0, current_fuel_price - base_fuel_price)
+            rate_per_mile = (fuel_diff / mpg) if mpg > 0 else 0.0
+            basis = 'configured_fleet_assumptions'
+
         amount = distance_miles * rate_per_mile
-        
+
         return {
             'charge_type': 'fuel_surcharge',
             'rate_basis': 'per_mile',
             'distance_miles': distance_miles,
             'base_fuel_price': base_fuel_price,
             'current_fuel_price': current_fuel_price,
-            'amount': round(amount, 2)
+            'amount': round(amount, 2),
+            # What the amount rests on, in the shape `optimize_route` established (FS-348).
+            # Returned rather than logged, so a caller that stores the charge can store what
+            # produced it.
+            'assumptions': {
+                'basis': basis,
+                'base_fuel_price_usd_per_gallon': base_fuel_price,
+                'current_fuel_price_usd_per_gallon': current_fuel_price,
+                'average_mpg': mpg,
+                'rate_per_mile': round(rate_per_mile, 4),
+                'note': (
+                    "Fuel prices are configured fleet assumptions, not a live fuel index. "
+                    "This is an estimate, not a carrier quote."
+                    if basis == 'configured_fleet_assumptions' else
+                    "Taken from the contract table's `default` entry. The table is not yet "
+                    "indexed by current fuel price, so a price-banded rate is not applied."
+                ),
+            },
         }
     
     async def create_freight_charge(
@@ -236,29 +345,44 @@ class RouteOptimizer:
         waypoints: Optional[List[Dict]] = None,
         optimization_criteria: str = 'balanced'
     ) -> Dict[str, Any]:
-        """
-        Optimize route based on criteria
-        
-        Note: This is a simplified implementation.
-        In production, integrate with Google Maps, HERE, or similar API.
+        """Distance from the routing provider; duration and costs from fleet assumptions.
+
+        THE DISTANCE IS MEASURED AND THE THREE FIGURES DERIVED FROM IT ARE NOT (FS-348).
+        `_estimate_distance` goes through `app.services.routing` — real haversine, or OSRM
+        road distance when `ROUTING_PROVIDER=osrm`. The duration and the two costs were
+        then computed from four literals written inline: `/ 50`, `/ 6`, `* 3.50`, `* 0.05`.
+
+        Those outputs are not transient. `create_route` persists them onto
+        `routes.estimated_duration_hours`, `.fuel_cost_estimate` and `.toll_cost_estimate`,
+        and `GET /transportation/routes` serves them — so a national fuel average from an
+        unrecorded date becomes a stored per-route cost. **Deterministic output reads as
+        computed**, which is why this is harder to notice than a random number would be.
+
+        The literals are now settings, so an operator can set them to their own fleet, and
+        the values they used are returned in `assumptions` beside the figures. That does
+        not make the estimate a quote — it makes what the estimate rests on visible to
+        whoever reads it.
         """
         waypoints = waypoints or []
-        
-        # Simplified distance calculation (would use actual routing API)
-        # This is placeholder logic
+
+        # Real: haversine, or OSRM road distance when configured.
         total_distance = self._estimate_distance(origin, destination, waypoints)
-        
-        # Calculate estimated duration (avg 50 mph + stops)
-        estimated_hours = total_distance / 50
-        estimated_hours += len(waypoints) * 0.5  # 30 min per stop
-        
-        # Fuel cost estimate (6 mpg, $3.50/gal)
-        fuel_gallons = total_distance / 6
-        fuel_cost = fuel_gallons * 3.50
-        
-        # Toll estimate (simplified)
-        toll_cost = total_distance * 0.05  # 5 cents per mile average
-        
+
+        speed_mph = settings.FLEET_AVERAGE_SPEED_MPH
+        stop_hours = settings.FLEET_STOP_MINUTES / 60.0
+        mpg = settings.FLEET_AVERAGE_MPG
+        fuel_price = settings.FUEL_PRICE_USD_PER_GALLON
+        toll_per_mile = settings.TOLL_COST_USD_PER_MILE
+
+        # Guarded: a misconfigured 0 would be a ZeroDivisionError on a request path, and
+        # the operator who set it would see a 500 rather than the reason.
+        estimated_hours = (total_distance / speed_mph) if speed_mph > 0 else 0.0
+        estimated_hours += len(waypoints) * stop_hours
+
+        fuel_gallons = (total_distance / mpg) if mpg > 0 else 0.0
+        fuel_cost = fuel_gallons * fuel_price
+        toll_cost = total_distance * toll_per_mile
+
         return {
             'origin': origin,
             'destination': destination,
@@ -267,7 +391,21 @@ class RouteOptimizer:
             'estimated_duration_hours': round(estimated_hours, 1),
             'fuel_cost_estimate': round(fuel_cost, 2),
             'toll_cost_estimate': round(toll_cost, 2),
-            'optimization_criteria': optimization_criteria
+            'optimization_criteria': optimization_criteria,
+            # What the three figures above rest on. Returned rather than logged so the
+            # caller that stores them can record them too if it chooses.
+            'assumptions': {
+                'distance_source': settings.ROUTING_PROVIDER,
+                'average_speed_mph': speed_mph,
+                'stop_minutes': settings.FLEET_STOP_MINUTES,
+                'average_mpg': mpg,
+                'fuel_price_usd_per_gallon': fuel_price,
+                'toll_usd_per_mile': toll_per_mile,
+                'note': (
+                    "Duration and costs are derived from configured fleet averages, not "
+                    "from a carrier quote or a live fuel index."
+                ),
+            },
         }
     
     def _estimate_distance(
@@ -454,8 +592,23 @@ class TransportationManagementService:
             if driver:
                 hos_check = self.hos_monitor.check_compliance(driver)
                 if not hos_check['is_compliant']:
+                    # BOTH REASONS, because `is_compliant` is false for two different
+                    # things and they need different actions (FS-421). `check_compliance`
+                    # is careful to separate them — a VIOLATION means the driver has
+                    # driven too long, and MISSING DATA means nobody can tell. This read
+                    # only `violations`, so a driver blocked for missing data produced
+                    # "Driver not compliant: " with nothing after the colon: a refusal
+                    # that names no reason and leaves a dispatcher with nowhere to go.
+                    reasons = list(hos_check['violations'])
+                    if hos_check.get('missing_data'):
+                        reasons += [
+                            f"cannot be assessed — {item.lower()}"
+                            for item in hos_check['missing_data']
+                        ]
                     raise ValueError(
-                        f"Driver not compliant: {', '.join(hos_check['violations'])}"
+                        "Driver not compliant: " + (
+                            "; ".join(reasons) or "no reason reported by the HOS check"
+                        )
                     )
             
             shipment.status = 'dispatched'
@@ -575,7 +728,17 @@ class TransportationManagementService:
                 weight_distribution=weight_distribution or {},
                 space_utilization_percent=space_utilization_percent,
                 special_instructions=special_instructions,
-                planned_by=planned_by
+                # `str(...)`, because `load_plans.planned_by` is `Column(String(36))` and
+                # NOT a `UUIDColumn` like its neighbours. `UUIDColumn` binds `str(value)`
+                # through its TypeDecorator; a plain VARCHAR does not, so asyncpg raised
+                #
+                #     invalid input for query argument $5: UUID(...) (expected str, got UUID)
+                #
+                # and every caller supplying `planned_by` got a 500. Found by the contract
+                # gate (FS-259). Same trap the `_scope` helper in fleet_logistics documents
+                # from the other direction — a VARCHAR column holding ids is not a UUID
+                # column, and the difference only shows on the wire.
+                planned_by=str(planned_by) if planned_by is not None else None
             )
             session.add(load_plan)
             await session.commit()
@@ -629,12 +792,20 @@ class TransportationManagementService:
             # Check compliance for each driver
             hos_violations = 0
             expired_medical_certs = 0
-            
+            unassessable_drivers = 0
+
             for driver in drivers:
                 compliance = self.hos_monitor.check_compliance(driver)
-                if not compliance['is_compliant']:
+                # A driver with missing data is NOT a violation — counting them as one
+                # would trade a false clearance for a false accusation, and an operator
+                # chasing a phantom HOS breach stops trusting the number either way.
+                # They are counted separately so the roll-up can say what it could not
+                # judge.
+                if compliance['violations']:
                     hos_violations += 1
-                if driver.medical_cert_expires and driver.medical_cert_expires < datetime.now(timezone.utc):
+                if not compliance['assessable']:
+                    unassessable_drivers += 1
+                if driver.medical_cert_expires and _as_utc(driver.medical_cert_expires) < datetime.now(timezone.utc):
                     expired_medical_certs += 1
             
             return {
@@ -646,7 +817,7 @@ class TransportationManagementService:
                     'is_valid': (
                         carrier.ctpat_certified and 
                         carrier.ctpat_expires_at and 
-                        carrier.ctpat_expires_at > datetime.now(timezone.utc)
+                        _as_utc(carrier.ctpat_expires_at) > datetime.now(timezone.utc)
                     )
                 },
                 'insurance_status': {
@@ -655,18 +826,38 @@ class TransportationManagementService:
                     'is_valid': (
                         carrier.insurance_on_file and
                         carrier.insurance_expires_at and
-                        carrier.insurance_expires_at > datetime.now(timezone.utc)
+                        _as_utc(carrier.insurance_expires_at) > datetime.now(timezone.utc)
                     )
                 },
                 'safety_rating': carrier.safety_rating,
-                'csa_score': float(carrier.csa_score) if carrier.csa_score else None,
+                # `if carrier.csa_score` is FALSY, and 0 is the BEST possible CSA score —
+                # a carrier with a spotless safety record reported "no score on file",
+                # which is what an operator sees for a carrier nobody has assessed. The
+                # check is on absence, not on truth.
+                'csa_score': (
+                    float(carrier.csa_score) if carrier.csa_score is not None else None
+                ),
                 'driver_compliance': {
                     'total_drivers': len(drivers),
                     'hos_violations': hos_violations,
                     'expired_medical_certs': expired_medical_certs,
-                    'compliant_drivers': len(drivers) - hos_violations
+                    'unassessable_drivers': unassessable_drivers,
+                    # Drivers who were judged AND passed. Subtracting only violations
+                    # counted the unassessable ones as compliant, which is the same
+                    # error one level up.
+                    'compliant_drivers': len(drivers) - hos_violations - unassessable_drivers,
                 },
+                # WHETHER ANY DRIVER WAS ASSESSED AT ALL. `hos_violations == 0` is
+                # trivially true for a carrier with no drivers on file, so the verdict
+                # below used to clear a carrier whose driver records had never been
+                # entered or synced. Zero violations found among zero drivers is not a
+                # finding — it is the absence of one, and Hours of Service is
+                # DOT-regulated. The frontend had the same defect on the same data and
+                # rendered a green tick for it.
+                'drivers_assessed': len(drivers) > 0 and unassessable_drivers == 0,
                 'overall_compliant': (
+                    len(drivers) > 0 and
+                    unassessable_drivers == 0 and
                     carrier.ctpat_certified and
                     carrier.insurance_on_file and
                     hos_violations == 0
@@ -706,8 +897,24 @@ class TransportationManagementService:
                 if carrier:
                     contract_rates = carrier.contract_rate or {}
             
-            distance = route.total_distance_miles if route else 500.0
-            weight = shipment.total_weight_lbs or 0
+            # float(), BECAUSE THESE COLUMNS ARE `Numeric` AND THIS ENDPOINT 500'd (FS-396).
+            #
+            # SQLAlchemy hands a `Numeric` column back as a `decimal.Decimal`, and the
+            # billing engine's rates are plain floats — so `distance_miles * rate_per_mile`
+            # raised
+            #
+            #     TypeError: unsupported operand type(s) for *: 'decimal.Decimal' and 'float'
+            #
+            # for any shipment whose route carries a distance, which is every real one. The
+            # 500.0 fallback is a float, so the endpoint only worked for shipments with NO
+            # route — the case with the least to bill.
+            #
+            # Converting here rather than making the engine Decimal-aware: `calculate_linehaul`
+            # declares `distance_miles: float` / `weight_lbs: float` and returns floats into a
+            # float schema, so this is the boundary where the storage type should end. These
+            # are rate-times-distance estimates, not ledger amounts.
+            distance = float(route.total_distance_miles) if route and route.total_distance_miles is not None else 500.0
+            weight = float(shipment.total_weight_lbs or 0)
             
             # Calculate linehaul
             linehaul = await self.billing_engine.calculate_linehaul(

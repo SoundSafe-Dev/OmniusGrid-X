@@ -11,17 +11,29 @@ import type {
 } from '../../types';
 import type { TimeRange } from '../../types';
 
+/** ROLLING WINDOWS, LABELLED AS SUCH (FS-486).
+ *
+ *  These read "This Month", "This Quarter", "This Year" — calendar periods. The endpoint
+ *  computes `now - timedelta(days=_RANGE_DAYS[range])`, which is a rolling window: on the
+ *  6th of August, "This Month" is 7 July to 6 August, and most of what it reports happened
+ *  last month. An operator reading a fuel-efficiency figure under "This Month" takes it for
+ *  August's, and it is not.
+ *
+ *  The number was right and the label was wrong, which is the harder direction to notice.
+ *  Every other range selector in this app — Historian, ErrorTriage, AnalyticsPages — already
+ *  says "Last N days"; this one was the exception. The days here mirror `_RANGE_DAYS` in
+ *  `app/api/kpi.py`, and `test_kpi_range_labels_are_honest.py` holds them together. */
 const TimeRangeSelector: FC<{ value: TimeRange; onChange: (r: TimeRange) => void }> = ({ value, onChange }) => (
   <select 
     value={value} 
     onChange={(e) => onChange(e.target.value as TimeRange)}
     className="px-3 py-1 bg-opsgrid-panel border border-opsgrid-border rounded text-sm"
   >
-    <option value="today">Today</option>
-    <option value="week">This Week</option>
-    <option value="month">This Month</option>
-    <option value="quarter">This Quarter</option>
-    <option value="year">This Year</option>
+    <option value="today">Last 24 hours</option>
+    <option value="week">Last 7 days</option>
+    <option value="month">Last 30 days</option>
+    <option value="quarter">Last 90 days</option>
+    <option value="year">Last 365 days</option>
   </select>
 );
 

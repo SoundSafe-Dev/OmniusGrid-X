@@ -24,7 +24,16 @@ registerTransform('/api/v1/organizations');
 registerTransform('/admin/assets'); // setMaintenanceMode body -> snake_case
 
 interface AssetListParams {
-  organizationId?: string;
+  // No organizationId. `GET /api/v1/assets/` declares only workcell_id, asset_type_id,
+  // is_active, skip and limit — and FastAPI drops unknown query parameters SILENTLY, so
+  // supplying one returned the caller's own assets either way while reading, at the call
+  // site and in the type, as a tenant filter. The organisation comes from the JWT.
+  //
+  // The backend guard could not see this call at all: `api.get<{ items: Asset[]; meta:
+  // { … } }>(…)` has braces and a semicolon inside its type argument, and the
+  // extractor's pattern excluded both — so it was neither checked nor counted as
+  // skipped. Six calls were invisible that way; the extractor now scans for the opening
+  // parenthesis instead of pattern-matching up to it.
   workcellId?: string;
   assetTypeId?: string;
   isActive?: boolean;
@@ -38,10 +47,21 @@ export const assetsApi = {
     // Backend now returns a {items, meta} envelope (FS-82) with a real total,
     // instead of a bare array we had to fake a count from. Map it to the flat
     // PaginatedResponse; tolerate either casing of has_more from the transform seam.
+    // Built explicitly rather than forwarded wholesale. Dropping `organizationId` from
+    // AssetListParams is a compile-time guarantee; passing the caller's object straight
+    // through still puts any extra key on the wire at runtime, where FastAPI discards
+    // unknown query parameters in silence. These five are what the endpoint declares.
+    const query = {
+      workcell_id: params?.workcellId,
+      asset_type_id: params?.assetTypeId,
+      is_active: params?.isActive,
+      skip: params?.skip,
+      limit: params?.limit,
+    };
     const response = await api.get<{
       items: Asset[];
       meta: { total: number; skip: number; limit: number; has_more?: boolean; hasMore?: boolean };
-    }>('/api/v1/assets/', { params });
+    }>('/api/v1/assets/', { params: query });
     const { items, meta } = response.data;
     return {
       items,
@@ -89,12 +109,25 @@ export const assetsApi = {
     return response.data;
   },
 
-  restartCollector: async (assetId: string): Promise<void> => {
-    await api.post(`/admin/collectors/${assetId}/restart`);
-  },
-
+  /**
+   * THIS INVERTED THE CALLER'S INTENT. It posted `{ inMaintenance }` as a JSON BODY, and
+   * the endpoint declares `enabled: bool = True` — a scalar, which FastAPI reads from the
+   * QUERY STRING. So the body was ignored and `enabled` fell to its default:
+   *
+   *   setMaintenanceMode(id, false)  ->  POST .../maintenance  ->  enabled = True
+   *
+   * Calling this to take an asset OUT of maintenance put it IN. Not a 422 that someone
+   * would have noticed — a 200, with the opposite of the requested effect, and a response
+   * body reading "Game-theoretic engine commands are blocked".
+   *
+   * `enabled` is sent explicitly now. The endpoint's `= True` default is left alone
+   * deliberately: changing it would break any caller that relies on the bare POST meaning
+   * "enable", and the fix belongs on the side that was wrong.
+   */
   setMaintenanceMode: async (assetId: string, inMaintenance: boolean): Promise<void> => {
-    await api.post(`/admin/assets/${assetId}/maintenance`, { inMaintenance });
+    await api.post(`/admin/assets/${assetId}/maintenance`, null, {
+      params: { enabled: inMaintenance },
+    });
   },
 };
 
@@ -137,13 +170,16 @@ export const dashboardApi = {
 };
 
 export const workcellsApi = {
-  list: async (organizationId?: string): Promise<Workcell[]> => {
+  // No organizationId parameter. `GET /api/v1/workcells/` declares only `skip` and
+  // `limit`, and FastAPI drops unknown query parameters SILENTLY — so passing one
+  // returned the caller's own workcells either way while looking like a filter had been
+  // applied. The organisation comes from the JWT.
+  list: async (): Promise<Workcell[]> => {
     if (USE_MOCK) return mockApi.getWorkcells();
     // FS-99: backend returns the {items, meta} pagination envelope now; callers
     // consume a plain array, so unwrap here.
     const response = await api.get<{ items: Workcell[]; meta: { total: number } }>(
       '/api/v1/workcells/',
-      { params: organizationId ? { organization_id: organizationId } : undefined },
     );
     return response.data.items;
   },

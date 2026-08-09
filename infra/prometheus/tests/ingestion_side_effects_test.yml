@@ -1,0 +1,73 @@
+# promtool unit tests for IngestionSideEffectFailing (FS-537). Run from infra/prometheus/:
+#   promtool test rules tests/ingestion_side_effects_test.yml
+#
+# WHAT THIS RULE HAS TO GET RIGHT. Five side effects on the ingest path are deliberately
+# swallowed — ingestion must not stop because a WebSocket publish failed — and until FS-537
+# nothing counted them. A rule failing on every message wrote one log line per message and
+# aggregated nowhere, so "server-side alarm rules are not firing" was a condition the
+# platform could not report.
+#
+# `promtool check rules` proves the expression parses. It cannot prove a series exists that
+# would make it true, which is how `EdgeAgentBufferHigh` was syntactically perfect and
+# useless for as long as it was (FS-498, rule 121). So the firing case is driven from a
+# counter shaped exactly as the worker emits it, and the quiet cases are asserted too: an
+# alert that fires on a healthy system is as bad as one that never fires.
+
+rule_files:
+  - ../alerts.yml
+
+evaluation_interval: 1m
+
+tests:
+  # ---------------------------------------------------------------------------
+  # Alarm-rule evaluation failing steadily -> fires after the 5m `for` window.
+  # This is the label that matters: telemetry keeps flowing and the alerting is off.
+  # ---------------------------------------------------------------------------
+  - interval: 1m
+    input_series:
+      - series: 'opsgrid_ingestion_side_effect_failed_total{side_effect="alarm_rule_evaluation"}'
+        values: '0+3x20'          # +3 failures every minute
+    alert_rule_test:
+      - eval_time: 4m
+        alertname: IngestionSideEffectFailing
+        exp_alerts: []            # still inside `for: 5m`
+      - eval_time: 10m
+        alertname: IngestionSideEffectFailing
+        exp_alerts:
+          - exp_labels:
+              severity: high
+              team: platform
+              side_effect: alarm_rule_evaluation
+            exp_annotations:
+              summary: "Ingest side effect alarm_rule_evaluation is failing"
+              description: "30 failures of alarm_rule_evaluation in the last 15m. Telemetry is still being stored — this path is deliberately non-fatal — but the side effect is not happening. If this is alarm_rule_evaluation, server-side alarm rules are NOT firing."
+
+  # ---------------------------------------------------------------------------
+  # MUST STAY QUIET: a counter that never moves. The overwhelmingly common case, and
+  # the one a `> 0` on a raw counter rather than an `increase()` would get wrong.
+  # ---------------------------------------------------------------------------
+  - interval: 1m
+    input_series:
+      - series: 'opsgrid_ingestion_side_effect_failed_total{side_effect="oee_state_tracking"}'
+        values: '17x20'           # 17 historical failures, none new
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: IngestionSideEffectFailing
+        exp_alerts: []
+
+  # ---------------------------------------------------------------------------
+  # MUST STAY QUIET: a single blip that stops. One failed WebSocket publish is not an
+  # incident, and `for: 5m` is what distinguishes it from a persistent fault. Without
+  # the window this would page on every transient.
+  # ---------------------------------------------------------------------------
+  - interval: 1m
+    input_series:
+      - series: 'opsgrid_ingestion_side_effect_failed_total{side_effect="websocket_telemetry_publish"}'
+        values: '0 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1'
+    alert_rule_test:
+      - eval_time: 3m
+        alertname: IngestionSideEffectFailing
+        exp_alerts: []            # inside the `for` window
+      - eval_time: 20m
+        alertname: IngestionSideEffectFailing
+        exp_alerts: []            # the increase has aged out of the 15m range

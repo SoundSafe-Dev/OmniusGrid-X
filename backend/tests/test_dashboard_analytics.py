@@ -55,9 +55,12 @@ def _insert_alarm(admin_sync_url, asset_id, severity, occurred_at):
     try:
         with conn.cursor() as cur:
             cur.execute(
-                "INSERT INTO alarms (id, asset_id, alarm_code, severity, message,"
-                " is_active, occurred_at) VALUES (%s, %s, %s, %s, %s, TRUE, %s)",
-                (str(uuid4()), asset_id, "TEST-1", severity, "test alarm", occurred_at),
+                "INSERT INTO alarms (id, asset_id, organization_id, alarm_code,"
+                " severity, message, is_active, occurred_at)"
+                " VALUES (%s, %s, (SELECT organization_id FROM assets WHERE id = %s),"
+                " %s, %s, %s, TRUE, %s)",
+                (str(uuid4()), asset_id, asset_id, "TEST-1", severity,
+                 "test alarm", occurred_at),
             )
     finally:
         conn.close()

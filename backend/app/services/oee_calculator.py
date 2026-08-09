@@ -9,8 +9,7 @@ from typing import Dict, Optional, Any, List
 from dataclasses import dataclass, field
 from enum import Enum
 import structlog
-from sqlalchemy import select, insert, update, func
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select
 
 from app.core.datetime_utils import aware_utc
 from app.db.database import AsyncSessionLocal
@@ -43,6 +42,13 @@ class OEEMetrics:
     good_parts: int = 0
     rejected_parts: int = 0
     ideal_cycle_time_seconds: float = 0.0
+    # Which factors were actually MEASURABLE (FS-234). Quality falls back to 1.0
+    # when there are no part counters, because it has to be a neutral multiplier
+    # for OEE — but reporting "Quality 100%" for a line with no quality
+    # instrumentation is a fabricated figure on a dashboard tile. These flags let
+    # a consumer render "—" instead of a number nobody measured.
+    quality_measured: bool = True
+    performance_measured: bool = True
     actual_cycle_time_seconds: float = 0.0
 
 
@@ -256,7 +262,25 @@ class OEECalculator:
                         oee = await self.calculate_oee(asset_id)
                         
                         # Store in database
-                        await self._store_oee_metrics(asset_id, oee)
+                        # NOT PERSISTED, and there is nothing here to persist it to.
+                        # This called `_store_oee_metrics`, which passed the STRING
+                        # "oee_metrics" to `insert()` — SQLAlchemy cannot make a table
+                        # out of that — and swallowed the failure in a broad `except`
+                        # that logged `oee_store_error`. No migration creates an
+                        # `oee_metrics` table either, so the write could never have
+                        # landed. Since this loop runs (main.py starts oee_calculator),
+                        # it produced that error for every asset on every pass.
+                        #
+                        # Nothing is lost. OEE here is DERIVED from `packml_states` and
+                        # `telemetry`, both already persisted, and `get_historical_oee`
+                        # recomputes it from them. A metrics table would be a cache, and
+                        # it was never built. The method is gone rather than left as a
+                        # no-op named `_store_*`: a helper that claims a side effect must
+                        # produce it (`test_helper_names_match_behaviour.py` fails
+                        # otherwise, which is how this note came to be written).
+                        #
+                        # If a rollup is wanted later it needs a migration, an ORM model,
+                        # tenant scoping under RLS and a retention policy.
                         
                         # Broadcast via WebSocket
                         org_id = self._asset_states[asset_id].get('organization_id')
@@ -353,16 +377,22 @@ class OEECalculator:
             production_seconds, part_counts['total']
         )
         
+        performance_measured = actual_cycle_time > 0
         performance = (
             ideal_cycle_time / actual_cycle_time
-            if actual_cycle_time > 0 else 0.0
+            if performance_measured else 0.0
         )
-        
+
         # Calculate Quality
         total_parts = part_counts['total']
         good_parts = part_counts['good']
-        quality = good_parts / total_parts if total_parts > 0 else 1.0
-        
+        # 1.0 when there is no part data: quality has to stay a neutral multiplier
+        # so OEE is not zeroed by missing instrumentation. But the flag records
+        # that nothing was measured, because "Quality 100%" on a line with no
+        # part counters is a number the platform invented.
+        quality_measured = total_parts > 0
+        quality = good_parts / total_parts if quality_measured else 1.0
+
         # Calculate OEE
         oee = availability * performance * quality
         
@@ -378,7 +408,9 @@ class OEECalculator:
             good_parts=good_parts,
             rejected_parts=part_counts['rejected'],
             ideal_cycle_time_seconds=ideal_cycle_time,
-            actual_cycle_time_seconds=round(actual_cycle_time, 2)
+            actual_cycle_time_seconds=round(actual_cycle_time, 2),
+            quality_measured=quality_measured,
+            performance_measured=performance_measured,
         )
     
     def _get_state_category(self, state: str) -> OEEStateCategory:
@@ -458,31 +490,6 @@ class OEECalculator:
             return production_seconds / total_parts
         return 0.0
     
-    async def _store_oee_metrics(self, asset_id: str, oee: OEEMetrics):
-        """Store OEE metrics in database"""
-        try:
-            async with AsyncSessionLocal() as session:
-                # Insert OEE record
-                await session.execute(
-                    insert("oee_metrics").values(
-                        asset_id=asset_id,
-                        timestamp=datetime.now(timezone.utc),
-                        availability=oee.availability,
-                        performance=oee.performance,
-                        quality=oee.quality,
-                        oee=oee.oee,
-                        runtime_minutes=oee.runtime_minutes,
-                        planned_downtime_minutes=oee.planned_downtime_minutes,
-                        unplanned_downtime_minutes=oee.unplanned_downtime_minutes,
-                        total_parts=oee.total_parts,
-                        good_parts=oee.good_parts,
-                        rejected_parts=oee.rejected_parts
-                    )
-                )
-                await session.commit()
-        except Exception as e:
-            logger.error("oee_store_error", asset_id=asset_id, error=str(e))
-    
     async def _broadcast_oee(
         self,
         organization_id: str,
@@ -508,48 +515,85 @@ class OEECalculator:
         except Exception as e:
             logger.warning("oee_broadcast_error", asset_id=asset_id, error=str(e))
     
+    #: PackML states that count as producing. Kept local rather than imported from
+    #: dashboard_analytics so the service layer does not depend on an API module.
+    _RUNNING_STATES = ("Execute", "EXECUTE", "execute")
+
     async def get_historical_oee(
         self,
         asset_id: str,
         start_time: datetime,
         end_time: datetime,
-        aggregation: str = 'hourly'  # 'hourly', 'daily', 'shift'
+        aggregation: str = 'hourly'  # 'hourly', 'daily'
     ) -> List[Dict]:
-        """Get historical OEE data"""
+        """Availability per time bucket for one asset, from recorded PackML states.
+
+        WHAT THIS REPLACED, AND WHY NOTHING NOTICED. Every column reference in the old
+        query was a PYTHON STRING rather than a mapped column:
+
+            func.avg("oee_metrics.availability")           # averages a string literal
+            "oee_metrics.asset_id" == asset_id             # a str == uuid -> False
+            "oee_metrics.timestamp" >= start_time          # str >= datetime -> TypeError
+
+        The third raised before the statement was ever compiled, so this function had
+        never returned a row. `health_index` calls it inside a broad `except` and logged
+        `health_index_oee_unavailable` on every asset, every time; `/api/v1/oee/historical/
+        {asset_id}` has no such handler and returned a 500.
+
+        And it could not have worked regardless: **there is no `oee_metrics` table** in
+        any migration. Its writer, `_store_oee_metrics`, passed the same string to
+        `insert()` and swallowed the failure, so the reader was querying a table nothing
+        had ever created and nothing had ever written.
+
+        The replacement uses `packml_states`, which is real, populated, and already the
+        basis of `/api/v1/dashboard/oee/trend`. That means AVAILABILITY only: performance
+        needs a per-asset ideal cycle time and quality needs part counters, and neither
+        can be resolved in one GROUP BY. Each row says so rather than reporting 1.0 for
+        the two factors it cannot measure — the same distinction the dashboard endpoint
+        and the per-asset OEE panel already make.
+        """
+        seconds = 86400 if aggregation == "daily" else 3600
+
         async with AsyncSessionLocal() as session:
-            # Query aggregated OEE metrics
             result = await session.execute(
                 select(
-                    func.date_trunc(aggregation, "oee_metrics.timestamp").label('period'),
-                    func.avg("oee_metrics.availability").label('avg_availability'),
-                    func.avg("oee_metrics.performance").label('avg_performance'),
-                    func.avg("oee_metrics.quality").label('avg_quality'),
-                    func.avg("oee_metrics.oee").label('avg_oee'),
-                    func.sum("oee_metrics.total_parts").label('total_parts'),
-                    func.sum("oee_metrics.good_parts").label('good_parts')
+                    PackMLState.state_entered_at,
+                    PackMLState.duration_seconds,
                 ).where(
-                    "oee_metrics.asset_id" == asset_id,
-                    "oee_metrics.timestamp" >= start_time,
-                    "oee_metrics.timestamp" <= end_time
-                ).group_by(
-                    func.date_trunc(aggregation, "oee_metrics.timestamp")
-                ).order_by('period')
+                    PackMLState.asset_id == asset_id,
+                    PackMLState.state.in_(self._RUNNING_STATES),
+                    PackMLState.state_entered_at >= start_time,
+                    PackMLState.state_entered_at <= end_time,
+                )
             )
-            
             rows = result.all()
-            
-            return [
-                {
-                    'period': row.period.isoformat() if row.period else None,
-                    'availability': round(row.avg_availability, 2) if row.avg_availability else 0,
-                    'performance': round(row.avg_performance, 2) if row.avg_performance else 0,
-                    'quality': round(row.avg_quality, 2) if row.avg_quality else 0,
-                    'oee': round(row.avg_oee, 2) if row.avg_oee else 0,
-                    'total_parts': row.total_parts or 0,
-                    'good_parts': row.good_parts or 0
-                }
-                for row in rows
-            ]
+
+        # Bucketed in Python rather than SQL: `date_trunc` is Postgres-only and this
+        # service also runs against the SQLite offline demo path.
+        run_seconds: Dict[datetime, float] = {}
+        for entered_at, duration in rows:
+            entered_at = aware_utc(entered_at)
+            if entered_at is None:
+                continue
+            epoch = int(entered_at.timestamp())
+            bucket = datetime.fromtimestamp(
+                epoch - (epoch % seconds), tz=timezone.utc
+            )
+            run_seconds[bucket] = run_seconds.get(bucket, 0.0) + float(duration or 0)
+
+        return [
+            {
+                'period': bucket.isoformat(),
+                'availability': round(min(1.0, total / seconds), 4),
+                # None, not 1.0. A neutral multiplier is the right arithmetic for an OEE
+                # product and the wrong thing to report as a measurement.
+                'performance': None,
+                'quality': None,
+                'oee': None,
+                'availability_only': True,
+            }
+            for bucket, total in sorted(run_seconds.items())
+        ]
 
 
 # Global instance

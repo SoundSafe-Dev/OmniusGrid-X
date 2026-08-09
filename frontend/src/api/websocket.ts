@@ -3,10 +3,36 @@ import { WebSocketMessage } from '../types';
 // WS endpoint resolution mirrors client.ts: VITE_WS_URL wins; dev builds hit
 // the backend on :8000; production builds use same-origin (nginx proxies /ws),
 // upgrading to wss: when the page is https.
-const getWsUrl = (): string => {
+//
+// EXPORTED SO IT CAN BE TESTED. `fleetHealth.ts` used to open its own socket with a
+// hardcoded `ws://`, which fails on any HTTPS deployment; that helper is gone and this is
+// the single derivation left. It was correct and nothing asserted it, so a regression to
+// `ws://` would have been silent until an operator on an HTTPS deployment noticed the fleet
+// had stopped updating — which looks like a quiet fleet, not a broken socket.
+export const getWsUrl = (): string => {
   const envUrl = import.meta.env.VITE_WS_URL;
   if (envUrl) return envUrl;
   if (import.meta.env.DEV) {
+    // FOLLOW VITE_API_URL WHEN IT IS SET, rather than assuming :8000.
+    //
+    // `VITE_API_URL` is the documented knob for pointing the dev frontend at a backend,
+    // and this branch ignored it — so moving the API to another port gave a socket that
+    // retried against nothing, forever, while every HTTP call worked. One backend needed
+    // two env vars in agreement and only one of them was written down. Hit while running
+    // the app on :8100 during a QA sweep on 2026-08-01.
+    //
+    // VITE_WS_URL still wins above, for the case where the socket really is elsewhere.
+    const apiUrl = import.meta.env.VITE_API_URL;
+    if (apiUrl) {
+      try {
+        const parsed = new URL(apiUrl, window.location.origin);
+        const scheme = parsed.protocol === 'https:' ? 'wss' : 'ws';
+        return `${scheme}://${parsed.host}/ws`;
+      } catch {
+        // An unparseable VITE_API_URL is the developer's typo, not a reason to have no
+        // socket at all; fall through to the default rather than throwing at module load.
+      }
+    }
     return `ws://${window.location.hostname || 'localhost'}:8000/ws`;
   }
   const scheme = window.location.protocol === 'https:' ? 'wss' : 'ws';
@@ -83,7 +109,10 @@ export class WebSocketManager {
     this.ws = token ? new WebSocket(WS_URL, ['bearer.v1', token]) : new WebSocket(WS_URL);
 
     this.ws.onopen = () => {
-      console.log('WebSocket connected');
+      // `debug`, not `log`: this fires on every reconnect (six attempts with backoff
+      // before the polling fallback), so at `log` level a flapping link floods the
+      // console and buries whatever the operator opened it to see.
+      console.debug('WebSocket connected');
       this.reconnectAttempts = 0;
       this.polling = false; // recovered: clears polling fallback via 'connected'
       this.flushMessageQueue();
@@ -108,7 +137,7 @@ export class WebSocketManager {
     };
 
     this.ws.onclose = () => {
-      console.log('WebSocket disconnected');
+      console.debug('WebSocket disconnected');
       this.stopHeartbeat();
       if (this.manualClose) {
         this.emitStatus('disconnected');

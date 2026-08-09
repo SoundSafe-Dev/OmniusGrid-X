@@ -1,7 +1,8 @@
 """Query Performance Monitoring API Routes"""
 
-from typing import List, Optional
-from fastapi import APIRouter, Depends, HTTPException, status
+from typing import Any, Dict, List, Optional
+from pydantic import BaseModel
+from fastapi import APIRouter, Depends, HTTPException, status, Query
 try:
     from sqlalchemy import text
     from sqlalchemy.ext.asyncio import AsyncSession
@@ -21,9 +22,99 @@ from app.middleware.rbac import require_admin
 # (exposes DB introspection + POST /reset-stats).
 router = APIRouter(dependencies=[Depends(require_admin)])
 
-@router.get("/slow-queries")
+
+# ---- Response schemas (pool #43).
+#
+# The ENVELOPE is declared precisely; the ROWS are not, deliberately. Every list
+# here is a projection of a `pg_stat_*` view or `pg_stat_statements`, whose
+# columns differ across PostgreSQL versions and extension builds — `pg_stat_statements`
+# renamed its timing columns at PG 13, and `total_size`/`table_size` in the bloat
+# query depend on which `pg_*_size` helpers the server exposes.
+#
+# Declaring a fixed row model would state a shape this code does not control and
+# cannot guarantee, and the failure mode is the bad one: a column that goes
+# missing on a different server gets DROPPED from the payload by the response
+# model rather than reported. So the envelope key is documented — which is what
+# a client codes against, and what the contract gate can check — and each row
+# stays an open object.
+
+
+class SlowQueriesResponse(BaseModel):
+    slow_queries: List[Dict[str, Any]]
+    #: `count` is returned beside every list and was nearly dropped by the first
+    #: version of these models — a response_model that omits it deletes it from the
+    #: payload, and a client paging on `count` would have seen it vanish silently.
+    count: int
+
+
+class TablePerformanceResponse(BaseModel):
+    tables: List[Dict[str, Any]]
+    #: `count` is returned beside every list and was nearly dropped by the first
+    #: version of these models — a response_model that omits it deletes it from the
+    #: payload, and a client paging on `count` would have seen it vanish silently.
+    count: int
+
+
+class IndexUsageResponse(BaseModel):
+    indexes: List[Dict[str, Any]]
+    #: `count` is returned beside every list and was nearly dropped by the first
+    #: version of these models — a response_model that omits it deletes it from the
+    #: payload, and a client paging on `count` would have seen it vanish silently.
+    count: int
+
+
+class MissingIndexesResponse(BaseModel):
+    candidates: List[Dict[str, Any]]
+    #: `count` is returned beside every list and was nearly dropped by the first
+    #: version of these models — a response_model that omits it deletes it from the
+    #: payload, and a client paging on `count` would have seen it vanish silently.
+    count: int
+
+
+class QueryListResponse(BaseModel):
+    """Shared by `/query-analysis` and `/frequent-queries` — both return `queries`."""
+
+    queries: List[Dict[str, Any]]
+    #: `count` is returned beside every list and was nearly dropped by the first
+    #: version of these models — a response_model that omits it deletes it from the
+    #: payload, and a client paging on `count` would have seen it vanish silently.
+    count: int
+
+
+class PerformanceHistoryResponse(BaseModel):
+    history: List[Dict[str, Any]]
+    #: `count` is returned beside every list and was nearly dropped by the first
+    #: version of these models — a response_model that omits it deletes it from the
+    #: payload, and a client paging on `count` would have seen it vanish silently.
+    count: int
+
+
+class TableBloatResponse(BaseModel):
+    tables: List[Dict[str, Any]]
+    #: `count` is returned beside every list and was nearly dropped by the first
+    #: version of these models — a response_model that omits it deletes it from the
+    #: payload, and a client paging on `count` would have seen it vanish silently.
+    count: int
+
+
+class CacheHitRatioResponse(BaseModel):
+    #: The no-statistics fallback returns `{"ratio": 0.0}` alone, so both counters
+    #: must be optional or that branch becomes a 500. A null here means "the
+    #: server reported no heap reads yet", which is not the same as zero.
+    heap_read: Optional[int] = None
+    heap_hit: Optional[int] = None
+    ratio: float
+
+
+class MessageResponse(BaseModel):
+    """The three admin actions (`record-snapshot`, `refresh-frequent-queries`,
+    `reset-stats`) each acknowledge with a single message."""
+
+    message: str
+
+@router.get("/slow-queries", response_model=SlowQueriesResponse)
 async def get_slow_queries(
-    limit: int = 50,
+    limit: int = Query(50, ge=1, description="Maximum rows to return."),
     db: AsyncSession = Depends(get_db)
 ):
     """Get slow queries (>1 second execution time)."""
@@ -59,9 +150,9 @@ async def get_slow_queries(
             detail=f"Failed to retrieve slow queries: {str(e)}"
         )
 
-@router.get("/table-performance")
+@router.get("/table-performance", response_model=TablePerformanceResponse)
 async def get_table_performance(
-    limit: int = 50,
+    limit: int = Query(50, ge=1, description="Maximum rows to return."),
     db: AsyncSession = Depends(get_db)
 ):
     """Get performance statistics by table."""
@@ -101,9 +192,9 @@ async def get_table_performance(
             detail=f"Failed to retrieve table performance: {str(e)}"
         )
 
-@router.get("/index-usage")
+@router.get("/index-usage", response_model=IndexUsageResponse)
 async def get_index_usage(
-    limit: int = 100,
+    limit: int = Query(100, ge=1, description="Maximum rows to return."),
     db: AsyncSession = Depends(get_db)
 ):
     """Get index usage statistics."""
@@ -137,9 +228,9 @@ async def get_index_usage(
             detail=f"Failed to retrieve index usage: {str(e)}"
         )
 
-@router.get("/missing-indexes")
+@router.get("/missing-indexes", response_model=MissingIndexesResponse)
 async def get_missing_indexes(
-    limit: int = 50,
+    limit: int = Query(50, ge=1, description="Maximum rows to return."),
     db: AsyncSession = Depends(get_db)
 ):
     """Get tables that may benefit from additional indexes."""
@@ -173,9 +264,9 @@ async def get_missing_indexes(
             detail=f"Failed to retrieve missing index candidates: {str(e)}"
         )
 
-@router.get("/query-analysis")
+@router.get("/query-analysis", response_model=QueryListResponse)
 async def get_query_analysis(
-    limit: int = 100,
+    limit: int = Query(100, ge=1, description="Maximum rows to return."),
     db: AsyncSession = Depends(get_db)
 ):
     """Get comprehensive query performance analysis."""
@@ -212,7 +303,7 @@ async def get_query_analysis(
             detail=f"Failed to analyze query performance: {str(e)}"
         )
 
-@router.post("/record-snapshot")
+@router.post("/record-snapshot", response_model=MessageResponse)
 async def record_performance_snapshot(
     db: AsyncSession = Depends(get_db)
 ):
@@ -230,10 +321,10 @@ async def record_performance_snapshot(
             detail=f"Failed to record performance snapshot: {str(e)}"
         )
 
-@router.get("/history")
+@router.get("/history", response_model=PerformanceHistoryResponse)
 async def get_performance_history(
     hours: int = 24,
-    limit: int = 100,
+    limit: int = Query(100, ge=1, description="Maximum rows to return."),
     db: AsyncSession = Depends(get_db)
 ):
     """Get query performance history."""
@@ -269,9 +360,9 @@ async def get_performance_history(
             detail=f"Failed to retrieve performance history: {str(e)}"
         )
 
-@router.get("/frequent-queries")
+@router.get("/frequent-queries", response_model=QueryListResponse)
 async def get_frequent_queries(
-    limit: int = 50,
+    limit: int = Query(50, ge=1, description="Maximum rows to return."),
     db: AsyncSession = Depends(get_db)
 ):
     """Get most frequently executed queries."""
@@ -304,7 +395,7 @@ async def get_frequent_queries(
             detail=f"Failed to retrieve frequent queries: {str(e)}"
         )
 
-@router.post("/refresh-frequent-queries")
+@router.post("/refresh-frequent-queries", response_model=MessageResponse)
 async def refresh_frequent_queries_view(
     db: AsyncSession = Depends(get_db)
 ):
@@ -322,9 +413,9 @@ async def refresh_frequent_queries_view(
             detail=f"Failed to refresh frequent queries: {str(e)}"
         )
 
-@router.get("/table-bloat")
+@router.get("/table-bloat", response_model=TableBloatResponse)
 async def get_table_bloat(
-    limit: int = 50,
+    limit: int = Query(50, ge=1, description="Maximum rows to return."),
     db: AsyncSession = Depends(get_db)
 ):
     """Get table size and bloat statistics."""
@@ -359,7 +450,7 @@ async def get_table_bloat(
             detail=f"Failed to retrieve table bloat: {str(e)}"
         )
 
-@router.get("/cache-hit-ratio")
+@router.get("/cache-hit-ratio", response_model=CacheHitRatioResponse)
 async def get_cache_hit_ratio(
     db: AsyncSession = Depends(get_db)
 ):
@@ -383,7 +474,7 @@ async def get_cache_hit_ratio(
             detail=f"Failed to retrieve cache hit ratio: {str(e)}"
         )
 
-@router.post("/reset-stats")
+@router.post("/reset-stats", response_model=MessageResponse)
 async def reset_query_stats(
     db: AsyncSession = Depends(get_db)
 ):

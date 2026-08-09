@@ -37,6 +37,7 @@ import structlog
 from sqlalchemy import and_, func, select, text
 
 from app.core.config import settings
+from app.core.tenant import tenant_session
 from app.db.database import AsyncSessionLocal
 from app.db.models import (
     ActionableRegistry,
@@ -117,11 +118,27 @@ def parse_asset_csv(raw: bytes) -> list[dict]:
     except UnicodeDecodeError:
         raise BulkOperationError("CSV must be UTF-8 encoded")
 
+    # `csv.Error` IS a structural problem, which is what this function's contract above
+    # says it converts. It was not caught, so two ordinary malformed uploads escaped as
+    # 500s where the endpoint documents a 400:
+    #
+    #   * a field over csv's 131072-character limit -> "field larger than field limit"
+    #   * a bare CR inside an unquoted field        -> "new-line character seen in
+    #                                                   unquoted field"
+    #
+    # Neither is a server fault; both are a file the caller should be told to fix. Found
+    # by the contract gate (FS-259) driving generated multipart bodies at
+    # `POST /bulk/assets/import`. The decode above was already handled this way — this
+    # extends the same treatment to the parse itself.
     reader = csv.DictReader(io.StringIO(text_data))
-    if not reader.fieldnames:
+    try:
+        fieldnames = reader.fieldnames
+    except csv.Error as exc:
+        raise BulkOperationError(f"CSV could not be parsed: {exc}")
+    if not fieldnames:
         raise BulkOperationError("CSV is empty or missing a header row")
 
-    headers = {(h or "").strip() for h in reader.fieldnames}
+    headers = {(h or "").strip() for h in fieldnames}
     headers.discard("")
     unknown = headers - ASSET_CSV_COLUMNS
     if unknown:
@@ -133,14 +150,19 @@ def parse_asset_csv(raw: bytes) -> list[dict]:
         raise BulkOperationError("CSV must contain at least an 'id' or 'name' column")
 
     rows: list[dict] = []
-    for raw_row in reader:
-        row = {
-            (k or "").strip(): (v.strip() if isinstance(v, str) else v)
-            for k, v in raw_row.items()
-            if k
-        }
-        if any(row.values()):  # skip blank lines
-            rows.append(row)
+    try:
+        for raw_row in reader:
+            row = {
+                (k or "").strip(): (v.strip() if isinstance(v, str) else v)
+                for k, v in raw_row.items()
+                if k
+            }
+            if any(row.values()):  # skip blank lines
+                rows.append(row)
+    except csv.Error as exc:
+        # The body rows raise separately from the header: a file can have a clean header
+        # and a malformed row 900, and that is still the caller's file, not a 500.
+        raise BulkOperationError(f"CSV could not be parsed: {exc}")
 
     if not rows:
         raise BulkOperationError("CSV has a header but no data rows")
@@ -251,23 +273,20 @@ class BulkProcessor:
     async def _tenant_session(self, organization_id: Any):
         """Yield a session bound to the caller's tenant via the RLS GUC.
 
-        Mirrors :func:`app.core.tenant.get_tenant_db` for use outside the request
-        lifecycle (background tasks). The GUC is session-scoped (``false``) so it
-        survives the per-row commits, then reset in ``finally`` so it cannot leak
-        onto a pooled connection.
+        DELEGATES rather than mirrors — see the identical note in
+        :meth:`app.services.export_processor.ExportProcessor._tenant_session`. Two copies
+        of the same helper under the same *"Mirrors get_tenant_db"* docstring is the
+        duplication :func:`app.core.tenant.tenant_session` was extracted to end.
+
+        The copy's own docstring named the reason it used a SESSION-scoped GUC: it had to
+        survive the per-row commits this processor makes. ``tenant_session`` gets the same
+        property from an ``after_begin`` listener that re-asserts the tenant on each new
+        transaction — so the binding survives the commits *and* cannot outlive the
+        transaction, which removes the pooled-connection leak the ``finally`` reset was
+        there to prevent.
         """
-        async with AsyncSessionLocal() as session:
-            await session.execute(
-                text("SELECT set_config('app.current_org_id', :org, false)"),
-                {"org": str(organization_id)},
-            )
-            try:
-                yield session
-            finally:
-                await session.execute(
-                    text("SELECT set_config('app.current_org_id', '', false)")
-                )
-                await session.commit()
+        async with tenant_session(organization_id) as session:
+            yield session
 
     @staticmethod
     def _as_uuid(value: Any, field: str) -> uuid.UUID:
@@ -709,6 +728,22 @@ class BulkProcessor:
         }
         try:
             async with AsyncSessionLocal() as session:
+                # audit_logs is ENABLE + FORCE ROW LEVEL SECURITY (migrations 011/033),
+                # and FORCE means the policy applies to the table owner too — so this
+                # INSERT is REJECTED unless app.current_org_id is set on the connection.
+                # AsyncSessionLocal never sets it, and the `except` below swallowed the
+                # rejection, so this entry has never been written on a real deployment
+                # while every caller saw its own work succeed. Found in the log noise of
+                # a real-DB run: `export_audit_failed ... new row violates row-level
+                # security policy for table "audit_logs"`, three times, passing by.
+                #
+                # is_local=true (transaction-scoped): there is no teardown here to reset
+                # a session-scoped value before the connection returns to the pool.
+                if organization_id and session.bind.dialect.name == "postgresql":
+                    await session.execute(
+                        text("SELECT set_config('app.current_org_id', :org, true)"),
+                        {"org": str(organization_id)},
+                    )
                 await session.execute(
                     text(
                         """

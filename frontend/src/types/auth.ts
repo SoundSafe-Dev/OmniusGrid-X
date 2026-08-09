@@ -1,4 +1,4 @@
-export type UserRole = 'admin' | 'operator' | 'viewer' | 'maintenance';
+export type UserRole = 'admin' | 'operator' | 'viewer';
 
 export interface User {
   id: string;
@@ -7,9 +7,39 @@ export interface User {
   role: UserRole;
   organizationId?: string;
   isActive: boolean;
-  lastLoginAt?: string;
+  /** `last_login` on the wire (FS-442). Declared as `lastLoginAt`, which nothing sends
+   *  — the column and the response field are both `last_login`. */
+  lastLogin?: string;
   createdAt: string;
   updatedAt: string;
+}
+
+export type UserInvitationStatus = 'pending' | 'accepted' | 'revoked' | 'expired';
+export type UserInvitationDeliveryStatus = 'pending' | 'sent' | 'failed';
+
+export interface UserInvitation {
+  id: string;
+  email: string;
+  role: UserRole;
+  status: UserInvitationStatus;
+  expiresAt: string;
+  deliveryStatus: UserInvitationDeliveryStatus;
+  deliveryAttempts: number;
+  deliveryErrorCode?: string | null;
+  deliveredAt?: string | null;
+  createdBy?: string | null;
+  acceptedUserId?: string | null;
+  acceptedAt?: string | null;
+  revokedAt?: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface InvitationValidation {
+  email: string;
+  role: UserRole;
+  organizationName: string;
+  expiresAt: string;
 }
 
 export interface LoginCredentials {
@@ -54,19 +84,6 @@ export const ROLE_PERMISSIONS: Record<UserRole, Permission[]> = {
     { resource: 'telemetry', action: 'read' },
     { resource: 'oee', action: 'read' },
     { resource: 'kanban', action: 'read' },
-    { resource: 'fleet', action: 'read' },
-    { resource: 'logistics', action: 'read' },
-  ],
-  maintenance: [
-    { resource: 'assets', action: 'read' },
-    { resource: 'assets', action: 'update' },
-    { resource: 'alarms', action: 'read' },
-    { resource: 'alarms', action: 'update' },
-    { resource: 'telemetry', action: 'read' },
-    { resource: 'oee', action: 'read' },
-    { resource: 'kanban', action: 'read' },
-    { resource: 'kanban', action: 'update' },
-    { resource: 'collectors', action: 'manage' },
     { resource: 'fleet', action: 'read' },
     { resource: 'logistics', action: 'read' },
   ],
