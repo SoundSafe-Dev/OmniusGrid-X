@@ -414,7 +414,18 @@ export const UsersPage: FC = () => {
               </Table.Row>
             </Table.Head>
             <Table.Body>
-              {invitations.length === 0 ? (
+              {invitationsQuery.isError ? (
+                /* A FAILED READ IS NOT AN EMPTY LIST. "No invitations yet." is a claim about
+                   the organisation; a failed request supports no claim at all, and an admin
+                   who reads it stops chasing an invitation that may well be outstanding.
+                   Same fix as FS-482 and the failureIsNotEmptiness sweep. */
+                <Table.Row>
+                  <Table.Cell colSpan={6} className="py-8 text-center text-status-alarm" role="alert">
+                    Invitations could not be loaded — this is a loading failure, not an
+                    absence of invitations.
+                  </Table.Cell>
+                </Table.Row>
+              ) : invitations.length === 0 ? (
                 <Table.Row>
                   <Table.Cell colSpan={6} className="py-8 text-center text-opsgrid-text-secondary">
                     No invitations yet.

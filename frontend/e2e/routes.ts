@@ -22,4 +22,7 @@ export const ROUTES = [
   '/logistics/yard', '/logistics/transportation', '/erp', '/compliance', '/nlp', '/intake',
   '/admin/users', '/admin/collectors', '/admin/health', '/admin/settings',
   '/admin/notifications', '/admin/errors', '/admin/fleet', '/admin/export-deliveries',
+  // Added with the 2026-08-08 Hridyansh merge. A routed page outside this list is a
+  // page nothing checks for rendering a field that never arrived.
+  '/accept-invite', '/admin/fleet/targeting', '/admin/fleet/maintenance',
 ]

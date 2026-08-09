@@ -158,7 +158,16 @@ class Asset(Base):
     workcell_id = UUIDForeignKey("workcells.id", nullable=False)  # NOT NULL since migration 013
     #: The third edge. `organization` and `asset_type` were declared and this was not,
     #: so an asset could still be flushed before its workcell (FS-408/410).
-    workcell = relationship("Workcell", lazy="raise")
+    #:
+    #: `foreign_keys` is REQUIRED as of the 2026-08-08 merge, and the reason is worth
+    #: keeping: there are now TWO foreign-key paths from assets to workcells — this
+    #: single-column one, and Hridyansh's composite `fk_assets_workcell_org`, which also
+    #: pins `organization_id` so an asset cannot point at another tenant's workcell.
+    #: Both are wanted; his is strictly stronger. But SQLAlchemy refuses to guess between
+    #: them — `AmbiguousForeignKeysError` — and that single unresolved relationship took
+    #: **719 tests** down with it, because every fixture that touches an Asset builds this
+    #: mapper.
+    workcell = relationship("Workcell", lazy="raise", foreign_keys=[workcell_id])
     asset_type_id = UUIDForeignKey("asset_types.id")
     name = Column(String(255), nullable=False)
     serial_number = Column(String(255))
