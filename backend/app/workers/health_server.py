@@ -51,6 +51,19 @@ WORKER_UNITS = Counter(
     ["worker"],
 )
 
+#: OTA rollout work that failed and was swallowed to keep the loop alive (2026-08-08).
+#:
+#: Both sites below are RIGHT to continue — a rollout whose command could not be cancelled
+#: must not abort the other cancellations, and a dispatch iteration that raises must not
+#: kill the orchestrator. But "keep going" and "tell nobody" are different decisions, and
+#: only the second one is a defect. `stage` distinguishes them so a rollout that is quietly
+#: failing every cycle is visible as a rate rather than as a log line somebody greps for.
+OTA_ROLLOUT_FAILURES = Counter(
+    "opsgrid_ota_rollout_failures_total",
+    "OTA rollout operations that failed and were logged rather than raised",
+    ["stage"],
+)
+
 #: Telemetry this worker ACCEPTED from a device and then could not process (FS-464).
 #:
 #: The message is published to a dead-letter topic so it can be replayed, which makes it

@@ -324,7 +324,7 @@ def _mark_invitation_expired(
         organization_id=invitation.organization_id,
         action="user_invitation_expired",
         resource_type="user_invitation",
-        resource_id=invitation.id,
+        resource_id=str(invitation.id),
         actor_id=actor_id,
         details={
             "email": invitation.normalized_email,
@@ -400,7 +400,7 @@ async def _record_delivery(
             else "user_invitation_delivery_failed"
         ),
         resource_type="user_invitation",
-        resource_id=invitation.id,
+        resource_id=str(invitation.id),
         actor_id=actor_id,
         details={
             "delivery_status": invitation.delivery_status,
@@ -585,7 +585,7 @@ async def create_invitation(
         organization_id=organization_id,
         action="user_invitation_created",
         resource_type="user_invitation",
-        resource_id=invitation.id,
+        resource_id=str(invitation.id),
         actor_id=current_user.id,
         details={
             "email": invitation.normalized_email,
@@ -656,7 +656,7 @@ async def resend_invitation(
         organization_id=organization_id,
         action="user_invitation_resent",
         resource_type="user_invitation",
-        resource_id=invitation.id,
+        resource_id=str(invitation.id),
         actor_id=current_user.id,
         details={
             "email": invitation.normalized_email,
@@ -718,7 +718,7 @@ async def revoke_invitation(
         organization_id=organization_id,
         action="user_invitation_revoked",
         resource_type="user_invitation",
-        resource_id=invitation.id,
+        resource_id=str(invitation.id),
         actor_id=current_user.id,
         details={
             "email": invitation.normalized_email,
@@ -829,7 +829,7 @@ async def update_user(
             organization_id=organization_id,
             action="user_profile_updated",
             resource_type="user",
-            resource_id=target.id,
+            resource_id=str(target.id),
             actor_id=current_user.id,
             details={"before": {"name": before["name"]}, "after": {"name": new_name}},
         )
@@ -840,7 +840,7 @@ async def update_user(
             organization_id=organization_id,
             action="user_email_changed",
             resource_type="user",
-            resource_id=target.id,
+            resource_id=str(target.id),
             actor_id=current_user.id,
             details={
                 "before": {"email": before["email"]},
@@ -854,7 +854,7 @@ async def update_user(
             organization_id=organization_id,
             action="user_role_changed",
             resource_type="user",
-            resource_id=target.id,
+            resource_id=str(target.id),
             actor_id=current_user.id,
             details={
                 "before": {"role": before["role"]},
@@ -872,7 +872,7 @@ async def update_user(
             organization_id=organization_id,
             action="user_sessions_revoked",
             resource_type="user",
-            resource_id=target.id,
+            resource_id=str(target.id),
             actor_id=current_user.id,
             details={"reason": "role_changed", "session_count": revoked_count},
         )
@@ -923,7 +923,7 @@ async def deactivate_user(
         organization_id=organization_id,
         action="user_deactivated",
         resource_type="user",
-        resource_id=target.id,
+        resource_id=str(target.id),
         actor_id=current_user.id,
         details={"email": target.email, "role": target.role},
     )
@@ -933,7 +933,7 @@ async def deactivate_user(
         organization_id=organization_id,
         action="user_sessions_revoked",
         resource_type="user",
-        resource_id=target.id,
+        resource_id=str(target.id),
         actor_id=current_user.id,
         details={"reason": "user_deactivated", "session_count": revoked_count},
     )
@@ -961,7 +961,7 @@ async def reactivate_user(
         organization_id=organization_id,
         action="user_reactivated",
         resource_type="user",
-        resource_id=target.id,
+        resource_id=str(target.id),
         actor_id=current_user.id,
         details={
             "email": target.email,
@@ -1065,7 +1065,7 @@ async def accept_invitation(
         organization_id=invitation.organization_id,
         action="user_invitation_accepted",
         resource_type="user_invitation",
-        resource_id=invitation.id,
+        resource_id=str(invitation.id),
         actor_id=user.id,
         details={
             "user_id": str(user.id),
@@ -1079,7 +1079,7 @@ async def accept_invitation(
         organization_id=invitation.organization_id,
         action="user_created",
         resource_type="user",
-        resource_id=user.id,
+        resource_id=str(user.id),
         actor_id=user.id,
         details={
             "source": "invitation",

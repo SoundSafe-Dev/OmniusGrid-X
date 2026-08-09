@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.api.auth import get_current_active_user
+from app.workers.health_server import OTA_ROLLOUT_FAILURES
 from app.core.tenant import get_tenant_db, get_tenant_org_id
 from app.db.models import (
     AgentRelease,
@@ -878,6 +879,10 @@ async def cancel_rollout(
                 organization_id=str(org_id),
             )
         except Exception as exc:  # noqa: BLE001
+            # Counted. Cancelling a rollout that leaves live commands behind is the one
+            # outcome an operator must not learn about from a log file — the fleet keeps
+            # executing an instruction the console says was cancelled.
+            OTA_ROLLOUT_FAILURES.labels(stage="command_cancel").inc()
             logger.error(
                 "ota_rollout_command_cancel_failed",
                 rollout_id=str(rollout_id),

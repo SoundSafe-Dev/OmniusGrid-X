@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
-from typing import Any, Literal
+from typing import Any, List, Literal, Optional
 from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
@@ -86,7 +86,7 @@ def _audit(
             organization_id=org_id,
             action=action,
             resource_type=resource_type,
-            resource_id=resource_id,
+            resource_id=str(resource_id),
             details=details,
             ip_address=request.client.host if request.client else None,
             user_agent=request.headers.get("user-agent"),
@@ -162,6 +162,105 @@ class TargetPreviewCreate(BaseModel):
     release_id: UUID
     selector: dict[str, Any]
     ttl_seconds: int | None = Field(default=None, ge=60, le=1800)
+
+
+# RESPONSE MODELS, added 2026-08-08 during the merge that brought this router onto
+# converged-pre-main. The router already built every shape below in its `_*_response`
+# helpers — these DECLARE what it was already returning. Nothing about the wire changed.
+#
+# WHY IT WAS WORTH DOING RATHER THAN ALLOWING. A route with no `response_model` is
+# invisible to the API contract gate, absent from the generated SDK, and a promise the
+# OpenAPI schema cannot make — and this router added 27 of them at once, against a ratchet
+# whose whole rule is that it only goes down. Raising the allowance would have been one
+# line and would have widened a gate to fit a merge.
+
+
+class SiteResponse(BaseModel):
+    id: str
+    key: str
+    name: str
+    description: Optional[str] = None
+    is_active: bool
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+
+
+class TagResponse(SiteResponse):
+    color: Optional[str] = None
+
+
+class GroupResponse(SiteResponse):
+    pass
+
+
+class CohortResponse(BaseModel):
+    id: str
+    name: str
+    description: Optional[str] = None
+    query_version: Optional[int] = None
+    query: Optional[dict[str, Any]] = None
+    is_active: bool
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+
+
+class TargetPreviewResponse(BaseModel):
+    id: str
+    release_id: str
+    selector: Optional[dict[str, Any]] = None
+    asset_ids: list[str] = []
+    agents: list[Any] = []
+    excluded_assets: list[Any] = []
+    warnings: list[Any] = []
+    membership_hash: Optional[str] = None
+    asset_count: int
+    agent_count: int
+    created_by: str
+    expires_at: Optional[datetime] = None
+    created_at: Optional[datetime] = None
+    #: Derived, not stored. A preview whose window has closed still answers, and a caller
+    #: that cannot tell reuses a membership set that no longer reflects the fleet.
+    expired: bool
+
+
+class WorkcellSiteResponse(BaseModel):
+    """A workcell as this router reports it — id, name, and the site it belongs to."""
+
+    id: str
+    name: Optional[str] = None
+    site_id: Optional[str] = None
+    site_key: Optional[str] = None
+
+
+class AssetTagAssignmentResponse(BaseModel):
+    """The result of attaching or detaching one asset. `assigned` is the state AFTER the
+    call, so a client does not have to infer it from the verb."""
+
+    asset_id: str
+    tag_id: Optional[str] = None
+    group_id: Optional[str] = None
+    assigned: bool
+
+
+class BulkTagAssignmentResponse(BaseModel):
+    applied: int
+    skipped: int
+    errors: list[Any] = []
+
+
+class FleetInventoryResponse(BaseModel):
+    sites: list[SiteResponse] = []
+    tags: list[TagResponse] = []
+    groups: list[GroupResponse] = []
+    cohorts: list[CohortResponse] = []
+
+
+class DeactivatedResponse(BaseModel):
+    """A soft delete. The id is echoed because these routes deactivate rather than remove,
+    and a caller that assumed removal would otherwise have no way to tell."""
+
+    id: str
+    is_active: bool = False
 
 
 def _site_response(site: Site) -> dict[str, Any]:
@@ -247,7 +346,7 @@ async def _tenant_asset(asset_id: UUID, org_id: UUID, db: AsyncSession) -> Asset
     return asset
 
 
-@router.get("/sites")
+@router.get("/sites", response_model=List[SiteResponse])
 @rate_limit("100/minute")
 async def list_sites(
     request: Request,
@@ -264,6 +363,7 @@ async def list_sites(
 
 @router.post(
     "/sites",
+    response_model=SiteResponse,
     status_code=status.HTTP_201_CREATED,
     dependencies=[Depends(require_admin)],
 )
@@ -296,14 +396,14 @@ async def create_site(
         org_id=org_id,
         action="fleet_site_created",
         resource_type="site",
-        resource_id=site.id,
+        resource_id=str(site.id),
         details={"key": key, "name": name},
     )
     await _commit_conflict(db, "A site with that key or name already exists")
     return _site_response(site)
 
 
-@router.patch("/sites/{site_id}", dependencies=[Depends(require_admin)])
+@router.patch("/sites/{site_id}", response_model=SiteResponse, dependencies=[Depends(require_admin)])
 @rate_limit("30/minute")
 async def update_site(
     request: Request,
@@ -340,7 +440,7 @@ async def update_site(
         org_id=org_id,
         action="fleet_site_updated",
         resource_type="site",
-        resource_id=site.id,
+        resource_id=str(site.id),
         details={
             "before": {
                 "key": before["key"],
@@ -360,7 +460,7 @@ async def update_site(
     return _site_response(site)
 
 
-@router.delete("/sites/{site_id}", dependencies=[Depends(require_admin)])
+@router.delete("/sites/{site_id}", response_model=DeactivatedResponse, dependencies=[Depends(require_admin)])
 @rate_limit("30/minute")
 async def deactivate_site(
     request: Request,
@@ -385,14 +485,14 @@ async def deactivate_site(
         org_id=org_id,
         action="fleet_site_deactivated",
         resource_type="site",
-        resource_id=site.id,
+        resource_id=str(site.id),
         details={"name": site.name},
     )
     await db.commit()
     return _site_response(site)
 
 
-@router.get("/workcells")
+@router.get("/workcells", response_model=List[WorkcellSiteResponse])
 @rate_limit("100/minute")
 async def list_workcells(
     request: Request,
@@ -428,6 +528,7 @@ async def list_workcells(
 
 @router.patch(
     "/workcells/{workcell_id}/site",
+    response_model=WorkcellSiteResponse,
     dependencies=[Depends(require_admin)],
 )
 @rate_limit("30/minute")
@@ -471,7 +572,7 @@ async def assign_workcell_site(
         org_id=org_id,
         action="fleet_workcell_site_assigned",
         resource_type="workcell",
-        resource_id=workcell.id,
+        resource_id=str(workcell.id),
         details={
             "previous_site_id": str(previous_site_id) if previous_site_id else None,
             "site_id": str(payload.site_id) if payload.site_id else None,
@@ -485,7 +586,7 @@ async def assign_workcell_site(
     }
 
 
-@router.get("/tags")
+@router.get("/tags", response_model=List[TagResponse])
 @rate_limit("100/minute")
 async def list_tags(
     request: Request,
@@ -502,6 +603,7 @@ async def list_tags(
 
 @router.post(
     "/tags",
+    response_model=TagResponse,
     status_code=status.HTTP_201_CREATED,
     dependencies=[Depends(require_admin)],
 )
@@ -535,14 +637,14 @@ async def create_tag(
         org_id=org_id,
         action="fleet_tag_created",
         resource_type="fleet_tag",
-        resource_id=tag.id,
+        resource_id=str(tag.id),
         details={"key": key, "name": name},
     )
     await _commit_conflict(db, "A tag with that key or name already exists")
     return _tag_response(tag)
 
 
-@router.patch("/tags/{tag_id}", dependencies=[Depends(require_admin)])
+@router.patch("/tags/{tag_id}", response_model=TagResponse, dependencies=[Depends(require_admin)])
 @rate_limit("30/minute")
 async def update_tag(
     request: Request,
@@ -582,7 +684,7 @@ async def update_tag(
         org_id=org_id,
         action="fleet_tag_updated",
         resource_type="fleet_tag",
-        resource_id=tag.id,
+        resource_id=str(tag.id),
         details={
             "before": {
                 "key": before["key"],
@@ -604,7 +706,7 @@ async def update_tag(
     return _tag_response(tag)
 
 
-@router.delete("/tags/{tag_id}", dependencies=[Depends(require_admin)])
+@router.delete("/tags/{tag_id}", response_model=DeactivatedResponse, dependencies=[Depends(require_admin)])
 @rate_limit("30/minute")
 async def deactivate_tag(
     request: Request,
@@ -632,7 +734,7 @@ async def deactivate_tag(
         org_id=org_id,
         action="fleet_tag_deactivated",
         resource_type="fleet_tag",
-        resource_id=tag.id,
+        resource_id=str(tag.id),
         details={"name": tag.name},
     )
     await db.commit()
@@ -641,6 +743,7 @@ async def deactivate_tag(
 
 @router.put(
     "/tags/{tag_id}/assets/{asset_id}",
+    response_model=AssetTagAssignmentResponse,
     dependencies=[Depends(require_admin)],
 )
 @rate_limit("60/minute")
@@ -690,7 +793,7 @@ async def assign_tag(
             org_id=org_id,
             action="fleet_tag_assigned",
             resource_type="asset",
-            resource_id=asset_id,
+            resource_id=str(asset_id),
             details={"tag_id": str(tag_id)},
         )
     await db.commit()
@@ -699,6 +802,7 @@ async def assign_tag(
 
 @router.delete(
     "/tags/{tag_id}/assets/{asset_id}",
+    response_model=AssetTagAssignmentResponse,
     dependencies=[Depends(require_admin)],
 )
 @rate_limit("60/minute")
@@ -740,14 +844,14 @@ async def remove_tag(
             org_id=org_id,
             action="fleet_tag_removed",
             resource_type="asset",
-            resource_id=asset_id,
+            resource_id=str(asset_id),
             details={"tag_id": str(tag_id)},
         )
     await db.commit()
     return {"asset_id": str(asset_id), "tag_id": str(tag_id), "removed": removed}
 
 
-@router.post("/tags/bulk-assignments", dependencies=[Depends(require_admin)])
+@router.post("/tags/bulk-assignments", response_model=BulkTagAssignmentResponse, dependencies=[Depends(require_admin)])
 @rate_limit("30/minute")
 async def bulk_tag_assignments(
     request: Request,
@@ -869,7 +973,7 @@ async def bulk_tag_assignments(
             org_id=org_id,
             action=f"fleet_tag_bulk_{payload.operation}",
             resource_type="fleet_tag",
-            resource_id=payload.tag_id,
+            resource_id=str(payload.tag_id),
             details={
                 "asset_ids": [str(asset_id) for asset_id in changed],
                 "changed_count": len(changed),
@@ -884,7 +988,7 @@ async def bulk_tag_assignments(
     }
 
 
-@router.get("/groups")
+@router.get("/groups", response_model=List[GroupResponse])
 @rate_limit("100/minute")
 async def list_groups(
     request: Request,
@@ -901,6 +1005,7 @@ async def list_groups(
 
 @router.post(
     "/groups",
+    response_model=GroupResponse,
     status_code=status.HTTP_201_CREATED,
     dependencies=[Depends(require_admin)],
 )
@@ -933,14 +1038,14 @@ async def create_group(
         org_id=org_id,
         action="fleet_group_created",
         resource_type="fleet_group",
-        resource_id=group.id,
+        resource_id=str(group.id),
         details={"key": key, "name": name},
     )
     await _commit_conflict(db, "A group with that key or name already exists")
     return _group_response(group)
 
 
-@router.patch("/groups/{group_id}", dependencies=[Depends(require_admin)])
+@router.patch("/groups/{group_id}", response_model=GroupResponse, dependencies=[Depends(require_admin)])
 @rate_limit("30/minute")
 async def update_group(
     request: Request,
@@ -980,7 +1085,7 @@ async def update_group(
         org_id=org_id,
         action="fleet_group_updated",
         resource_type="fleet_group",
-        resource_id=group.id,
+        resource_id=str(group.id),
         details={
             "before": {
                 "key": before["key"],
@@ -1000,7 +1105,7 @@ async def update_group(
     return _group_response(group)
 
 
-@router.delete("/groups/{group_id}", dependencies=[Depends(require_admin)])
+@router.delete("/groups/{group_id}", response_model=DeactivatedResponse, dependencies=[Depends(require_admin)])
 @rate_limit("30/minute")
 async def deactivate_group(
     request: Request,
@@ -1028,7 +1133,7 @@ async def deactivate_group(
         org_id=org_id,
         action="fleet_group_deactivated",
         resource_type="fleet_group",
-        resource_id=group.id,
+        resource_id=str(group.id),
         details={"name": group.name},
     )
     await db.commit()
@@ -1037,6 +1142,7 @@ async def deactivate_group(
 
 @router.put(
     "/groups/{group_id}/assets/{asset_id}",
+    response_model=AssetTagAssignmentResponse,
     dependencies=[Depends(require_admin)],
 )
 @rate_limit("60/minute")
@@ -1086,7 +1192,7 @@ async def assign_group_member(
             org_id=org_id,
             action="fleet_group_member_added",
             resource_type="asset",
-            resource_id=asset_id,
+            resource_id=str(asset_id),
             details={"group_id": str(group_id)},
         )
     await db.commit()
@@ -1095,6 +1201,7 @@ async def assign_group_member(
 
 @router.delete(
     "/groups/{group_id}/assets/{asset_id}",
+    response_model=AssetTagAssignmentResponse,
     dependencies=[Depends(require_admin)],
 )
 @rate_limit("60/minute")
@@ -1136,14 +1243,14 @@ async def remove_group_member(
             org_id=org_id,
             action="fleet_group_member_removed",
             resource_type="asset",
-            resource_id=asset_id,
+            resource_id=str(asset_id),
             details={"group_id": str(group_id)},
         )
     await db.commit()
     return {"asset_id": str(asset_id), "group_id": str(group_id), "removed": removed}
 
 
-@router.get("/cohorts")
+@router.get("/cohorts", response_model=List[CohortResponse])
 @rate_limit("100/minute")
 async def list_cohorts(
     request: Request,
@@ -1158,7 +1265,7 @@ async def list_cohorts(
     return [_cohort_response(cohort) for cohort in cohorts]
 
 
-@router.get("/cohorts/{cohort_id}")
+@router.get("/cohorts/{cohort_id}", response_model=CohortResponse)
 @rate_limit("100/minute")
 async def get_cohort(
     request: Request,
@@ -1181,6 +1288,7 @@ async def get_cohort(
 
 @router.post(
     "/cohorts",
+    response_model=CohortResponse,
     status_code=status.HTTP_201_CREATED,
     dependencies=[Depends(require_admin)],
 )
@@ -1214,14 +1322,14 @@ async def create_cohort(
         org_id=org_id,
         action="fleet_cohort_created",
         resource_type="fleet_cohort",
-        resource_id=cohort.id,
+        resource_id=str(cohort.id),
         details={"name": cohort.name, "query_version": 1},
     )
     await _commit_conflict(db, "A cohort with that name already exists")
     return _cohort_response(cohort)
 
 
-@router.patch("/cohorts/{cohort_id}", dependencies=[Depends(require_admin)])
+@router.patch("/cohorts/{cohort_id}", response_model=CohortResponse, dependencies=[Depends(require_admin)])
 @rate_limit("30/minute")
 async def update_cohort(
     request: Request,
@@ -1262,7 +1370,7 @@ async def update_cohort(
         org_id=org_id,
         action="fleet_cohort_updated",
         resource_type="fleet_cohort",
-        resource_id=cohort.id,
+        resource_id=str(cohort.id),
         details={
             "before": {
                 "name": before["name"],
@@ -1280,7 +1388,7 @@ async def update_cohort(
     return _cohort_response(cohort)
 
 
-@router.delete("/cohorts/{cohort_id}", dependencies=[Depends(require_admin)])
+@router.delete("/cohorts/{cohort_id}", response_model=DeactivatedResponse, dependencies=[Depends(require_admin)])
 @rate_limit("30/minute")
 async def deactivate_cohort(
     request: Request,
@@ -1308,14 +1416,14 @@ async def deactivate_cohort(
         org_id=org_id,
         action="fleet_cohort_deactivated",
         resource_type="fleet_cohort",
-        resource_id=cohort.id,
+        resource_id=str(cohort.id),
         details={"name": cohort.name},
     )
     await db.commit()
     return _cohort_response(cohort)
 
 
-@router.get("/inventory")
+@router.get("/inventory", response_model=FleetInventoryResponse)
 @rate_limit("100/minute")
 async def fleet_inventory(
     request: Request,
@@ -1363,6 +1471,7 @@ async def fleet_inventory(
 
 @router.post(
     "/target-previews",
+    response_model=TargetPreviewResponse,
     status_code=status.HTTP_201_CREATED,
     dependencies=[Depends(require_admin)],
 )
@@ -1419,7 +1528,7 @@ async def create_target_preview(
         org_id=org_id,
         action="fleet_target_preview_created",
         resource_type="fleet_target_preview",
-        resource_id=preview.id,
+        resource_id=str(preview.id),
         details={
             "release_id": str(release.id),
             "asset_count": preview.asset_count,
@@ -1431,7 +1540,7 @@ async def create_target_preview(
     return _preview_response(preview)
 
 
-@router.get("/target-previews/{preview_id}")
+@router.get("/target-previews/{preview_id}", response_model=TargetPreviewResponse)
 @rate_limit("100/minute")
 async def get_target_preview(
     request: Request,

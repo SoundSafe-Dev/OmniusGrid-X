@@ -216,7 +216,7 @@ def test_maintenance_window_schema_is_force_rls(admin_sync_url):
     try:
         with conn.cursor() as cur:
             migration_sql = (
-                MIGRATIONS_DIR / "048_maintenance_windows.sql"
+                MIGRATIONS_DIR / "066_maintenance_windows.sql"
             ).read_text()
             cur.execute(migration_sql)
             cur.execute(migration_sql)

@@ -369,7 +369,7 @@ def add_remote_requested_audit(
             organization_id=command.organization_id,
             action="remote_agent_operation_requested",
             resource_type="remote_agent_command",
-            resource_id=command.id,
+            resource_id=str(command.id),
             details=details,
             ip_address=context.ip_address,
             user_agent=context.user_agent,
@@ -400,7 +400,7 @@ def add_remote_terminal_audit(
                 else "remote_agent_operation_failed"
             ),
             resource_type="remote_agent_command",
-            resource_id=command.id,
+            resource_id=str(command.id),
             details={
                 "phase": "terminal",
                 "status": status,

@@ -12,6 +12,7 @@ from sqlalchemy import and_, or_, select, text
 from sqlalchemy.orm import selectinload
 
 from app.core.config import settings
+from app.workers.health_server import OTA_ROLLOUT_FAILURES
 from app.db.database import AsyncSessionLocal
 from app.db.models import (
     AgentRelease,
@@ -87,6 +88,10 @@ class RolloutOrchestrator:
             try:
                 await self.dispatch_due_rollouts()
             except Exception as exc:  # noqa: BLE001
+                # Counted, not just logged. The loop must survive a bad iteration, but a
+                # dispatcher failing every cycle and a dispatcher with nothing to do look
+                # identical in the logs and different on a graph.
+                OTA_ROLLOUT_FAILURES.labels(stage="dispatch_iteration").inc()
                 logger.error("ota_rollout_dispatch_iteration_failed", error=str(exc))
             await asyncio.sleep(settings.OTA_ROLLOUT_DISPATCH_INTERVAL_SECONDS)
 

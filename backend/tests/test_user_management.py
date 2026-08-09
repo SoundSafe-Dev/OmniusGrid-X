@@ -738,7 +738,7 @@ def test_invitation_migration_is_idempotent_and_forces_rls(admin_sync_url):
         Path(__file__).resolve().parents[2]
         / "database"
         / "migrations"
-        / "049_user_invitations.sql"
+        / "067_user_invitations.sql"
     ).read_text()
     conn = psycopg2.connect(admin_sync_url)
     conn.autocommit = True

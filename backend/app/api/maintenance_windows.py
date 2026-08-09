@@ -137,7 +137,7 @@ def _audit(
             organization_id=org_id,
             action=action,
             resource_type="maintenance_window",
-            resource_id=window_id,
+            resource_id=str(window_id),
             details=details,
             ip_address=request.client.host if request.client else None,
             user_agent=request.headers.get("user-agent"),
