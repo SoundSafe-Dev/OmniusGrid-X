@@ -482,7 +482,18 @@ export const MaintenanceWindows: FC = () => {
                         <Button
                           size="sm"
                           variant="outline"
-                          onClick={() => disableWindow.mutate(window.id)}
+                          onClick={() =>
+                            disableWindow.mutate(window.id, {
+                              // A window that is still enforcing while the operator
+                              // believes it is off is the whole cost of a silent failure
+                              // here — the next rollout waits for a window nobody meant
+                              // to keep. The page already has a banner; this uses it.
+                              onError: (e: unknown) =>
+                                setFeedback(
+                                  `The window was not disabled: ${handleApiError(e).message}`,
+                                ),
+                            })
+                          }
                           loading={disableWindow.isPending}
                         >
                           <Power size={14} className="mr-1" /> Disable

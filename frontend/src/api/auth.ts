@@ -26,7 +26,11 @@ const normalizeUser = (value: RawUser): User => ({
   name: value.name ?? value.full_name ?? '',
   role: value.role ?? 'viewer',
   organizationId: value.organizationId ?? value.organization_id,
-  isActive: value.isActive ?? value.is_active ?? true,
+  // FALSE, not true. `UserResponse` always sends `is_active`, so this branch is dead —
+  // but if it ever fires, showing a user as ACTIVE is claiming access we did not observe,
+  // and showing them as inactive merely prompts a reactivation nobody needed. FS-482:
+  // when a failure has to default somewhere, default away from the irreversible side.
+  isActive: value.isActive ?? value.is_active ?? false,
   // FS-442: the wire field is `last_login`. `lastLoginAt` was declared once and
   // nothing ever sent it, so the type carries `lastLogin` — the fallbacks stay.
   lastLogin: value.lastLogin ?? value.last_login_at ?? value.last_login,

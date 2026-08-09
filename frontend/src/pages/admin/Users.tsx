@@ -359,7 +359,17 @@ export const UsersPage: FC = () => {
               </Table.Row>
             </Table.Head>
             <Table.Body>
-              {users.length === 0 ? (
+              {usersQuery.isError ? (
+                /* A FAILED READ IS NOT AN EMPTY ORGANISATION. "No users found" is a claim
+                   about the tenant; a failed request supports no claim at all, and an
+                   admin who reads it concludes the invitations they sent never landed. */
+                <Table.Row>
+                  <Table.Cell colSpan={5} className="py-8 text-center text-status-alarm" role="alert">
+                    Users could not be loaded — this is a loading failure, not an empty
+                    organisation.
+                  </Table.Cell>
+                </Table.Row>
+              ) : users.length === 0 ? (
                 <Table.Row>
                   <Table.Cell colSpan={5} className="py-8 text-center text-opsgrid-text-secondary">
                     No users found.

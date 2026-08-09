@@ -1,4 +1,4 @@
-import { FC, useMemo } from 'react';
+import { FC, useMemo, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { ArrowLeft, AlertTriangle, RefreshCw } from 'lucide-react';
 import {
@@ -15,6 +15,7 @@ import {
   usePauseAgentRollout,
   useResumeAgentRollout,
 } from '../../hooks/useFleet';
+import { handleApiError } from '../../api';
 import {
   AgentRolloutStatus,
   AgentRolloutTarget,
@@ -77,6 +78,7 @@ export const FleetRolloutDetail: FC = () => {
   // re-widens a property access inside a closure — a local binding it can narrow says
   // the same thing without telling the compiler to stop checking.
   const rolloutRow = rollout.data;
+  const [actionError, setActionError] = useState<string | null>(null);
 
   const waveGroups = useMemo(
     () => groupByWave(rollout.data?.targets ?? []),
@@ -97,6 +99,11 @@ export const FleetRolloutDetail: FC = () => {
           <h1 className="text-2xl font-bold text-opsgrid-text">Rollout Detail</h1>
           <p className="text-sm text-opsgrid-text-secondary">Per-device state, command IDs, and rollout events.</p>
         </div>
+      {actionError && (
+        <p className="text-xs text-status-alarm" role="alert">
+          {actionError}
+        </p>
+      )}
         <div className="flex flex-wrap items-center gap-2">
           <Button variant="secondary" onClick={() => rollout.refetch()}>
             <RefreshCw size={16} className="mr-2" />
@@ -119,7 +126,14 @@ export const FleetRolloutDetail: FC = () => {
           {rolloutRow?.status === 'paused' && (
             <Button
               variant="secondary"
-              onClick={() => resumeRollout.mutate(rolloutRow.id)}
+              onClick={() =>
+                resumeRollout.mutate(rolloutRow.id, {
+                  // A resume that fails leaves the rollout PAUSED while the button that
+                  // was just pressed reports nothing — the fleet sits waiting for an
+                  // update the operator believes they released.
+                  onError: (e: unknown) => setActionError(handleApiError(e).message),
+                })
+              }
               loading={resumeRollout.isPending}
             >
               Resume

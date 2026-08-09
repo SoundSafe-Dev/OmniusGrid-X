@@ -48,6 +48,24 @@ const LITERAL_DEFAULT =
  * fixed.
  */
 const ALLOWED: Record<string, string> = {
+  // `normalizeUser`, arrived 2026-08-08 with the merge. Every one of these is the SECOND
+  // half of a camelCase/snake_case fallback chain — the client reading one wire shape or
+  // the other — and `UserResponse` declares all five as required, so the literal is a dead
+  // last resort rather than a value standing in for data. `isActive` is NOT here: it
+  // defaulted to `true`, which claims access nobody observed, and now defaults to false.
+  'auth.ts:email': 'BENIGN. Required on UserResponse; the literal is the tail of a naming fallback.',
+  'auth.ts:name': "BENIGN. `name ?? full_name ?? ''` — a user genuinely may have no display name.",
+  'auth.ts:role':
+    'BENIGN, and deliberately the LEAST privileged of the roles. Required on UserResponse, '
+    + 'so this is dead — and if it ever fires, viewer grants nothing.',
+  'auth.ts:isActive':
+    'BENIGN, and the DIRECTION is the point. It defaulted to `true` when it arrived — '
+    + 'claiming access nobody observed. Required on UserResponse, so the branch is dead; '
+    + 'if it ever fires, false merely prompts a reactivation nobody needed, where true '
+    + 'tells an admin someone can log in who may not be able to. FS-482: default away '
+    + 'from the irreversible side.',
+  'auth.ts:createdAt': 'BENIGN. Required on UserResponse; empty renders as an em dash.',
+  'auth.ts:updatedAt': 'BENIGN. Required on UserResponse; empty renders as an em dash.',
   'analysisSessions.ts:title':
     'REQUEST. The title of a session the client is creating, when the caller supplied none.',
   'client.ts:status':
