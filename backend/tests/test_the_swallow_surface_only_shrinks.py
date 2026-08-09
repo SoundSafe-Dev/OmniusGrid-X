@@ -50,7 +50,14 @@ MAX_SWALLOWING = 201
 #: Eleven, not the ten a body-only scan reports: `ingestion.py`'s top-level handler counts
 #: through `_dead_letter`. Set to the exact figure — a floor one below the real number is
 #: a free regression nobody would see.
-MIN_COUNTED = 11
+#:
+#: RAISED TO 13 with the Hridyansh merge. His two new swallows are both RIGHT to continue —
+#: a rollout whose command cannot be cancelled must not abort the other cancellations, and a
+#: dispatch iteration that raises must not kill the orchestrator — so they were counted
+#: (`opsgrid_ota_rollout_failures_total`) rather than narrowed. The total stayed at 201
+#: because two websocket sends were narrowed from `except Exception` in exchange, which is
+#: what this file means by "lower some other allowance first".
+MIN_COUNTED = 13
 
 #: Files whose swallows are all counted, and must stay that way. A regression here is a
 #: specific failure going dark again, which the totals above cannot show: swapping a counted

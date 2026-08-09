@@ -22,6 +22,14 @@ const pauseMutation = { mutate: vi.fn(), isPending: false, isError: false }
 const cancelMutation = { mutate: vi.fn(), isPending: false, isError: false }
 
 vi.mock('../../hooks/useFleet', () => ({
+  // ADDED 2026-08-08 by the Hridyansh merge. A partial `vi.mock` throws on any
+  // export the component reaches for and the mock omits — so a page that gains a
+  // hook takes its test file with it. Stubbed neutrally; the assertions below are
+  // about the affordances this file already covered.
+  useFleetCohorts: () => ({ data: undefined, isLoading: false, isError: false, mutate: vi.fn(), mutateAsync: vi.fn(), isPending: false }),
+  useResumeAgentRollout: () => ({ data: undefined, isLoading: false, isError: false, mutate: vi.fn(), mutateAsync: vi.fn(), isPending: false }),
+  useRollout: () => ({ data: undefined, isLoading: false, isError: false, mutate: vi.fn(), mutateAsync: vi.fn(), isPending: false }),
+  useCreateFleetTargetPreview: () => ({ data: undefined, isLoading: false, isError: false, mutate: vi.fn(), mutateAsync: vi.fn(), isPending: false }),
   useAgentRollout: (id: string) => useAgentRollout(id),
   usePauseAgentRollout: () => pauseMutation,
   useCancelAgentRollout: () => cancelMutation,

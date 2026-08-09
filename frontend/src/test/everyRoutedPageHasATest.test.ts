@@ -110,7 +110,10 @@ describe('the resolver is not vacuous', () => {
   })
 
   it('resolves a barrel export renamed on the way out', () => {
-    expect(pageFileFor(APP, 'Users')).toBe(resolve(SRC, 'pages/admin/AdminPages.tsx'))
+    // `UsersPage as Users`, and since 2026-08-08 the page lives in Users.tsx rather than
+    // AdminPages.tsx. The rename is what this asserts; the file it points at moved with
+    // the merge that split the page out.
+    expect(pageFileFor(APP, 'Users')).toBe(resolve(SRC, 'pages/admin/Users.tsx'))
   })
 })
 

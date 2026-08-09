@@ -24,10 +24,12 @@ import {
   Inbox,
   Database,
   Bug,
+  ListFilter,
   UploadCloud,
   HeartPulse,
   SlidersHorizontal,
   ShieldCheck,
+  CalendarClock,
 } from 'lucide-react';
 import { useUIStore, useAuthStore } from '../../stores';
 import { cn } from '../../utils';
@@ -127,6 +129,8 @@ const navItems: NavItem[] = [
       { path: '/admin/errors', label: 'Error Triage', icon: Bug, description: 'Production error monitoring' },
       { path: '/admin/fleet', label: 'Fleet OTA', icon: UploadCloud, description: 'Edge-agent releases and staged rollouts' },
       { path: '/admin/notifications', label: 'Notifications', icon: Bell, description: 'Alert delivery subscriptions and log' },
+      { path: '/admin/fleet/targeting', label: 'Fleet Targeting', icon: ListFilter, description: 'Sites, tags, groups, and dynamic cohorts' },
+      { path: '/admin/fleet/maintenance', label: 'Maintenance Windows', icon: CalendarClock, description: 'Recurring site windows and rollout scheduling' },
       { path: '/admin/settings', label: 'Settings', icon: Settings, description: 'System configuration' },
     ],
   },
@@ -178,6 +182,7 @@ export const Sidebar: FC<SidebarProps> = ({ mobile = false, onClose }) => {
             <NavLink
               key={child.path}
               to={child.path}
+              end={child.path === '/fleet' || child.path === '/admin/fleet'}
               onClick={() => mobile && onClose?.()}
               className={({ isActive }) =>
                 cn(

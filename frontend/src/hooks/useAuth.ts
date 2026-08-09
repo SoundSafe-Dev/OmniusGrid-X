@@ -23,7 +23,7 @@ export function useAuth() {
 
   const isAdmin = user?.role === 'admin';
   const isOperator = user?.role === 'operator' || user?.role === 'admin';
-  const isMaintenance = user?.role === 'maintenance' || user?.role === 'admin';
+  const isMaintenance = user?.role === 'operator' || user?.role === 'admin';
 
   return {
     user,

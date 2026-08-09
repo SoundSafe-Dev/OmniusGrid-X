@@ -170,7 +170,11 @@ class WebSocketManager:
         for connection in self.active_connections[organization_id]:
             try:
                 await connection.send_json(message)
-            except Exception:
+            # NARROWED 2026-08-08. `except Exception` here read every failure as "this
+            # client has gone", including a TypeError inside the payload we are sending —
+            # so a serialisation bug silently disconnected every subscriber instead of
+            # raising once. These three are what a dead socket actually raises.
+            except (WebSocketDisconnect, ConnectionError, RuntimeError):
                 disconnected.add(connection)
         
         # Clean up disconnected clients
@@ -366,7 +370,11 @@ class WebSocketManager:
                 # Check if client wants this message
                 if self._should_send_to_client(websocket, message):
                     await websocket.send_json(message.to_dict())
-            except Exception:
+            # NARROWED 2026-08-08. `except Exception` here read every failure as "this
+            # client has gone", including a TypeError inside the payload we are sending —
+            # so a serialisation bug silently disconnected every subscriber instead of
+            # raising once. These three are what a dead socket actually raises.
+            except (WebSocketDisconnect, ConnectionError, RuntimeError):
                 disconnected.add(websocket)
         
         # Clean up disconnected clients

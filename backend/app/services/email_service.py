@@ -1,10 +1,11 @@
-"""Reusable company SMTP transport for report delivery."""
+"""Reusable company SMTP transport for report and invitation delivery."""
 
 from __future__ import annotations
 
 import asyncio
 import re
 from collections.abc import Sequence
+from datetime import datetime
 from email.message import EmailMessage
 from typing import Final
 
@@ -30,6 +31,7 @@ __all__ = [
     "EmailDeliveryError",
     "send_email",
     "send_compliance_report_email",
+    "send_user_invitation_email",
 ]
 
 _EMAIL_RE: Final[re.Pattern[str]] = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
@@ -210,6 +212,34 @@ async def send_compliance_report_email(
     )
     await send_email(
         recipients,
+        content.subject,
+        content.text_body,
+        content.html_body,
+        max_attempts=max_attempts,
+    )
+
+
+async def send_user_invitation_email(
+    recipient: str,
+    organization_name: str,
+    requested_role: str,
+    invitation_url: str,
+    expires_at: datetime,
+    *,
+    max_attempts: int = 3,
+) -> None:
+    """Send a one-time user invitation through the shared SMTP transport."""
+
+    from app.services.email_templates import build_user_invitation_email
+
+    content = build_user_invitation_email(
+        organization_name=organization_name,
+        requested_role=requested_role,
+        invitation_url=invitation_url,
+        expires_at=expires_at,
+    )
+    await send_email(
+        [recipient],
         content.subject,
         content.text_body,
         content.html_body,

@@ -7,7 +7,6 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, status
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
-import jwt
 from jwt import PyJWTError as JWTError
 from passlib.context import CryptContext
 from pydantic import BaseModel, ConfigDict, Field
@@ -25,6 +24,7 @@ from app.core.security import (
     create_access_token,
     create_refresh_token,
     decode_local_token,
+    get_current_user_ws,
     token_expiry,
 )
 from app.core.session import SessionManager
@@ -89,8 +89,21 @@ async def _load_local_user(
     ):
         raise _credentials_exception()
 
+    user_id = UUID(payload["sub"])
+    linked_session_jti = payload.get("sid")
+    if (
+        check_revocation
+        and linked_session_jti is not None
+        and not await SessionManager.is_refresh_session_active(
+            linked_session_jti,
+            user_id,
+            db,
+        )
+    ):
+        raise _credentials_exception()
+
     result = await db.execute(
-        select(User).where(User.id == UUID(payload["sub"]))
+        select(User).where(User.id == user_id)
     )
     user = result.scalar_one_or_none()
     if user is None:
@@ -484,82 +497,26 @@ async def get_current_user_info(
     }
 
 
-@router.get(
-    "/users",
-    summary="Get organization users",
-    description="Retrieve users in the authenticated user's organization.",
-)
-async def get_organization_users(
-    skip: int = Query(0, ge=0, description="Rows to skip."),
-    limit: int = Query(50, ge=1, le=200, description="Maximum rows to return."),
-    current_user: User = Depends(get_current_active_user),
-    db: AsyncSession = Depends(get_db),
-):
-    """Get the users in the caller's organization, for assignment pickers.
-
-    PAGINATION IS DECLARED HERE BECAUSE THE CLIENT ALREADY SENT IT. `authApi.getUsers`
-    takes `{ skip, limit }` and types the result `PaginatedResponse<User>`, but this
-    handler declared no query parameters — and **FastAPI drops unknown query parameters
-    silently**, so both were discarded and every caller received the whole organization
-    while believing it had asked for a page. Three of the five fields the declared type
-    promises (`skip`, `limit`, `hasMore`) were never sent at all.
-
-    `total` is a COUNT over the whole organization, not `len(items)`. Returning the page
-    length was correct only while the page was always everything; as a paginated field it
-    would report "3 users" to an organization of 300 and stop the caller from paging.
-
-    camelCase `hasMore` is deliberate and matches `isActive`/`createdAt` below: this
-    router is on the casing seam's never-register list (`transformRegistry.ts`), so what
-    is written here is what TypeScript reads.
-    """
-    if not current_user.organization_id:
-        return {"items": [], "total": 0, "skip": skip, "limit": limit, "hasMore": False}
-
-    scoped = select(User).where(User.organization_id == current_user.organization_id)
-    total = (
-        await db.execute(
-            select(func.count()).select_from(scoped.subquery())
-        )
-    ).scalar_one()
-
-    result = await db.execute(scoped.order_by(User.created_at.asc(), User.id.asc()).offset(skip).limit(limit))
-    users = result.scalars().all()
-    user_list = [
-        {
-            "id": str(user.id),
-            "name": user.full_name,
-            "full_name": user.full_name,
-            "email": user.email,
-            "role": user.role,
-            "isActive": user.is_active,
-            "createdAt": user.created_at.isoformat() if user.created_at else None,
-            "updatedAt": user.updated_at.isoformat() if user.updated_at else None,
-        }
-        for user in users
-    ]
-
-    return {
-        "items": user_list,
-        "total": total,
-        "skip": skip,
-        "limit": limit,
-        "hasMore": skip + len(user_list) < total,
-    }
-
+# `GET /users` MOVED, 2026-08-08. It lived here (FS-221: declared pagination, because the
+# client already sent `skip`/`limit` and FastAPI was dropping them silently). Hridyansh's
+# `app/api/users.py` serves the same path — `users.router` is mounted at
+# `/api/v1/auth/users` — with the same wire shape, `get_tenant_db` instead of `get_db`, and
+# the invitation surface beside it. Two handlers cannot share one path, and his is the
+# better one on tenancy, so this one is gone rather than shadowing his router.
 
 # ---- WebSocket authentication (ported from HARSH-CONTRIBUTION during the
 # converged-pre-main merge: its websocket.py imports this, but its auth.py was
 # resolved keep-ours; self-contained version against our dev-token flow). ----
 
 async def resolve_websocket_user(token: Optional[str]) -> Optional[User]:
-    """Authenticate WebSocket clients (JWT or dev-token). Returns None if invalid."""
+    """Authenticate WebSocket clients through the canonical durable checks."""
     from app.db.database import AsyncSessionLocal
 
     if not token:
         return None
 
-    async with AsyncSessionLocal() as db:
-        if token == "dev-token" and settings.ALLOW_DEV_TOKEN:
+    if token == "dev-token" and settings.ALLOW_DEV_TOKEN:
+        async with AsyncSessionLocal() as db:
             # Same fixed dev identity as get_current_active_user's bypass.
             dev_user_id = "00000000-0000-0000-0000-000000000001"
             result = await db.execute(select(User).where(User.id == dev_user_id))
@@ -567,24 +524,9 @@ async def resolve_websocket_user(token: Optional[str]) -> Optional[User]:
             if user is None:
                 # First-ever call: reuse the REST bypass to create org+user.
                 user = await get_current_active_user(token="dev-token", header_token=None, db=db)
-            return user
+            return user if user.is_active else None
 
-        try:
-            # Same checks as core.security.get_current_user_ws — the previous
-            # raw jwt.decode enforced neither, so a REFRESH token or a REVOKED
-            # (logged-out) access token could open a socket. expected_type
-            # rejects a refresh token used as an access token; is_token_revoked
-            # rejects a revoked one.
-            payload = decode_local_token(token, expected_type="access")
-            user_id = payload["sub"]
-            if await SessionManager.is_token_revoked(payload["jti"], db):
-                return None
-        except (JWTError, LocalTokenClaimsError, KeyError, ValueError):
-            return None
-
-        result = await db.execute(select(User).where(User.id == user_id))
-        user = result.scalar_one_or_none()
-        return user if user and user.is_active else None
+    return await get_current_user_ws(token)
 
 
 # The admin-console dependency was consolidated into the single canonical

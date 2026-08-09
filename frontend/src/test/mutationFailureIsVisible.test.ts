@@ -72,6 +72,25 @@ export function mutationsWithNoErrorSurface(raw: string): string[] {
     // …or it is awaited via mutateAsync, where the try/catch at the call site is the
     // handler. AlarmRules does exactly this and was a false positive until it was.
     if (new RegExp(String.raw`\b${name}\.mutateAsync\b`).test(source)) continue
+    // …or the options object is HOISTED and shared, which is what four sibling
+    // deactivations do rather than repeat the same handler four times:
+    //
+    //     const options = { onSuccess: …, onError: reportError }
+    //     if (kind === 'site') deactivateSite.mutate(id, options)
+    //
+    // Reading only the call site made every one of those a finding, and the failure was
+    // handled the whole time. Method rule 18: a guard wrong once about a legitimate idiom
+    // gets loosened until it catches nothing — so it learns the idiom instead.
+    const identifier = options.trim().match(/^([A-Za-z_$][\w$]*)$/)
+    if (identifier) {
+      const decl = new RegExp(
+        String.raw`\b(?:const|let|var)\s+${identifier[1]}\s*(?::[^=]+)?=\s*\{`,
+      ).exec(source)
+      if (decl) {
+        const body = optionsObject(source, decl.index + decl[0].length - 1)
+        if (body && /\bonError\s*:/.test(body)) continue
+      }
+    }
     silent.push(name)
   }
   return [...new Set(silent)]
@@ -314,7 +333,32 @@ export function callSiteSurfacesFailure(source: string, hook: string): boolean |
   }
   // Per-call options: `variable.mutate(arg, { onError: … })`
   const perCall = new RegExp(String.raw`\b${variable}\.mutate\s*\([\s\S]{0,600}?onError`)
-  return perCall.test(clean)
+  if (perCall.test(clean)) return true
+  // …or a HOISTED options object, shared across sibling mutations rather than repeated:
+  //
+  //     const options = { onSuccess: …, onError: reportError }
+  //     if (kind === 'site') deactivateSite.mutate(id, options)
+  //
+  // FleetTargeting deactivates four resources this way. Reading only the call site made
+  // all four a finding while the failure was handled the whole time — and a guard that
+  // cries wolf on a legitimate idiom gets loosened until it catches nothing (rule 66).
+  const passed = new RegExp(
+    String.raw`\b${variable}\.mutate\s*\([^)]*?,\s*([A-Za-z_$][\w$]*)\s*\)`,
+  ).exec(clean)
+  if (passed) {
+    // The BODY is read with `optionsObject`, which balances braces. A non-greedy
+    // `{…}?` stops at the first inner `}` — here that is `setFeedback({ … })`, one line
+    // above the `onError` it was looking for, so the guard reported a handled failure as
+    // unhandled. Brace-matching, not a window (rule 27).
+    const decl = new RegExp(
+      String.raw`\b(?:const|let|var)\s+${passed[1]}\s*(?::[^=]+)?=\s*\{`,
+    ).exec(clean)
+    if (decl) {
+      const body = optionsObject(clean, decl.index + decl[0].length - 1)
+      if (body && /\bonError\s*:/.test(body)) return true
+    }
+  }
+  return false
 }
 
 const HOOK_FILES = readdirSync(HOOK_DIR).filter((f) => f.endsWith('.ts') && !f.includes('.test.'))

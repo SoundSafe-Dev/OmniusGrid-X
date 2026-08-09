@@ -36,6 +36,24 @@ const HOOKS = join(SRC, 'hooks')
 
 /** Exported hooks with no consumer, and what each one is. */
 const DEAD_EXPORTS: Record<string, string> = {
+  // ARRIVED WITH THE 2026-08-08 MERGE, and the asymmetry is the point: the BACKEND can
+  // edit every one of these — PATCH /fleet/{sites,tags,groups,cohorts}/{id} all exist and
+  // now carry response models — while the FleetTargeting page can only create and
+  // deactivate. So the capability is built, reachable over HTTP, and unreachable through
+  // the product. Wiring the edit affordances is his lane's call; recorded rather than
+  // deleted because deleting them would throw away the half that works.
+  useUpdateFleetSite:
+    'PATCH /api/v1/fleet/sites/{id} is live; FleetTargeting.tsx offers no edit affordance.',
+  useUpdateFleetTag: 'Same shape: the route exists, the page has no edit control.',
+  useUpdateFleetGroup: 'Same shape: the route exists, the page has no edit control.',
+  useUpdateFleetCohort: 'Same shape: the route exists, the page has no edit control.',
+  useFleetCohort:
+    'Single-cohort read. GET /api/v1/fleet/cohorts/{id} is live; the page lists cohorts ' +
+    'and never opens one, so nothing needs the detail fetch yet.',
+  useFleetTargetPreview:
+    'Reads a stored preview by id. The page creates previews and renders the response it ' +
+    'gets back, so it never re-fetches one — which is also why a preview expiring is ' +
+    'invisible to it today.',
   useFeatureFlags:
     'The whole feature-flag client is unused while the BACKEND serves the API — ' +
     'app/api/feature_flags.py mounts full CRUD. Nothing in the product gates behaviour on a ' +

@@ -19,9 +19,10 @@ def test_production_flags_insecure_defaults():
     assert any("JWT_SECRET_KEY" in p for p in problems)
     assert any("DEBUG" in p for p in problems)
     assert any("EDGE_BOOTSTRAP_TOKEN" in p for p in problems)
-    # Dev auth bypasses and wildcard CORS default insecure — flagged in prod.
+    # Dev auth bypass and wildcard CORS defaults are insecure. Open
+    # registration now defaults closed, so it should not create a problem.
     assert any("ALLOW_DEV_TOKEN" in p for p in problems)
-    assert any("ALLOW_OPEN_REGISTRATION" in p for p in problems)
+    assert not any("ALLOW_OPEN_REGISTRATION" in p for p in problems)
     assert any("CORS_ALLOW_ORIGINS" in p for p in problems)
     assert any("GEOTAB_WEBHOOK_SECRET" in p for p in problems)
     assert any("ERP_ENCRYPTION_KEY" in p for p in problems)

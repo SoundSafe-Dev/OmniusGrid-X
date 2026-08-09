@@ -1,8 +1,18 @@
+FROM python:3.11-slim AS wheel-builder
+
+WORKDIR /build
+
+RUN pip install --no-cache-dir build==1.2.2.post1
+
+COPY pyproject.toml .
+COPY requirements.txt .
+COPY opsgrid_agent ./opsgrid_agent
+
+RUN python -m build --wheel --outdir /wheel
+
+
 FROM python:3.11-slim
 
-WORKDIR /app
-
-# Install system dependencies
 RUN apt-get update && apt-get install -y \
     gcc \
     tesseract-ocr \
@@ -11,12 +21,11 @@ RUN apt-get update && apt-get install -y \
     libglib2.0-0 \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Python dependencies
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+COPY requirements.txt /tmp/opsgrid-agent-requirements.txt
+RUN pip install --no-cache-dir -r /tmp/opsgrid-agent-requirements.txt
 
-# Copy application code
-COPY . .
+COPY --from=wheel-builder /wheel /opt/opsgrid-agent/seed
+COPY bootstrap /opt/opsgrid-agent/bootstrap
 
 # Build metadata -> heartbeat manifest (versioning.build_manifest reads these).
 # Injected by CI/compose: --build-arg AGENT_VERSION=... AGENT_BUILD_ID=... AGENT_GIT_SHA=...
@@ -29,8 +38,8 @@ ENV AGENT_VERSION=${AGENT_VERSION} \
 
 # Non-root: the agent only needs its state dir, never root.
 RUN useradd --system --home-dir /var/lib/opsgrid-agent --shell /usr/sbin/nologin opsgrid \
-    && mkdir -p /var/lib/opsgrid-agent \
-    && chown -R opsgrid:opsgrid /var/lib/opsgrid-agent /app
+    && mkdir -p /var/lib/opsgrid-agent/runtime \
+    && chown -R opsgrid:opsgrid /var/lib/opsgrid-agent
 USER opsgrid
 
 # Prometheus /metrics + /healthz (metrics_server; EXPOSE matches the default).
@@ -45,5 +54,10 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
         urllib.request.urlopen('http://localhost:'+os.getenv('METRICS_PORT','9108')+'/healthz', timeout=4)" \
         || exit 1
 
-# Default command (overridden in docker-compose)
-CMD ["python", "-m", "opsgrid_agent.main"]
+WORKDIR /var/lib/opsgrid-agent
+
+ENV OPSGRID_RUNTIME_ROOT=/var/lib/opsgrid-agent/runtime \
+    OPSGRID_SEED_WHEEL_GLOB=/opt/opsgrid-agent/seed/*.whl \
+    PYTHONUNBUFFERED=1
+
+CMD ["python", "/opt/opsgrid-agent/bootstrap/launcher.py"]

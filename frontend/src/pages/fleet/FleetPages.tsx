@@ -5,6 +5,7 @@ import { Card, Badge, SkeletonCard } from '../../components';
 import { Tooltip, TooltipTrigger, TooltipContent } from '../../components/ui';
 import { GeoTabIntegration } from '../../components/fleet/GeoTabIntegration';
 import { workcellsApi, assetsApi, organizationsApi } from '../../api';
+import { AgentOperationsPanel } from './AgentOperationsPanel';
 
 export const FleetOverview: FC = () => {
   const { data: workcells, isLoading: workcellsLoading, isError: workcellsError } = useQuery({ queryKey: ['fleet-workcells'], queryFn: () => workcellsApi.list() });
@@ -52,6 +53,8 @@ export const FleetOverview: FC = () => {
 
   return (
     <div className="space-y-6">
+      <AgentOperationsPanel />
+
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         {tiles.map(({ icon: Icon, value, label, tip }) => (
           <Tooltip key={label}>

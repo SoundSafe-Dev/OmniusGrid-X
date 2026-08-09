@@ -1,10 +1,42 @@
 import { api } from './client';
 import {
   AuthResponse,
+  InvitationValidation,
   LoginCredentials,
   User,
+  UserInvitation,
+  UserInvitationStatus,
+  UserRole,
   PaginatedResponse,
 } from '../types';
+
+type RawUser = Partial<User> & {
+  full_name?: string;
+  organization_id?: string;
+  is_active?: boolean;
+  last_login?: string;
+  last_login_at?: string;
+  created_at?: string;
+  updated_at?: string;
+};
+
+const normalizeUser = (value: RawUser): User => ({
+  id: String(value.id ?? ''),
+  email: value.email ?? '',
+  name: value.name ?? value.full_name ?? '',
+  role: value.role ?? 'viewer',
+  organizationId: value.organizationId ?? value.organization_id,
+  // FALSE, not true. `UserResponse` always sends `is_active`, so this branch is dead —
+  // but if it ever fires, showing a user as ACTIVE is claiming access we did not observe,
+  // and showing them as inactive merely prompts a reactivation nobody needed. FS-482:
+  // when a failure has to default somewhere, default away from the irreversible side.
+  isActive: value.isActive ?? value.is_active ?? false,
+  // FS-442: the wire field is `last_login`. `lastLoginAt` was declared once and
+  // nothing ever sent it, so the type carries `lastLogin` — the fallbacks stay.
+  lastLogin: value.lastLogin ?? value.last_login_at ?? value.last_login,
+  createdAt: value.createdAt ?? value.created_at ?? '',
+  updatedAt: value.updatedAt ?? value.updated_at ?? '',
+});
 
 export const authApi = {
   login: async (credentials: LoginCredentials): Promise<{ accessToken: string; refreshToken?: string; user: User }> => {
@@ -19,7 +51,7 @@ export const authApi = {
     });
     
     // Fetch user info after login
-    const userResponse = await api.get<User>('/api/v1/auth/me', {
+    const userResponse = await api.get<RawUser>('/api/v1/auth/me', {
       headers: {
         'Authorization': `Bearer ${response.data.access_token}`,
       },
@@ -27,8 +59,8 @@ export const authApi = {
     
     return {
       accessToken: response.data.access_token,
-      refreshToken: (response.data as any).refresh_token,
-      user: userResponse.data,
+      refreshToken: response.data.refresh_token,
+      user: normalizeUser(userResponse.data),
     };
   },
 
@@ -44,15 +76,34 @@ export const authApi = {
   },
 
   getMe: async (): Promise<User> => {
-    const response = await api.get<User>('/api/v1/auth/me');
-    return response.data;
+    const response = await api.get<RawUser>('/api/v1/auth/me');
+    return normalizeUser(response.data);
   },
 
   getUsers: async (params?: { skip?: number; limit?: number }): Promise<PaginatedResponse<User>> => {
     const response = await api.get<PaginatedResponse<User>>('/api/v1/auth/users', { params });
+    return {
+      ...response.data,
+      items: response.data.items.map(normalizeUser),
+    };
+  },
+
+  inviteUser: async (invitation: {
+    email: string;
+    role: UserRole;
+  }): Promise<UserInvitation> => {
+    const response = await api.post<UserInvitation>(
+      '/api/v1/auth/users/invitations',
+      invitation
+    );
     return response.data;
   },
 
+  // MERGED 2026-08-08. Ours (FS-221) targets /api/v1/users; Hridyansh's invitation methods
+  // target /api/v1/auth/users, and BOTH routers are mounted, so both resolve. His
+  // `updateUser` is the one thing dropped: ours is a strict superset — it also maps
+  // `isActive`, which his signature cannot express — and two methods of one name cannot
+  // coexist. Nothing else of his was removed.
   // The write methods target /api/v1/users (the admin router added in FS-221),
   // NOT /api/v1/auth/users. Those auth paths never existed — only GET did — so
   // these three 404'd, which is why AdminPages hard-coded USER_MGMT_ENABLED=false
@@ -93,5 +144,64 @@ export const authApi = {
   // because alarms.acknowledged_by and alarm_rules.created_by reference them.
   deleteUser: async (userId: string): Promise<void> => {
     await api.delete(`/api/v1/users/${userId}`);
+  },
+
+  getInvitations: async (params?: {
+    skip?: number;
+    limit?: number;
+    invitation_status?: UserInvitationStatus;
+  }): Promise<PaginatedResponse<UserInvitation>> => {
+    const response = await api.get<PaginatedResponse<UserInvitation>>(
+      '/api/v1/auth/users/invitations',
+      { params }
+    );
+    return response.data;
+  },
+
+  resendInvitation: async (invitationId: string): Promise<UserInvitation> => {
+    const response = await api.post<UserInvitation>(
+      `/api/v1/auth/users/invitations/${invitationId}/resend`
+    );
+    return response.data;
+  },
+
+  revokeInvitation: async (invitationId: string): Promise<UserInvitation> => {
+    const response = await api.delete<UserInvitation>(
+      `/api/v1/auth/users/invitations/${invitationId}`
+    );
+    return response.data;
+  },
+
+
+  deactivateUser: async (userId: string): Promise<User> => {
+    const response = await api.delete<RawUser>(`/api/v1/auth/users/${userId}`);
+    return normalizeUser(response.data);
+  },
+
+  reactivateUser: async (userId: string): Promise<User> => {
+    const response = await api.post<RawUser>(
+      `/api/v1/auth/users/${userId}/reactivate`
+    );
+    return normalizeUser(response.data);
+  },
+
+  validateInvitation: async (token: string): Promise<InvitationValidation> => {
+    const response = await api.post<InvitationValidation>(
+      '/api/v1/auth/invitations/validate',
+      { token }
+    );
+    return response.data;
+  },
+
+  acceptInvitation: async (data: {
+    token: string;
+    name: string;
+    password: string;
+  }): Promise<User> => {
+    const response = await api.post<{ message: string; user: RawUser }>(
+      '/api/v1/auth/invitations/accept',
+      data
+    );
+    return normalizeUser(response.data.user);
   },
 };
