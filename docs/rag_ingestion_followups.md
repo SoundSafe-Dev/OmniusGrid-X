@@ -63,24 +63,6 @@ single tenant can saturate embedding CPU and degrade everyone's queries.
 **Fix:** per-org ingest rate limit + a max-documents / max-total-bytes quota,
 enforced at the API and surfaced in the status endpoint.
 
-## 6. No document metadata record, so document *type* cannot be known
-
-Everything about a document lives in the Qdrant point payload and the S3 object
-metadata. There is no row anywhere saying "this is a form", "this is a policy",
-"this is an SOP" — the classification a reader most wants to act on.
-
-This surfaced building the Compliance Assistant. Its **Forms you may need** panel
-has to decide whether a source document is something you *fill in and return* or
-something you *read*, and with no metadata to consult it does so with a filename
-regex (`_FORM_PATTERN` in `rag_retriever.py`). That is guesswork: it reads
-`fmla-request-form.pdf` correctly and would read a badly-named form not at all.
-
-**Fix:** the document record from #1 is the natural home. A `doc_type`
-(`policy | sop | form | standard | agreement`) set at ingest — declared by the
-uploader, defaulted by the current heuristic — replaces the regex with a fact.
-`SourceDoc.is_form` then reads one field, and the panel can grow the other types
-for free.
-
 ---
 
 ### Already handled in the structure-aware pass (for reference)

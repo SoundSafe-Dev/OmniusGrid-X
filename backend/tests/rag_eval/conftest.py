@@ -19,15 +19,8 @@ from pathlib import Path
 import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from client import RagClient, FORMATS, DOCS_DIR, ApiError  # noqa: E402,F401
-from corpus import DOC_BY_ID, doc_format_pairs  # noqa: E402
+from client import RagClient, FORMATS, DOCS_DIR, ApiError  # noqa: E402
 from report import write_pytest_report  # noqa: E402
-
-# The parametrization axis for the per-format isolation tests: one entry per
-# (document, format) the corpus can ingest, e.g. "sop-qa-014-md". Content tests
-# extend this with a query dimension (see test_content.py).
-DOC_FORMAT_PARAMS = [pytest.param((doc_id, fmt), id=f"{doc_id}-{fmt}")
-                     for (doc_id, fmt) in doc_format_pairs()]
 
 # Session result sink (written to a report at the end).
 _RESULTS = []
@@ -43,8 +36,8 @@ def pytest_addoption(parser):
 
 
 def pytest_configure(config):
-    for m in ("mechanics", "retrieval", "synthesis", "negative", "hybrid",
-              "isolation", "lifecycle", "robustness", "metrics", "corpus"):
+    for m in ("mechanics", "retrieval", "synthesis", "negative",
+              "isolation", "lifecycle", "robustness", "metrics"):
         config.addinivalue_line("markers", f"{m}: RAG eval category")
 
 
@@ -92,22 +85,18 @@ def run_id():
     return uuid.uuid4().hex[:8]
 
 
-@pytest.fixture(scope="module")
-def indexed_doc_format(request, rag_client, run_id):
-    """Isolate ONE (document, format): wipe everything, ingest just that one
-    rendering, yield its ingestion result. Indirectly parametrized by each test
-    over ``(doc_id, format)`` pairs, so pass/fail is attributable to an exact
-    document+format cell and, at module scope, the same cell is ingested once and
-    reused across every query that targets it. Teardown wipes so the next cell
-    starts clean."""
-    doc_id, fmt = request.param
-    doc = DOC_BY_ID[doc_id]
-    filename, ctype = doc.file(fmt)
-    ingest_id = f"pytest-{doc_id}-{fmt}-{run_id}"
+@pytest.fixture(scope="module", params=list(FORMATS.keys()))
+def indexed_format(request, rag_client, run_id):
+    """Isolate ONE format: wipe everything, ingest just this format, yield its
+    ingestion result. Module-scoped so each content module ingests each format
+    once (5 ingests/module) and pass/fail is attributable to that format.
+    Teardown wipes so the next format/module starts clean."""
+    fmt = request.param
+    filename, ctype = FORMATS[fmt]
+    doc_id = f"pytest-{fmt}-{run_id}"
     rag_client.wipe_all()
-    ing = rag_client.ingest(doc.path(fmt), ctype, ingest_id)
-    yield {"doc_id": doc_id, "format": fmt, "ingest_id": ingest_id,
-           "ingestion": ing, "client": rag_client, "doc": doc}
+    ing = rag_client.ingest(DOCS_DIR / filename, ctype, doc_id)
+    yield {"format": fmt, "doc_id": doc_id, "ingestion": ing, "client": rag_client}
     rag_client.wipe_all()
 
 
@@ -119,35 +108,14 @@ def second_org_client(base_url, rag_client):
     """A client scoped to a DIFFERENT org than rag_client, for isolation tests.
 
     The dev-token bypass always maps to one fixed org, so a second org needs a
-    real second identity. Resolution order:
-      1. explicit creds — RAG_TEST_ORG_B_TOKEN, or RAG_TEST_ORG_B_EMAIL/PASSWORD
-         (seed one org+user once and the cross-org tests run everywhere);
-      2. best-effort self-provisioning (works only if the stack exposes a
-         create-org path — this one does not, so it normally falls through);
-      3. skip loudly (documented) rather than silently pass.
-    """
-    client = _second_org_from_env(base_url) or _try_provision_second_org(base_url, rag_client)
-    if not client:
-        pytest.skip(
-            "No second org available. Seed one org+user and set RAG_TEST_ORG_B_TOKEN "
-            "(or RAG_TEST_ORG_B_EMAIL/PASSWORD) to enable the cross-org isolation test; "
-            "this stack has no create-org endpoint to self-provision one.")
-    return client  # a RagClient bound to the second org's token
-
-
-def _second_org_from_env(base_url):
-    """A RagClient for a caller-supplied second org, or None if none configured."""
-    token = os.environ.get("RAG_TEST_ORG_B_TOKEN")
-    if token:
-        return RagClient(base_url, token)
-    email = os.environ.get("RAG_TEST_ORG_B_EMAIL")
-    password = os.environ.get("RAG_TEST_ORG_B_PASSWORD")
-    if email and password:
-        try:
-            return RagClient(base_url, RagClient.login(base_url, email, password))
-        except ApiError:
-            return None
-    return None
+    real second user. We try open registration into a freshly created org; if the
+    environment doesn't allow provisioning a distinct org, the isolation tests
+    skip (documented) rather than silently pass."""
+    org_id = _try_provision_second_org(base_url, rag_client)
+    if not org_id:
+        pytest.skip("No way to provision a second org in this environment; "
+                    "seed a second org+user to enable tenant-isolation tests.")
+    return org_id  # a RagClient bound to the second org's token
 
 
 def _try_provision_second_org(base_url, rag_client):

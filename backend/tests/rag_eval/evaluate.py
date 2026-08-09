@@ -18,43 +18,6 @@ import json
 from typing import Any, Dict, List, Optional, Tuple
 
 
-# Cues that a forbidden value is being explicitly CONTRASTED or negated rather
-# than asserted as the answer — e.g. "8 minutes, NOT 15 minutes", "UNLIKE the
-# 15-minute detergent step". When one of these immediately precedes a forbidden
-# substring, that occurrence is a disambiguation, not the near-duplicate
-# confusion the `forbid` list exists to catch. A bare, unqualified occurrence is
-# still a hard violation (e.g. "the acid rinse is 15 minutes").
-_CONTRAST_CUES = (
-    "not ", "n't ", "n't,", "rather than ", "instead of ", "unlike ",
-    "as opposed to ", "opposed to ", "but not ", "never ", "other than ",
-    "different from ", "distinct from ", "as against ", "whereas ",
-    "versus ", " vs ", "vs. ", "compared to ", "compared with ", "as compared",
-    "not to be confused with ", "which is not", "and not ", "is not ",
-)
-_CONTRAST_WINDOW = 40  # chars before a forbidden hit to scan for a cue
-
-
-def _forbidden_violations(hay: str, forbid: List[str]) -> List[str]:
-    """Forbidden substrings that appear ASSERTED (not in an explicit contrast).
-
-    A forbidden term counts as a violation if *any* of its occurrences is not
-    immediately preceded by a contrast/negation cue. This stops a correct answer
-    that disambiguates against the near-duplicate ("8 min, not 15 min") from
-    being failed, while a bare wrong assertion still fails.
-    """
-    violations: List[str] = []
-    for f in forbid:
-        fl = f.lower()
-        idx = hay.find(fl)
-        while idx != -1:
-            before = hay[max(0, idx - _CONTRAST_WINDOW):idx]
-            if not any(cue in before for cue in _CONTRAST_CUES):
-                violations.append(f)  # a bare, asserted occurrence -> violation
-                break
-            idx = hay.find(fl, idx + 1)
-    return violations
-
-
 def _citation_text(cit: Dict[str, Any]) -> str:
     parts = [cit.get("snippet", "") or ""]
     src = cit.get("source", {})
@@ -87,7 +50,7 @@ def evaluate(spec: Dict[str, Any], resp: Dict[str, Any]) -> Tuple[bool, Dict[str
 
     matched, missing = match(spec["concepts"])
     bonus_matched, bonus_missing = match(spec.get("bonus", []))
-    forbidden_hits = _forbidden_violations(forbid_hay, spec.get("forbid", []))
+    forbidden_hits = [f for f in spec.get("forbid", []) if f.lower() in forbid_hay]
 
     passed = not missing and not forbidden_hits
     detail = {
