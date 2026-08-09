@@ -21,6 +21,7 @@ import {
   SkeletonTable,
   Table,
 } from '../../components';
+import { useDialog } from '../../components/ui';
 import { useAuthStore } from '../../stores';
 import { User, UserInvitation, UserRole } from '../../types';
 
@@ -85,7 +86,13 @@ const Modal: FC<ModalProps> = ({ title, children, onClose, footer }) => (
 //: a bigger page — see the note at the query below.
 const USER_PAGE_CAP = 200;
 
+//: One page, and the step "Show more" takes. The server declares `le=200`, so the cap
+//: above is a real ceiling rather than a client preference — the page has to say so when
+//: it reaches it, or an admin reads a truncated list as the whole organisation.
+const USER_PAGE_SIZE = 50;
+
 export const UsersPage: FC = () => {
+  const { confirm, alert } = useDialog();
   const queryClient = useQueryClient();
   const currentUser = useAuthStore((state) => state.user);
   const [error, setError] = useState<string | null>(null);
@@ -102,12 +109,15 @@ export const UsersPage: FC = () => {
     role: 'viewer' as UserRole,
   });
 
+  // PAGINATED, and the limit is EXPLICIT. The endpoint's default page is not this page's
+  // decision to inherit — an undeclared limit means the server picks, and the client then
+  // renders whatever arrives as though it were everything.
+  const [limit, setLimit] = useState(USER_PAGE_SIZE);
   const usersQuery = useQuery({
-    queryKey: ['admin-users'],
-    // 200, not 500: `GET /auth/users` declares `le=200`, so a request for 500 is rejected
-    // 422 and this page renders nothing at all. Capped requests must also SAY they were
-    // capped — `MAX_UNSIGNALLED` is at zero, and a silent cap here would move it off.
-    queryFn: () => authApi.getUsers({ limit: USER_PAGE_CAP }),
+    queryKey: ['admin-users', limit],
+    // Never above USER_PAGE_CAP: `GET /auth/users` declares `le=200`, so a larger request
+    // is rejected 422 and this page renders nothing at all.
+    queryFn: () => authApi.getUsers({ limit }),
   });
   const invitationsQuery = useQuery({
     queryKey: ['admin-user-invitations'],
@@ -235,20 +245,47 @@ export const UsersPage: FC = () => {
     });
   };
 
-  const deactivate = (user: User) => {
-    if (
-      window.confirm(
-        `Deactivate ${user.name || user.email}? Their current sessions will be revoked.`
-      )
-    ) {
-      deactivateMutation.mutate(user.id);
+  const deactivate = async (user: User) => {
+    // DEACTIVATION, not deletion, and the wording says so. The row is kept — alarms and
+    // alarm_rules reference the user — so telling an admin they are about to "delete"
+    // someone describes an outcome the server will not produce.
+    const confirmed = await confirm({
+      title: 'Deactivate this user?',
+      message:
+        `${user.name || user.email} will be DEACTIVATED, not deleted. Their current ` +
+        'sessions are revoked and they can be reactivated later.',
+      confirmLabel: 'Deactivate',
+      // The dialog styles the action as destructive. It is NOT irreversible — the row is
+      // kept and the user can be reactivated — which is why the message says deactivated
+      // rather than promising something the server will not do.
+      destructive: true,
+    });
+    if (!confirmed) return;
+    try {
+      await deactivateMutation.mutateAsync(user.id);
+    } catch (failure) {
+      // reportError already set the banner; this stops the rejection escaping as an
+      // unhandled promise and tells the admin the access is UNCHANGED rather than
+      // leaving them to infer it from a row that did not move.
+      //
+      // THE SERVER'S REASON IS CARRIED THROUGH. "It failed" and "you are not allowed to do
+      // this" send an admin to different places, and only one of them is worth a retry.
+      await alert({
+        title: 'The user was not deactivated',
+        message:
+          `${handleApiError(failure).message}\n\n${user.name || user.email} still has ` +
+          'access — nothing has been changed.',
+      });
     }
   };
 
-  const revokeInvitation = (invitation: UserInvitation) => {
-    if (window.confirm(`Revoke the invitation for ${invitation.email}?`)) {
-      revokeMutation.mutate(invitation.id);
-    }
+  const revokeInvitation = async (invitation: UserInvitation) => {
+    const confirmed = await confirm({
+      title: 'Revoke this invitation?',
+      message: `The invitation for ${invitation.email} will stop working immediately.`,
+      confirmLabel: 'Revoke',
+    });
+    if (confirmed) revokeMutation.mutate(invitation.id);
   };
 
   const loading = usersQuery.isLoading || invitationsQuery.isLoading;
@@ -258,6 +295,10 @@ export const UsersPage: FC = () => {
     : null;
   const users = usersQuery.data?.items ?? [];
   const invitations = invitationsQuery.data?.items ?? [];
+
+  const totalUsers = usersQuery.data?.total ?? users.length;
+  const hiddenUsers = Math.max(0, totalUsers - users.length);
+  const atCeiling = limit >= USER_PAGE_CAP;
 
   return (
     <div className="space-y-6">
@@ -392,7 +433,28 @@ export const UsersPage: FC = () => {
             </Table.Body>
           </Table>
         )}
-      </Card>
+        {/* WHAT IS NOT ON SCREEN, said out loud. A list that stops at the page size and
+            offers nothing is indistinguishable from an organisation that small — and an
+            admin who believes they are looking at everyone stops looking for the person
+            who is missing. `MAX_UNSIGNALLED` is at zero for exactly this class. */}
+        {!loading && hiddenUsers > 0 && (
+          <div className="flex items-center justify-between gap-3 px-4 py-3 text-xs text-opsgrid-text-secondary">
+            <span>
+              Showing {users.length} of {totalUsers} users
+              {atCeiling && ' — Showing the first 200; narrow the list to see the rest'}
+            </span>
+            {!atCeiling && (
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => setLimit((n) => Math.min(n + USER_PAGE_SIZE, USER_PAGE_CAP))}
+              >
+                Show more
+              </Button>
+            )}
+          </div>
+        )}
+              </Card>
 
       <Card
         title="Invitations"

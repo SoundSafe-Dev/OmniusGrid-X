@@ -28,6 +28,7 @@ const getUsers = vi.fn()
 const createUser = vi.fn()
 const updateUser = vi.fn()
 const deleteUser = vi.fn()
+const inviteUser = vi.fn()
 
 vi.mock('../../api', () => ({
   authApi: {
@@ -40,13 +41,20 @@ vi.mock('../../api', () => ({
     // cause as the Fleet mocks. Stubbed neutrally: these describes are about the user
     // table's affordances, not about invitations.
     getInvitations: vi.fn().mockResolvedValue({ items: [], total: 0, skip: 0, limit: 200, hasMore: false }),
-    inviteUser: vi.fn(),
+    inviteUser: (d: unknown) => inviteUser(d),
     resendInvitation: vi.fn(),
     revokeInvitation: vi.fn(),
     deactivateUser: (id: string) => deleteUser(id),
     reactivateUser: vi.fn(),
   },
   api: { get: vi.fn(), post: vi.fn(), patch: vi.fn(), delete: vi.fn() },
+  // The page reads the server's reason through this. Omitting it from a partial mock made
+  // the failure path throw INSIDE its own catch, so the alert never fired and the test
+  // read as "the page says nothing on failure" — a false positive for the exact defect it
+  // was written to catch.
+  handleApiError: (e: any) => ({
+    message: e?.response?.data?.detail ?? e?.message ?? 'Request failed',
+  }),
 }))
 
 const confirmMock = vi.fn()
@@ -93,7 +101,7 @@ beforeEach(() => {
   confirmMock.mockResolvedValue(true)
   createUser.mockResolvedValue(USER)
   updateUser.mockResolvedValue(USER)
-  deleteUser.mockResolvedValue(undefined)
+  deleteUser.mockResolvedValue({ ...USER, isActive: false })
 })
 
 describe('UsersPage', () => {
@@ -101,8 +109,11 @@ describe('UsersPage', () => {
     page()
     expect(await screen.findByText('Dana Operator')).toBeInTheDocument()
 
-    // The flag being true is the whole point of FS-224.
-    expect(screen.getByRole('button', { name: /add user/i })).toBeInTheDocument()
+    // The flag being true is the whole point of FS-224. The affordance is now "Invite"
+    // rather than "Add" — the merged page provisions through an invitation instead of
+    // creating directly, which is a product difference. What this pins is that SOME write
+    // affordance is present and the "ask the backend team" notice is gone.
+    expect(screen.getByRole('button', { name: /add user|invite/i })).toBeInTheDocument()
     // And the "provisioned on the backend" explanation must be gone.
     expect(
       screen.queryByText(/self-serve create\/edit\/delete isn't available/i),
@@ -180,7 +191,10 @@ describe('UsersPage — a failed write does not pass for a successful one', () =
     )
     await waitFor(() => expect(alertMock).toHaveBeenCalled())
     const opts = alertMock.mock.calls[0][0]
-    expect(opts.title).toMatch(/could not remove the user/i)
+    // 'not deactivated' rather than 'not removed' — the page's wording is more accurate
+    // than the one this test was written against, and the property is that the title
+    // says the thing did not happen.
+    expect(opts.title).toMatch(/could not remove the user|was not deactivated/i)
     // The reason has to reach the screen: "it failed" and "you are not allowed to do
     // this" send an admin to different places.
     expect(opts.message).toMatch(/Insufficient rights/)
@@ -195,7 +209,9 @@ describe('UsersPage — a failed write does not pass for a successful one', () =
     )
     await waitFor(() => expect(alertMock).toHaveBeenCalled())
     const opts = alertMock.mock.calls[0][0]
-    expect(`${opts.title} ${opts.message}`).toMatch(/access is unchanged|Nothing has been changed/i)
+    expect(`${opts.title} ${opts.message}`).toMatch(
+      /access is unchanged|Nothing has been changed|still has access/i,
+    )
     // And the row is still listed, which is the state the message now explains.
     expect(screen.getByText('Dana Operator')).toBeInTheDocument()
   })
@@ -212,24 +228,20 @@ describe('UsersPage — a failed write does not pass for a successful one', () =
     expect(alertMock).not.toHaveBeenCalled()
   })
 
-  it('tells the admin when a user could not be created', async () => {
-    // The modal simply stayed open with the form still filled — feedback of a sort, but
-    // a slow network reads identically to a rejected payload.
-    createUser.mockRejectedValue({ response: { data: { detail: 'Email already in use' } } })
+  it('tells the admin when a user could not be provisioned', async () => {
+    // RETARGETED 2026-08-08 from the create form to the invite form. The merged page
+    // provisions by invitation rather than creating directly — a product difference. The
+    // property is unchanged and is the one worth keeping: a refused write must reach the
+    // admin WITH the server's reason, because "it failed" and "that address is already
+    // in use" send them to different places. Previously the modal simply stayed open with
+    // the form still filled, which a slow network looks exactly like.
+    inviteUser.mockRejectedValue({ response: { data: { detail: 'Email already in use' } } })
     page()
     await screen.findByText('Dana Operator')
-    await userEvent.click(screen.getByRole('button', { name: /add user/i }))
-    // The form label is "Name"; the API field is `full_name`. Asserting on the label
-    // the page actually renders, not on the wire name.
-    await userEvent.type(screen.getByLabelText(/^name$/i), 'New Person')
+    await userEvent.click(screen.getByRole('button', { name: /invite user/i }))
     await userEvent.type(screen.getByLabelText(/email/i), 'new@test.local')
-    await userEvent.type(screen.getByLabelText(/password/i), 'hunter2hunter2')
-    await userEvent.click(screen.getByRole('button', { name: /^create user$/i }))
-    await waitFor(() => expect(alertMock).toHaveBeenCalled())
-    // Index arithmetic, not `.at(-1)`: this project's TS lib target predates it, and
-    // the same slip already cost a run earlier in this sweep.
-    const calls = alertMock.mock.calls
-    expect(calls[calls.length - 1][0].message).toMatch(/Email already in use/)
+    await userEvent.click(screen.getByRole('button', { name: /send invitation/i }))
+    await screen.findByText(/Email already in use/)
   })
 })
 
