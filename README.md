@@ -546,7 +546,7 @@ verifier failed. On a UTC developer machine none of it is visible.
 
 > 📋 **Next week's work is pooled in
 > [`docs/planning/next-week-task-pool.md`](docs/planning/next-week-task-pool.md)** (week of
-> 2026-08-10) — **20 independently-assignable tickets and 5 decisions**, with sizes and
+> 2026-08-10) — **31 independently-assignable tickets and 5 decisions**, seventeen of them carried from the previous pool and marked with their age, with sizes and
 > acceptance criteria, for **Harsh (Product Manager)** to redistribute. Every figure in it was
 > re-derived from the tree on the day it was written, and one item is a *recorded negative* —
 > an entry measured while writing and found not to reproduce. The previous pool is archived at

@@ -8162,3 +8162,45 @@ field is meant to carry category → created-ids. The background task suggests t
 The other real one, FS-609, is `POST /fleet/releases` letting a `PermissionError` escape when
 the OTA artifact directory is missing — where the two correct 503s beside it show the shape it
 should have.
+
+---
+
+## The pool was too short, which is the harder direction to notice
+
+The first draft of `next-week-task-pool.md` claimed *"several entries that pool listed as open
+have since closed — they are not repeated here."* **It was not checked before it was written.**
+Auditing the 2026-07-26 pool item by item found **twelve entries still open** that the new one
+had silently dropped, one of them regressed:
+
+| Old # | Then | Measured 2026-08-08 |
+|---|---|---|
+| #5–#9 | Alex's five intake items | **all five unchanged** since 2026-07-22 |
+| #46 | 190 `USE_MOCK` forks | **249** — worse by 59 |
+| #47 | 0 `useTranslation` call sites | **still 0** |
+| #20 | `get_db` on RLS tables, 24 files | **13** — reduced, not closed |
+| #23 / #34 / #35 | no org CRUD, no ERP export, no ERP websocket | **all three still absent** |
+| #42 | generated SDK unadopted | **still unadopted** |
+
+**And a whole lane was gone.** Alex is an active contributor with three commits on this branch,
+and the draft had no section for him — he would have been handed a pool containing nothing.
+
+THE CAUSE MATTERS MORE THAN THE CORRECTION. Every previous plan in this repository rotted by
+listing **more** work than existed, and the new pool's own preamble warns about exactly that.
+This one rotted the other way, because it was built by asking *"what did I find this week?"*
+instead of *"what is open?"* — so it narrowed to its author's footprint, and the lane that
+overlaps nothing I touched disappeared completely.
+
+**A short pool looks like progress.** That is the whole problem: an inflated backlog gets
+questioned eventually, and a deflated one gets celebrated. The only reason this was caught is
+that somebody read it and asked why it looked like the last one and where Alex's work had gone
+— the second question is the one a diff would never have raised, because a missing section
+produces no conflict.
+
+It is the same shape as the three guards a document split disabled the same day: a derived list
+quietly narrowing, with nothing comparing it against what it derives from. There the comparison
+was a filename; here it was a person.
+
+**Every item now carries its age** — the pool it first appeared in. Seventeen of thirty-one are
+carried, and two are on their third consecutive pool (`main` promotion, correlation-AI honesty).
+A repeat with no age on it reads as new work and hides how long it has been sitting, which is
+how a decision nobody makes stays invisible while looking like a fresh ticket every fortnight.
