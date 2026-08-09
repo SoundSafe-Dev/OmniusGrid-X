@@ -2,6 +2,7 @@ import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router-dom'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import { TooltipProvider } from '../../components/ui'
 import { axe } from 'jest-axe'
 import { describe, expect, it, vi, beforeEach } from 'vitest'
 
@@ -64,10 +65,15 @@ function page(items: unknown[] = [USER], total = items.length) {
   getUsers.mockResolvedValue({ items, total, skip: 0, limit: 50, hasMore: total > items.length })
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   return render(
+    // TooltipProvider added 2026-08-08: the merged Users page uses `Tooltip`, which throws
+    // outside its provider. The app supplies it at the root, so this is the harness catching
+    // up with the page rather than a change in what the page needs.
     <QueryClientProvider client={client}>
-      <MemoryRouter>
-        <UsersPage />
-      </MemoryRouter>
+      <TooltipProvider>
+        <MemoryRouter>
+          <UsersPage />
+        </MemoryRouter>
+      </TooltipProvider>
     </QueryClientProvider>,
   )
 }
