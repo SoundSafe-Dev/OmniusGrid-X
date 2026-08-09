@@ -17,6 +17,7 @@ httpx==0.28.1
 python-dotenv==1.2.2
 prometheus-client==0.21.1
 cryptography==48.0.1   # matched with backend pin (edge_ca chain)
+packaging==23.2
 
 # Optional industrial-protocol driver libraries.
 # Each backs one collector; install only those needed for the deployed hardware.

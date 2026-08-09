@@ -13,6 +13,7 @@ import uuid
 import pytest
 from fastapi import FastAPI
 from starlette.testclient import TestClient
+from starlette.websockets import WebSocketDisconnect
 
 from app.api import websocket as ws_module
 
@@ -56,6 +57,20 @@ def test_unknown_type_returns_error(client):
         ws.send_json({"type": "totally-unknown"})
         err = ws.receive_json()
         assert err["type"] == "error"
+
+
+def test_missing_token_is_rejected(client):
+    with pytest.raises(WebSocketDisconnect) as exc_info:
+        with client.websocket_connect("/ws?organization_id=org-1"):
+            pass
+    assert exc_info.value.code == 1008
+
+
+def test_cross_tenant_organization_is_rejected(client):
+    with pytest.raises(WebSocketDisconnect) as exc_info:
+        with client.websocket_connect("/ws?token=x&organization_id=org-2"):
+            pass
+    assert exc_info.value.code == 1008
 
 
 # --- FS-108: correlation id on the WebSocket path ---------------------------

@@ -59,25 +59,35 @@ def build_heartbeat_payload(
     asset_ids: list[str],
     manifest: dict[str, Any],
     config_hash: str,
+    collector_status: dict[str, Any],
+    buffer_depth: int,
+    update_status: dict[str, Any] | None = None,
     timestamp: str | None = None,
 ) -> dict[str, Any]:
     """The Kafka agent-status heartbeat: which build is running on which assets.
 
-    NARROWED (FS-466). This used to also carry `git_sha`, `collector_status` and
-    `buffer_depth`, and the cloud read none of them — `_process_agent_heartbeat` updates
-    `Asset.agent_version / agent_config_hash / agent_build_id / last_seen` and nothing else.
+    MERGE NOTE 2026-08-08 — two designs met here and BOTH are kept, deliberately.
 
-    Device HEALTH travels the other heartbeat, `POST /api/v1/edge/heartbeat`, which reports
-    `buffer_pending`, `dead_lettered`, `dropped` and `active_collectors`; the backend
-    persists those on `edge_agent_status` and publishes per-agent `edge_agent_*` gauges.
-    That path has a consumer, so it is the one that keeps the health fields.
+    FS-466 narrowed this payload to eight fields, because `git_sha`, `collector_status` and
+    `buffer_depth` were sent on every beat and the cloud read none of them:
+    `_process_agent_heartbeat` updated `Asset.agent_version / agent_config_hash /
+    agent_build_id / last_seen` and nothing else. Device HEALTH travels the other heartbeat,
+    `POST /api/v1/edge/heartbeat`, which the backend persists on `edge_agent_status` and
+    publishes as per-agent `edge_agent_*` gauges — that path has consumers, so it kept the
+    health fields.
 
-    Two paths carrying the same facts under two names (`buffer_depth` / `buffer_pending`)
-    is the condition that produced six aliases in FS-435. This one now answers exactly one
-    question — what is running where — and the caller no longer computes buffer stats and
-    collector status on every beat to fill fields nobody reads.
+    Hridyansh's OTA work (2026-07-23..27) re-widens it and adds `agent_update`, and his
+    `_process_agent_heartbeat` DOES consume `collector_status` — so that field now has a
+    reader and the FS-466 argument no longer applies to it.
+
+    `git_sha`, `buffer_depth` and `agent_update` still have **no consumer** in the merged
+    tree. They are kept rather than dropped, because dropping another lane's field during a
+    merge is how work disappears — and they are recorded in
+    `test_heartbeat_contract_is_fully_read.py::DELIBERATELY_UNREAD` with an owner, so the
+    gap is visible instead of silent. `agent_update` is the one that matters: a self-update
+    that reports its outcome to nobody cannot be rolled back on evidence.
     """
-    return {
+    payload = {
         "message_type": "agent_heartbeat",
         "agent_id": agent_id,
         "organization_id": organization_id,
@@ -85,8 +95,14 @@ def build_heartbeat_payload(
         "agent_version": manifest["agent_version"],
         "config_hash": config_hash,
         "build_id": manifest.get("build_id"),
+        "git_sha": manifest.get("git_sha"),
+        "collector_status": collector_status,
+        "buffer_depth": buffer_depth,
         "timestamp": timestamp or _utc_now(),
     }
+    if update_status:
+        payload["agent_update"] = update_status
+    return payload
 
 
 def load_agent_state(path: str | Path) -> dict[str, Any]:
@@ -108,5 +124,15 @@ def persist_agent_state(path: str | Path, state: dict[str, Any]) -> None:
     ) as tmp:
         tmp.write(payload)
         tmp.write("\n")
+        tmp.flush()
+        os.fsync(tmp.fileno())
         tmp_path = Path(tmp.name)
     tmp_path.replace(state_path)
+    try:
+        directory_fd = os.open(state_path.parent, os.O_RDONLY)
+    except OSError:
+        return
+    try:
+        os.fsync(directory_fd)
+    finally:
+        os.close(directory_fd)

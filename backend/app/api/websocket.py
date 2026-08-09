@@ -4,8 +4,12 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Depends, Query
 
 from app.core.http_metrics import record_websocket_event
 from typing import Optional, Set
+import asyncio
 import json
+from typing import Optional, Set
+
 import structlog
+from fastapi import APIRouter, Query, WebSocket, WebSocketDisconnect
 
 from app.services.websocket_manager import websocket_manager
 from app.api.auth import resolve_websocket_user
@@ -26,8 +30,8 @@ async def websocket_endpoint(
     WebSocket endpoint for real-time telemetry, state changes, and alarms.
     
     Query Parameters:
-    - token: JWT authentication token
-    - organization_id: Organization to subscribe to
+    - token: Required JWT authentication token
+    - organization_id: Optional organization assertion; must match the user
     - asset_ids: Optional comma-separated list of asset IDs to filter (empty = all)
     
     Message Types Received from Client:
@@ -167,7 +171,21 @@ async def _serve_websocket(
     try:
         while True:
             # Receive messages from client
-            data = await websocket.receive_text()
+            try:
+                data = await asyncio.wait_for(
+                    websocket.receive_text(),
+                    timeout=30,
+                )
+            except asyncio.TimeoutError:
+                # Re-read durable account/session state so role changes and
+                # deactivation close passive sockets on every API replica.
+                if await resolve_websocket_user(token) is None:
+                    await websocket.close(
+                        code=1008,
+                        reason="Authentication expired",
+                    )
+                    return
+                continue
             
             try:
                 message = json.loads(data)

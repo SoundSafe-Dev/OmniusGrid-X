@@ -3,6 +3,8 @@
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from functools import lru_cache
 
+from pydantic import Field
+
 
 class Settings(BaseSettings):
     """Application settings"""
@@ -29,6 +31,8 @@ class Settings(BaseSettings):
     OTA_SIGNATURE_ALG: str = "ed25519"
     OTA_SIGNING_PRIVATE_KEY_PATH: str = ""
     OTA_SIGNING_PUBLIC_KEY: str = ""
+    OTA_AGENT_ARTIFACT_MAX_BYTES: int = 64 * 1024 * 1024
+    OTA_AGENT_ARTIFACT_MAX_UNCOMPRESSED_BYTES: int = 256 * 1024 * 1024
     OTA_ROLLOUT_DISPATCH_ENABLED: bool = True
     OTA_ROLLOUT_DISPATCH_INTERVAL_SECONDS: int = 30
 
@@ -43,8 +47,10 @@ class Settings(BaseSettings):
     #: the loop while every other tenant waits.
     POSTING_DRAIN_BATCH_SIZE: int = 50
     OTA_ROLLOUT_DEFAULT_COMMAND_TIMEOUT_SECONDS: int = 120
+    OTA_AGENT_UPDATE_COMMAND_TIMEOUT_SECONDS: int = 600
     OTA_ROLLOUT_DEFAULT_HEALTH_TIMEOUT_SECONDS: int = 300
     OTA_ROLLOUT_DEFAULT_MIN_SUCCESS_RATIO: float = 1.0
+    FLEET_TARGET_PREVIEW_TTL_SECONDS: int = 900
     
     # Security
     JWT_SECRET_KEY: str = "dev_secret_key_change_in_production"
@@ -61,6 +67,12 @@ class Settings(BaseSettings):
     AUTH_REGISTER_RATE_LIMIT: str = "5/hour"
     AUTH_REFRESH_RATE_LIMIT: str = "30/minute"
     AUTH_LOGOUT_RATE_LIMIT: str = "30/minute"
+    AUTH_INVITE_VALIDATE_RATE_LIMIT: str = "30/minute"
+    AUTH_INVITE_ACCEPT_RATE_LIMIT: str = "10/minute"
+    USER_INVITE_PUBLIC_BASE_URL: str = "http://localhost:3000"
+    USER_INVITE_EXPIRE_HOURS: int = Field(default=72, ge=1, le=720)
+    USER_INVITE_EMAIL_MAX_ATTEMPTS: int = Field(default=3, ge=1, le=10)
+    USER_PASSWORD_MIN_LENGTH: int = Field(default=12, ge=12, le=72)
     
     # Security Headers
     SECURITY_HEADERS_ENABLED: bool = True
@@ -376,7 +388,7 @@ class Settings(BaseSettings):
     # Dev-only auth conveniences. Both MUST be false in production; the
     # startup hook (validate_settings) hard-fails if they are left on.
     ALLOW_DEV_TOKEN: bool = True   # accept "dev-token" as an admin bypass
-    ALLOW_OPEN_REGISTRATION: bool = True  # unauthenticated POST /auth/register
+    ALLOW_OPEN_REGISTRATION: bool = False  # unauthenticated POST /auth/register
 
     model_config = SettingsConfigDict(env_file=".env")
 

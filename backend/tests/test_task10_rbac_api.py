@@ -344,6 +344,7 @@ async def test_dev_registration_forces_operator_role(
 ):
     import app.api.auth as auth_api
 
+    monkeypatch.setattr(auth_api.settings, "ALLOW_OPEN_REGISTRATION", True)
     monkeypatch.setattr(
         auth_api,
         "get_password_hash",

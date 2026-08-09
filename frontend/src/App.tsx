@@ -5,7 +5,7 @@ import { Routes, Route } from 'react-router-dom'
 // imports that don't tree-shake), and App is the eager root, so going through
 // it would pull those heavy libs into the initial bundle.
 import { AdminRoute, Layout, ProtectedRoute } from './components/layout'
-import { Login } from './pages/auth'
+import { AcceptInvitation, Login } from './pages/auth'
 import { TooltipProvider, DialogProvider } from './components/ui'
 import ErrorBoundary from './components/ErrorBoundary'
 
@@ -44,6 +44,8 @@ const OrganizationTree = named(() => import('./pages/fleet'), 'OrganizationTree'
 // OTA fleet management (integration), kept lazy like the other admin pages.
 const Fleet = named(() => import('./pages/admin'), 'Fleet')
 const FleetRolloutDetail = named(() => import('./pages/admin'), 'FleetRolloutDetail')
+const FleetTargeting = named(() => import('./pages/admin'), 'FleetTargeting')
+const MaintenanceWindows = named(() => import('./pages/admin'), 'MaintenanceWindows')
 
 // Converged from integration: error-triage admin pages, kept lazy.
 const ErrorTriage = named(() => import('./pages/admin'), 'ErrorTriage')
@@ -90,6 +92,7 @@ const App: FC = () => {
           <Routes>
             {/* Public Routes */}
             <Route path="/login" element={<Login />} />
+            <Route path="/accept-invite" element={<AcceptInvitation />} />
 
             {/* Protected Routes */}
             <Route element={<ProtectedRoute />}>
@@ -163,6 +166,8 @@ const App: FC = () => {
                   <Route path="/admin/errors" element={<ErrorTriage />} />
                   <Route path="/admin/errors/:fingerprint" element={<ErrorTriageDetail />} />
                   <Route path="/admin/fleet" element={<Fleet />} />
+                  <Route path="/admin/fleet/targeting" element={<FleetTargeting />} />
+                  <Route path="/admin/fleet/maintenance" element={<MaintenanceWindows />} />
                   <Route path="/admin/fleet/rollouts/:rolloutId" element={<FleetRolloutDetail />} />
                 </Route>
               </Route>

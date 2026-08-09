@@ -7,15 +7,41 @@ import hashlib
 import inspect
 import json
 from collections import OrderedDict
+from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Any, Awaitable, Callable, Dict, Iterable, Optional, Set
+from typing import Any, Awaitable, Callable, Dict, Iterable, Optional, Set, Union
 from uuid import UUID
 
 import structlog
 
+from opsgrid_agent.remote_ops.contracts import (
+    MAX_COMMAND_ACK_BYTES,
+    RemoteOperationError,
+    error_result,
+    is_remote_operation,
+    json_size,
+    validate_parameters,
+    validate_result,
+)
+
 logger = structlog.get_logger()
 
-CommandHandler = Callable[[Dict[str, Any]], Awaitable[Optional[Dict[str, Any]]]]
+
+@dataclass
+class DeferredCommandAck:
+    """A durable handler outcome whose acknowledgement follows a process restart."""
+
+    reason: str
+    after_commit: Callable[[], Awaitable[None] | None]
+
+    async def run_after_commit(self) -> None:
+        result = self.after_commit()
+        if inspect.isawaitable(result):
+            await result
+
+
+CommandResult = Optional[Union[Dict[str, Any], DeferredCommandAck]]
+CommandHandler = Callable[[Dict[str, Any]], Awaitable[CommandResult] | CommandResult]
 
 
 class CommandConsumer:
@@ -51,6 +77,10 @@ class CommandConsumer:
         self._task: Optional[asyncio.Task] = None
         self._running = False
 
+    @property
+    def is_running(self) -> bool:
+        return self._running
+
     def register_handler(self, action_id: str, handler: CommandHandler) -> None:
         """Register a handler for an action_id."""
         if not action_id:
@@ -59,9 +89,11 @@ class CommandConsumer:
             raise TypeError("handler must be callable")
         self._handlers[str(action_id)] = handler
 
-    async def start(self) -> None:
+    async def start(self, *, consume: bool = True) -> None:
         """Start raw command consumption with manual offset commits."""
         if self._running:
+            if consume:
+                self.start_consuming()
             return
 
         from aiokafka import AIOKafkaConsumer, AIOKafkaProducer
@@ -85,7 +117,8 @@ class CommandConsumer:
             await self._consumer.start()
             await self._producer.start()
             self._running = True
-            self._task = asyncio.create_task(self._consume_loop())
+            if consume:
+                self.start_consuming()
             logger.info(
                 "command_consumer_started",
                 agent_id=self.agent_id,
@@ -96,6 +129,13 @@ class CommandConsumer:
         except Exception:
             await self._stop_clients()
             raise
+
+    def start_consuming(self) -> None:
+        """Begin consumption after startup reconciliation has completed."""
+        if not self._running:
+            raise RuntimeError("Command consumer clients are not started")
+        if self._task is None or self._task.done():
+            self._task = asyncio.create_task(self._consume_loop())
 
     async def stop(self) -> None:
         """Stop command consumption and publication."""
@@ -116,7 +156,7 @@ class CommandConsumer:
         *,
         source_partition: Optional[int] = None,
         source_offset: Optional[int] = None,
-    ) -> Optional[Dict[str, Any]]:
+    ) -> CommandResult:
         """Validate and handle one raw command record."""
         command, validation_error = self._decode_and_validate(payload)
         if validation_error:
@@ -158,20 +198,63 @@ class CommandConsumer:
             await self._remember_and_emit(command_id, ack)
             return ack
 
+        remote_operation = is_remote_operation(action_id)
+        if remote_operation:
+            try:
+                command = dict(command)
+                command["parameters"] = validate_parameters(
+                    action_id,
+                    command["parameters"],
+                )
+            except RemoteOperationError as exc:
+                ack = self._build_ack(
+                    command,
+                    status="rejected",
+                    success=False,
+                    result=error_result(action_id, exc),
+                    error=exc.public_message,
+                )
+                await self._remember_and_emit(command_id, ack)
+                return ack
+
         try:
             result = handler(command)
             if inspect.isawaitable(result):
                 result = await result
+            if isinstance(result, DeferredCommandAck):
+                logger.info(
+                    "command_ack_deferred",
+                    command_id=command_id,
+                    action_id=action_id,
+                    reason=result.reason,
+                )
+                return result
             if result is None:
                 result = {}
             elif not isinstance(result, dict):
                 result = {"value": result}
+            if remote_operation:
+                result = validate_result(action_id, result)
 
             ack = self._build_ack(
                 command,
                 status="completed",
                 success=True,
                 result=result,
+            )
+        except RemoteOperationError as exc:
+            logger.warning(
+                "remote_operation_failed",
+                command_id=command_id,
+                action_id=action_id,
+                error_code=exc.code,
+            )
+            ack = self._build_ack(
+                command,
+                status="failed",
+                success=False,
+                result=error_result(action_id, exc),
+                error=exc.public_message,
             )
         except Exception as exc:  # noqa: BLE001
             logger.exception(
@@ -180,19 +263,46 @@ class CommandConsumer:
                 action_id=action_id,
                 error=str(exc),
             )
+            if remote_operation:
+                remote_error = RemoteOperationError("operation_failed")
+                result = error_result(action_id, remote_error)
+                public_error = remote_error.public_message
+            else:
+                result = {
+                    "error": str(exc),
+                    "action_id": action_id,
+                    **({"phase": exc.phase} if hasattr(exc, "phase") else {}),
+                }
+                public_error = str(exc)
             ack = self._build_ack(
                 command,
                 status="failed",
                 success=False,
-                result={
-                    "error": str(exc),
-                    "action_id": action_id,
-                    **({"phase": exc.phase} if hasattr(exc, "phase") else {}),
-                },
-                error=str(exc),
+                result=result,
+                error=public_error,
             )
 
         await self._remember_and_emit(command_id, ack)
+        return ack
+
+    async def emit_command_ack(
+        self,
+        command: Dict[str, Any],
+        *,
+        status: str,
+        success: bool,
+        result: Dict[str, Any],
+        error: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Publish an acknowledgement reconstructed after a process restart."""
+        ack = self._build_ack(
+            command,
+            status=status,
+            success=success,
+            result=result,
+            error=error,
+        )
+        await self._remember_and_emit(str(command["command_id"]), ack)
         return ack
 
     async def _consume_loop(self) -> None:
@@ -204,7 +314,7 @@ class CommandConsumer:
                     if not self._running:
                         return
                     try:
-                        await self.handle_message(
+                        outcome = await self.handle_message(
                             message.value,
                             source_partition=message.partition,
                             source_offset=message.offset,
@@ -215,6 +325,12 @@ class CommandConsumer:
                                     message.offset + 1
                             }
                         )
+                        if isinstance(outcome, DeferredCommandAck):
+                            await self._run_deferred_after_commit(
+                                outcome,
+                                command_offset=message.offset,
+                            )
+                            return
                     except asyncio.CancelledError:
                         raise
                     except Exception as exc:  # noqa: BLE001
@@ -234,6 +350,28 @@ class CommandConsumer:
                 raise
             except Exception as exc:  # noqa: BLE001
                 logger.error("command_consumer_loop_error", error=str(exc))
+                await asyncio.sleep(5)
+
+    async def _run_deferred_after_commit(
+        self,
+        outcome: DeferredCommandAck,
+        *,
+        command_offset: int,
+    ) -> None:
+        """Retry the restart handoff without rewinding an already committed offset."""
+        while self._running:
+            try:
+                await outcome.run_after_commit()
+                return
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:  # noqa: BLE001
+                logger.error(
+                    "command_post_commit_action_failed",
+                    reason=outcome.reason,
+                    source_offset=command_offset,
+                    error=str(exc),
+                )
                 await asyncio.sleep(5)
 
     async def _stop_clients(self) -> None:
@@ -326,7 +464,18 @@ class CommandConsumer:
             "timestamp": datetime.now(timezone.utc).isoformat(),
         }
         if error:
-            ack["error"] = error
+            ack["error"] = str(error)[:512]
+        if json_size(ack) > MAX_COMMAND_ACK_BYTES:
+            action_id = str(payload.get("action_id") or "")
+            if is_remote_operation(action_id):
+                overflow = RemoteOperationError("result_too_large")
+                ack["result"] = error_result(action_id, overflow)
+                ack["error"] = overflow.public_message
+            else:
+                ack["result"] = {"error": "command_result_too_large"}
+                ack["error"] = "Command result exceeded the acknowledgement limit"
+            ack["status"] = "failed"
+            ack["success"] = False
         return ack
 
     @staticmethod

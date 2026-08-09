@@ -1,4 +1,4 @@
-"""Storage helpers for signed edge-agent OTA config bundles."""
+"""Storage helpers for signed edge-agent OTA release artifacts."""
 
 from __future__ import annotations
 
@@ -32,9 +32,16 @@ def ota_storage_root() -> Path:
     return Path(settings.OTA_STORAGE_PATH).resolve()
 
 
-def resolve_bundle_path(organization_id: UUID, release_id: UUID) -> tuple[Path, str]:
+def resolve_bundle_path(
+    organization_id: UUID,
+    release_id: UUID,
+    *,
+    suffix: str = ".bundle",
+) -> tuple[Path, str]:
+    if suffix not in {".bundle", ".whl"}:
+        raise AgentReleaseStorageError("Unsupported OTA artifact suffix")
     root = ota_storage_root()
-    relative = Path(str(organization_id)) / f"{release_id}.bundle"
+    relative = Path(str(organization_id)) / f"{release_id}{suffix}"
     absolute = (root / relative).resolve()
     if not absolute.is_relative_to(root):
         raise AgentReleaseStorageError("Resolved OTA bundle path escapes storage root")
@@ -56,11 +63,44 @@ def store_config_bundle(
 ) -> StoredBundle:
     if not bundle:
         raise AgentReleaseStorageError("Config bundle cannot be empty")
+    return store_release_artifact(
+        organization_id,
+        release_id,
+        bundle,
+        suffix=".bundle",
+    )
 
-    output_path, storage_key = resolve_bundle_path(organization_id, release_id)
+
+def store_agent_wheel(
+    organization_id: UUID,
+    release_id: UUID,
+    artifact: bytes,
+) -> StoredBundle:
+    if not artifact:
+        raise AgentReleaseStorageError("Agent wheel cannot be empty")
+    return store_release_artifact(
+        organization_id,
+        release_id,
+        artifact,
+        suffix=".whl",
+    )
+
+
+def store_release_artifact(
+    organization_id: UUID,
+    release_id: UUID,
+    artifact: bytes,
+    *,
+    suffix: str,
+) -> StoredBundle:
+    output_path, storage_key = resolve_bundle_path(
+        organization_id,
+        release_id,
+        suffix=suffix,
+    )
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    checksum = hashlib.sha256(bundle).hexdigest()
-    signature = sign_bundle(bundle)
+    checksum = hashlib.sha256(artifact).hexdigest()
+    signature = sign_bundle(artifact)
 
     fd, temp_name = tempfile.mkstemp(
         dir=output_path.parent,
@@ -70,8 +110,12 @@ def store_config_bundle(
     os.close(fd)
     temp_path = Path(temp_name)
     try:
-        temp_path.write_bytes(bundle)
+        with temp_path.open("wb") as handle:
+            handle.write(artifact)
+            handle.flush()
+            os.fsync(handle.fileno())
         os.replace(temp_path, output_path)
+        _fsync_directory(output_path.parent)
     finally:
         if temp_path.exists():
             temp_path.unlink(missing_ok=True)
@@ -82,8 +126,26 @@ def store_config_bundle(
         checksum_sha256=checksum,
         signature_ed25519=signature,
         signing_key_id=signing_key_id,
-        size_bytes=len(bundle),
+        size_bytes=len(artifact),
     )
+
+
+def delete_release_artifact(storage_key: str) -> None:
+    """Best-effort cleanup for an artifact whose metadata transaction failed."""
+    path = absolute_bundle_path(storage_key)
+    path.unlink(missing_ok=True)
+    _fsync_directory(path.parent)
+
+
+def _fsync_directory(path: Path) -> None:
+    try:
+        descriptor = os.open(path, os.O_RDONLY)
+    except OSError:
+        return
+    try:
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
 
 
 def issue_release_bundle_url(

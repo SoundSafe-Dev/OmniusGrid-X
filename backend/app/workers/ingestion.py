@@ -4,12 +4,12 @@ import asyncio
 import json
 import os
 import re
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Dict, Any, Optional
 from uuid import UUID
 import structlog
 from aiokafka import AIOKafkaConsumer, AIOKafkaProducer
-from sqlalchemy import select, text, update
+from sqlalchemy import delete, or_, select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 import sys
@@ -24,8 +24,15 @@ from app.workers.health_server import (
 )
 from app.core.datetime_utils import aware_utc
 from app.db.database import AsyncSessionLocal
-from app.db.models import Telemetry, PackMLState, Asset, Alarm
+from app.db.models import (
+    Alarm,
+    Asset,
+    AssetAgentCollector,
+    PackMLState,
+    Telemetry,
+)
 from app.services.data_shedding import data_shedder
+from app.services.fleet_targeting import semver_asset_values
 from app.services.websocket_manager import websocket_manager
 from app.services.oee_calculator import oee_calculator
 from app.services.alarm_rules import (
@@ -367,18 +374,20 @@ class IngestionWorker:
             return
 
         organization_id = data.get('organization_id')
-        raw_asset_ids = data.get('asset_ids') or []
-        if not organization_id or not raw_asset_ids:
+        raw_asset_ids = data.get('asset_ids')
+        if not organization_id or not isinstance(raw_asset_ids, list):
             logger.warning(
                 "invalid_agent_heartbeat",
                 organization_id=organization_id,
-                asset_count=len(raw_asset_ids),
+                asset_count=len(raw_asset_ids) if isinstance(raw_asset_ids, list) else None,
             )
             return
 
         try:
             org_uuid = UUID(str(organization_id))
-            asset_ids = [UUID(str(asset_id)) for asset_id in raw_asset_ids]
+            if len(raw_asset_ids) > 5000:
+                raise ValueError("agent heartbeat contains too many assets")
+            asset_ids = list(dict.fromkeys(UUID(str(asset_id)) for asset_id in raw_asset_ids))
         except (TypeError, ValueError) as exc:
             logger.warning("invalid_agent_heartbeat_uuid", error=str(exc))
             return
@@ -402,30 +411,179 @@ class IngestionWorker:
         )
 
         timestamp_str = data.get('timestamp')
-        if timestamp_str:
-            timestamp = datetime.fromisoformat(timestamp_str.replace('Z', '+00:00'))
-        else:
-            timestamp = datetime.now(timezone.utc)
+        received_at = datetime.now(timezone.utc)
+        try:
+            if timestamp_str:
+                reported_at = datetime.fromisoformat(timestamp_str.replace('Z', '+00:00'))
+                if reported_at.tzinfo is None:
+                    reported_at = reported_at.replace(tzinfo=timezone.utc)
+            else:
+                reported_at = received_at
+        except (AttributeError, TypeError, ValueError) as exc:
+            logger.warning("invalid_agent_heartbeat_timestamp", error=str(exc))
+            return
+        if reported_at > received_at + timedelta(minutes=5):
+            reported_at = received_at
+        agent_id = data.get('agent_id')
+        if not isinstance(agent_id, str) or not agent_id.strip() or len(agent_id) > 255:
+            logger.warning("invalid_agent_heartbeat_agent_id")
+            return
+        agent_id = agent_id.strip()
 
-        result = await session.execute(
-            update(Asset)
-            .where(Asset.organization_id == org_uuid, Asset.id.in_(asset_ids))
-            .values(
-                agent_id=data.get('agent_id'),
-                agent_version=data.get('agent_version'),
-                agent_config_hash=data.get('config_hash'),
-                agent_build_id=data.get('build_id'),
-                agent_last_heartbeat=timestamp,
-                last_seen=timestamp,
-            )
+        # Agent status is consumed outside an HTTP tenant dependency. Set the same
+        # transaction-local tenant context explicitly so FORCE RLS remains usable.
+        await session.execute(
+            text("SELECT set_config('app.current_org_id', :org_id, true)"),
+            {"org_id": str(org_uuid)},
         )
+
+        stale_candidates = list(
+            (
+                await session.execute(
+                    select(Asset.id).where(
+                        Asset.organization_id == org_uuid,
+                        Asset.agent_id == agent_id,
+                        Asset.id.not_in(asset_ids),
+                        or_(
+                            Asset.agent_reported_at.is_(None),
+                            Asset.agent_reported_at < reported_at,
+                        ),
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+        stale_asset_ids: list[UUID] = []
+        if stale_candidates:
+            stale_asset_ids = list(
+                (
+                    await session.execute(
+                        update(Asset)
+                        .where(
+                            Asset.organization_id == org_uuid,
+                            Asset.id.in_(stale_candidates),
+                            Asset.agent_id == agent_id,
+                            or_(
+                                Asset.agent_reported_at.is_(None),
+                                Asset.agent_reported_at < reported_at,
+                            ),
+                        )
+                        .values(
+                            agent_id=None,
+                            agent_version=None,
+                            agent_config_hash=None,
+                            agent_build_id=None,
+                            agent_last_heartbeat=None,
+                            agent_reported_at=reported_at,
+                            **semver_asset_values(None),
+                        )
+                        .returning(Asset.id)
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            if stale_asset_ids:
+                await session.execute(
+                    delete(AssetAgentCollector).where(
+                        AssetAgentCollector.organization_id == org_uuid,
+                        AssetAgentCollector.asset_id.in_(stale_asset_ids),
+                    )
+                )
+
+        raw_version = data.get('agent_version')
+        if raw_version is not None and (
+            not isinstance(raw_version, str) or len(raw_version) > 100
+        ):
+            raw_version = None
+        version_values = semver_asset_values(raw_version)
+        config_hash = data.get('config_hash')
+        if config_hash is not None and (
+            not isinstance(config_hash, str) or len(config_hash) > 64
+        ):
+            config_hash = None
+        build_id = data.get('build_id')
+        if build_id is not None and (
+            not isinstance(build_id, str) or len(build_id) > 255
+        ):
+            build_id = None
+        updated_ids = list(
+            (
+                await session.execute(
+                    update(Asset)
+                    .where(
+                        Asset.organization_id == org_uuid,
+                        Asset.id.in_(asset_ids),
+                        or_(
+                            Asset.agent_reported_at.is_(None),
+                            Asset.agent_reported_at < reported_at,
+                        ),
+                    )
+                    .values(
+                        agent_id=agent_id,
+                        agent_version=raw_version,
+                        agent_config_hash=config_hash,
+                        agent_build_id=build_id,
+                        agent_last_heartbeat=received_at,
+                        agent_reported_at=reported_at,
+                        last_seen=received_at,
+                        **version_values,
+                    )
+                    .returning(Asset.id)
+                )
+            )
+            .scalars()
+            .all()
+        )
+
+        if updated_ids:
+            await session.execute(
+                delete(AssetAgentCollector).where(
+                    AssetAgentCollector.organization_id == org_uuid,
+                    AssetAgentCollector.asset_id.in_(updated_ids),
+                )
+            )
+
+        collector_status = data.get('collector_status') or {}
+        collectors = collector_status.get('collectors') if isinstance(collector_status, dict) else {}
+        collectors = collectors if isinstance(collectors, dict) else {}
+        # UUIDString-backed asset IDs are returned as strings on every dialect,
+        # while heartbeat payload validation produces UUID objects. Compare the
+        # canonical text form so collector facts are not silently discarded.
+        updated_id_set = {str(asset_id) for asset_id in updated_ids}
+        for raw_asset_id, collector in collectors.items():
+            try:
+                collector_asset_id = str(UUID(str(raw_asset_id)))
+            except (TypeError, ValueError):
+                continue
+            if collector_asset_id not in updated_id_set or not isinstance(collector, dict):
+                continue
+            collector_type = collector.get('type')
+            if (
+                not isinstance(collector_type, str)
+                or not collector_type.strip()
+                or len(collector_type.strip()) > 100
+            ):
+                continue
+            session.add(
+                AssetAgentCollector(
+                    organization_id=org_uuid,
+                    asset_id=collector_asset_id,
+                    collector_type=collector_type.strip(),
+                    enabled=bool(collector.get('enabled', True)),
+                    running=bool(collector.get('running', False)),
+                    heartbeat_at=received_at,
+                )
+            )
 
         logger.info(
             "agent_heartbeat_ingested",
-            agent_id=data.get('agent_id'),
+            agent_id=agent_id,
             organization_id=str(org_uuid),
             asset_count=len(asset_ids),
-            updated_assets=result.rowcount,
+            updated_assets=len(updated_ids),
+            retired_assets=len(stale_asset_ids),
         )
     
     async def _evaluate_alarm_rules(

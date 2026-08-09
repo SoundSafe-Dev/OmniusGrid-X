@@ -66,6 +66,7 @@ CREDENTIALLESS_PREFIXES = (
     "/api/v1/fleet/releases/",       # public_router signed bundle download
     "/api/v1/models/",               # public_router signed model download
     "/api/v1/compliance/reports/",   # public_router signed download
+    "/api/v1/auth/invitations/",     # one-time invitation token in body
 )
 
 # Explicit contract: these mounted routes must retain the canonical admin
@@ -83,7 +84,16 @@ ADMIN_ROUTE_INVENTORY = {
     # Admin user management (FS-221). Every route on the router carries
     # require_admin; these entries are the deliberate review of that.
     ("DELETE", "/api/v1/users/{user_id}"),
+    ("DELETE", "/api/v1/fleet/cohorts/{cohort_id}"),
+    ("DELETE", "/api/v1/fleet/groups/{group_id}"),
+    ("DELETE", "/api/v1/fleet/groups/{group_id}/assets/{asset_id}"),
+    ("DELETE", "/api/v1/fleet/maintenance-windows/{window_id}"),
+    ("DELETE", "/api/v1/fleet/sites/{site_id}"),
+    ("DELETE", "/api/v1/fleet/tags/{tag_id}"),
+    ("DELETE", "/api/v1/fleet/tags/{tag_id}/assets/{asset_id}"),
     ("DELETE", "/api/v1/gdpr/admin/users/{user_id}/data-delete"),
+    ("DELETE", "/api/v1/auth/users/{user_id}"),
+    ("DELETE", "/api/v1/auth/users/invitations/{invitation_id}"),
     ("DELETE", "/api/v1/kanban/rules/{rule_id}"),
     ("DELETE", "/api/v1/registries/correlations/{correlation_id}"),
     ("DELETE", "/api/v1/registries/items/{item_id}"),
@@ -138,11 +148,24 @@ ADMIN_ROUTE_INVENTORY = {
     ("GET", "/api/v1/users/"),
     ("GET", "/api/v1/users/{user_id}"),
     ("GET", "/api/v1/gdpr/admin/users/{user_id}/data-export"),
+    ("GET", "/api/v1/auth/users"),
+    ("GET", "/api/v1/auth/users/{user_id}"),
+    ("GET", "/api/v1/auth/users/invitations"),
     ("GET", "/api/v1/registries/{registry_id}/score"),
     ("PATCH", "/api/v1/admin/errors/{fingerprint}"),
+    ("PATCH", "/api/v1/auth/users/{user_id}"),
+    ("PATCH", "/api/v1/fleet/cohorts/{cohort_id}"),
+    ("PATCH", "/api/v1/fleet/groups/{group_id}"),
+    ("PATCH", "/api/v1/fleet/maintenance-windows/{window_id}"),
+    ("PATCH", "/api/v1/fleet/sites/{site_id}"),
+    ("PATCH", "/api/v1/fleet/tags/{tag_id}"),
+    ("PATCH", "/api/v1/fleet/workcells/{workcell_id}/site"),
     ("POST", "/admin/assets/{asset_id}/maintenance"),
     ("POST", "/admin/database/vacuum"),
     ("POST", "/api/v1/api-keys/generate"),
+    ("POST", "/api/v1/auth/users/{user_id}/reactivate"),
+    ("POST", "/api/v1/auth/users/invitations"),
+    ("POST", "/api/v1/auth/users/invitations/{invitation_id}/resend"),
     ("POST", "/api/v1/assets/"),
     ("POST", "/api/v1/bulk/assets/import"),
     ("POST", "/api/v1/bulk/jobs/{job_id}/cancel"),
@@ -167,13 +190,22 @@ ADMIN_ROUTE_INVENTORY = {
     ("PATCH", "/api/v1/users/{user_id}"),
     ("POST", "/api/v1/users/"),
     ("POST", "/api/v1/fleet/model-releases"),
+    ("POST", "/api/v1/fleet/cohorts"),
+    ("POST", "/api/v1/fleet/groups"),
+    ("POST", "/api/v1/fleet/maintenance-windows"),
+    ("POST", "/api/v1/fleet/maintenance-windows/preview"),
     ("POST", "/api/v1/fleet/releases"),
+    ("POST", "/api/v1/fleet/releases/agent"),
     ("POST", "/api/v1/fleet/releases/{release_id}/publish"),
     ("POST", "/api/v1/fleet/releases/{release_id}/yank"),
     ("POST", "/api/v1/fleet/rollouts"),
     ("POST", "/api/v1/fleet/rollouts/{rollout_id}/cancel"),
     ("POST", "/api/v1/fleet/rollouts/{rollout_id}/pause"),
     ("POST", "/api/v1/fleet/rollouts/{rollout_id}/resume"),
+    ("POST", "/api/v1/fleet/sites"),
+    ("POST", "/api/v1/fleet/tags"),
+    ("POST", "/api/v1/fleet/tags/bulk-assignments"),
+    ("POST", "/api/v1/fleet/target-previews"),
     ("POST", "/api/v1/gdpr/processing-records"),
     ("POST", "/api/v1/kanban/rules"),
     ("POST", "/api/v1/kanban/rules/{rule_id}/test"),
@@ -192,6 +224,8 @@ ADMIN_ROUTE_INVENTORY = {
     ("PUT", "/api/v1/exports/schedules/{schedule_id}"),
     ("PUT", "/api/v1/exports/templates/{template_id}"),
     ("PUT", "/api/v1/feature-flags/{key}"),
+    ("PUT", "/api/v1/fleet/groups/{group_id}/assets/{asset_id}"),
+    ("PUT", "/api/v1/fleet/tags/{tag_id}/assets/{asset_id}"),
     ("PUT", "/api/v1/kanban/rules/{rule_id}"),
     ("PUT", "/api/v1/registries/correlations/{correlation_id}"),
     ("PUT", "/api/v1/registries/items/{item_id}"),
@@ -225,6 +259,8 @@ SELF_SERVICE_MUTATIONS = {
 }
 
 CREDENTIAL_MUTATIONS = {
+    ("POST", "/api/v1/auth/invitations/accept"),
+    ("POST", "/api/v1/auth/invitations/validate"),
     ("POST", "/api/v1/auth/login"),
     ("POST", "/api/v1/auth/refresh"),
     ("POST", "/api/v1/auth/register"),

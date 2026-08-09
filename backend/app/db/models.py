@@ -3,7 +3,7 @@
 import uuid
 from app.core.datetime_utils import utcnow
 from typing import Optional, List
-from sqlalchemy import Column, String, DateTime, Boolean, Numeric, Float, JSON, ForeignKey, Text, BigInteger, Integer, ARRAY, Date, UUID, UniqueConstraint, CheckConstraint, Index, func, text
+from sqlalchemy import Column, String, DateTime, Time, Boolean, Numeric, Float, JSON, ForeignKey, ForeignKeyConstraint, Text, BigInteger, Integer, ARRAY, Date, UUID, UniqueConstraint, CheckConstraint, Index, func, text
 from sqlalchemy.dialects.postgresql import INET, JSONB
 from sqlalchemy.orm import declarative_base, relationship
 from sqlalchemy.types import TypeDecorator
@@ -121,6 +121,37 @@ class AssetType(Base):
 
 class Asset(Base):
     __tablename__ = "assets"
+    __table_args__ = (
+        UniqueConstraint("id", "organization_id", name="uq_assets_id_org"),
+        CheckConstraint(
+            "("
+            "agent_version_valid AND "
+            "agent_version_major IS NOT NULL AND agent_version_major >= 0 AND "
+            "agent_version_minor IS NOT NULL AND agent_version_minor >= 0 AND "
+            "agent_version_patch IS NOT NULL AND agent_version_patch >= 0"
+            ") OR ("
+            "NOT agent_version_valid AND "
+            "agent_version_major IS NULL AND "
+            "agent_version_minor IS NULL AND "
+            "agent_version_patch IS NULL AND "
+            "agent_version_prerelease IS NULL"
+            ")",
+            name="ck_assets_agent_semver_components",
+        ),
+        ForeignKeyConstraint(
+            ["workcell_id", "organization_id"],
+            ["workcells.id", "workcells.organization_id"],
+            ondelete="RESTRICT",
+            name="fk_assets_workcell_org",
+        ),
+        Index(
+            "idx_assets_org_agent_reported",
+            "organization_id",
+            "agent_id",
+            "agent_reported_at",
+            postgresql_where=text("agent_id IS NOT NULL"),
+        ),
+    )
 
     id = UUIDColumn()
     organization_id = UUIDForeignKey("organizations.id")
@@ -150,6 +181,12 @@ class Asset(Base):
     agent_config_hash = Column(String(64))
     agent_build_id = Column(String(255))
     agent_last_heartbeat = Column(DateTime(timezone=True))
+    agent_reported_at = Column(DateTime(timezone=True))
+    agent_version_valid = Column(Boolean, nullable=False, default=False, server_default=text("false"))
+    agent_version_major = Column(Integer)
+    agent_version_minor = Column(Integer)
+    agent_version_patch = Column(Integer)
+    agent_version_prerelease = Column(String(255))
     created_at = Column(DateTime(timezone=True), default=utcnow)
     updated_at = Column(DateTime(timezone=True), default=utcnow)
 
@@ -398,9 +435,18 @@ class Operation(Base):
 
 class Workcell(Base):
     __tablename__ = "workcells"
+    __table_args__ = (
+        UniqueConstraint("id", "organization_id", name="uq_workcells_id_org"),
+        ForeignKeyConstraint(
+            ["site_id", "organization_id"],
+            ["sites.id", "sites.organization_id"],
+            name="fk_workcells_site_org",
+        ),
+    )
     
     id = UUIDColumn()
     organization_id = UUIDForeignKey("organizations.id")
+    site_id = Column(UUIDString(), nullable=True)
 
     #: Ordering only (FS-417). SQLAlchemy builds insert ordering from relationships,
     #: not from ForeignKey columns, so without these a flush can emit this row before
@@ -413,6 +459,325 @@ class Workcell(Base):
     location = Column(String(255))
     created_at = Column(DateTime(timezone=True), default=utcnow)
     updated_at = Column(DateTime(timezone=True), default=utcnow)
+
+
+class Site(Base):
+    """Tenant-owned physical site containing zero or more workcells."""
+
+    __tablename__ = "sites"
+    __table_args__ = (
+        UniqueConstraint("organization_id", "key", name="uq_sites_org_key"),
+        UniqueConstraint("organization_id", "name", name="uq_sites_org_name"),
+        UniqueConstraint("id", "organization_id", name="uq_sites_id_org"),
+        CheckConstraint("length(trim(key)) > 0", name="ck_sites_key_nonempty"),
+        CheckConstraint("length(trim(name)) > 0", name="ck_sites_name_nonempty"),
+    )
+
+    id = UUIDColumn()
+    organization_id = Column(
+        UUIDString(),
+        ForeignKey("organizations.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    key = Column(String(100), nullable=False)
+    name = Column(String(255), nullable=False)
+    description = Column(Text)
+    is_active = Column(Boolean, nullable=False, default=True, server_default=text("true"))
+    created_by = Column(
+        UUIDString(),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    created_at = Column(DateTime(timezone=True), default=utcnow, server_default=func.now())
+    updated_at = Column(
+        DateTime(timezone=True),
+        default=utcnow,
+        onupdate=utcnow,
+        server_default=func.now(),
+    )
+
+
+class MaintenanceWindow(Base):
+    """Tenant-owned recurring local-time dispatch window."""
+
+    __tablename__ = "maintenance_windows"
+    __table_args__ = (
+        UniqueConstraint(
+            "organization_id",
+            "name",
+            name="uq_maintenance_windows_org_name",
+        ),
+        UniqueConstraint(
+            "id",
+            "organization_id",
+            name="uq_maintenance_windows_id_org",
+        ),
+        ForeignKeyConstraint(
+            ["site_id", "organization_id"],
+            ["sites.id", "sites.organization_id"],
+            name="fk_maintenance_windows_site_org",
+        ),
+        CheckConstraint(
+            "length(trim(name)) > 0",
+            name="ck_maintenance_windows_name_nonempty",
+        ),
+        CheckConstraint(
+            "length(trim(timezone)) > 0",
+            name="ck_maintenance_windows_timezone_nonempty",
+        ),
+        CheckConstraint(
+            "jsonb_typeof(weekdays) = 'array' "
+            "AND jsonb_array_length(weekdays) BETWEEN 1 AND 7 "
+            "AND weekdays <@ '[0, 1, 2, 3, 4, 5, 6]'::jsonb",
+            name="ck_maintenance_windows_weekdays",
+        ).ddl_if(dialect="postgresql"),
+        CheckConstraint(
+            "local_start_time <> local_end_time",
+            name="ck_maintenance_windows_nonzero_duration",
+        ),
+        Index(
+            "idx_maintenance_windows_org_site_enabled",
+            "organization_id",
+            "site_id",
+            "enabled",
+        ),
+    )
+
+    id = UUIDColumn()
+    organization_id = Column(
+        UUIDString(),
+        ForeignKey("organizations.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    site_id = Column(UUIDString(), nullable=True)
+    name = Column(String(255), nullable=False)
+    timezone = Column(String(100), nullable=False)
+    weekdays = Column(JSON().with_variant(JSONB, "postgresql"), nullable=False)
+    local_start_time = Column(Time, nullable=False)
+    local_end_time = Column(Time, nullable=False)
+    enabled = Column(Boolean, nullable=False, default=True, server_default=text("true"))
+    created_by = Column(
+        UUIDString(),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    created_at = Column(DateTime(timezone=True), default=utcnow, server_default=func.now())
+    updated_at = Column(
+        DateTime(timezone=True),
+        default=utcnow,
+        onupdate=utcnow,
+        server_default=func.now(),
+    )
+
+
+class AssetAgentCollector(Base):
+    """Latest collector facts reported for one asset by its edge agent."""
+
+    __tablename__ = "asset_agent_collectors"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["asset_id", "organization_id"],
+            ["assets.id", "assets.organization_id"],
+            ondelete="CASCADE",
+            name="fk_asset_agent_collectors_asset_org",
+        ),
+        CheckConstraint(
+            "length(trim(collector_type)) > 0",
+            name="ck_asset_agent_collectors_type",
+        ),
+    )
+
+    organization_id = Column(
+        UUIDString(),
+        ForeignKey("organizations.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    asset_id = Column(UUIDString(), primary_key=True)
+    collector_type = Column(String(100), primary_key=True)
+    enabled = Column(Boolean, nullable=False, default=True, server_default=text("true"))
+    running = Column(Boolean, nullable=False, default=False, server_default=text("false"))
+    heartbeat_at = Column(DateTime(timezone=True), nullable=False)
+
+
+class FleetTag(Base):
+    """Tenant-owned reusable asset label."""
+
+    __tablename__ = "fleet_tags"
+    __table_args__ = (
+        UniqueConstraint("organization_id", "key", name="uq_fleet_tags_org_key"),
+        UniqueConstraint("organization_id", "name", name="uq_fleet_tags_org_name"),
+        UniqueConstraint("id", "organization_id", name="uq_fleet_tags_id_org"),
+        CheckConstraint("length(trim(key)) > 0", name="ck_fleet_tags_key_nonempty"),
+        CheckConstraint("length(trim(name)) > 0", name="ck_fleet_tags_name_nonempty"),
+    )
+
+    id = UUIDColumn()
+    organization_id = Column(
+        UUIDString(),
+        ForeignKey("organizations.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    key = Column(String(100), nullable=False)
+    name = Column(String(255), nullable=False)
+    description = Column(Text)
+    color = Column(String(32))
+    is_active = Column(Boolean, nullable=False, default=True, server_default=text("true"))
+    created_by = Column(
+        UUIDString(),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    created_at = Column(DateTime(timezone=True), default=utcnow, server_default=func.now())
+    updated_at = Column(
+        DateTime(timezone=True),
+        default=utcnow,
+        onupdate=utcnow,
+        server_default=func.now(),
+    )
+
+
+class AssetFleetTag(Base):
+    """Many-to-many tenant-safe asset/tag assignment."""
+
+    __tablename__ = "asset_fleet_tags"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["asset_id", "organization_id"],
+            ["assets.id", "assets.organization_id"],
+            ondelete="CASCADE",
+            name="fk_asset_fleet_tags_asset_org",
+        ),
+        ForeignKeyConstraint(
+            ["tag_id", "organization_id"],
+            ["fleet_tags.id", "fleet_tags.organization_id"],
+            ondelete="CASCADE",
+            name="fk_asset_fleet_tags_tag_org",
+        ),
+    )
+
+    organization_id = Column(
+        UUIDString(),
+        ForeignKey("organizations.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    asset_id = Column(UUIDString(), primary_key=True)
+    tag_id = Column(UUIDString(), primary_key=True)
+    assigned_by = Column(
+        UUIDString(),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    assigned_at = Column(DateTime(timezone=True), default=utcnow, server_default=func.now())
+
+
+class FleetGroup(Base):
+    """Tenant-owned explicit fleet group."""
+
+    __tablename__ = "fleet_groups"
+    __table_args__ = (
+        UniqueConstraint("organization_id", "key", name="uq_fleet_groups_org_key"),
+        UniqueConstraint("organization_id", "name", name="uq_fleet_groups_org_name"),
+        UniqueConstraint("id", "organization_id", name="uq_fleet_groups_id_org"),
+        CheckConstraint("length(trim(key)) > 0", name="ck_fleet_groups_key_nonempty"),
+        CheckConstraint("length(trim(name)) > 0", name="ck_fleet_groups_name_nonempty"),
+    )
+
+    id = UUIDColumn()
+    organization_id = Column(
+        UUIDString(),
+        ForeignKey("organizations.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    key = Column(String(100), nullable=False)
+    name = Column(String(255), nullable=False)
+    description = Column(Text)
+    is_active = Column(Boolean, nullable=False, default=True, server_default=text("true"))
+    created_by = Column(
+        UUIDString(),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    created_at = Column(DateTime(timezone=True), default=utcnow, server_default=func.now())
+    updated_at = Column(
+        DateTime(timezone=True),
+        default=utcnow,
+        onupdate=utcnow,
+        server_default=func.now(),
+    )
+
+
+class AssetFleetGroup(Base):
+    """Many-to-many tenant-safe asset/group membership."""
+
+    __tablename__ = "asset_fleet_groups"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["asset_id", "organization_id"],
+            ["assets.id", "assets.organization_id"],
+            ondelete="CASCADE",
+            name="fk_asset_fleet_groups_asset_org",
+        ),
+        ForeignKeyConstraint(
+            ["group_id", "organization_id"],
+            ["fleet_groups.id", "fleet_groups.organization_id"],
+            ondelete="CASCADE",
+            name="fk_asset_fleet_groups_group_org",
+        ),
+    )
+
+    organization_id = Column(
+        UUIDString(),
+        ForeignKey("organizations.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    asset_id = Column(UUIDString(), primary_key=True)
+    group_id = Column(UUIDString(), primary_key=True)
+    assigned_by = Column(
+        UUIDString(),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    assigned_at = Column(DateTime(timezone=True), default=utcnow, server_default=func.now())
+
+
+class FleetCohort(Base):
+    """Saved validated dynamic targeting query."""
+
+    __tablename__ = "fleet_cohorts"
+    __table_args__ = (
+        UniqueConstraint("organization_id", "name", name="uq_fleet_cohorts_org_name"),
+        UniqueConstraint("id", "organization_id", name="uq_fleet_cohorts_id_org"),
+        CheckConstraint("length(trim(name)) > 0", name="ck_fleet_cohorts_name_nonempty"),
+        CheckConstraint("query_version = 1", name="ck_fleet_cohorts_query_version"),
+        CheckConstraint(
+            "jsonb_typeof(query) = 'object'",
+            name="ck_fleet_cohorts_query_object",
+        ).ddl_if(dialect="postgresql"),
+    )
+
+    id = UUIDColumn()
+    organization_id = Column(
+        UUIDString(),
+        ForeignKey("organizations.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    name = Column(String(255), nullable=False)
+    description = Column(Text)
+    query_version = Column(Integer, nullable=False, default=1, server_default="1")
+    query = Column(JSON().with_variant(JSONB, "postgresql"), nullable=False)
+    is_active = Column(Boolean, nullable=False, default=True, server_default=text("true"))
+    created_by = Column(
+        UUIDString(),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    created_at = Column(DateTime(timezone=True), default=utcnow, server_default=func.now())
+    updated_at = Column(
+        DateTime(timezone=True),
+        default=utcnow,
+        onupdate=utcnow,
+        server_default=func.now(),
+    )
 
 
 # ==================== YMS Models ====================
@@ -918,6 +1283,116 @@ class User(Base):
     last_login = Column(DateTime(timezone=True))
     created_at = Column(DateTime(timezone=True), default=utcnow)
     updated_at = Column(DateTime(timezone=True), default=utcnow)
+
+
+class UserInvitation(Base):
+    """One-time tenant invitation whose raw bearer token is never persisted."""
+
+    __tablename__ = "user_invitations"
+    __table_args__ = (
+        UniqueConstraint(
+            "id",
+            "organization_id",
+            name="uq_user_invitations_id_org",
+        ),
+        CheckConstraint(
+            "length(trim(normalized_email)) > 0",
+            name="ck_user_invitations_email_nonempty",
+        ),
+        CheckConstraint(
+            "requested_role IN ('admin', 'operator', 'viewer')",
+            name="ck_user_invitations_role",
+        ),
+        CheckConstraint(
+            "status IN ('pending', 'accepted', 'revoked', 'expired')",
+            name="ck_user_invitations_status",
+        ),
+        CheckConstraint(
+            "delivery_status IN ('pending', 'sent', 'failed')",
+            name="ck_user_invitations_delivery_status",
+        ),
+        CheckConstraint(
+            "delivery_attempts >= 0",
+            name="ck_user_invitations_delivery_attempts",
+        ),
+        CheckConstraint(
+            "expires_at > created_at",
+            name="ck_user_invitations_expiry",
+        ),
+        Index(
+            "uq_user_invitations_pending_org_email",
+            "organization_id",
+            "normalized_email",
+            unique=True,
+            postgresql_where=text("status = 'pending'"),
+        ),
+        Index(
+            "idx_user_invitations_org_status_created",
+            "organization_id",
+            "status",
+            text("created_at DESC"),
+        ),
+        Index(
+            "idx_user_invitations_pending_expiry",
+            "expires_at",
+            postgresql_where=text("status = 'pending'"),
+        ),
+    )
+
+    id = UUIDColumn()
+    organization_id = Column(
+        UUIDString(),
+        ForeignKey("organizations.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    normalized_email = Column(String(320), nullable=False)
+    requested_role = Column(String(50), nullable=False)
+    token_hash = Column(String(64), nullable=False, unique=True)
+    status = Column(
+        String(20),
+        nullable=False,
+        default="pending",
+        server_default="pending",
+    )
+    expires_at = Column(DateTime(timezone=True), nullable=False)
+    delivery_status = Column(
+        String(20),
+        nullable=False,
+        default="pending",
+        server_default="pending",
+    )
+    delivery_attempts = Column(
+        Integer,
+        nullable=False,
+        default=0,
+        server_default="0",
+    )
+    last_delivery_attempt_at = Column(DateTime(timezone=True))
+    delivered_at = Column(DateTime(timezone=True))
+    delivery_error_code = Column(String(100))
+    created_by = Column(
+        UUIDString(),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    accepted_user_id = Column(
+        UUIDString(),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    accepted_at = Column(DateTime(timezone=True))
+    revoked_at = Column(DateTime(timezone=True))
+    created_at = Column(
+        DateTime(timezone=True),
+        default=utcnow,
+        server_default=func.now(),
+    )
+    updated_at = Column(
+        DateTime(timezone=True),
+        default=utcnow,
+        onupdate=utcnow,
+        server_default=func.now(),
+    )
 
 
 class Command(Base):
@@ -1557,7 +2032,7 @@ class AuditLog(Base):
     organization = relationship("Organization", foreign_keys="AuditLog.organization_id", lazy="raise")
     action = Column(String(100), nullable=False)
     resource_type = Column(String(50), nullable=True)
-    resource_id = Column(String(36), nullable=True)  # Polymorphic - can reference any table
+    resource_id = Column(UUID(as_uuid=True), nullable=True)  # Polymorphic UUID resource
     details = Column(JSON, default={}, nullable=False)
     # Migrations 001/009 create this as INET. Declared as VARCHAR here, every
     # insert bound $n::VARCHAR and Postgres rejected it with
@@ -2074,7 +2549,7 @@ class ComplianceReportJob(Base):
 
 
 class AgentRelease(Base):
-    """Signed edge-agent release metadata and config-bundle pointer."""
+    """Signed config, model, or executable edge-agent release artifact."""
     __tablename__ = "agent_releases"
     __table_args__ = (
         CheckConstraint(
@@ -2082,13 +2557,28 @@ class AgentRelease(Base):
             name="ck_agent_releases_status",
         ),
         CheckConstraint(
-            "artifact_type IN ('config', 'model')",
+            "artifact_type IN ('config', 'model', 'agent')",
             name="ck_agent_releases_artifact_type",
         ),
-        UniqueConstraint(
-            "organization_id", "version", "channel",
-            name="uq_agent_releases_org_version_channel",
+        CheckConstraint(
+            "("
+            "artifact_type <> 'agent' OR ("
+            "artifact_format IS NOT NULL AND "
+            "artifact_format = 'wheel' AND "
+            "artifact_filename IS NOT NULL AND "
+            "artifact_size_bytes IS NOT NULL AND "
+            "artifact_size_bytes > 0 AND "
+            "package_name IS NOT NULL AND "
+            "package_name = 'opsgrid-agent'"
+            ")"
+            ")",
+            name="ck_agent_releases_agent_artifact",
         ),
+        UniqueConstraint(
+            "organization_id", "artifact_type", "version", "channel",
+            name="uq_agent_releases_org_type_version_channel",
+        ),
+        UniqueConstraint("id", "organization_id", name="uq_agent_releases_id_org"),
     )
 
     id = UUIDColumn()
@@ -2102,6 +2592,11 @@ class AgentRelease(Base):
     image_tag = Column(String(255), nullable=True)
     artifact_type = Column(String(20), nullable=False, default="config", server_default="config")
     model_name = Column(String(100), nullable=True)
+    artifact_format = Column(String(20), nullable=True)
+    artifact_filename = Column(String(255), nullable=True)
+    artifact_size_bytes = Column(BigInteger, nullable=True)
+    package_name = Column(String(100), nullable=True)
+    minimum_bootstrap_version = Column(String(100), nullable=True)
     bundle_storage_key = Column(Text, nullable=False)
     checksum_sha256 = Column(String(64), nullable=False)
     signature_ed25519 = Column(Text, nullable=False)
@@ -2124,6 +2619,79 @@ class AgentRelease(Base):
     rollouts = relationship("AgentRollout", back_populates="release")
 
 
+class FleetTargetPreview(Base):
+    """Short-lived exact resolution used to materialize a rollout."""
+
+    __tablename__ = "fleet_target_previews"
+    __table_args__ = (
+        CheckConstraint("asset_count >= 0 AND agent_count >= 0", name="ck_fleet_target_previews_counts"),
+        CheckConstraint(
+            "jsonb_typeof(selector) = 'object'",
+            name="ck_fleet_target_previews_selector_object",
+        ).ddl_if(dialect="postgresql"),
+        CheckConstraint(
+            "jsonb_typeof(ordered_asset_ids) = 'array'",
+            name="ck_fleet_target_previews_assets_array",
+        ).ddl_if(dialect="postgresql"),
+        CheckConstraint(
+            "jsonb_typeof(resolved_agents) = 'array'",
+            name="ck_fleet_target_previews_agents_array",
+        ).ddl_if(dialect="postgresql"),
+        CheckConstraint(
+            "jsonb_typeof(excluded_assets) = 'array'",
+            name="ck_fleet_target_previews_excluded_array",
+        ).ddl_if(dialect="postgresql"),
+        CheckConstraint(
+            "jsonb_typeof(warnings) = 'array'",
+            name="ck_fleet_target_previews_warnings_array",
+        ).ddl_if(dialect="postgresql"),
+        CheckConstraint(
+            "membership_hash ~ '^[0-9a-f]{64}$'",
+            name="ck_fleet_target_previews_hash",
+        ).ddl_if(dialect="postgresql"),
+        UniqueConstraint("id", "organization_id", name="uq_fleet_target_previews_id_org"),
+        ForeignKeyConstraint(
+            ["release_id", "organization_id"],
+            ["agent_releases.id", "agent_releases.organization_id"],
+            ondelete="CASCADE",
+            name="fk_fleet_target_previews_release_org",
+        ),
+    )
+
+    id = UUIDColumn()
+    organization_id = Column(
+        UUIDString(),
+        ForeignKey("organizations.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    release_id = Column(UUIDString(), nullable=False)
+    selector = Column(JSON().with_variant(JSONB, "postgresql"), nullable=False)
+    ordered_asset_ids = Column(JSON().with_variant(JSONB, "postgresql"), nullable=False)
+    resolved_agents = Column(JSON().with_variant(JSONB, "postgresql"), nullable=False)
+    excluded_assets = Column(
+        JSON().with_variant(JSONB, "postgresql"),
+        nullable=False,
+        default=list,
+        server_default="[]",
+    )
+    warnings = Column(
+        JSON().with_variant(JSONB, "postgresql"),
+        nullable=False,
+        default=list,
+        server_default="[]",
+    )
+    membership_hash = Column(String(64), nullable=False)
+    asset_count = Column(Integer, nullable=False)
+    agent_count = Column(Integer, nullable=False)
+    created_by = Column(
+        UUIDString(),
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    expires_at = Column(DateTime(timezone=True), nullable=False)
+    created_at = Column(DateTime(timezone=True), default=utcnow, server_default=func.now())
+
+
 class AgentRollout(Base):
     """Tenant-scoped OTA rollout definition."""
     __tablename__ = "agent_rollouts"
@@ -2131,6 +2699,33 @@ class AgentRollout(Base):
         CheckConstraint(
             "status IN ('pending', 'paused', 'running', 'completed', 'cancelled', 'rolled_back', 'failed')",
             name="ck_agent_rollouts_status",
+        ),
+        ForeignKeyConstraint(
+            ["target_preview_id", "organization_id"],
+            ["fleet_target_previews.id", "fleet_target_previews.organization_id"],
+            ondelete="RESTRICT",
+            name="fk_agent_rollouts_preview_org",
+        ),
+        Index(
+            "uq_agent_rollouts_target_preview",
+            "target_preview_id",
+            unique=True,
+            postgresql_where=text("target_preview_id IS NOT NULL"),
+        ),
+        CheckConstraint(
+            "pause_reason IS NULL "
+            "OR pause_reason IN ('manual', 'maintenance_window')",
+            name="ck_agent_rollouts_pause_reason",
+        ),
+        Index(
+            "idx_agent_rollouts_schedule_due",
+            "organization_id",
+            "status",
+            "next_eligible_at",
+            "scheduled_start_at",
+            postgresql_where=text(
+                "status IN ('pending', 'running', 'paused')"
+            ),
         ),
     )
 
@@ -2149,6 +2744,17 @@ class AgentRollout(Base):
     target_selector = Column(JSON().with_variant(JSONB, "postgresql"), nullable=False, default=dict)
     strategy = Column(JSON().with_variant(JSONB, "postgresql"), nullable=False, default=dict)
     status = Column(String(30), nullable=False, default="pending", server_default="pending")
+    target_preview_id = Column(UUIDString(), nullable=True)
+    target_membership_hash = Column(String(64))
+    scheduled_start_at = Column(DateTime(timezone=True))
+    enforce_maintenance_windows = Column(
+        Boolean,
+        nullable=False,
+        default=False,
+        server_default=text("false"),
+    )
+    pause_reason = Column(String(40))
+    next_eligible_at = Column(DateTime(timezone=True))
     created_by = Column(
         UUIDString(),
         ForeignKey("users.id", ondelete="SET NULL"),
@@ -2187,6 +2793,24 @@ class AgentRolloutTarget(Base):
             "rollout_id", "asset_id",
             name="uq_agent_rollout_targets_rollout_asset",
         ),
+        ForeignKeyConstraint(
+            ["route_asset_id", "organization_id"],
+            ["assets.id", "assets.organization_id"],
+            ondelete="RESTRICT",
+            name="fk_agent_rollout_targets_route_asset_org",
+        ),
+        ForeignKeyConstraint(
+            ["site_id", "organization_id"],
+            ["sites.id", "sites.organization_id"],
+            ondelete="RESTRICT",
+            name="fk_agent_rollout_targets_site_org",
+        ),
+        Index(
+            "idx_agent_rollout_targets_site",
+            "rollout_id",
+            "site_id",
+            "wave_index",
+        ),
     )
 
     id = UUIDColumn()
@@ -2205,9 +2829,15 @@ class AgentRolloutTarget(Base):
         ForeignKey("assets.id", ondelete="CASCADE"),
         nullable=False,
     )
+    agent_id = Column(String(255))
+    route_asset_id = Column(UUIDString(), nullable=True)
+    site_id = Column(UUIDString(), nullable=True)
     wave_index = Column(Integer, nullable=False, default=0, server_default="0")
     status = Column(String(30), nullable=False, default="pending", server_default="pending")
     current_version = Column(String(100))
+    attempted_version = Column(String(100))
+    running_version = Column(String(100))
+    local_rollback = Column(Boolean, nullable=False, default=False, server_default=text("false"))
     attempts = Column(Integer, nullable=False, default=0, server_default="0")
     command_id = Column(String(255))
     rollback_command_id = Column(String(255))

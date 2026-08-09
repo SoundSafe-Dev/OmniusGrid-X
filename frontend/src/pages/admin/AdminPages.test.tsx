@@ -5,7 +5,11 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { axe } from 'jest-axe'
 import { describe, expect, it, vi, beforeEach } from 'vitest'
 
-import { UsersPage } from './AdminPages'
+// MOVED 2026-08-08: UsersPage now lives in Users.tsx — Hridyansh's page, which adds
+// invitations. These describes follow it rather than being deleted with the import; the
+// behaviour they pin (a failed write must not read as a success, and a capped list must
+// say it was capped) is not specific to whose file the page is in.
+import { UsersPage } from './Users'
 
 // This page shipped with its write affordances HIDDEN behind
 // USER_MGMT_ENABLED = false, because create/update/delete pointed at

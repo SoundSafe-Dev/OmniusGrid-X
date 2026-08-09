@@ -7,7 +7,13 @@ from contextlib import asynccontextmanager
 
 from app.api import assets, telemetry, alarms, operations, auth, dashboard, health, engines
 from app.api import alarm_rules
+# TWO user-administration surfaces after the 2026-08-08 merge, at DIFFERENT prefixes, and
+# both are mounted rather than one being dropped. `user_management` serves /api/v1/users
+# (FS-221); Hridyansh's `users` serves /api/v1/auth/users and adds invitations, reactivate
+# and per-user reads. Which one the product keeps is a design call for his lane — deleting
+# either during a merge is how a fortnight's work disappears quietly.
 from app.api import user_management
+from app.api import users
 from app.api import dashboard_analytics
 from app.api import yard
 from app.api import insight_activation
@@ -17,7 +23,7 @@ from app.api import edge_enroll, edge_ingest, edge_fleet
 from app.api import erp_webhooks
 from app.api import platform_correlation
 from app.api import fleet_logistics
-from app.api import fleet_agents, agent_releases, agent_rollouts, models
+from app.api import fleet_agents, fleet_targeting, maintenance_windows, agent_releases, agent_rollouts, models
 from app.api import kpi
 from app.api import workcells
 from app.api import fleet_health
@@ -53,6 +59,7 @@ from app.middleware.rate_limit import (
     auth_limiter,
     limiter,
     rate_limit_exceeded_handler,
+    remote_operation_limiter,
 )
 from app.middleware.profiling import setup_profiling
 from app.middleware.error_tracking import setup_error_tracking
@@ -250,6 +257,7 @@ setup_tracing(app, engine=_db_engine)
 # limits work in tests and dynamically configured deployments.
 app.state.limiter = limiter
 app.state.auth_limiter = auth_limiter
+app.state.remote_operation_limiter = remote_operation_limiter
 app.add_exception_handler(RateLimitExceeded, rate_limit_exceeded_handler)
 
 # Application-wide middleware remains gated on settings.RATE_LIMIT_ENABLED.
@@ -331,6 +339,18 @@ setup_profiling(app)
 
 # Include routers
 app.include_router(auth.router, prefix="/api/v1/auth", tags=["Authentication"], responses=common_responses)
+app.include_router(
+    users.router,
+    prefix="/api/v1/auth/users",
+    tags=["User Management"],
+    responses=common_responses,
+)
+app.include_router(
+    users.public_router,
+    prefix="/api/v1/auth/invitations",
+    tags=["User Invitations"],
+    responses=common_responses,
+)
 app.include_router(assets.router, prefix="/api/v1/assets", tags=["Assets"], responses=common_responses)
 app.include_router(telemetry.router, prefix="/api/v1/telemetry", tags=["Telemetry"], responses=common_responses)
 app.include_router(alarms.router, prefix="/api/v1/alarms", tags=["Alarms"], responses=common_responses)
@@ -404,6 +424,8 @@ app.include_router(exports.router, prefix="/api/v1/exports", tags=["Exports"], r
 app.include_router(exports.public_router, prefix="/api/v1/exports", tags=["Exports"], responses=common_responses)
 app.include_router(error_tracking.router, prefix="/api/v1/admin/errors", tags=["Error Triage"], responses=common_responses)
 app.include_router(fleet_agents.router, prefix="/api/v1/fleet", tags=["Fleet"], responses=common_responses)
+app.include_router(fleet_targeting.router, prefix="/api/v1/fleet", tags=["Fleet"], responses=common_responses)
+app.include_router(maintenance_windows.router, prefix="/api/v1/fleet", tags=["Fleet"], responses=common_responses)
 app.include_router(agent_releases.router, prefix="/api/v1/fleet", tags=["Fleet"], responses=common_responses)
 app.include_router(agent_releases.public_router, prefix="/api/v1/fleet", tags=["Fleet"], responses=common_responses)
 app.include_router(agent_rollouts.router, prefix="/api/v1/fleet", tags=["Fleet"], responses=common_responses)

@@ -10,7 +10,6 @@ from sqlalchemy import select
 
 from app.core.config import settings
 from app.core.session import SessionManager
-from app.db.database import AsyncSessionLocal
 from app.db.models import User
 
 
@@ -95,6 +94,11 @@ def decode_local_token(token: str, *, expected_type: Optional[str] = None) -> di
         raise LocalTokenClaimsError("invalid token type")
     if expected_type is not None and token_type != expected_type:
         raise LocalTokenClaimsError("unexpected token type")
+    if token_type == "access" and payload.get("sid") is not None:
+        try:
+            UUID(str(payload["sid"]))
+        except (TypeError, ValueError, AttributeError) as exc:
+            raise LocalTokenClaimsError("invalid session id") from exc
     if not isinstance(issued_at, (int, float)) or not isinstance(
         expires_at, (int, float)
     ):
@@ -119,10 +123,24 @@ async def get_current_user_ws(token: str) -> Optional[User]:
         return None
 
     try:
+        # Resolve at call time so tests and deployments can replace the session
+        # factory without leaving WebSocket authentication bound to a stale one.
+        from app.db.database import AsyncSessionLocal
+
         payload = decode_local_token(token, expected_type="access")
         user_id = UUID(payload["sub"])
         async with AsyncSessionLocal() as db:
             if await SessionManager.is_token_revoked(payload["jti"], db):
+                return None
+            linked_session_jti = payload.get("sid")
+            if (
+                linked_session_jti is not None
+                and not await SessionManager.is_refresh_session_active(
+                    linked_session_jti,
+                    user_id,
+                    db,
+                )
+            ):
                 return None
             result = await db.execute(select(User).where(User.id == user_id))
             user = result.scalar_one_or_none()

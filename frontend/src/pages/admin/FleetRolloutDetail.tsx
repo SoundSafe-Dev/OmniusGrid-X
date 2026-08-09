@@ -13,6 +13,7 @@ import {
   useAgentRollout,
   useCancelAgentRollout,
   usePauseAgentRollout,
+  useResumeAgentRollout,
 } from '../../hooks/useFleet';
 import {
   AgentRolloutStatus,
@@ -70,6 +71,7 @@ export const FleetRolloutDetail: FC = () => {
   const { rolloutId = '' } = useParams();
   const rollout = useAgentRollout(rolloutId);
   const pauseRollout = usePauseAgentRollout();
+  const resumeRollout = useResumeAgentRollout();
   const cancelRollout = useCancelAgentRollout();
 
   const waveGroups = useMemo(
@@ -96,13 +98,27 @@ export const FleetRolloutDetail: FC = () => {
             <RefreshCw size={16} className="mr-2" />
             Refresh
           </Button>
-          {rollout.data && ['pending', 'running'].includes(rollout.data.status) && (
+          {rollout.data &&
+            (['pending', 'running'].includes(rollout.data.status) ||
+              (rollout.data.status === 'paused' &&
+                rollout.data.pause_reason === 'maintenance_window')) && (
             <Button
               variant="secondary"
               onClick={() => pauseRollout.mutate(rollout.data!.id)}
               loading={pauseRollout.isPending}
             >
-              Pause
+              {rollout.data.pause_reason === 'maintenance_window'
+                ? 'Hold manually'
+                : 'Pause'}
+            </Button>
+          )}
+          {rollout.data?.status === 'paused' && (
+            <Button
+              variant="secondary"
+              onClick={() => resumeRollout.mutate(rollout.data!.id)}
+              loading={resumeRollout.isPending}
+            >
+              Resume
             </Button>
           )}
           {rollout.data && ['pending', 'running', 'paused'].includes(rollout.data.status) && (
@@ -152,14 +168,51 @@ export const FleetRolloutDetail: FC = () => {
               <h2 className="text-xl font-semibold text-opsgrid-text">{rollout.data.name}</h2>
               <Badge variant={ROLLOUT_STATUS_VARIANT[rollout.data.status]}>{rollout.data.status}</Badge>
             </div>
-            <dl className="grid grid-cols-2 gap-4 lg:grid-cols-6">
+            <dl className="grid grid-cols-2 gap-4 lg:grid-cols-4 xl:grid-cols-8">
               <MetaItem label="Release" value={rollout.data.release_id} mono />
               <MetaItem label="Targets" value={formatNumber(overall.total, 0)} />
               <MetaItem label="Completed" value={`${overall.terminal}/${overall.total}`} />
               <MetaItem label="Success" value={formatNumber(overall.success, 0)} />
               <MetaItem label="Failed / rolled back" value={formatNumber(overall.failed, 0)} />
+              <MetaItem
+                label="Not before"
+                value={
+                  rollout.data.scheduled_start_at
+                    ? formatDateTime(rollout.data.scheduled_start_at)
+                    : 'Immediate'
+                }
+              />
+              <MetaItem
+                label="Window policy"
+                value={
+                  rollout.data.enforce_maintenance_windows
+                    ? 'Enforced'
+                    : 'Not enforced'
+                }
+              />
+              <MetaItem
+                label="Next eligible"
+                value={
+                  rollout.data.next_eligible_at
+                    ? formatDateTime(rollout.data.next_eligible_at)
+                    : '—'
+                }
+              />
               <MetaItem label="Updated" value={rollout.data.updated_at ? formatTimeAgo(rollout.data.updated_at) : 'Unknown'} />
             </dl>
+            {rollout.data.pause_reason && (
+              <div className="mt-4 rounded-lg border border-status-warning/40 bg-status-warning/10 p-3 text-sm text-opsgrid-text">
+                Paused by{' '}
+                {rollout.data.pause_reason === 'manual'
+                  ? 'an administrator'
+                  : 'the maintenance-window scheduler'}
+                {rollout.data.next_eligible_at
+                  ? ` until approximately ${formatDateTime(
+                      rollout.data.next_eligible_at
+                    )}`
+                  : '.'}
+              </div>
+            )}
           </Card>
 
           <Card title="Wave progress" subtitle="Targets grouped by wave" noPadding>
@@ -205,7 +258,7 @@ export const FleetRolloutDetail: FC = () => {
 
           <Card title="Targets" subtitle="Per-device rollout state" noPadding>
             {rollout.isFetching && !rollout.data ? (
-              <SkeletonTable rows={6} columns={8} />
+              <SkeletonTable rows={6} columns={9} />
             ) : rollout.data.targets.length === 0 ? (
               <div className="p-8 text-center text-sm text-opsgrid-text-secondary">No targets.</div>
             ) : (
@@ -214,6 +267,7 @@ export const FleetRolloutDetail: FC = () => {
                   <Table.Row>
                     <Table.Header>Status</Table.Header>
                     <Table.Header>Asset</Table.Header>
+                    <Table.Header>Site</Table.Header>
                     <Table.Header>Wave</Table.Header>
                     <Table.Header>Attempts</Table.Header>
                     <Table.Header>Command</Table.Header>
@@ -227,6 +281,9 @@ export const FleetRolloutDetail: FC = () => {
                     <Table.Row key={target.id}>
                       <Table.Cell><Badge variant={TARGET_STATUS_VARIANT[target.status]}>{target.status}</Badge></Table.Cell>
                       <Table.Cell className="font-mono text-xs">{target.asset_id}</Table.Cell>
+                      <Table.Cell className="font-mono text-xs">
+                        {target.site_id || 'Organization default'}
+                      </Table.Cell>
                       <Table.Cell className="tabular-nums">{target.wave_index}</Table.Cell>
                       <Table.Cell className="tabular-nums">{target.attempts}</Table.Cell>
                       <Table.Cell className="max-w-[12rem] truncate font-mono text-xs" title={target.command_id || undefined}>

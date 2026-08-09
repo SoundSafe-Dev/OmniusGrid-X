@@ -323,6 +323,32 @@ class SessionManager:
         return result.scalar_one_or_none() is not None
 
     @staticmethod
+    async def is_refresh_session_active(
+        jti: UUID | str,
+        user_id: UUID | str,
+        db: AsyncSession,
+    ) -> bool:
+        """Return whether an access token's linked refresh session is live.
+
+        Locally issued access tokens carry the refresh-session JTI in ``sid``.
+        Requiring that durable session to remain active makes role changes and
+        account deactivation effective across every API replica immediately,
+        and prevents credentials issued before deactivation from becoming
+        usable again after an administrator reactivates the account.
+        """
+
+        result = await db.execute(
+            select(UserSession.id).where(
+                UserSession.jti == _uuid(jti),
+                UserSession.user_id == _uuid(user_id),
+                UserSession.token_type == "refresh",
+                UserSession.is_active.is_(True),
+                UserSession.expires_at > _utcnow(),
+            )
+        )
+        return result.scalar_one_or_none() is not None
+
+    @staticmethod
     async def cleanup_expired_sessions(db: AsyncSession) -> int:
         """Delete expired refresh sessions and denylist entries."""
         now = _utcnow()

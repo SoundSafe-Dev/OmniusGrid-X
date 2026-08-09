@@ -140,6 +140,16 @@ async def create_asset(
     )
     if not result.scalar_one_or_none():
         raise HTTPException(status_code=400, detail="Asset type not found")
+    workcell = (
+        await db.execute(
+            select(Workcell).where(
+                Workcell.id == asset_data.workcell_id,
+                Workcell.organization_id == org_id,
+            )
+        )
+    ).scalar_one_or_none()
+    if workcell is None:
+        raise HTTPException(status_code=404, detail="Workcell not found")
 
     # Server-side override: ignore any client-supplied organization_id and
     # bind the new asset to the authenticated user's organization.
@@ -176,6 +186,17 @@ async def update_asset(
         raise HTTPException(status_code=404, detail="Asset not found")
 
     update_data = asset_data.model_dump(exclude_unset=True)
+    if "workcell_id" in update_data:
+        workcell = (
+            await db.execute(
+                select(Workcell).where(
+                    Workcell.id == update_data["workcell_id"],
+                    Workcell.organization_id == org_id,
+                )
+            )
+        ).scalar_one_or_none()
+        if workcell is None:
+            raise HTTPException(status_code=404, detail="Workcell not found")
     for field, value in update_data.items():
         setattr(asset, field, value)
 

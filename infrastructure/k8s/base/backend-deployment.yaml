@@ -183,6 +183,38 @@ spec:
               value: "omniusgrid-backend"
             # LOG_LEVEL likewise moved to backend-config, so production's `warn` and
             # staging's `debug` reach the process instead of being shadowed by this.
+            - name: ALLOW_OPEN_REGISTRATION
+              value: "false"
+            - name: USER_INVITE_PUBLIC_BASE_URL
+              value: "https://omniusgrid.local"
+            - name: USER_INVITE_EXPIRE_HOURS
+              value: "72"
+            - name: SMTP_HOST
+              valueFrom:
+                secretKeyRef:
+                  name: smtp-credentials
+                  key: host
+                  optional: true
+            - name: SMTP_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: smtp-credentials
+                  key: username
+                  optional: true
+            - name: SMTP_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: smtp-credentials
+                  key: password
+                  optional: true
+            - name: SMTP_PORT
+              value: "587"
+            - name: SMTP_FROM_EMAIL
+              value: "reports@omniusgrid.local"
+            - name: SMTP_USE_TLS
+              value: "false"
+            - name: SMTP_START_TLS
+              value: "true"
             - name: PYTHONDONTWRITEBYTECODE
               value: "1"
             - name: PYTHONUNBUFFERED
