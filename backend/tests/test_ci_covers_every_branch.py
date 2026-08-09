@@ -39,6 +39,15 @@ WORKFLOW = REPO / ".github" / "workflows" / "quality-gates.yml"
 EXEMPT = {
     # Long-lived integration branches belonging to other lanes are covered when they
     # merge; entries here are a deliberate choice, not an oversight.
+    #
+    # A PRESERVATION BRANCH, not a development one (2026-08-08). `rag-rewrite` is
+    # htreinen's work as it existed on his laptop — three commits that were on NO remote
+    # at all until they were pushed here, and a disjoint history with no merge base to
+    # converged. Its three commits are cherry-picked onto the trunk and gated there; the
+    # branch is the RECORD of where they came from, and gating a frozen record buys
+    # nothing. It should be deleted once he confirms nothing else on it is wanted, and
+    # this entry should go with it.
+    "rag-rewrite",
 }
 
 

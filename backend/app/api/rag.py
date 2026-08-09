@@ -23,7 +23,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 import structlog
 
 from app.core.config import settings
-from app.core.tenant import get_tenant_dbfrom app.api.auth import get_current_active_user
+from app.core.tenant import get_tenant_db
+from app.api.auth import get_current_active_user
 from app.db.models import User
 from app.services.rag_ingestion import get_ingestion_pipeline, IngestionResult
 from app.services.rag_retriever import get_retriever, RagAnswer

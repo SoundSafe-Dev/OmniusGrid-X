@@ -270,7 +270,8 @@ class Settings(BaseSettings):
     # Per-citation snippet preview length. A citation shows a window of its source
     # chunk; too short and the cited fact falls outside the preview (e.g. a long
     # table row or an unstructured .txt chunk whose match sits past the cutoff).
-    RAG_CITATION_SNIPPET_CHARS: int = 600    RAG_TABLE_ROWS_PER_BLOCK: int = 1  # table rows per citable block (1 = one row/block)
+    RAG_CITATION_SNIPPET_CHARS: int = 600
+    RAG_TABLE_ROWS_PER_BLOCK: int = 1  # table rows per citable block (1 = one row/block)
 
     # Retrieval (query path). Hybrid search returns RAG_RETRIEVE_LIMIT fused
     # candidates; the reranker cuts them to RAG_RERANK_TOP_N passages, capped at
