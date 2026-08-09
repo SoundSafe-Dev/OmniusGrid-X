@@ -233,26 +233,36 @@ class WorkcellSiteResponse(BaseModel):
 
 
 class AssetTagAssignmentResponse(BaseModel):
-    """The result of attaching or detaching one asset. `assigned` is the state AFTER the
-    call, so a client does not have to infer it from the verb."""
+    """Attaching or detaching one asset.
+
+    `created` and `removed` are what the handlers actually return — whether the call CHANGED
+    anything, not whether the asset is now attached. Re-attaching an asset that is already
+    tagged answers `created: false`, and that distinction is the reason the field exists.
+    An earlier draft of this model declared `assigned` instead and would have deleted both.
+    """
 
     asset_id: str
     tag_id: Optional[str] = None
     group_id: Optional[str] = None
-    assigned: bool
+    created: Optional[bool] = None
+    removed: Optional[bool] = None
 
 
 class BulkTagAssignmentResponse(BaseModel):
-    applied: int
-    skipped: int
-    errors: list[Any] = []
+    """One bulk attach/detach. `changed_count` is the rows that MOVED, which is not the
+    number requested — asking to tag forty assets when thirty already carry it changes ten."""
+
+    tag_id: str
+    operation: str
+    changed_count: int
+    results: list[Any] = []
 
 
 class FleetInventoryResponse(BaseModel):
-    sites: list[SiteResponse] = []
-    tags: list[TagResponse] = []
-    groups: list[GroupResponse] = []
-    cohorts: list[CohortResponse] = []
+    """The targeting inventory: every asset with the sites, tags and groups it belongs to.
+    A per-asset roll-up, not four parallel lists — which is what the first draft assumed."""
+
+    assets: list[Any] = []
 
 
 class DeactivatedResponse(BaseModel):
@@ -460,7 +470,7 @@ async def update_site(
     return _site_response(site)
 
 
-@router.delete("/sites/{site_id}", response_model=DeactivatedResponse, dependencies=[Depends(require_admin)])
+@router.delete("/sites/{site_id}", response_model=SiteResponse, dependencies=[Depends(require_admin)])
 @rate_limit("30/minute")
 async def deactivate_site(
     request: Request,
@@ -706,7 +716,7 @@ async def update_tag(
     return _tag_response(tag)
 
 
-@router.delete("/tags/{tag_id}", response_model=DeactivatedResponse, dependencies=[Depends(require_admin)])
+@router.delete("/tags/{tag_id}", response_model=TagResponse, dependencies=[Depends(require_admin)])
 @rate_limit("30/minute")
 async def deactivate_tag(
     request: Request,
@@ -1105,7 +1115,7 @@ async def update_group(
     return _group_response(group)
 
 
-@router.delete("/groups/{group_id}", response_model=DeactivatedResponse, dependencies=[Depends(require_admin)])
+@router.delete("/groups/{group_id}", response_model=GroupResponse, dependencies=[Depends(require_admin)])
 @rate_limit("30/minute")
 async def deactivate_group(
     request: Request,
@@ -1388,7 +1398,7 @@ async def update_cohort(
     return _cohort_response(cohort)
 
 
-@router.delete("/cohorts/{cohort_id}", response_model=DeactivatedResponse, dependencies=[Depends(require_admin)])
+@router.delete("/cohorts/{cohort_id}", response_model=CohortResponse, dependencies=[Depends(require_admin)])
 @rate_limit("30/minute")
 async def deactivate_cohort(
     request: Request,
