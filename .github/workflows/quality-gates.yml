@@ -827,9 +827,18 @@ jobs:
       - name: Install
         working-directory: ./frontend
         run: npm ci
-      - name: Vitest
+      # WITH COVERAGE, since 2026-08-09, and that is the change that matters here.
+      # `npm run test` is `vitest run` without `--coverage`, so the thresholds in
+      # vitest.config.ts were enforced by NO job in either workflow — a ratchet that
+      # nothing ran. It had already gone false and nothing reported it: the 2026-08-08
+      # merge added ~700 lines of untested pages and lines fell below the threshold,
+      # silently, because the only thing that would have said so was never invoked.
+      #
+      # `npm run coverage` fails the step when a threshold is breached, which is what
+      # makes the numbers in that config a gate rather than a comment.
+      - name: Vitest with coverage thresholds
         working-directory: ./frontend
-        run: npm run test
+        run: npm run coverage
 
   # --- task 2: frontend E2E smoke (Playwright) -----------------------------
   frontend-e2e:

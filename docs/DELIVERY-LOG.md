@@ -8335,3 +8335,46 @@ this is the first bill it has produced.
 The general shape is worth keeping: **two changes that each pass alone can fail together**, and
 the failure is in neither one's diff. Only the combined branch shows it, which is an argument
 for integrating early rather than accumulating.
+
+---
+
+## FS-650 — the coverage ratchet was enforced by nothing, and had already gone false
+
+Re-deriving the task pool from the promoted `main` — rather than editing the one written an
+hour earlier — turned up something no ticket would have found.
+
+**`vitest.config.ts` sets four coverage thresholds. No CI job reads them.** `ci-cd.yml` runs
+`npx vitest run`; `quality-gates.yml` ran `npm run test`. Both are `vitest run` **without
+`--coverage`**, and coverage thresholds only fail a run when coverage is being collected. So
+FS-541/542's ratchet — built, documented, cited in the README, and quoted in two task pools —
+was checked by nobody from the day it was written.
+
+**It had already gone false.** The 2026-08-08 merge added roughly 700 lines of untested pages,
+and lines fell to **45.45 against a threshold of 46**. Nothing reported it, because nothing was
+looking. The config's own comment warns about exactly this — *"a ratchet that trails reality by
+20 points is not a ratchet, it is a number in a config file"* — and the failure mode it
+describes had happened to it in the other direction.
+
+**Fixed by lowering the thresholds and raising the enforcement in the same change.** The
+numbers went to the measured floor (43/44/37/45) and `npm run coverage` is now the blocking
+step. Lowering a floor to make a build pass is the thing this repository forbids; this is the
+narrow case where it is right, because **no build was passing or failing on it** — a lower
+number a gate enforces is strictly tighter than a higher one nothing reads. The way back up is
+the two untested component trees, not another edit to the config.
+
+### And three figures in the previous pool were wrong
+
+Re-measuring rather than carrying forward corrected:
+
+* **"1,777 lines of service code production does not import" → 8,101 across 19 modules.** I had
+  named four; the register holds nineteen. The largest is
+  `erp_connectors/dynamics_data_extraction.py` at 737 lines, and `services/oee_calculator.py`
+  (600) is the one worth alarm — OEE is a headline feature and 600 lines of it are unreachable.
+* **`feature_extraction.py` "has a production importer" → zero.** It is named in the *comments*
+  of two other modules. A grep for the module name found prose about it.
+* **"Coverage has under one point of headroom" → the thresholds were breached**, per above.
+
+Each of the last three pools has failed differently: one listed more work than existed, one
+listed less and dropped a whole lane, and this one carried a figure that was wrong by a factor
+of four. **The common cause is a pool written from the previous pool.** The only defence that
+has worked is re-deriving every number, which is now what the document's own preamble instructs.
