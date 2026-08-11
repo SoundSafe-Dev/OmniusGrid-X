@@ -14,18 +14,20 @@ repository has paid for that twice:
 An alert that cannot fire is indistinguishable from a healthy system, which is the property
 that makes this worth a gate rather than a habit.
 
-    MAX_UNTESTED_RULES = 15   may only go DOWN
+    UNTESTED = set()   reached zero 2026-08-11 (FS-653); may only stay empty
 
-WHAT WAS TESTED FIRST, and why not all 51 at once. The eight where "cannot fire" costs most:
-telemetry leaving the system (`IngestionDataLost`, `IngestionDeadLettering`,
-`EdgeBufferDropping`, `EdgeDeadLettering`), a backup that stopped running
-(`DatabaseBackupJobFailed`), and the processes whose absence means the product is down
-(`TimescaleDBDown`, `BackendAPIDown`). Those are the conditions nobody is watching a dashboard
-for.
+**ALL 51 RULES NOW HAVE A FIRING PROOF.** The ratchet started at 23 named exceptions, went to
+15, and is now empty — which changes what this file asserts. While the set had members the
+question was "is the tail shrinking"; with it empty the question is the stronger one, "does
+every rule have a test", and `test_no_new_rule_is_untested` asks exactly that with nothing
+subtracted from it. THE SET IS NOT TO BE REPOPULATED. A new rule ships with its test or it
+does not ship; adding a name back here to land a rule faster is the trade the gate exists to
+refuse.
 
-THE REMAINING 23 ARE NAMED, not counted. A number alone lets somebody satisfy the ratchet by
-deleting a rule; naming them means the list changes only when a rule is tested or deliberately
-removed.
+Each rule is driven true from a series the product publishes and carries a must-stay-quiet
+companion built from a HEALTHY signal rather than an absent one — a buffer at zero or an asset
+with no series proves less than it looks. An alert that fires on a working cluster is muted
+within a day, which is the same as not having one.
 """
 
 from __future__ import annotations
@@ -40,39 +42,18 @@ REPO = pathlib.Path(__file__).resolve().parents[2]
 ALERTS = REPO / "infra" / "prometheus" / "alerts.yml"
 TEST_DIR = ALERTS.parent / "tests"
 
-#: Rules with no promtool unit test. **Only ever shrinks.** Measured 2026-08-08.
+#: Rules with no promtool unit test. **Empty, and meant to stay that way.** See the module
+#: docstring: this went 23 → 15 → 0 over FS-583 and FS-653, and the final fifteen live in
+#: `tests/remaining_rules_test.yml`.
 #:
-#: EIGHT REMOVED 2026-08-11 (FS-653), in `tests/edge_reachability_test.yml`: the two that say
-#: an agent is gone (`up` versus the agent's own `edge_agent_up` — they disagree exactly when
-#: the process is alive and broken), the collector, the buffer PAIR, the broker, the asset and
-#: the disk. Each is driven true from a series the product publishes, and each carries a
-#: must-stay-quiet case built from a HEALTHY signal rather than an absent one — a buffer at
-#: zero or an asset with no series proves less than it looks.
+#: Expectations there are GENERATED from `alerts.yml` rather than written by hand. promtool
+#: compares annotations even when a test omits them, so an omission asserts empty and a guess
+#: asserts something plausible and wrong; three drafts failed that way in FS-583 before the
+#: lesson took.
 #:
-#: Expectations generated from `alerts.yml` rather than written by hand. promtool compares
-#: annotations even when they are omitted, so an omission asserts empty and a guess asserts
-#: something plausible and wrong; three drafts failed that way in FS-583 before the lesson
-#: took.
-#:
-#: Named rather than counted so the ratchet cannot be satisfied by deleting a rule — which
-#: would improve the number and remove an alert, the exact trade this gate exists to prevent.
-UNTESTED: set[str] = {
-    "APILatencyP95High",
-    "CNPGInstanceExporterDown",
-    "DatabaseBackupStale",
-    "DigitalTwinOptimizeSlow",
-    "EdgeAgentBuffering",
-    "EdgeAgentCertExpiringSoon",
-    "EdgeBackfillLagHigh",
-    "EdgeCollectorErrors",
-    "ErrorTrackerFlushFailing",
-    "HighMemoryUsage",
-    "HistorianQueriesSlow",
-    "IngestionLagHigh",
-    "NotificationDeliverySlow",
-    "OcrAccuracyLow",
-    "SlowDatabaseQueries",
-}
+#: Kept as a named set rather than a count so the gate cannot be satisfied by deleting a rule
+#: — which would improve the number and remove an alert.
+UNTESTED: set[str] = set()
 
 #: Every rule whose failure means data is gone or the product is down. These may NEVER be
 #: untested — a separate, absolute assertion rather than part of the ratchet, because the

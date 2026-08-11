@@ -1,0 +1,465 @@
+# The last fifteen rules that could be shown to parse and never to fire (FS-653).
+#
+# With this file every alert in `alerts.yml` has a test that drives its expression true from
+# a series the product publishes, and a companion case that keeps it quiet on a healthy
+# system. The pair matters as much as the rule: an alert that fires on a working cluster is
+# muted within a day, which is the same as not having one.
+#
+# The expectations here were GENERATED from `alerts.yml` rather than transcribed. promtool
+# compares annotations even when a test omits them, and copying fifteen descriptions with Go
+# template placeholders inside them by hand produces mismatches that look like rule defects
+# and are not. If a rule's text changes, regenerate rather than patch.
+
+rule_files:
+  - ../alerts.yml
+
+evaluation_interval: 1m
+
+tests:
+  # --- a node with 90% of its memory consumed ------------------------------------------
+  - interval: 1m
+    input_series:
+    - series: node_memory_MemTotal_bytes{instance="node-1:9100"}
+      values: 100+0x10
+    - series: node_memory_MemAvailable_bytes{instance="node-1:9100"}
+      values: 10+0x10
+    alert_rule_test:
+    - eval_time: 6m
+      alertname: HighMemoryUsage
+      exp_alerts:
+      - exp_labels:
+          alertname: HighMemoryUsage
+          instance: node-1:9100
+          severity: high
+          team: infrastructure
+        exp_annotations:
+          summary: High memory usage detected
+          description: node-1:9100 memory usage is above 85%
+  # --- half-used memory is not an alert ------------------------------------------------
+  - interval: 1m
+    input_series:
+    - series: node_memory_MemTotal_bytes{instance="node-1:9100"}
+      values: 100+0x10
+    - series: node_memory_MemAvailable_bytes{instance="node-1:9100"}
+      values: 50+0x10
+    alert_rule_test:
+    - eval_time: 6m
+      alertname: HighMemoryUsage
+      exp_alerts: []
+  # --- a consumer group 20k messages behind --------------------------------------------
+  - interval: 1m
+    input_series:
+    - series: redpanda_kafka_consumer_group_lag{group="telemetry-ingest"}
+      values: 20000+0x10
+    alert_rule_test:
+    - eval_time: 6m
+      alertname: IngestionLagHigh
+      exp_alerts:
+      - exp_labels:
+          alertname: IngestionLagHigh
+          group: telemetry-ingest
+          severity: medium
+          team: data
+        exp_annotations:
+          summary: High message lag in Redpanda
+          description: Consumer group lag is over 10,000 messages. Data backfill may be needed.
+  # --- a group that is keeping up ------------------------------------------------------
+  - interval: 1m
+    input_series:
+    - series: redpanda_kafka_consumer_group_lag{group="telemetry-ingest"}
+      values: 12+0x10
+    alert_rule_test:
+    - eval_time: 6m
+      alertname: IngestionLagHigh
+      exp_alerts: []
+  # --- transactions whose max duration is climbing 50s per second ----------------------
+  - interval: 1m
+    input_series:
+    - series: postgresql_stat_activity_max_tx_duration{instance="timescaledb:9187"}
+      values: 0+3000x30
+    alert_rule_test:
+    - eval_time: 15m
+      alertname: SlowDatabaseQueries
+      exp_alerts:
+      - exp_labels:
+          alertname: SlowDatabaseQueries
+          instance: timescaledb:9187
+          severity: low
+          team: data
+        exp_annotations:
+          summary: Slow database queries detected
+          description: Queries taking longer than 30 seconds
+  # --- a database whose transactions finish --------------------------------------------
+  - interval: 1m
+    input_series:
+    - series: postgresql_stat_activity_max_tx_duration{instance="timescaledb:9187"}
+      values: 0+60x30
+    alert_rule_test:
+    - eval_time: 15m
+      alertname: SlowDatabaseQueries
+      exp_alerts: []
+  # --- an agent holding 8000 messages it cannot send -----------------------------------
+  - interval: 1m
+    input_series:
+    - series: opsgrid_edge_buffer_messages{agent_id="agent-7"}
+      values: 8000+0x10
+    alert_rule_test:
+    - eval_time: 4m
+      alertname: EdgeAgentBuffering
+      exp_alerts:
+      - exp_labels:
+          alertname: EdgeAgentBuffering
+          agent_id: agent-7
+          severity: medium
+          team: edge
+        exp_annotations:
+          summary: Edge agent buffering high volume
+          description: Edge agent agent-7 has over 5000 buffered messages
+  # --- a buffer that is draining normally ----------------------------------------------
+  - interval: 1m
+    input_series:
+    - series: opsgrid_edge_buffer_messages{agent_id="agent-7"}
+      values: 40+0x10
+    alert_rule_test:
+    - eval_time: 4m
+      alertname: EdgeAgentBuffering
+      exp_alerts: []
+  # --- a screen scraper reading three characters in four -------------------------------
+  - interval: 1m
+    input_series:
+    - series: opsgrid_ocr_accuracy{asset_id="press-2"}
+      values: 0.75+0x15
+    alert_rule_test:
+    - eval_time: 11m
+      alertname: OcrAccuracyLow
+      exp_alerts:
+      - exp_labels:
+          alertname: OcrAccuracyLow
+          asset_id: press-2
+          severity: low
+          team: edge
+        exp_annotations:
+          summary: OCR accuracy below threshold
+          description: Screen scraper accuracy dropped below 80% on press-2
+  # --- accuracy above the floor --------------------------------------------------------
+  - interval: 1m
+    input_series:
+    - series: opsgrid_ocr_accuracy{asset_id="press-2"}
+      values: 0.95+0x15
+    alert_rule_test:
+    - eval_time: 11m
+      alertname: OcrAccuracyLow
+      exp_alerts: []
+  # --- the oldest unsent message is two hours old --------------------------------------
+  - interval: 1m
+    input_series:
+    - series: edge_buffer_backfill_lag_seconds{agent_id="agent-7"}
+      values: 7200+0x15
+    alert_rule_test:
+    - eval_time: 11m
+      alertname: EdgeBackfillLagHigh
+      exp_alerts:
+      - exp_labels:
+          alertname: EdgeBackfillLagHigh
+          agent_id: agent-7
+          severity: medium
+          team: edge
+        exp_annotations:
+          summary: Edge backfill lag high
+          description: Oldest pending edge message is over 1h old (7200s)
+  # --- a backfill that is keeping up ---------------------------------------------------
+  - interval: 1m
+    input_series:
+    - series: edge_buffer_backfill_lag_seconds{agent_id="agent-7"}
+      values: 30+0x15
+    alert_rule_test:
+    - eval_time: 11m
+      alertname: EdgeBackfillLagHigh
+      exp_alerts: []
+  # --- a collector erroring once a second ----------------------------------------------
+  - interval: 1m
+    input_series:
+    - series: edge_collector_errors_total{asset_id="press-2", collector_type="modbus"}
+      values: 0+60x25
+    alert_rule_test:
+    - eval_time: 12m
+      alertname: EdgeCollectorErrors
+      exp_alerts:
+      - exp_labels:
+          alertname: EdgeCollectorErrors
+          asset_id: press-2
+          collector_type: modbus
+          severity: medium
+          team: edge
+        exp_annotations:
+          summary: Edge collector error rate elevated
+          description: Collector press-2 (modbus) erroring at 1/s
+  # --- one error every ten minutes is under the floor ----------------------------------
+  - interval: 1m
+    input_series:
+    - series: edge_collector_errors_total{asset_id="press-2", collector_type="modbus"}
+      values: 0+0.1x25
+    alert_rule_test:
+    - eval_time: 12m
+      alertname: EdgeCollectorErrors
+      exp_alerts: []
+  # --- a certificate with a day left and rotation apparently stuck ---------------------
+  - interval: 1m
+    input_series:
+    - series: edge_agent_cert_expiry_seconds{agent_id="agent-7"}
+      values: 86400+0x20
+    alert_rule_test:
+    - eval_time: 16m
+      alertname: EdgeAgentCertExpiringSoon
+      exp_alerts:
+      - exp_labels:
+          alertname: EdgeAgentCertExpiringSoon
+          agent_id: agent-7
+          severity: high
+          team: edge
+        exp_annotations:
+          summary: Edge agent certificate expiring
+          description: Agent agent-7 cert expires in < 2 days; rotation may be failing
+  # --- a certificate with a month left -------------------------------------------------
+  - interval: 1m
+    input_series:
+    - series: edge_agent_cert_expiry_seconds{agent_id="agent-7"}
+      values: 2592000+0x20
+    alert_rule_test:
+    - eval_time: 16m
+      alertname: EdgeAgentCertExpiringSoon
+      exp_alerts: []
+  # --- every request landing in the 2.5-5s bucket --------------------------------------
+  - interval: 1m
+    input_series:
+    - series: opsgrid_http_request_duration_seconds_bucket{le="1"}
+      values: 0+0x30
+    - series: opsgrid_http_request_duration_seconds_bucket{le="2.5"}
+      values: 0+0x30
+    - series: opsgrid_http_request_duration_seconds_bucket{le="5"}
+      values: 0+600x30
+    - series: opsgrid_http_request_duration_seconds_bucket{le="+Inf"}
+      values: 0+600x30
+    alert_rule_test:
+    - eval_time: 12m
+      alertname: APILatencyP95High
+      exp_alerts:
+      - exp_labels:
+          alertname: APILatencyP95High
+          severity: warning
+          team: backend
+        exp_annotations:
+          summary: API p95 latency above 2s
+          description: 95th-percentile API latency has exceeded 2 seconds for 10 minutes.
+          runbook_url: https://github.com/SoundSafe-Dev/OmniusGrid-X/blob/main/docs/runbooks/error-triage.md
+  # --- requests inside one second ------------------------------------------------------
+  - interval: 1m
+    input_series:
+    - series: opsgrid_http_request_duration_seconds_bucket{le="1"}
+      values: 0+600x30
+    - series: opsgrid_http_request_duration_seconds_bucket{le="2.5"}
+      values: 0+600x30
+    - series: opsgrid_http_request_duration_seconds_bucket{le="5"}
+      values: 0+600x30
+    - series: opsgrid_http_request_duration_seconds_bucket{le="+Inf"}
+      values: 0+600x30
+    alert_rule_test:
+    - eval_time: 12m
+      alertname: APILatencyP95High
+      exp_alerts: []
+  # --- an email channel taking half a minute per send ----------------------------------
+  - interval: 1m
+    input_series:
+    - series: opsgrid_notification_delivery_duration_seconds_bucket{channel="email", le="5"}
+      values: 0+0x30
+    - series: opsgrid_notification_delivery_duration_seconds_bucket{channel="email", le="10"}
+      values: 0+0x30
+    - series: opsgrid_notification_delivery_duration_seconds_bucket{channel="email", le="30"}
+      values: 0+600x30
+    - series: opsgrid_notification_delivery_duration_seconds_bucket{channel="email", le="+Inf"}
+      values: 0+600x30
+    alert_rule_test:
+    - eval_time: 12m
+      alertname: NotificationDeliverySlow
+      exp_alerts:
+      - exp_labels:
+          alertname: NotificationDeliverySlow
+          channel: email
+          severity: warning
+          team: backend
+        exp_annotations:
+          summary: Notification p95 delivery latency above 10s
+          description: 95th-percentile delivery latency for channel email has exceeded 10s for 10 minutes. A slow channel backs up the dispatcher and delays every subsequent alert.
+          runbook_url: https://github.com/SoundSafe-Dev/OmniusGrid-X/blob/main/docs/runbooks/subsystems.md#notifications
+  # --- a channel delivering inside five seconds ----------------------------------------
+  - interval: 1m
+    input_series:
+    - series: opsgrid_notification_delivery_duration_seconds_bucket{channel="email", le="5"}
+      values: 0+600x30
+    - series: opsgrid_notification_delivery_duration_seconds_bucket{channel="email", le="10"}
+      values: 0+600x30
+    - series: opsgrid_notification_delivery_duration_seconds_bucket{channel="email", le="30"}
+      values: 0+600x30
+    - series: opsgrid_notification_delivery_duration_seconds_bucket{channel="email", le="+Inf"}
+      values: 0+600x30
+    alert_rule_test:
+    - eval_time: 12m
+      alertname: NotificationDeliverySlow
+      exp_alerts: []
+  # --- an optimize sweep running a minute a pass ---------------------------------------
+  - interval: 1m
+    input_series:
+    - series: opsgrid_twin_optimize_run_duration_seconds_bucket{le="1"}
+      values: 0+0x30
+    - series: opsgrid_twin_optimize_run_duration_seconds_bucket{le="10"}
+      values: 0+0x30
+    - series: opsgrid_twin_optimize_run_duration_seconds_bucket{le="60"}
+      values: 0+600x30
+    - series: opsgrid_twin_optimize_run_duration_seconds_bucket{le="+Inf"}
+      values: 0+600x30
+    alert_rule_test:
+    - eval_time: 17m
+      alertname: DigitalTwinOptimizeSlow
+      exp_alerts:
+      - exp_labels:
+          alertname: DigitalTwinOptimizeSlow
+          severity: warning
+          team: backend
+        exp_annotations:
+          summary: Digital-twin optimize p95 runtime above 10s
+          description: 95th-percentile twin optimization runtime has exceeded 10s for 15 minutes. The candidate sweep is likely too wide or the baseline pull is slow; recommendations will lag.
+          runbook_url: https://github.com/SoundSafe-Dev/OmniusGrid-X/blob/main/docs/runbooks/subsystems.md#digital-twin
+  # --- a sweep finishing inside a second -----------------------------------------------
+  - interval: 1m
+    input_series:
+    - series: opsgrid_twin_optimize_run_duration_seconds_bucket{le="1"}
+      values: 0+600x30
+    - series: opsgrid_twin_optimize_run_duration_seconds_bucket{le="10"}
+      values: 0+600x30
+    - series: opsgrid_twin_optimize_run_duration_seconds_bucket{le="60"}
+      values: 0+600x30
+    - series: opsgrid_twin_optimize_run_duration_seconds_bucket{le="+Inf"}
+      values: 0+600x30
+    alert_rule_test:
+    - eval_time: 17m
+      alertname: DigitalTwinOptimizeSlow
+      exp_alerts: []
+  # --- hourly-granularity queries taking seconds ---------------------------------------
+  - interval: 1m
+    input_series:
+    - series: opsgrid_historian_query_duration_seconds_bucket{granularity="1h", le="0.5"}
+      values: 0+0x30
+    - series: opsgrid_historian_query_duration_seconds_bucket{granularity="1h", le="2.5"}
+      values: 0+0x30
+    - series: opsgrid_historian_query_duration_seconds_bucket{granularity="1h", le="10"}
+      values: 0+600x30
+    - series: opsgrid_historian_query_duration_seconds_bucket{granularity="1h", le="+Inf"}
+      values: 0+600x30
+    alert_rule_test:
+    - eval_time: 12m
+      alertname: HistorianQueriesSlow
+      exp_alerts:
+      - exp_labels:
+          alertname: HistorianQueriesSlow
+          granularity: 1h
+          severity: warning
+          team: backend
+        exp_annotations:
+          summary: Historian p95 query latency above 2.5s
+          description: 95th-percentile historian query latency at granularity 1h has exceeded 2.5s for 10 minutes. Check continuous-aggregate freshness and chunk pruning on TimescaleDB.
+          runbook_url: https://github.com/SoundSafe-Dev/OmniusGrid-X/blob/main/docs/runbooks/subsystems.md#historian
+  # --- queries answered from a warm aggregate ------------------------------------------
+  - interval: 1m
+    input_series:
+    - series: opsgrid_historian_query_duration_seconds_bucket{granularity="1h", le="0.5"}
+      values: 0+600x30
+    - series: opsgrid_historian_query_duration_seconds_bucket{granularity="1h", le="2.5"}
+      values: 0+600x30
+    - series: opsgrid_historian_query_duration_seconds_bucket{granularity="1h", le="10"}
+      values: 0+600x30
+    - series: opsgrid_historian_query_duration_seconds_bucket{granularity="1h", le="+Inf"}
+      values: 0+600x30
+    alert_rule_test:
+    - eval_time: 12m
+      alertname: HistorianQueriesSlow
+      exp_alerts: []
+  # --- flush cycles failing, one a minute ----------------------------------------------
+  - interval: 1m
+    input_series:
+    - series: opsgrid_error_tracker_flush_failures_total
+      values: 0+1x25
+    alert_rule_test:
+    - eval_time: 20m
+      alertname: ErrorTrackerFlushFailing
+      exp_alerts:
+      - exp_labels:
+          alertname: ErrorTrackerFlushFailing
+          severity: warning
+          team: backend
+        exp_annotations:
+          summary: Error tracker flush cycles are failing
+          description: One or more error-tracker flush cycles failed in the last 15 minutes (batch re-queued). Usually the errors sink (DB) is unreachable or slow; fix before the pending buffer hits capacity
+            and drops.
+          runbook_url: https://github.com/SoundSafe-Dev/OmniusGrid-X/blob/main/docs/runbooks/subsystems.md#error-tracker
+  # --- a counter that never moves ------------------------------------------------------
+  - interval: 1m
+    input_series:
+    - series: opsgrid_error_tracker_flush_failures_total
+      values: 0+0x25
+    alert_rule_test:
+    - eval_time: 20m
+      alertname: ErrorTrackerFlushFailing
+      exp_alerts: []
+  # --- the metrics collector down on one instance --------------------------------------
+  - interval: 1m
+    input_series:
+    - series: cnpg_collector_up{pod="omniusgrid-db-2"}
+      values: 0+0x15
+    alert_rule_test:
+    - eval_time: 11m
+      alertname: CNPGInstanceExporterDown
+      exp_alerts:
+      - exp_labels:
+          alertname: CNPGInstanceExporterDown
+          pod: omniusgrid-db-2
+          severity: high
+          team: platform
+        exp_annotations:
+          summary: CloudNativePG exporter down on omniusgrid-db-2
+          description: "The CloudNativePG metrics collector on omniusgrid-db-2 has been down for 10 minutes \u2014 replication and health metrics for this instance are missing. Check the instance pod."
+          runbook_url: https://github.com/SoundSafe-Dev/OmniusGrid-X/blob/main/infrastructure/k8s/database-ha/README.md
+  # --- a collector that is up ----------------------------------------------------------
+  - interval: 1m
+    input_series:
+    - series: cnpg_collector_up{pod="omniusgrid-db-2"}
+      values: 1+0x15
+    alert_rule_test:
+    - eval_time: 11m
+      alertname: CNPGInstanceExporterDown
+      exp_alerts: []
+  # --- no successful backup since the epoch, evaluated 27 hours in ---------------------
+  - interval: 1m
+    input_series:
+    - series: kube_cronjob_status_last_successful_time{cronjob="omniusgrid-db-backup"}
+      values: 0+0x1650
+    alert_rule_test:
+    - eval_time: 27h
+      alertname: DatabaseBackupStale
+      exp_alerts:
+      - exp_labels:
+          alertname: DatabaseBackupStale
+          severity: critical
+          team: platform
+        exp_annotations:
+          summary: No successful database backup in over 26h
+          description: The db-backup CronJob has not completed successfully in more than 26 hours. Restores would fall back to an older backup (higher RPO). Check the CronJob and the backup bucket credentials.
+          runbook_url: https://github.com/SoundSafe-Dev/OmniusGrid-X/blob/main/docs/runbooks/database-backup-restore.md
+  # --- a CronJob whose last success tracks the clock -----------------------------------
+  - interval: 1m
+    input_series:
+    - series: kube_cronjob_status_last_successful_time{cronjob="omniusgrid-db-backup"}
+      values: 0+60x1650
+    alert_rule_test:
+    - eval_time: 27h
+      alertname: DatabaseBackupStale
+      exp_alerts: []
