@@ -138,11 +138,17 @@ export default defineConfig({
       // merge, and branches (46) is the highest this ratchet has ever held.
       //
       //   measured 2026-08-11: statements 45.60 · branches 46.58 · functions 38.86 · lines 47.00
+      //
+      // AND AGAIN, after the kanban STORE — 367 lines that own board loading and every task
+      // mutation, and which `pages/Kanban.test.tsx` mocks wholesale, so the page tests
+      // proved the page renders whatever it returns and nothing about what it returns.
+      //
+      //   measured 2026-08-11: statements 46.53 · branches 46.84 · functions 39.36 · lines 47.96
       thresholds: {
-        statements: 45,
+        statements: 46,
         branches: 46,
-        functions: 38,
-        lines: 46,
+        functions: 39,
+        lines: 47,
       },
     },
   },

@@ -8507,3 +8507,24 @@ others.
 **Coverage 46.40 → 47.00 lines**, thresholds raised again to **45/46/38/46**. Every one is now
 above where it stood before the merge, and branches at 46 is the highest this ratchet has ever
 held — two days after it had to be lowered because nothing was enforcing it.
+
+### The kanban store, and a comment that described the version this is not
+
+`stores/kanbanStore.tsx` — 367 lines owning board loading and **every task mutation** — is
+mocked wholesale by `pages/Kanban.test.tsx`. So the page tests proved the page renders whatever
+the store returns, and nothing whatever about what it returns.
+
+**`moveTask` is pessimistic, and its comment said optimistic.** The POST is awaited *before*
+local state changes, so a rejected move leaves the card in its original column. That is the
+better of the two orderings — a card that jumps to the new column and snaps back is
+indistinguishable from a board that reordered itself, and the operator has no way to tell
+whether the move took. The comment described the version that would have had that problem.
+Class 53: a comment that argues for the code beneath it and is no longer true. Corrected, and
+the ordering is now pinned by a test rather than by a note.
+
+**A failed refresh has to do two things at once.** Keep the last known board — blanking it on a
+transient failure throws away the only state the operator has — *and* set the error, because a
+stale board with no error reads as current. Both are asserted, and so is the clearing of a
+previous error once a refresh succeeds.
+
+**Coverage 47.00 → 47.96 lines, 45.60 → 46.53 statements.** Thresholds now 46/46/39/47.

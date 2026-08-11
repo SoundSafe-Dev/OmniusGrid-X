@@ -224,9 +224,14 @@ export const KanbanProvider: React.FC<{ children: ReactNode }> = ({ children }) 
       ));
       return;
     }
+    // THE POST IS AWAITED FIRST, so this is pessimistic rather than optimistic — the
+    // comment here used to say the opposite, and the ordering is the better of the two.
+    // A card that jumps to the new column and then snaps back is indistinguishable from a
+    // board that reordered itself, and the operator has no way to tell whether the move
+    // took. Refusing to move it until the server agrees means a rejected drag looks like
+    // a drag that did not happen, which is what it is. Pinned by kanbanStore.test.tsx.
     await api.post(`/api/v1/kanban/tasks/${taskId}/move`, { target_column_id: targetColumnId, position });
 
-    // Update local state optimistically
     setTasks(prev => prev.map(t =>
       t.id === taskId
         ? { ...t, column_id: targetColumnId, position: position ?? t.position }
