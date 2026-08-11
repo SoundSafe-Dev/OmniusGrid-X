@@ -35,8 +35,6 @@ import { ROUTES } from './routes'
  */
 
 const LIVE = process.env.E2E_LIVE_BACKEND === '1'
-const EMAIL = process.env.E2E_USER_EMAIL ?? 'e2e@omniusgrid.test'
-const PASSWORD = process.env.E2E_USER_PASSWORD ?? 'e2e-playwright-password'
 
 
 /** The visible signature of a field that never arrived. */

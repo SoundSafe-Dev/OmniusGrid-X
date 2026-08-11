@@ -34,7 +34,17 @@ module.exports = {
     // Underscore prefix is the codebase's deliberate-ignore convention.
     '@typescript-eslint/no-unused-vars': [
       'error',
-      { argsIgnorePattern: '^_', varsIgnorePattern: '^_' },
+      {
+        argsIgnorePattern: '^_',
+        varsIgnorePattern: '^_',
+        // `const { priority, ...withoutPriority } = WIRE` is how this suite builds a payload
+        // with a field REMOVED, and the discarded name is the documentation — `alertType`,
+        // `severity`, `status`, `createdAt` each say which field the test is proving the
+        // adapter cannot invent. Without this the rule demands they be renamed `_alertType`,
+        // which obscures the one thing the line exists to say. Seven deliberate omissions
+        // were being reported as mistakes.
+        ignoreRestSiblings: true,
+      },
     ],
   },
 };

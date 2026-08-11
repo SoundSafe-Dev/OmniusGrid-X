@@ -450,7 +450,10 @@ export function staleAfterFailedSwitch(source: string): string[] {
   let match: RegExpExecArray | null
   while ((match = HANDLER.exec(clean))) {
     const [, name, param] = match
-    const body = clean.slice(match.index, match.index + 2500).split(/\n  const \w+ = /)[0]
+    // `{2}` rather than two literal spaces: eslint is right that they are hard to count,
+    // and this one is load-bearing — it is matching the indentation of a top-level `const`
+    // inside a component, which is how the handler's body is bounded.
+    const body = clean.slice(match.index, match.index + 2500).split(/\n {2}const \w+ = /)[0]
     const setIndex = body.search(new RegExp(`set[A-Z]\\w*\\(\\s*${param}\\b`))
     if (setIndex < 0) continue
     const readIndex = body.search(/await\s+\w+Api\.\w+\s*\(/)

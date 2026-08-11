@@ -26,8 +26,6 @@ import { test, expect } from '@playwright/test'
  */
 
 const LIVE = process.env.E2E_LIVE_BACKEND === '1'
-const EMAIL = process.env.E2E_USER_EMAIL ?? 'e2e@omniusgrid.test'
-const PASSWORD = process.env.E2E_USER_PASSWORD ?? 'e2e-playwright-password'
 
 /** EVERY routed page, from the shared list (FS-492).
  *
@@ -90,12 +88,12 @@ test.describe('controls do not break', () => {
 
       const buttons = page.locator('main button:visible')
       const count = Math.min(await buttons.count().catch(() => 0), 5)
-      let clicked = 0
+      // No counter here: the `the sweep actually clicks things` test below is what proves
+      // the sweep is not a no-op, and one vacuity check for the file beats 33 unread ones.
       for (let i = 0; i < count; i++) {
         const label = (await buttons.nth(i).innerText().catch(() => '')) || '(icon)'
         if (DESTRUCTIVE.test(label)) continue
         await buttons.nth(i).click({ timeout: 2000, noWaitAfter: true }).catch(() => {})
-        clicked++
       }
       // Requests started by the last clicks need a moment to come back.
       await page.waitForTimeout(1500)

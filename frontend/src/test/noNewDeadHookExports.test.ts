@@ -93,7 +93,6 @@ function hookExports(): Map<string, string> {
     const visit = (node: ts.Node) => {
       const isExported = ts
         .getCombinedModifierFlags(node as ts.Declaration)
-        // eslint-disable-next-line no-bitwise
         & ts.ModifierFlags.Export
       if (isExported) {
         if (ts.isFunctionDeclaration(node) && node.name) {
