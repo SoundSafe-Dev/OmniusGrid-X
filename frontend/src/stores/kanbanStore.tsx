@@ -111,6 +111,10 @@ interface KanbanContextType {
   columns: TaskColumn[];
   tasks: Task[];
   metrics: KanbanMetrics | null;
+  // True when the last metrics poll failed. The numbers in `metrics` are then the last ones
+  // that DID arrive, and a consumer that renders them without saying so is presenting a
+  // reading from an unknown time ago as the current state of the floor.
+  metricsAreStale: boolean;
   filters: KanbanFilters;
   isLoading: boolean;
   error: string | null;
@@ -134,6 +138,7 @@ export const KanbanProvider: React.FC<{ children: ReactNode }> = ({ children }) 
   const [columns, setColumns] = useState<TaskColumn[]>([]);
   const [tasks, setTasks] = useState<Task[]>([]);
   const [metrics, setMetrics] = useState<KanbanMetrics | null>(null);
+  const [metricsAreStale, setMetricsAreStale] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [filters, setFiltersState] = useState<KanbanFilters>({
@@ -185,8 +190,18 @@ export const KanbanProvider: React.FC<{ children: ReactNode }> = ({ children }) 
       }
       const response = await api.get<KanbanMetrics>('/api/v1/kanban/metrics');
       setMetrics(response.data);
+      setMetricsAreStale(false);
     } catch (err) {
+      // THIS POLLS EVERY 30 SECONDS, and the catch used to reach only the console. `metrics`
+      // keeps the last value that arrived, so a board whose metrics endpoint died an hour ago
+      // went on rendering hour-old throughput, WIP and cycle time as the current state of the
+      // floor — indefinitely, and with nothing on screen to suggest otherwise. A stale reading
+      // presented as a live one is worse than no reading: the operator acts on it.
+      //
+      // The numbers are deliberately NOT cleared. The last known state is worth more than a
+      // blank bar, provided it is labelled as the last known state.
       console.error('Failed to fetch metrics:', err);
+      setMetricsAreStale(true);
     }
   }, []);
 
@@ -339,6 +354,7 @@ export const KanbanProvider: React.FC<{ children: ReactNode }> = ({ children }) 
     columns,
     tasks,
     metrics,
+    metricsAreStale,
     filters,
     isLoading,
     error,

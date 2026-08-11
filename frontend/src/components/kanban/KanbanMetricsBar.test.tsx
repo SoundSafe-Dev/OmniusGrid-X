@@ -76,3 +76,30 @@ describe('cycle time', () => {
     expect(screen.getByText('0m')).toBeInTheDocument()
   })
 })
+
+describe('a bar showing figures that stopped arriving', () => {
+  /**
+   * The store polls metrics every 30 seconds and used to swallow a failed poll into the
+   * console, keeping the last values it had. So a board whose metrics endpoint died an hour
+   * ago rendered hour-old throughput, WIP and cycle time as the current state of the floor.
+   *
+   * The numbers stay — the last known state is worth more than a blank bar — but they are
+   * labelled, because an unlabelled stale reading is the one a supervisor acts on.
+   */
+  it('says nothing extra while the figures are current', () => {
+    render(<KanbanMetricsBar metrics={metrics()} />)
+    expect(screen.queryByRole('status')).toBeNull()
+  })
+
+  it('says the figures are not updating when they are stale', () => {
+    render(<KanbanMetricsBar metrics={metrics()} stale />)
+    expect(screen.getByRole('status')).toHaveTextContent(/not updating/i)
+  })
+
+  it('still shows the last figures rather than hiding them', () => {
+    // Blanking the bar on a failed poll trades a confident wrong answer for no answer, and
+    // the operator loses the last thing they knew. The label is what makes keeping them safe.
+    render(<KanbanMetricsBar metrics={metrics({ total_tasks: 47 })} stale />)
+    expect(screen.getByText('47')).toBeInTheDocument()
+  })
+})

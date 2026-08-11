@@ -19,7 +19,7 @@
  *     believes they have filtered.
  */
 import { act, render, screen, waitFor } from '@testing-library/react'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const get = vi.fn()
 const post = vi.fn()
@@ -156,5 +156,81 @@ describe('updating a task', () => {
     await act(async () => {
       await expect(ctx.updateTask('t-1', { title: 'x' })).rejects.toThrow('not permitted')
     })
+  })
+})
+
+describe('metrics that stopped arriving', () => {
+  /**
+   * `refreshMetrics` polls every 30 seconds and its catch used to reach only the console,
+   * while `metrics` kept the last value that arrived. A board whose metrics endpoint died an
+   * hour ago went on rendering hour-old throughput, WIP and cycle time as the current state
+   * of the floor — indefinitely, and with nothing on screen to suggest otherwise.
+   *
+   * The polling is what makes this the bad version of the class. A one-shot fetch that fails
+   * leaves an empty bar, which is at least a question; a poll that fails leaves a confident
+   * wrong answer that never changes.
+   */
+  const METRICS = { data: { total_tasks: 12, tasks_completed_today: 3 } }
+
+  const withMetrics = (metricsAnswer: () => Promise<unknown>) =>
+    get.mockImplementation((url: string) =>
+      String(url).includes('/metrics') ? metricsAnswer() : Promise.resolve(board()),
+    )
+
+  it('is not stale when the poll succeeds', async () => {
+    withMetrics(() => Promise.resolve(METRICS))
+    await mount()
+    await waitFor(() => expect(ctx.metrics).not.toBeNull())
+    expect(ctx.metricsAreStale).toBe(false)
+  })
+
+  it('says so when the poll fails', async () => {
+    withMetrics(() => Promise.reject(new Error('502')))
+    await mount()
+    await waitFor(() => expect(ctx.metricsAreStale).toBe(true))
+  })
+
+  // `refreshMetrics` is not on the context, so the retries below are driven through the real
+  // 30-second poll. That is the stronger test anyway: the polling is what turns a failed
+  // fetch into a permanently wrong reading, so the poll is the thing worth exercising.
+  // `refreshMetrics` is not on the context, so the retries below are driven through the real
+  // 30-second poll. That is the stronger test anyway: the polling is what turns a failed
+  // fetch into a permanently wrong reading, so the poll is the thing worth exercising.
+  //
+  // The clock has to be faked BEFORE the provider mounts — an interval created under real
+  // timers does not answer to `advanceTimersByTime`, which is the first version of this test
+  // failing to fire at all. `shouldAdvanceTime` keeps `waitFor` working.
+  const tick = () => act(async () => { await vi.advanceTimersByTimeAsync(30_000) })
+
+  beforeEach(() => vi.useFakeTimers({ shouldAdvanceTime: true }))
+  afterEach(() => vi.useRealTimers())
+
+  it('keeps the last figures rather than blanking the bar', async () => {
+    // Deliberate: the last known state is worth more than an empty bar, provided it is
+    // labelled. Clearing `metrics` here would trade one honest failure for a different one.
+    let fail = false
+    withMetrics(() => (fail ? Promise.reject(new Error('502')) : Promise.resolve(METRICS)))
+    await mount()
+    await waitFor(() => expect(ctx.metrics).not.toBeNull())
+
+    fail = true
+    await tick()
+
+    await waitFor(() => expect(ctx.metricsAreStale).toBe(true))
+    expect(ctx.metrics).toMatchObject({ total_tasks: 12 })
+  })
+
+  it('clears the flag when the endpoint comes back', async () => {
+    // Without this a single blip labels the bar stale for the life of the page, and a label
+    // that is always on is a label nobody reads.
+    let fail = true
+    withMetrics(() => (fail ? Promise.reject(new Error('502')) : Promise.resolve(METRICS)))
+    await mount()
+    await waitFor(() => expect(ctx.metricsAreStale).toBe(true))
+
+    fail = false
+    await tick()
+
+    await waitFor(() => expect(ctx.metricsAreStale).toBe(false))
   })
 })

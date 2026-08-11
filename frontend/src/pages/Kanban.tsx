@@ -23,7 +23,8 @@ const KanbanContent: React.FC = () => {
     board, 
     columns, 
     tasks, 
-    metrics, 
+    metrics,
+    metricsAreStale, 
     filters, 
     isLoading, 
     error,
@@ -175,6 +176,7 @@ const KanbanContent: React.FC = () => {
         {metrics && (
           <KanbanMetricsBar 
             metrics={metrics}
+            stale={metricsAreStale}
             className="mt-3"
           />
         )}

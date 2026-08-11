@@ -8,11 +8,19 @@ import { CheckCircle2, Clock, AlertCircle, Activity, Users } from 'lucide-react'
 
 interface KanbanMetricsBarProps {
   metrics: KanbanMetrics;
+  /**
+   * The last metrics poll failed, so `metrics` holds the last values that arrived rather
+   * than the current ones. The poll runs every 30s, so without this the bar would go on
+   * showing a reading from an unknown time ago as the state of the floor — for as long as
+   * the endpoint stayed down, and with nothing on screen to suggest otherwise.
+   */
+  stale?: boolean;
   className?: string;
 }
 
 export const KanbanMetricsBar: React.FC<KanbanMetricsBarProps> = ({
   metrics,
+  stale = false,
   className = '',
 }) => {
   const statCards = [
@@ -54,7 +62,21 @@ export const KanbanMetricsBar: React.FC<KanbanMetricsBarProps> = ({
   ];
 
   return (
-    <div className={`flex flex-wrap gap-3 ${className}`}>
+    <div className={`flex flex-wrap items-center gap-3 ${className}`}>
+      {stale && (
+        // Not an error banner and not a replacement for the numbers: the last known state of
+        // the board is worth more than a blank bar, provided it is labelled as the last known
+        // state rather than the current one.
+        <div
+          role="status"
+          className="flex items-center gap-2 px-3 py-2 rounded-lg bg-yellow-50 dark:bg-yellow-900/20 text-yellow-800 dark:text-yellow-200"
+        >
+          <AlertCircle className="w-4 h-4" />
+          <span className="text-xs font-medium">
+            Not updating — these are the last figures that arrived
+          </span>
+        </div>
+      )}
       {statCards.map((stat) => {
         const Icon = stat.icon;
         return (
