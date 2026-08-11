@@ -110,7 +110,15 @@ class FanoutResult:
             "by_status": counts,
             # Named explicitly rather than left for the caller to derive: the whole point is
             # that "it went everywhere" must not be the default reading.
-            "fully_posted": all(p.status == PostingStatus.POSTED for p in self.postings),
+            #
+            # `bool(self.postings) and ...`, because `all([])` is True. An event that
+            # reached NO target — no integration has the capability, or none is
+            # configured — would otherwise report `fully_posted: true`, and the operator
+            # is told the work went through when it went nowhere. A verdict computed from
+            # emptiness, on the path where the verdict means "the part was issued".
+            # Found by the first test ever written against this module (FS-655).
+            "fully_posted": bool(self.postings)
+            and all(p.status == PostingStatus.POSTED for p in self.postings),
             "awaiting_a_person": [
                 {"target": p.target_system, "instruction": p.instruction}
                 for p in self.needs_a_human

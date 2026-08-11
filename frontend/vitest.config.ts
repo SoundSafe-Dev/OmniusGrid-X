@@ -123,11 +123,20 @@ export default defineConfig({
       // FS-654/655, not another edit here.
       //
       //   measured 2026-08-09: statements 44.14 · branches 44.65 · functions 37.90 · lines 45.45
+      //
+      // RAISED BACK 2026-08-11, and past where it started. FS-652 put tests on the five
+      // `common/` components and the dialog primitives — all of which were stubbed out of
+      // every page test that mounted them, so a stub and an exercised component looked
+      // identical to the coverage tool. **Lines 45.45 -> 46.40**, above the 46 the merge
+      // pushed them under. The lowering lasted two days and the way back up was tests,
+      // which is what that note said it would be.
+      //
+      //   measured 2026-08-11: statements 45.05 · branches 45.69 · functions 38.40 · lines 46.40
       thresholds: {
-        statements: 43,
-        branches: 44,
-        functions: 37,
-        lines: 45,
+        statements: 44,
+        branches: 45,
+        functions: 38,
+        lines: 46,
       },
     },
   },

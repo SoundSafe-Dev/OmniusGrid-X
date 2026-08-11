@@ -26,7 +26,7 @@ first appeared in — a repeat with no age on it reads as new work.
 
 | Claim in the last pool | Measured on `main` |
 |---|---|
-| "1,777 lines of service code production does not import" | **8,101 lines across 19 modules** — the register was four times the size of the four I named |
+| "1,777 lines of service code production does not import" | **6,955 lines across 16 modules** — the register is four times the four I named. *(An intermediate figure of 8,101/19 was published for an hour and was also wrong: the count had swept in the guard's positive-control list, which names modules asserted to be REACHABLE. Corrected by reading the register variable instead of grepping the file.)* |
 | `feature_extraction.py` has a production importer | **Zero.** It is named only in the *comments* of two other modules |
 | Frontend coverage "has under one point of headroom" | **The thresholds were breached and no gate was reading them** — see FS-650 |
 
@@ -46,7 +46,7 @@ first appeared in — a repeat with no age on it reads as new work.
 | Contract gate | floor **380**; 402/471 measured with all dependencies present |
 | Alert rules | 51; **23 with no promtool test** |
 | Migrations | **70**; 4 permanently not re-runnable |
-| Dead modules | **19 recorded, 8,101 lines** |
+| Dead modules | **16 recorded, 6,955 lines** |
 | Orphaned definitions | **52 recorded** — 30 in `services/`, 16 in `erp_connectors/` |
 | Stranded work | **none** |
 
@@ -54,31 +54,39 @@ first appeared in — a repeat with no age on it reads as new work.
 
 # Decisions — Harsh, as PM
 
-### D1. 8,101 lines the product does not import · L · *corrected upward from 1,777*
+### D1. 6,955 lines the product does not import · L · *corrected upward from 1,777*
 
-Nineteen modules, recorded in `test_no_new_unreachable_modules.py`. The largest:
+Sixteen modules, in `test_no_new_unreachable_modules.py`'s `UNREACHABLE` register:
 
 | Module | Lines |
 |---|---|
 | `erp_connectors/dynamics_data_extraction.py` | 737 |
 | `erp_connectors/sap_data_extraction.py` | 664 |
-| `services/oee_calculator.py` | 600 |
 | `erp_connectors/oracle_data_extraction.py` | 575 |
 | `services/erp_error_handler.py` | 533 — the entire ERP dead-letter surface |
 | `erp_connectors/sap_webhook_integration.py` | 532 |
 | `services/erp_security.py` | 483 |
 | `erp_middleware/rabbitmq_integration.py` | 467 |
 | `services/device_provisioning.py` | 465 |
+| `erp_middleware/azure_service_bus_integration.py` | 420 |
+| `erp_middleware/kafka_connect_integration.py` | 415 |
+| `erp_middleware/boomi_integration.py` | 394 |
+| `erp_middleware/mulesoft_integration.py` | 301 |
+| `services/schema_registry.py` | 296 |
+| `services/feature_extraction.py` | 293 |
+| `workers/export_delivery.py` | 234 |
+| `core/secrets.py` | 146 |
 
-Plus ten more. **`oee_calculator.py` is the one to look at first** — OEE is a headline feature and
-600 lines of it are unreachable, which suggests either a second implementation or a feature
-running on something else.
+**It is one question, not sixteen.** Five `erp_middleware/*` integrations (1,997 lines) are five
+transports for one job, and none is wired; three `*_data_extraction` modules (1,976 lines) are
+superseded by the store-raw-and-transform-at-analysis-time path this product actually uses.
+**Answering "which ERP transport does this product support" retires roughly 4,000 of the 6,955.**
 
-Each has tests, which is how they survived a dead-code sweep: a module with tests and no callers
-reads as live to any importer-based check.
+The two worth separate attention are `core/secrets.py` (146 lines — a secrets helper nothing
+calls, next to a deployment where nothing applies either secret-provisioning path, FS-675) and
+`workers/export_delivery.py` (234 — while `/admin/export-deliveries` serves attempt history).
 
-**Done when:** each of the nineteen has an owner and a verdict — wire, delete, or record why it
-must stay. Not one decision for all nineteen.
+**Done when:** the ERP transport question is answered once, and the remaining four have owners.
 
 ### D2. Two user-administration surfaces are mounted · M · *new with the merge*
 
@@ -122,15 +130,21 @@ Fixed by setting the thresholds to the measured floor **and wiring `npm run cove
 blocking job in the same change**. The numbers went down; the enforcement went up. The way back
 up is FS-651 and FS-652, not another edit to the config.
 
+### FS-652. `components/common/` and the dialog primitives · ~~M~~ **done 2026-08-11**
+
+Five components that no test had ever rendered — each stubbed as `() => null` in every page
+test that mounts them — plus `DialogProvider`, 181 lines that became load-bearing when the
+admin Users page moved off `window.confirm`. **Lines 45.45 → 46.40** and the thresholds are
+back above where the merge pushed them under.
+
 ### FS-651. `components/kanban/` — 1,811 lines, 7 components, **zero** test files · L · *carried (FS-632)*
 
 The largest untested component tree, and the one that pulls coverage down hardest.
 
-### FS-652. `components/common/` and `components/ui/` · M · *carried (FS-622)*
+### FS-652b. The remaining `ui/` primitives · S · *what FS-652 left*
 
-346 lines across 5 components with no test file; 12 primitives with 2. `Select` was an
-unlabelled combobox app-wide while reporting **100% line coverage**, because the a11y suite
-never rendered it.
+`Card`, `ChartContainer`, `Skeleton`, `Tooltip` and `Wordmark` still have no test. Small, and
+the a11y suite already covers the six that carry semantics.
 
 ### FS-653. 23 of 51 alert rules cannot be shown to fire · M · *carried (FS-621)*
 
@@ -143,10 +157,14 @@ make it true. Named, not counted — the ratchet cannot be satisfied by deleting
 `continue-on-error` and removes its own container when it cannot verify its address. **The next
 raise is a CI change, not a code fix.**
 
-### FS-655. Four live services with production callers and no tests · M · *carried (FS-624)*
+### FS-655. Four live services with production callers and no tests · M · **two done, two left**
 
-`insight_activation.py` (517 lines, behind a mounted router — reachable over HTTP today),
-`shop_floor_fanout.py` (326), `inference_client.py` (137), `agent_release_storage.py` (165).
+`insight_activation.py` and `shop_floor_fanout.py` now have tests — and the second one **found
+a defect**: `all([])` is True, so a shop-floor event that reached no target at all reported
+`fully_posted: true`. The operator is told the work went through when it went nowhere.
+
+**Left:** `inference_client.py` (137 lines, 2 importers) and `agent_release_storage.py`
+(165, 4 importers).
 
 ---
 

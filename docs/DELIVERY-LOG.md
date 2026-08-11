@@ -8378,3 +8378,45 @@ Each of the last three pools has failed differently: one listed more work than e
 listed less and dropped a whole lane, and this one carried a figure that was wrong by a factor
 of four. **The common cause is a pool written from the previous pool.** The only defence that
 has worked is re-deriving every number, which is now what the document's own preamble instructs.
+
+---
+
+## FS-652 / FS-655 — the coverage lowering lasted two days, and a fan-out that reported success on nothing
+
+### The correction first: `oee_calculator.py` is not dead
+
+I reported it as the largest unreachable module and the lead of D1 — *"OEE is a headline
+feature and 600 lines of it are unreachable."* **It is imported and started by `main.py:49`.**
+
+It appears in that guard file inside the **positive control** — a short list of modules
+asserted to be *reachable*, which exists to prove the walk works. I counted the register by
+grepping the file for quoted paths, and the grep swallowed both lists. That inflated 16 modules
+/ 6,955 lines into 19 / 8,101 and put a running worker at the top of a dead-code list.
+
+Three measurement errors in two days, all the same shape: **reading a structure by pattern
+instead of importing it.** The register is one import away and cannot include the control.
+
+### FS-652 — five components nothing had ever rendered
+
+All five in `components/common/` were replaced by `() => null` in every page test that mounts
+them, so a stub and an exercised component looked identical to the coverage tool. Same for the
+dialog primitives — 181 lines that became **load-bearing** three days ago when the admin Users
+page was moved off `window.confirm` onto them.
+
+The dialog tests are mutation-verified: flipping cancel to resolve `true` fails exactly the test
+written for it, which is the failure that would deactivate a user nobody asked to deactivate.
+
+**Lines 45.45 → 46.40**, and the thresholds are back to 44/45/38/46 — above where they were
+before the merge pushed them under, with functions higher than they have ever been. The
+lowering lasted two days, and the way back up was tests, as that note said it would be.
+
+### FS-655 — `all([])` is True, on the path that means "the part was issued"
+
+`shop_floor_fanout.FanoutResult.summary()` reports `fully_posted`, which the router turns into
+what an operator is told. It was `all(p.status == POSTED for p in self.postings)` — and an
+event that reached **no target at all**, because no integration has the capability or none is
+configured, satisfies that vacuously.
+
+So a shop-floor event that went nowhere reported that it went everywhere. A verdict computed
+from emptiness, in a service with **four production importers and no test naming the module**
+— found by the first test ever written against it.
