@@ -380,6 +380,27 @@ jobs:
       - name: Install dev deps
         working-directory: ./backend
         run: pip install -r requirements-dev.txt
+      # BEFORE the suite, and blocking. `ci-cd.yml` has run this since the beginning and fires
+      # on `main` and pull_request only, so no branch push has ever been checked — and the
+      # first run of it after wiring the frontend equivalents found **F821 undefined name
+      # 'driver_id'** in `api/transportation.py`, on the success path of a live dispatch
+      # route. The service commits before that line, so a shipment really was dispatched and
+      # the operator got a 500.
+      #
+      # E9/F63/F7/F82 only: syntax errors, undefined names and broken comparisons. Style is a
+      # separate argument and `black --check` stays advisory in ci-cd.yml for the reason
+      # recorded there.
+      #
+      # `scripts` as well as `app`, which `ci-cd.yml` does not cover. Both were measured at
+      # zero the day this step was added — along with `backend/tests` and
+      # `edge-agent/opsgrid_agent` — so widening the scope costs nothing now and is the only
+      # moment it ever will. `scripts/` holds the migration runner and the seeders; an
+      # undefined name there fails a deployment rather than a request.
+      - name: flake8 errors (blocking)
+        working-directory: ./backend
+        run: |
+          pip install flake8
+          flake8 app scripts --count --select=E9,F63,F7,F82 --show-source --statistics
       - name: Full backend suite
         working-directory: ./backend
         # The three excluded files fail at COLLECTION (the intake/parsing lane's
@@ -848,9 +869,43 @@ jobs:
       #
       # `npm run coverage` fails the step when a threshold is breached, which is what
       # makes the numbers in that config a gate rather than a comment.
+      # BEFORE the tests, because a compile error is cheaper to read than a runtime one and
+      # because `vitest run` DOES NOT TYPECHECK — it transpiles and discards the types. That
+      # gap is not hypothetical: a test file committed on this branch on 2026-08-11 was green
+      # under vitest and did not compile, and nothing in this workflow would have said so.
+      #
+      # `ci-cd.yml` has had a blocking `tsc --noEmit` since FS-53, and it runs on `main` and
+      # pull_request ONLY. This workflow is the one that runs on every branch push — so every
+      # developer branch here has been carrying zero typechecking until somebody opened a PR.
+      # Same shape as the coverage thresholds below, which no job ran for weeks, and as the
+      # `develop` branch pattern that gated nothing: the gate existed, in a job that was not
+      # reached.
+      #
+      # `tsconfig.json` has `include: ["src"]`, so this covers the 130 test files too, which
+      # is where the miss was.
+      - name: Type check (blocking)
+        working-directory: ./frontend
+        run: npx tsc --noEmit
+
+      # Same hole as the typecheck, same evidence: `ci-cd.yml` has had a blocking
+      # `npm run lint` since FS-54 and it runs on `main` and pull_request only, so no branch
+      # push has ever been linted. **Fifteen errors had accumulated** by the time anybody
+      # looked — none of them behavioural, all of them enough to fail the gate the moment a
+      # PR opened, which is the worst time to find them.
+      - name: Lint (blocking)
+        working-directory: ./frontend
+        run: npm run lint
+
       - name: Vitest with coverage thresholds
         working-directory: ./frontend
         run: npm run coverage
+
+      # The production build. `tsc --noEmit` above catches type errors; this catches what it
+      # cannot — an unresolvable import, a missing asset, a plugin that fails only under
+      # rollup. Also main-and-PR-only until now.
+      - name: Production build (blocking)
+        working-directory: ./frontend
+        run: npx vite build
 
   # --- task 2: frontend E2E smoke (Playwright) -----------------------------
   frontend-e2e:
