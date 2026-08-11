@@ -202,6 +202,37 @@ role, and those six are the point of the exercise — they were passing because 
 The floor was re-baselined to 380 deliberately, which is a different act from lowering a floor
 to make a build pass, and `contract_ratchet.py` records both numbers.
 
+## Two floors, and a probe that decides between them (FS-654)
+
+The floor above could not rise. A healthy run scored **402** and a run where the broker step
+removed its own container scored **387**, and one number had to survive both — so it had to
+survive the worse one. A healthy build therefore carried 22 operations of headroom it could
+never spend, and the gate would have sat through a regression of 22 rather than fail a build
+whose broker did not come up. That is the trade that killed this job's predecessor.
+
+There are now two:
+
+| configuration | floor | derivation |
+|---|---|---|
+| a broker answered | **393** | 402 measured, less the 9-operation spread |
+| no broker answered | **380** | unchanged, held since 2026-08-07 |
+
+**The run measures which one applies.** `contract_ratchet.py` opens a TCP connection to the
+same bootstrap address the app was given and reports what it finds. It does not accept a claim:
+`--broker` names an address to probe, and `--broker none` selects the lower floor and can never
+select the higher one.
+
+That distinction is the design. The lower floor is the one somebody would want on a red build,
+and *"the broker must have been down"* is unfalsifiable after the fact — it costs 13 operations
+of protection and nobody can check it. Selecting it now requires the broker to be genuinely
+unreachable, which is the condition the lower floor describes.
+
+The probe runs **after** the suite, which is the right order: the question is not whether a
+broker was configured but whether one was reachable while the operations were collected. A
+broker that died mid-run scores like a broker that was never there, and the floor follows the
+score. The one remaining gap — a broker that recovers between the last request and the probe —
+leaves the run held to the *higher* floor, which fails safe.
+
 **Point 2 below is still open**, and it is the one this repository cannot answer.
 
 ---

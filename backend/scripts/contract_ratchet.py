@@ -28,6 +28,8 @@ cannot drift down quietly.
 from __future__ import annotations
 
 import argparse
+import os
+import socket
 import sys
 import xml.etree.ElementTree as ET
 from pathlib import Path
@@ -125,9 +127,31 @@ from pathlib import Path
 #: broker did not come up** — which is precisely how this job's predecessor became advisory
 #: and got killed at six hours.
 #:
-#: So the next raise is gated on a CI change, not on a code fix: make the broker required, or
-#: measure what the job scores without one and set the floor from that. Until then a healthy
-#: run carries 22 of headroom, which is slack this gate cannot spend.
+#: RESOLVED 2026-08-11 (FS-654) — with TWO floors, and the run decides which one applies by
+#: MEASURING rather than by being told.
+#:
+#: The impasse was that one number had to serve two configurations, so it had to serve the
+#: worse one, and a healthy run spent 22 operations of headroom to protect a degraded run that
+#: might never happen. Two floors end that:
+#:
+#:     BASELINE_WITH_BROKER    393   = 402 measured, less the 9-operation spread
+#:     BASELINE_WITHOUT_BROKER 380   unchanged; the floor this gate has held since 2026-08-07
+#:
+#: WHY THE RATCHET PROBES THE BROKER ITSELF rather than accepting a `--broker` flag from the
+#: workflow. A flag is a claim, and the lower floor is the one somebody would want on a red
+#: build — "the broker must have been down" is unfalsifiable after the fact and costs 13
+#: operations of protection. So this script opens a TCP connection to the same address the app
+#: was given and reports what it finds. Lying to it requires taking the broker down, which is
+#: the condition the lower floor describes.
+#:
+#: The probe runs AFTER the suite, which is the right order and worth stating: the question is
+#: not "was a broker configured" but "was one reachable while the operations were collected".
+#: A broker that died mid-run scores like a broker that was never there, and the floor should
+#: follow the score. The remaining gap — a broker that comes back between the last request and
+#: the probe — leaves the run held to the HIGHER floor, which fails safe.
+#:
+#: `--broker none` states there is no broker to probe, for a laptop run. It selects the lower
+#: floor and says so; it cannot select the higher one.
 #:
 #: What the 402 run found, which is the point of running it: `ServerError` is down to 14, and
 #: not one of the 14 is a defect in this lane. Six are the pg_stat_statements limitation
@@ -137,7 +161,16 @@ from pathlib import Path
 #: never been able to serialise its own handler's output** — see FS-608.
 #:
 #: Raise it when a fix clears the noise. Never lower it.
-BASELINE_PASSING = 380
+BASELINE_WITHOUT_BROKER = 380
+
+#: The floor for a run where a broker was reachable. 402 measured 2026-08-08, less the same
+#: 9-operation spread the lower floor allows for. Never lower it either — and note that this
+#: one catches a regression of 10 where the shared floor caught 22.
+BASELINE_WITH_BROKER = 393
+
+#: Kept as the name the CLI default and older callers use: the floor that holds when nothing
+#: is known about the broker.
+BASELINE_PASSING = BASELINE_WITHOUT_BROKER
 
 #: Total operations the schema documents, checked so a collapse in collection cannot
 #: pass the ratchet by making "passing" small and "total" equally small.
@@ -147,6 +180,25 @@ EXPECTED_TOTAL = 452
 #: How far total may drift before the run is treated as untrustworthy. Routes get
 #: added legitimately; a 10% swing means something structural changed.
 TOTAL_TOLERANCE = 0.10
+
+
+def broker_is_reachable(address: str, timeout: float = 3.0) -> bool:
+    """Open a TCP connection to the bootstrap address the app was given.
+
+    Deliberately a connect and nothing more. A Kafka handshake would be a better proof of a
+    *working* broker, and it would also introduce a client library and a second way for this
+    check to hang — the failure mode that made the CI step fail-safe in the first place. What
+    is being distinguished here is "something is listening" from "nothing is", which is the
+    difference between the two floors.
+    """
+    host, _, port = address.rpartition(":")
+    if not host or not port.isdigit():
+        return False
+    try:
+        with socket.create_connection((host, int(port)), timeout=timeout):
+            return True
+    except OSError:
+        return False
 
 
 def read_counts(report: Path) -> tuple[int, int]:
@@ -164,7 +216,20 @@ def read_counts(report: Path) -> tuple[int, int]:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("report", type=Path, help="junit-xml written by pytest")
-    parser.add_argument("--baseline", type=int, default=BASELINE_PASSING)
+    parser.add_argument(
+        "--baseline",
+        type=int,
+        default=None,
+        help="override the floor entirely; skips the broker probe",
+    )
+    parser.add_argument(
+        "--broker",
+        default=None,
+        help=(
+            "bootstrap address to probe, or 'none' to declare there is no broker. "
+            "Defaults to $REDPANDA_URL. A run with no broker is held to the lower floor."
+        ),
+    )
     args = parser.parse_args()
 
     if not args.report.exists():
@@ -172,6 +237,20 @@ def main() -> int:
         return 1
 
     passing, total = read_counts(args.report)
+
+    if args.baseline is not None:
+        baseline, why = args.baseline, "explicitly overridden"
+    else:
+        address = args.broker or os.environ.get("REDPANDA_URL", "")
+        if address and address != "none" and broker_is_reachable(address):
+            baseline = BASELINE_WITH_BROKER
+            why = f"a broker answered at {address}"
+        else:
+            baseline = BASELINE_WITHOUT_BROKER
+            why = (
+                f"no broker answered at {address}" if address and address != "none"
+                else "no broker address to probe"
+            )
 
     # A suite that collected almost nothing would otherwise sail past the ratchet.
     if abs(total - EXPECTED_TOTAL) > EXPECTED_TOTAL * TOTAL_TOLERANCE:
@@ -182,24 +261,30 @@ def main() -> int:
         )
         return 1
 
-    print(f"contract conformance: {passing}/{total} operations (ratchet: {args.baseline})")
+    print(
+        f"contract conformance: {passing}/{total} operations "
+        f"(ratchet: {baseline} — {why})"
+    )
 
-    if passing < args.baseline:
+    if passing < baseline:
         print(
-            f"\nFAIL: conformance dropped by {args.baseline - passing}.\n"
-            f"  was {args.baseline}, now {passing}\n\n"
+            f"\nFAIL: conformance dropped by {baseline - passing}.\n"
+            f"  floor {baseline} ({why}), now {passing}\n\n"
             "An operation that used to conform to the OpenAPI schema no longer does, or a\n"
             "new one landed that never did. The generated TypeScript SDK is built from that\n"
             "schema, so a drop here is a client that will be wrong at runtime.\n\n"
             "Fix the endpoint, or document the response it actually returns. Do NOT lower\n"
-            "BASELINE_PASSING in scripts/contract_ratchet.py to make this pass."
+            "BASELINE_WITH_BROKER or BASELINE_WITHOUT_BROKER in scripts/contract_ratchet.py\n"
+            "to make this pass. If the broker was the problem, fix the broker — this run was\n"
+            "already held to the floor that matches what it found."
         )
         return 1
 
-    if passing > args.baseline:
+    if passing > baseline:
         print(
-            f"\n{passing - args.baseline} more operation(s) conform than the ratchet expects.\n"
-            f"Raise BASELINE_PASSING to {passing} in scripts/contract_ratchet.py to lock the gain in."
+            f"\n{passing - baseline} more operation(s) conform than the ratchet expects.\n"
+            f"Raise the floor for this configuration ({why}) to {passing} in\n"
+            "scripts/contract_ratchet.py to lock the gain in."
         )
 
     return 0

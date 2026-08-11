@@ -22,6 +22,7 @@ configuration the gate no longer has.
 from __future__ import annotations
 
 import pathlib
+import importlib.util
 import re
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
@@ -76,16 +77,67 @@ class TestTheDocDoesNotDescribeAGateThatIsGone:
         )
 
 
+def _floors() -> tuple[int, int]:
+    r"""Import the floors rather than grep for them.
+
+    This test USED to read `^BASELINE_PASSING = (\d+)` out of the file, and FS-654 turned that
+    line into `BASELINE_PASSING = BASELINE_WITHOUT_BROKER` — a regex over source cannot follow
+    an indirection, and it would have failed with "BASELINE_PASSING is gone" while the constant
+    was sitting right there. The same mistake once counted a live module as dead by grepping
+    for its name in the file that already listed it as a positive control.
+    """
+    spec = importlib.util.spec_from_file_location("contract_ratchet", RATCHET)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module.BASELINE_WITHOUT_BROKER, module.BASELINE_WITH_BROKER
+
+
 class TestTheNumbersInTheDocAndTheRatchetAgree:
     def test_the_floor_the_doc_cites_is_the_floor_in_force(self):
         """A document quoting a floor the script does not hold is how a reader concludes a
         regression is acceptable, or that headroom exists which does not."""
-        match = re.search(r"^BASELINE_PASSING = (\d+)", RATCHET.read_text(), re.M)
-        assert match, "BASELINE_PASSING is gone from contract_ratchet.py"
-        floor = int(match.group(1))
-        assert f"floor was re-baselined to {floor}" in DOC.read_text(), (
-            f"the document does not name the floor actually in force ({floor}). The one it "
+        without, _ = _floors()
+        assert f"floor was re-baselined to {without}" in DOC.read_text(), (
+            f"the document does not name the floor actually in force ({without}). The one it "
             f"names is what somebody will plan against."
+        )
+
+    def test_the_broker_floor_is_the_higher_one(self):
+        """FS-654 split one floor into two, and the whole design rests on which is which. A
+        transposition would hold a broker-less run to the broker floor — failing every build
+        in which the broker did not come up, which is exactly how this job's predecessor
+        became advisory and got killed."""
+        without, with_broker = _floors()
+        assert with_broker > without, (
+            f"BASELINE_WITH_BROKER ({with_broker}) is not above BASELINE_WITHOUT_BROKER "
+            f"({without}). A run that reaches more operations because a dependency was "
+            f"present cannot be held to a lower bar than one that could not reach them."
+        )
+
+    def test_neither_floor_has_been_lowered(self):
+        """The one rule this whole gate has: a floor may rise and may never fall. Recorded as
+        literals because the point is to fail when the constants change, not to restate them.
+        Raising a floor means editing this line too, deliberately, in the same commit."""
+        without, with_broker = _floors()
+        assert without >= 380, (
+            f"BASELINE_WITHOUT_BROKER is {without}, below the 380 measured 2026-08-07. A "
+            f"lowered ratchet is indistinguishable from no ratchet."
+        )
+        assert with_broker >= 393, (
+            f"BASELINE_WITH_BROKER is {with_broker}, below the 393 set from the 402 measured "
+            f"2026-08-08 less its 9-operation spread."
+        )
+
+    def test_the_probe_decides_the_floor_rather_than_a_flag(self):
+        """A flag is a claim, and the lower floor is the one somebody would want on a red
+        build. `--broker` names an address to PROBE; it cannot assert a broker was present."""
+        source = RATCHET.read_text()
+        assert "def broker_is_reachable" in source, (
+            "the broker probe is gone. Without it the two floors are selected by assertion, "
+            "and 'the broker must have been down' is unfalsifiable after the fact."
+        )
+        assert "socket.create_connection" in source, (
+            "the probe no longer opens a connection, so it is no longer a measurement"
         )
 
     def test_the_doc_records_the_cost_of_the_restricted_role(self):

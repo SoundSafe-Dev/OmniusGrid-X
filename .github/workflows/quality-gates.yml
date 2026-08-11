@@ -226,6 +226,18 @@ jobs:
         run: python scripts/contract_summary.py contract-report.xml
       - name: Conformance must not regress
         working-directory: ./backend
+        # TWO FLOORS, and the script picks one by PROBING the address below rather than by
+        # being told (FS-654). The broker step above is `continue-on-error` and removes its
+        # own container when the advertised address does not verify, so a run may legitimately
+        # score ~15 operations lower than a healthy one. One floor had to cover both cases,
+        # which meant covering the worse one, which meant a healthy run spent 22 operations of
+        # headroom protecting a degraded run that might never happen.
+        #
+        # The probe rather than a flag: the lower floor is the one somebody would want on a
+        # red build, and "the broker must have been down" is unfalsifiable after the fact.
+        # Selecting it now requires the broker to actually be unreachable.
+        env:
+          REDPANDA_URL: 127.0.0.1:39092
         run: python scripts/contract_ratchet.py contract-report.xml
       - name: Upload contract report
         if: always()
