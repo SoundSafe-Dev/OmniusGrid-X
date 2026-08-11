@@ -166,8 +166,16 @@ export default defineConfig({
       // with tests. Functions clears 40 for the first time.
       //
       //   measured 2026-08-11: statements 48.69 · branches 48.63 · functions 41.23 · lines 50.24
+      //
+      // SEVENTH RAISE, after FS-655 — the sweep that asked what a POLLED value shows when its
+      // poll starts failing. Statements only; branches, functions and lines each moved by less
+      // than a point and their floors already sit inside that. Raising a threshold the
+      // measurement does not clear by a margin is how a ratchet starts failing on variance
+      // rather than on regressions.
+      //
+      //   measured 2026-08-11: statements 49.01 · branches 48.97 · functions 41.44 · lines 50.57
       thresholds: {
-        statements: 48,
+        statements: 49,
         branches: 48,
         functions: 41,
         lines: 50,
