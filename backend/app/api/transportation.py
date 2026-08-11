@@ -720,7 +720,11 @@ async def dispatch_shipment(
         return {
             "message": "Shipment dispatched",
             "shipment_id": str(shipment_id),
-            "driver_id": str(driver_id),
+            # `request.driver_id`, not `driver_id` — the bare name is undefined here and
+            # raised NameError on EVERY SUCCESSFUL DISPATCH. The service commits before this
+            # line runs, so the shipment was dispatched and the caller got a 500: a write
+            # that landed, reported as a failure.
+            "driver_id": str(request.driver_id),
             "status": shipment.status
         }
     except ValueError as e:
