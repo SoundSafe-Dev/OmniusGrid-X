@@ -1,3 +1,4 @@
+import { normalizeApiError } from './errors'
 import axios, { AxiosError, AxiosResponse } from 'axios'
 import { requestTransform, responseTransform } from './transformRegistry'
 import { ApiError } from '../types'
@@ -94,16 +95,33 @@ api.interceptors.response.use(
   }
 )
 
+/**
+ * Normalise any thrown value into the shape the UI renders.
+ *
+ * DELEGATES to `normalizeApiError`. There were two normalisers in this directory with
+ * different contracts — that one answers `status: null` and `code: 'network_error'` when a
+ * request never reached the server, and this one answered **`status: 500`**, turning "we could
+ * not reach the backend" into "the backend failed". All fifteen callers read only `.message`,
+ * so nothing was visibly wrong yet; the first caller to retry on `>= 500` would have retried a
+ * request that never left the machine, and error triage would have attributed every network
+ * outage to a server fault.
+ *
+ * `status` is nullable for the same reason `?? null` replaced `|| 0` elsewhere: absent and
+ * zero are different facts, and a number invented at the moment nothing is known is the most
+ * confident possible answer.
+ */
 export function handleApiError(error: unknown): ApiError {
-  if (axios.isAxiosError(error)) {
-    return {
-      status: error.response?.status || 500,
-      message: (error.response?.data as any)?.detail || error.message || 'An error occurred',
-      details: (error.response?.data as any)?.details,
-    }
-  }
+  const normalized = normalizeApiError(error)
+
+  // A request with no response is the one case where the server's own message says nothing
+  // useful — axios offers "Network Error" — and it is also the case where the user can act.
+  const neverReachedServer = axios.isAxiosError(error) && !error.response
+
   return {
-    status: 500,
-    message: error instanceof Error ? error.message : 'An unknown error occurred',
+    status: normalized.status,
+    message: neverReachedServer
+      ? 'Could not reach the server. The request may not have been sent — check your connection, then try again.'
+      : normalized.message,
+    details: normalized.details as ApiError['details'],
   }
 }

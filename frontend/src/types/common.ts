@@ -7,7 +7,12 @@ export interface PaginatedResponse<T> {
 }
 
 export interface ApiError {
-  status: number;
+  /**
+   * The HTTP status, or **null when the request never reached the server**. This used to be
+   * `number`, defaulted to 500 — so a network outage was indistinguishable from a backend
+   * fault, and the distinction is the one a caller would branch on.
+   */
+  status: number | null;
   message: string;
   details?: Record<string, string[]>;
 }
