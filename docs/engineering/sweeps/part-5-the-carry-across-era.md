@@ -1407,3 +1407,88 @@ fixed forever and the UI would never benefit. Look for the duplicate before deba
 behaviour, and guard the agreement rather than the delegation: "A must call B" passes for any
 delegation and fails for any honest reimplementation, which is backwards. Assert that both
 answer the same thing.
+
+## Class 96 — a gate in a workflow that branch pushes never reach (FS-657)
+
+The previous entry ends with my own miss: a test file that was green under `vitest run` and
+did not compile, because `vitest` transpiles and discards types. I recorded it as a local
+process failure — run `tsc` last, not first — and then asked the obvious follow-up, which was
+whether CI would have caught it.
+
+It would have, in a workflow that does not run on the branch.
+
+`ci-cd.yml` has carried a blocking `npx tsc --noEmit` since FS-53 and a blocking
+`npm run lint` since FS-54. It triggers on `push: branches: [main]` and `pull_request`.
+`quality-gates.yml` is the workflow that fires on every developer branch — `hamad/**`,
+`hridyansh/**`, `htreinen`, `HARSH-CONTRIBUTION`, `alex` — and it had **neither**.
+
+Every branch in this repository has been running with no typecheck and no lint, for as long as
+both workflows have existed. The consequences were already sitting in the tree:
+
+* my non-compiling test file, green under every job that runs on a branch push;
+* **fifteen lint errors** across e2e specs, adapter tests and page tests — none behavioural,
+  every one of them enough to fail the gate the moment a pull request opened, which is the
+  worst moment to discover them.
+
+The fifteen are worth reading, because seven of them were not defects at all. They are the
+omit-a-key idiom — `const { alertType, ...withoutType } = WIRE` — where the discarded name is
+the documentation: it says which field the test is proving the adapter cannot invent. The rule
+wanted them renamed `_alertType`, which destroys the one thing the line exists to say. The
+correct fix was `ignoreRestSiblings: true` in the config, not eight underscores in the tests.
+**A linter demanding a change that makes the code say less is a misconfigured linter**, and
+answering it literally would have been the lasting damage.
+
+The other eight were genuinely dead: three pairs of `EMAIL`/`PASSWORD` constants left behind
+when FS-452 moved authentication into a Playwright setup project, and a per-route counter made
+vestigial by the file's own vacuity test.
+
+### What the hole was hiding
+
+Wiring the frontend checks in was the cheap half. The backend has the same arrangement —
+`flake8 app --count --select=E9,F63,F7,F82` has been blocking in `ci-cd.yml` from the start,
+on `main` and pull requests only — and its **first run against this branch** reported:
+
+    app/api/transportation.py:723:30: F821 undefined name 'driver_id'
+
+`POST /transportation/shipments/{id}/dispatch` built its reply with a bare `driver_id`. The
+request body is `request.driver_id`; there is no such name in that scope. So every dispatch
+raised `NameError` and answered 500.
+
+**And a 500 is the mild reading.** `dispatch_shipment` sets the status, assigns the driver and
+trailer, and **commits** before returning — the NameError fires afterwards, while the route is
+building its response. The shipment really was dispatched, and the operator was told it was
+not. That is the one error that makes somebody do the thing twice.
+
+Two guards had a claim on this and neither could reach it. `tests/route_walk.py` drives every
+route against a real Postgres looking for 5xx, but a generated `shipment_id` matches no row, so
+the service raises `ValueError("Shipment not found")` and the route answers 400 — **the defect
+is reachable only by succeeding, and the smoke test never succeeds**. And the one check that
+names this exact class, by error code, ran in the workflow nobody's push reaches.
+
+## Rule 137 — a gate that is never reached and a gate that does not exist are the same gate
+
+This repository has now paid for the same shape three times. `develop` sat in a branch-trigger
+list for months without existing on any remote, so the dev branches that *did* exist ran zero
+CI. The coverage thresholds in `vitest.config.ts` were enforced by no job in either workflow —
+`npm run test` is `vitest run` without `--coverage` — and had already gone false when somebody
+finally looked. And now two blocking checks that only fire where nobody pushes.
+
+None of the three announces itself. Every job is green, the gate is present in the repository,
+and "we have a typecheck" is true and useless. When adding a check, the question is not "is it
+blocking" but **"which pushes reach it"** — and the answer has to be checked against the
+branches people actually use, not the ones the trigger list mentions.
+
+## Rule 139 — a smoke test that only ever fails has not tested the success path
+
+`route_walk` covers every route and looks for 5xx, which reads like complete coverage of "does
+it crash". It is not: with generated inputs, most write routes reject before they do anything,
+so what is proven is that the REFUSAL path does not crash. The dispatch NameError sat behind a
+real shipment, a real driver and an HOS check. When a smoke test reports a route clean, ask
+which branch it actually reached.
+
+## Rule 138 — the check you skipped is the one that finds your mistake
+
+I ran `npx tsc --noEmit`, then appended a test block, then ran only `vitest`. The order was the
+whole defect: every check I ran passed, and the one I had already run was the one that
+mattered. Run the compile last, after the final edit — and when a run is green, ask which
+tools did not look at the thing you just changed.

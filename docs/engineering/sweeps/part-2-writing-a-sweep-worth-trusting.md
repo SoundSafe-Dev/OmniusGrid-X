@@ -860,6 +860,24 @@ one of its findings. The habit that catches it:
      AGREEMENT, not the delegation: "A must call B" passes for any delegation and fails for
      any honest reimplementation, which is backwards.
 
+137. **A gate that is never reached and a gate that does not exist are the same gate.**
+     Paid for three times here: a branch pattern for a branch that never existed, coverage
+     thresholds no job passed `--coverage` to, and two blocking checks living only in the
+     workflow that skips branch pushes. None announces itself — every job is green and "we
+     have a typecheck" is true and useless. Ask not "is it blocking" but **"which pushes
+     reach it"**, against the branches people actually use.
+
+138. **The check you skipped is the one that finds your mistake.**
+     `tsc`, then an edit, then only `vitest`. Every check that ran passed, and the one already
+     run was the one that mattered. Compile last, after the final edit — and when a run is
+     green, ask which tools did not look at what you just changed.
+
+139. **A smoke test that only ever fails has not tested the success path.**
+     `route_walk` drives every route looking for 5xx, which reads as complete coverage of
+     "does it crash". With generated inputs most write routes reject before doing anything, so
+     what is proven is that the REFUSAL path does not crash. An undefined name on a dispatch
+     route's success path survived it for months. Ask which branch the smoke test reached.
+
 ---
 
 ## Open observations, not yet tickets

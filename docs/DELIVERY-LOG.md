@@ -8775,3 +8775,93 @@ Recorded as **class 95**, with rules 135 (when a sweep comes back clean, the rea
 result) and 136 (two implementations of one question is a defect before either is wrong).
 
 **1,054 frontend tests**; branches 48.97 → 49.06, the other three unchanged.
+
+### The gates that ran where nobody pushes
+
+The previous entry ends with a miss of my own: a test file green under `vitest run` that did
+not compile. I recorded it as a local process failure and then asked whether CI would have
+caught it.
+
+It would have — in a workflow that does not run on the branch.
+
+`ci-cd.yml` has carried a blocking `npx tsc --noEmit` since FS-53 and a blocking
+`npm run lint` since FS-54, and it triggers on `push: branches: [main]` plus `pull_request`.
+`quality-gates.yml` is the one that fires on every developer branch — `hamad/**`,
+`hridyansh/**`, `htreinen`, `HARSH-CONTRIBUTION`, `alex` — and it had **neither**. Every branch
+in this repository has run with no typecheck and no lint for as long as both files have
+existed.
+
+Both consequences were already in the tree. My non-compiling test file, and **fifteen lint
+errors** across e2e specs, adapter tests and page tests — none behavioural, every one enough to
+fail the gate the moment a PR opened.
+
+**Seven of the fifteen were not defects.** They are the omit-a-key idiom —
+`const { alertType, ...withoutType } = WIRE` — where the discarded name *is* the documentation:
+it says which field the test is proving the adapter cannot invent. The rule wanted them renamed
+`_alertType`, which destroys the one thing the line exists to say. The fix was
+`ignoreRestSiblings: true` in the config, not eight underscores in the tests. Answering a
+misconfigured linter literally would have been the lasting damage.
+
+The other eight were dead: three pairs of `EMAIL`/`PASSWORD` constants stranded when FS-452
+moved authentication into a Playwright setup project, a vestigial per-route counter the file's
+own vacuity test had superseded, a regex with two literal spaces (now `{2}`, and it is
+load-bearing — it bounds a handler body by indentation), and an `eslint-disable` for a rule
+this config does not enable.
+
+Both checks are now blocking steps in `quality-gates.yml`, and
+`test_branch_pushes_reach_the_gates.py` asserts that every check reachable only from `main`
+also runs on a branch push. It is mutation-verified: deleting the typecheck step fails two
+tests and names it.
+
+**This repository has now paid for the same shape three times.** `develop` sat in a
+branch-trigger list for months without existing on any remote, so the dev branches that did
+exist ran zero CI. The coverage thresholds were enforced by no job in either workflow and had
+already gone false when somebody looked. And now two blocking checks that only fire where
+nobody pushes. None of the three announces itself: every job is green, the gate is in the
+repository, and "we have a typecheck" is true and useless.
+
+Recorded as **class 96**, with rules 137 (a gate that is never reached and a gate that does not
+exist are the same gate — ask which pushes reach it, not whether it is blocking) and 138 (the
+check you skipped is the one that finds your mistake — compile last, after the final edit).
+
+Frontend lint: **15 errors → 0**.
+
+### What the gate hole was hiding: a dispatch that succeeded and reported 500
+
+Wiring the frontend checks into the branch-push workflow was the cheap half. The backend has
+the same arrangement — `flake8 app --count --select=E9,F63,F7,F82` has been blocking in
+`ci-cd.yml` from the start, on `main` and pull requests only. Its **first run against this
+branch** reported:
+
+    app/api/transportation.py:723:30: F821 undefined name 'driver_id'
+
+`POST /transportation/shipments/{id}/dispatch` built its reply with a bare `driver_id`. The
+body is `request.driver_id`; there is no such name in that scope. Every dispatch raised
+`NameError` and answered 500.
+
+**A 500 is the mild reading.** `dispatch_shipment` sets the status, assigns the driver and
+trailer and **commits** before returning; the NameError fires afterwards, while the route
+builds its response. The shipment really was dispatched and the operator was told it was not —
+the one error that makes somebody do the thing twice.
+
+Two guards had a claim on it and neither could reach it. `route_walk.py` drives every route
+against a real Postgres looking for 5xx, but a generated `shipment_id` matches no row, so the
+service raises `ValueError("Shipment not found")` and the route answers 400. **The defect is
+reachable only by succeeding, and the smoke test never succeeds.** And the one check that names
+this exact class by error code ran where no push reaches it.
+
+Six tests, driving the success path with the service faked — mutation-verified, four fail with
+the bare name restored. The refusal paths are pinned too, including FS-421's requirement that
+an HOS block names its reason, because those are the branches `route_walk` does exercise and
+they must keep working.
+
+`flake8` at error level and `npx vite build` join `tsc` and `lint` as blocking steps on branch
+pushes. `test_branch_pushes_reach_the_gates.py` now asserts all five.
+
+The step covers `app` **and `scripts`**, which `ci-cd.yml` never did. `app/` held the only
+F821 in the repository — `scripts/`, `backend/tests/` and `edge-agent/opsgrid_agent/` all
+measured zero the same day, so widening the scope cost nothing and this is the only moment it
+ever will. `scripts/` is worth the extra path on its own: it holds the migration runner and the
+seeders, where an undefined name fails a deployment rather than a request.
+
+Recorded as rule 139 — a smoke test that only ever fails has not tested the success path.
