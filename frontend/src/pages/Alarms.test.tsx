@@ -8,9 +8,10 @@ import { describe, expect, it, vi, beforeEach } from 'vitest'
 
 const useAlarms = vi.fn()
 const acknowledge = { mutate: vi.fn(), isPending: false }
+const activeAlarms = vi.fn(() => ({ data: { count: 0 }, isError: false }))
 vi.mock('../hooks', () => ({
   useAlarms: (args: any) => useAlarms(args),
-  useActiveAlarms: () => ({ data: [] }),
+  useActiveAlarms: () => activeAlarms(),
   useAcknowledgeAlarm: () => acknowledge,
 }))
 vi.mock('../components/ui', () => ({
@@ -97,5 +98,47 @@ describe('an acknowledgement that did not happen', () => {
     fireEvent.click(screen.getByRole('button', { name: /acknowledge/i }))
 
     expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+  })
+})
+
+describe('the summary cards when the active-alarm count is unavailable', () => {
+  /**
+   * `useActiveAlarms` polls every ten seconds and both cards read only its `data`.
+   * `activeAlarms?.count || 0` turns a failure into a zero, so a feed that has never answered
+   * rendered **"Active 0"** — and the card beside it computes `total - count`, so it rendered
+   * every alarm on the page as **acknowledged**.
+   *
+   * This is the page an operator opens because they are worried about alarms. Two confident
+   * wrong numbers, from one missing `isError`.
+   */
+  it('shows the count when the feed is answering', async () => {
+    activeAlarms.mockReturnValue({ data: { count: 3 }, isError: false })
+    render(<Alarms />)
+    expect(await screen.findByText('3')).toBeInTheDocument()
+  })
+
+  it('does not report zero active alarms when the count could not be fetched', async () => {
+    activeAlarms.mockReturnValue({ data: undefined, isError: true })
+    render(<Alarms />)
+    await screen.findAllByText('—')
+    // A dash is not a number. What matters is that no confident zero is on screen.
+    expect(screen.queryByText('0')).toBeNull()
+  })
+
+  it('does not report every alarm acknowledged when the count is missing', async () => {
+    // The worse of the two: `total - 0` is `total`, so a dead feed said the whole page had
+    // been dealt with. Both cards go to a dash together, because one is derived from the other.
+    activeAlarms.mockReturnValue({ data: undefined, isError: true })
+    render(<Alarms />)
+    expect((await screen.findAllByText('—')).length).toBe(2)
+  })
+
+  it('keeps a stale count out of the cards too', async () => {
+    // react-query holds the last successful `data` across a failure, so this is the shape the
+    // bug takes after the feed has worked once — a number nobody can date.
+    activeAlarms.mockReturnValue({ data: { count: 3 }, isError: true })
+    render(<Alarms />)
+    await screen.findAllByText('—')
+    expect(screen.queryByText('3')).toBeNull()
   })
 })

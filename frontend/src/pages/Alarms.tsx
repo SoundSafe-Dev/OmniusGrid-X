@@ -14,7 +14,13 @@ const Alarms: FC = () => {
   const rangeStart = total === 0 ? 0 : (alarmsData?.skip ?? skip) + 1
   const rangeEnd = (alarmsData?.skip ?? skip) + alarms.length
 
-  const { data: activeAlarms } = useActiveAlarms()
+  // `isError`, not just `data`. This polls every ten seconds and react-query keeps the last
+  // successful `data` across a failure, so both cards below reported a count from an unknown
+  // time ago — and on a cold failure `activeAlarms?.count || 0` is 0, which renders "Active 0"
+  // and, worse, "Acknowledged {total}": a feed that never answered says every alarm on the
+  // page has been dealt with. This is the page an operator opens BECAUSE they are worried.
+  const { data: activeAlarms, isError: activeCountUnavailable } = useActiveAlarms()
+  const activeCount = activeCountUnavailable ? null : activeAlarms?.count ?? null
 
   // Invalidates the shared ['alarms'] key, refreshing both list and active queries.
   const acknowledgeMutation = useAcknowledgeAlarm()
@@ -110,7 +116,9 @@ const Alarms: FC = () => {
                 <AlertTriangle className="text-status-alarm" size={24} />
                 <div>
                   <p className="text-sm text-opsgrid-text-secondary">Active</p>
-                  <p className="text-2xl font-bold">{activeAlarms?.count || 0}</p>
+                  <p className="text-2xl font-bold">
+                    {activeCount ?? <span className="text-opsgrid-text-secondary">—</span>}
+                  </p>
                 </div>
               </div>
             </div>
@@ -126,7 +134,9 @@ const Alarms: FC = () => {
                 <div>
                   <p className="text-sm text-opsgrid-text-secondary">Acknowledged</p>
                   <p className="text-2xl font-bold">
-                    {Math.max(0, total - (activeAlarms?.count || 0))}
+                    {activeCount === null
+                      ? <span className="text-opsgrid-text-secondary">—</span>
+                      : Math.max(0, total - activeCount)}
                   </p>
                 </div>
               </div>

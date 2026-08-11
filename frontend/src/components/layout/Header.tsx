@@ -11,7 +11,13 @@ export const Header: FC = () => {
   const location = useLocation();
   const { mobileSidebarOpen, setMobileSidebarOpen } = useUIStore();
   const { connected, connectionState, pollingFallback } = useWebSocket();
-  const { data: activeAlarms } = useActiveAlarms();
+  // `isError` is read, not just `data`. The query polls every TEN SECONDS, and react-query
+  // keeps the last successful `data` across a failure — so without this a dead alarm feed
+  // showed the last count it managed to fetch, indefinitely. Worse on a cold start: with no
+  // data yet, `activeAlarms?.count || 0` is 0, the badge is hidden by `> 0`, and **an alarm
+  // feed that has never answered renders as a plant with no active alarms.** On an industrial
+  // monitoring product that is the one indicator that must never quietly read "all clear".
+  const { data: activeAlarms, isError: alarmsUnavailable } = useActiveAlarms();
 
   // Get page title from current route
   const getPageTitle = () => {
@@ -99,8 +105,28 @@ export const Header: FC = () => {
               <TooltipContent>Real-time WebSocket connection status</TooltipContent>
             </Tooltip>
 
+            {/* Alarm status unknown — deliberately rendered BEFORE the count badge, and
+                shown whether or not a stale count survives, because "we cannot tell you"
+                outranks a number nobody can date. */}
+            {alarmsUnavailable && (
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <div className="relative" role="status" aria-label="Alarm status unavailable">
+                    <Bell size={20} className="text-status-warning" />
+                    <span className="absolute -top-1 -right-1 w-4 h-4 bg-status-warning text-white text-xs rounded-full flex items-center justify-center">
+                      ?
+                    </span>
+                  </div>
+                </TooltipTrigger>
+                <TooltipContent>
+                  Alarm status unavailable — the alarm feed is not answering, so this is not a
+                  report that there are no alarms.
+                </TooltipContent>
+              </Tooltip>
+            )}
+
             {/* Active Alarms Badge */}
-            {activeAlarmsCount > 0 && (
+            {!alarmsUnavailable && activeAlarmsCount > 0 && (
               <Tooltip>
                 <TooltipTrigger asChild>
                   <div className="relative">
