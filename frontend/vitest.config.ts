@@ -144,11 +144,17 @@ export default defineConfig({
       // proved the page renders whatever it returns and nothing about what it returns.
       //
       //   measured 2026-08-11: statements 46.53 · branches 46.84 · functions 39.36 · lines 47.96
+      //
+      // FOURTH RAISE, after the filter bar and the metrics bar. Lines have gone 45.45 ->
+      // 48.21 in a day, entirely by testing components that were `() => null` stubs in
+      // every page test that mounted them.
+      //
+      //   measured 2026-08-11: statements 46.76 · branches 47.30 · functions 39.61 · lines 48.21
       thresholds: {
         statements: 46,
-        branches: 46,
+        branches: 47,
         functions: 39,
-        lines: 47,
+        lines: 48,
       },
     },
   },

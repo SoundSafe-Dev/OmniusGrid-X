@@ -76,7 +76,11 @@ export const KanbanMetricsBar: React.FC<KanbanMetricsBarProps> = ({
       })}
 
       {/* Cycle Time */}
-      {metrics.avg_cycle_time_minutes && (
+      {/* `!= null`, not truthiness. A truthiness gate hides ZERO as readily as absent, and
+          the two mean different things: absent is "not measured yet"; zero is a board where
+          tasks close the moment they open — extraordinary throughput, or a workflow nobody
+          is using. Both are worth seeing, and `&&` showed neither. Falsy is not absent. */}
+      {metrics.avg_cycle_time_minutes != null && (
         <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-purple-50 dark:bg-purple-900/20">
           <Clock className="w-4 h-4 text-purple-600 dark:text-purple-400" />
           <div>

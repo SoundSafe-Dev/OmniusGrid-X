@@ -8528,3 +8528,24 @@ stale board with no error reads as current. Both are asserted, and so is the cle
 previous error once a refresh succeeds.
 
 **Coverage 47.00 → 47.96 lines, 45.60 → 46.53 statements.** Thresholds now 46/46/39/47.
+
+### The filter bar and the metrics bar, and a gate that hid a measured zero
+
+**`KanbanMetricsBar` hid a cycle time of zero.** The panel was rendered behind
+`{metrics.avg_cycle_time_minutes && (…)}`, and a truthiness gate hides **0** as readily as
+absent. Those mean different things: absent is "not measured yet"; zero is a board where tasks
+close the moment they open — extraordinary throughput, or a workflow nobody is using. Both are
+worth seeing and the gate showed neither. **Falsy is not absent**, on a number rather than a
+collection. Fixed to `!= null`.
+
+**`KanbanFilters` clears with `undefined`, not `''`** — and that distinction is load-bearing.
+An empty string is a *value*: the store would forward `?priority=` and the board would come
+back empty while the control read "All Priorities", which is an empty result the user cannot
+attribute to anything. Mutation-verified.
+
+**"Clear all" resets by naming each field**, so a filter added later and not added there
+survives the clear — the board stays filtered while the bar says it is not. Also
+mutation-verified, by deleting one field from the reset.
+
+**Coverage 47.96 → 48.21 lines.** Across the day: **45.45 → 48.21**, entirely by testing
+components that were `() => null` stubs in every page test that mounted them.

@@ -144,9 +144,11 @@ back above where the merge pushed them under.
 rest: a drop that does not `preventDefault` is **silently rejected by the browser**, and
 "overdue" is a conjunction whose second half, if dropped, paints the whole Done column red.
 
-**Left (1,320 lines):** `TaskDetailModal` (604), `CreateTaskModal` (216), `KanbanBoard` (214),
-`KanbanFilters` (177), `KanbanMetricsBar` (109). And `stores/kanbanStore.tsx` (367) — mocked
-wholesale at `pages/Kanban.test.tsx`, and it owns board loading and every task mutation.
+**Also done:** `KanbanFilters` (177), `KanbanMetricsBar` (109) — which was **hiding a measured
+cycle time of zero** behind a truthiness gate — and `stores/kanbanStore.tsx` (367), where
+`moveTask`'s comment claimed optimistic updates for code that is pessimistic.
+
+**Left (1,034 lines):** `TaskDetailModal` (604), `CreateTaskModal` (216), `KanbanBoard` (214).
 
 ### FS-652b. The remaining `ui/` primitives · S · *what FS-652 left*
 
