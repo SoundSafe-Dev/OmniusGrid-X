@@ -1301,3 +1301,57 @@ because the store itself does — `createTask` catches and returns `null`, `upda
 logs and re-raises. A caller cannot get this right by reading its own file. Both are now
 routed through a single `runAction`-shaped helper per modal, so the question "what happens
 when this fails" has one answer per component rather than one per button.
+
+## Class 94 — a polled reading that cannot say it stopped arriving (FS-655)
+
+Class 93 closed by asking what a modal does when a write fails. The carry-across is the read
+side, and it is worse, because a read has no button to press: **what does a POLLED value show
+when the poll starts failing?**
+
+react-query keeps the last successful `data` across a failed refetch, and that is the right
+default — a screen that blanks on every blip is unusable. But a component that destructures
+only `data` cannot tell a live reading from one taken an unknown time ago, and on a *poll*
+that is not a transient state. The retry runs forever, so the wrong reading stays for as long
+as the endpoint is down and nothing on the page changes.
+
+The cold-start form is the one that matters. With no data yet, `data?.count || 0` is **zero**,
+and zero renders as a fact:
+
+* **`Header.tsx`** hid the alarm badge behind `count > 0`. An alarm feed that had never
+  answered rendered as a plant with **no active alarms** — in the corner of every page, on an
+  industrial monitoring product, on the one indicator that must never quietly read all-clear.
+* **`Alarms.tsx`** showed "Active 0", and the card beside it computes `total − count`, so it
+  reported **every alarm on the page as acknowledged**. This is the page an operator opens
+  because they are worried.
+* **`kanbanStore`** swallowed a failed 30-second metrics poll into the console and kept the
+  last figures, so an hour-old throughput, WIP and cycle time read as the current floor.
+
+Three sites, one missing `isError` each.
+
+`failureIsNotEmptiness` could not see any of them. It looks for a rendered *phrase* — "No
+vehicles", "None found" — and these render a **number**. A confident `0` is the same lie with
+better typography.
+
+## Rule 132 — a poll turns a transient failure into a permanent wrong answer
+
+A one-shot fetch that fails leaves a blank, which is at least a question. A poll that fails
+leaves the last answer, forever, with a retry running behind it that keeps not working. When
+reviewing an error path, the first question is not "is this handled" but "how long does this
+state last if nobody intervenes" — and for a `refetchInterval` the answer is: until somebody
+notices, which is what the missing indicator was for.
+
+## Rule 133 — `|| 0` on a value that might be absent is a measurement invented from nothing
+
+`data?.count || 0` reads as a safe default and is a fabricated reading. Zero is not the
+neutral value for a count the caller could not obtain; it is the most reassuring possible
+answer, and it is produced precisely when nothing is known. The same line also swallows a
+genuine zero, so the one case where the number is true becomes indistinguishable from the case
+where it is invented. `?? null` and an explicit branch, every time.
+
+## Rule 134 — the numbers a component derives inherit the honesty of their inputs
+
+`Math.max(0, total - (activeAlarms?.count || 0))` was written as arithmetic, not as a claim,
+and it is the more dangerous of the two cards: an unavailable active count did not merely
+default it to zero, it **turned the whole page into "acknowledged"**. Whenever a fabricated
+default flows into a subtraction, a ratio or a percentage, look at what it computes before
+deciding the default was harmless.

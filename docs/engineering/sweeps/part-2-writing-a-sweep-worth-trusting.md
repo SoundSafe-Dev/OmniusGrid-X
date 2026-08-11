@@ -830,6 +830,24 @@ one of its findings. The habit that catches it:
      component through one helper, so "what happens when this fails" has one answer per
      component rather than one per button.
 
+132. **A poll turns a transient failure into a permanent wrong answer.**
+     A one-shot fetch that fails leaves a blank, which is at least a question. A poll that
+     fails leaves the last answer forever, with a retry running behind it that keeps not
+     working. The question is not "is this handled" but "how long does this state last if
+     nobody intervenes" — for a `refetchInterval`, until somebody notices.
+
+133. **`|| 0` on a value that might be absent is a measurement invented from nothing.**
+     Zero is not the neutral default for a count you could not obtain; it is the most
+     reassuring possible answer, produced precisely when nothing is known. It also swallows a
+     genuine zero, so the one case where the number is true is indistinguishable from the case
+     where it is invented. `?? null` and an explicit branch.
+
+134. **The numbers a component derives inherit the honesty of their inputs.**
+     `Math.max(0, total - (count || 0))` was written as arithmetic, not as a claim, and an
+     unavailable count did not default it to zero — it turned the whole page into
+     "acknowledged". When a fabricated default flows into a subtraction, a ratio or a
+     percentage, look at what it computes before deciding the default was harmless.
+
 ---
 
 ## Open observations, not yet tickets

@@ -8666,3 +8666,55 @@ over source cannot follow an indirection — it would have reported the constant
 sat one line below. It now imports the module. Same shape as the sweep that called a live
 module dead by grepping for its name in the file that already listed it as a positive control:
 **reading source is not reading a value.**
+
+### What a polled reading shows after it stops arriving
+
+Class 93 asked what a modal does when a **write** fails. The carry-across is the read side,
+and it is worse, because a read has no button to press.
+
+react-query keeps the last successful `data` across a failed refetch — the right default, a
+screen that blanks on every blip is unusable. But a consumer that destructures only `data`
+cannot tell a live reading from one taken an unknown time ago, and on a **poll** that is not a
+transient state: the retry runs forever, so the wrong reading stays for as long as the endpoint
+is down and nothing on the page changes.
+
+The cold-start form is what makes it serious. With no data yet, `data?.count || 0` is zero, and
+zero renders as a fact.
+
+**`Header.tsx` — the alarm badge.** Polls every ten seconds; hid the badge behind `count > 0`.
+An alarm feed that had never answered rendered as a plant with **no active alarms**, in the
+corner of every page. On an industrial monitoring product that is the one indicator that must
+never quietly read all-clear. It now shows an explicit unknown state, and the stale form is
+covered too: a surviving count is no longer presented as current.
+
+**`Alarms.tsx` — the summary cards.** Showed "Active 0" on the same `|| 0`, and the card beside
+it computes `total − count`, so a dead feed reported **every alarm on the page as
+acknowledged**. This is the page an operator opens because they are worried. Both cards now go
+to a dash together, because one is derived from the other.
+
+**`kanbanStore` — the metrics poll.** Thirty seconds, catch reaching only the console, `metrics`
+holding the last value. Hour-old throughput, WIP and cycle time read as the current floor. The
+figures are deliberately kept and **labelled** rather than blanked: the last known state is
+worth more than an empty bar, provided nobody mistakes it for now.
+
+Three sites, one missing `isError` each. `failureIsNotEmptiness` could see none of them — it
+looks for a rendered *phrase*, and these render a **number**. A confident `0` is the same lie
+with better typography.
+
+Guarded by `polledQueriesReportFailure.test.ts`, which resolves the polled hooks from
+`refetchInterval` and checks their consumers. It carries a positive control that fails if the
+sweep cannot distinguish a consumer reading the error from one that is not — without it the
+sweep passes by calling everything safe, which is how three earlier sweeps in this repo
+reported clean trees. Mutation-verified: reverting the Header names `Header.tsx:20` exactly.
+
+Its allowlist is empty and its scope is stated rather than assumed — only the destructuring
+form is matched, because `const q = useThing()` hands the consumer the whole query object and
+the question stops having a static answer.
+
+Recorded as **class 94**, with rules 132 (a poll turns a transient failure into a permanent
+wrong answer), 133 (`|| 0` on a possibly-absent value is a measurement invented from nothing)
+and 134 (derived numbers inherit the honesty of their inputs).
+
+**Coverage 50.24 → 50.57 lines; 1,039 frontend tests.** Statements threshold to 49; the other
+three moved by less than a point and were left, because a floor raised inside the noise starts
+failing on variance rather than on regressions.
