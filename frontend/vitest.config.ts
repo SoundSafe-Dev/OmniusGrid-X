@@ -150,8 +150,12 @@ export default defineConfig({
       // every page test that mounted them.
       //
       //   measured 2026-08-11: statements 46.76 · branches 47.30 · functions 39.61 · lines 48.21
+      //
+      // FIFTH RAISE, after KanbanBoard. Lines 45.45 -> 48.57 in a day.
+      //
+      //   measured 2026-08-11: statements 47.13 · branches 47.60 · functions 39.91 · lines 48.57
       thresholds: {
-        statements: 46,
+        statements: 47,
         branches: 47,
         functions: 39,
         lines: 48,

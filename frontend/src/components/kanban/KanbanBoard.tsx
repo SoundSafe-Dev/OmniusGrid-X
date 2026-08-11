@@ -40,8 +40,16 @@ export const KanbanBoard: React.FC<KanbanBoardProps> = ({
   }, []);
 
   const handleDrop = useCallback(async (columnId: string) => {
-    if (draggedTaskId) {
+    if (!draggedTaskId) return;
+    try {
       await onDragEnd(draggedTaskId, columnId);
+    } finally {
+      // FINALLY, NOT AFTER THE AWAIT. `onDragEnd` rejects when the store's move is refused
+      // — a WIP limit, a permission, a dropped connection — and the resets used to sit
+      // after it, so a rejection skipped them. The board kept holding the task with the
+      // target column still highlighted, and **the next drop anywhere moved that task**
+      // rather than the one being dragged. The gesture has ended either way; whether it
+      // succeeded is a separate question, and the error still propagates to the caller.
       setDraggedTaskId(null);
       setDragOverColumnId(null);
     }

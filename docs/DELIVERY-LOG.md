@@ -8549,3 +8549,24 @@ mutation-verified, by deleting one field from the reset.
 
 **Coverage 47.96 → 48.21 lines.** Across the day: **45.45 → 48.21**, entirely by testing
 components that were `() => null` stubs in every page test that mounted them.
+
+### The board, and a refused move that left it holding the task
+
+`KanbanBoard` is the only thing that remembers **which task** was picked up between the card
+starting a drag and the column receiving the drop. That state was the finding.
+
+`handleDrop` awaited `onDragEnd` and cleared `draggedTaskId` **afterwards**. So when the store
+refused a move — a WIP limit, a permission, a dropped connection — the await threw, the two
+resets never ran, and the board kept pointing at the task with the target column still
+highlighted. **The next drop anywhere then moved that task**, not the one the operator was
+dragging.
+
+Fixed with `finally`, because the gesture has ended either way; whether it *succeeded* is a
+separate question, and the error still propagates. Mutation-verified: replacing the
+`try`/`finally` with plain blocks reproduces the defect exactly, and only that test fails.
+
+This is the third defect in the same shape today — `all([])`, a truthiness gate over zero, and
+now a cleanup that only runs on success. Each is a branch nobody took while writing the code,
+and each was invisible until something rendered or called it.
+
+**Coverage 48.21 → 48.57 lines**, 969 frontend tests.

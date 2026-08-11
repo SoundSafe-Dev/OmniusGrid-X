@@ -148,7 +148,10 @@ rest: a drop that does not `preventDefault` is **silently rejected by the browse
 cycle time of zero** behind a truthiness gate — and `stores/kanbanStore.tsx` (367), where
 `moveTask`'s comment claimed optimistic updates for code that is pessimistic.
 
-**Left (1,034 lines):** `TaskDetailModal` (604), `CreateTaskModal` (216), `KanbanBoard` (214).
+**Also done:** `KanbanBoard` (214) — which was **leaving the drag state set when a move was
+refused**, so the next drop anywhere moved the previously-dragged task.
+
+**Left (820 lines):** `TaskDetailModal` (604) and `CreateTaskModal` (216).
 
 ### FS-652b. The remaining `ui/` primitives · S · *what FS-652 left*
 
