@@ -8865,3 +8865,49 @@ ever will. `scripts/` is worth the extra path on its own: it holds the migration
 seeders, where an undefined name fails a deployment rather than a request.
 
 Recorded as rule 139 — a smoke test that only ever fails has not tested the success path.
+
+### The route twenty lines below the one FS-420 fixed
+
+Rule 139 said a smoke test that only ever fails has not tested the success path. So: which
+write routes in `transportation.py` have a success path nothing asserts? Four, measured with a
+detector carrying a positive control — the dispatch route fixed an hour earlier, which had to
+show a success assertion or the measurement meant nothing.
+
+One of the four was `POST /shipments/{id}/status`, carrying FS-420's exact defect.
+
+FastAPI reads a non-Pydantic scalar with no `Body(...)` marker as a **query parameter**, so
+`status: str` on that route required `?status=`. The client posts `{ status, note }` as JSON.
+**Every status update answered 422**, and the two buttons that call it — "Mark Delivered" and
+"Cancel" — had never worked once.
+
+Third instance. FS-379 on Strategic approve/reject, FS-420 on dispatch, now the route twenty
+lines below it in the same file. Fixing an instance is not fixing a class.
+
+`note` is the smaller half. The client sent one on every call; `Shipment` has no note column
+and the service never read the field. Pydantic drops unknown fields silently, so accepting the
+body would have made the API appear to record something it discards. The model declares
+`extra: "forbid"` and the client no longer offers the parameter.
+
+Eleven tests on the two routes; four fail with the bare scalars restored.
+
+**Why the server side is still full of this shape.** Sweeping every router found **22 routes**
+taking bare scalars, and nearly all are correct in practice — because FS-379 and the
+maintenance-mode and NLP-chat routes were each closed by moving the **frontend** onto the
+contract the server already published. `api/engines.ts` says so in a comment: the route belongs
+to another lane, and moving the client needs no agreement to land. Right call every time, and
+it leaves the shape in place 22 times over, each one client-edit away from breaking.
+
+So the new guard demands no refactors in other lanes. It asserts that **the two sides agree**,
+and fails when a caller posts a body to a route whose parameters live in the query. Its
+allowlist is empty. Mutation-verified: it names both the route and the exact client line.
+
+**The detector took two corrections before it was worth reading.** The first excluded four
+FastAPI markers and reported 48 sites — including a correctly-declared `Header(...)` webhook
+signature, which is not a query parameter and never was. The second matched routes by their
+last path segment, so `/insights/activations/{id}/reject` was reported as a defect in
+`/strategic/recommendations/{rec_id}/approve`: two unrelated routes sharing one word. Both
+corrections are pinned as tests, because a detector that names correct code is one people learn
+to skip.
+
+Recorded as **class 97**, with rule 140 — fixing the caller closes the instance and preserves
+the class.

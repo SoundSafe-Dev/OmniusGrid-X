@@ -1492,3 +1492,61 @@ I ran `npx tsc --noEmit`, then appended a test block, then ran only `vitest`. Th
 whole defect: every check I ran passed, and the one I had already run was the one that
 mattered. Run the compile last, after the final edit — and when a run is green, ask which
 tools did not look at the thing you just changed.
+
+## Class 97 — a parameter the endpoint reads from the query, sent in the body (FS-658)
+
+Rule 139 said a smoke test that only ever fails has not tested the success path. The
+carry-across is to ask which write routes have a success path nothing asserts — and the answer
+in `transportation.py` was four, measured with a detector carrying a positive control (the
+dispatch route fixed an hour earlier, which must show one success assertion or the measurement
+means nothing).
+
+One of the four was `POST /shipments/{id}/status`, the route **immediately below** the one
+FS-420 fixed, carrying FS-420's exact defect.
+
+FastAPI reads a non-Pydantic scalar with no `Body(...)` marker as a **query parameter**.
+`async def update_shipment_status(shipment_id: UUID, status: str, ...)` therefore requires
+`?status=`. The client posts `{ status, note }` as JSON. So **every status update answered
+422**, and the two buttons that call it — "Mark Delivered" and "Cancel" on the Transportation
+page — had never worked once.
+
+Third instance of this class. FS-379 on Strategic approve/reject, FS-420 on dispatch, and now
+the route twenty lines below the one FS-420 fixed. **Fixing an instance is not fixing a class**,
+and the neighbouring route was never looked at.
+
+`note` is the smaller half and worth its own line. The client sent one on every call; `Shipment`
+has no note column and the service never read the field. Pydantic drops unknown fields silently
+by default, so accepting the body would have made the API appear to record something it
+discards. The model declares `extra: "forbid"` and the client no longer offers the parameter —
+a field a caller can pass and the server cannot keep is a promise the API does not make.
+
+### Why the server side is still full of this shape
+
+The sweep across every router found **22 routes** taking bare scalars. Nearly all are correct
+in practice, and the reason is written in the client: FS-379 and the maintenance-mode and
+NLP-chat routes were each closed by moving the **frontend** onto the contract the server
+already published — cheaper, and it crosses no lane boundary. `api/engines.ts` says so
+explicitly.
+
+That was the right call every time, and it means the server-side shape survives 22 times over,
+each one client-edit away from breaking. The next person to write the obvious
+`api.post(url, { field })` gets a 422 and no clue why.
+
+So the guard does not demand 22 refactors in other people's lanes. It asserts the thing that
+actually matters — that **the two sides agree** — and fails when a caller posts a body to a
+route whose parameters live in the query.
+
+The detector took two corrections before it was worth reading. The first excluded four FastAPI
+markers and flagged 48 sites, including a correctly-declared `Header(...)` webhook signature.
+The second matched routes by their last path segment, so `/insights/activations/{id}/reject`
+was reported as a defect in `/strategic/recommendations/{rec_id}/approve` — two unrelated
+routes sharing one word.
+
+## Rule 140 — fixing the caller closes the instance and preserves the class
+
+Three times this defect was closed by correcting the client, each time for a good reason: the
+route belonged to another lane, and moving the caller needed no agreement. The instance really
+was fixed. But the server still publishes a contract nobody would guess, in 22 places, and the
+next caller written against it fails the same way. When the cheap fix is on the other side of
+the seam, record what the expensive one would have been — and guard the seam, since that is
+what the cheap fix leaves undefended.

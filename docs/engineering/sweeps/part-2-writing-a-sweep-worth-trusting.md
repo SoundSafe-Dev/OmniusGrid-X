@@ -878,6 +878,13 @@ one of its findings. The habit that catches it:
      what is proven is that the REFUSAL path does not crash. An undefined name on a dispatch
      route's success path survived it for months. Ask which branch the smoke test reached.
 
+140. **Fixing the caller closes the instance and preserves the class.**
+     Three times a query-parameter-vs-body mismatch was closed by correcting the client, each
+     time for a good reason — the route was in another lane. The instance really was fixed,
+     and the server still publishes a contract nobody would guess, in 22 places. When the
+     cheap fix is on the other side of a seam, record what the expensive one would have been
+     and guard the seam, because that is what the cheap fix leaves undefended.
+
 ---
 
 ## Open observations, not yet tickets
