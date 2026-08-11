@@ -14,7 +14,7 @@ repository has paid for that twice:
 An alert that cannot fire is indistinguishable from a healthy system, which is the property
 that makes this worth a gate rather than a habit.
 
-    MAX_UNTESTED_RULES = 23   may only go DOWN
+    MAX_UNTESTED_RULES = 15   may only go DOWN
 
 WHAT WAS TESTED FIRST, and why not all 51 at once. The eight where "cannot fire" costs most:
 telemetry leaving the system (`IngestionDataLost`, `IngestionDeadLettering`,
@@ -42,23 +42,28 @@ TEST_DIR = ALERTS.parent / "tests"
 
 #: Rules with no promtool unit test. **Only ever shrinks.** Measured 2026-08-08.
 #:
+#: EIGHT REMOVED 2026-08-11 (FS-653), in `tests/edge_reachability_test.yml`: the two that say
+#: an agent is gone (`up` versus the agent's own `edge_agent_up` — they disagree exactly when
+#: the process is alive and broken), the collector, the buffer PAIR, the broker, the asset and
+#: the disk. Each is driven true from a series the product publishes, and each carries a
+#: must-stay-quiet case built from a HEALTHY signal rather than an absent one — a buffer at
+#: zero or an asset with no series proves less than it looks.
+#:
+#: Expectations generated from `alerts.yml` rather than written by hand. promtool compares
+#: annotations even when they are omitted, so an omission asserts empty and a guess asserts
+#: something plausible and wrong; three drafts failed that way in FS-583 before the lesson
+#: took.
+#:
 #: Named rather than counted so the ratchet cannot be satisfied by deleting a rule — which
 #: would improve the number and remove an alert, the exact trade this gate exists to prevent.
 UNTESTED: set[str] = {
     "APILatencyP95High",
-    "AssetOffline",
     "CNPGInstanceExporterDown",
     "DatabaseBackupStale",
     "DigitalTwinOptimizeSlow",
-    "DiskSpaceCritical",
     "EdgeAgentBuffering",
     "EdgeAgentCertExpiringSoon",
-    "EdgeAgentOffline",
-    "EdgeAgentUnreachable",
     "EdgeBackfillLagHigh",
-    "EdgeBufferExpiring",
-    "EdgeBufferGrowing",
-    "EdgeCollectorDown",
     "EdgeCollectorErrors",
     "ErrorTrackerFlushFailing",
     "HighMemoryUsage",
@@ -66,7 +71,6 @@ UNTESTED: set[str] = {
     "IngestionLagHigh",
     "NotificationDeliverySlow",
     "OcrAccuracyLow",
-    "RedpandaDown",
     "SlowDatabaseQueries",
 }
 

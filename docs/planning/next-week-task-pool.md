@@ -146,10 +146,20 @@ The largest untested component tree, and the one that pulls coverage down hardes
 `Card`, `ChartContainer`, `Skeleton`, `Tooltip` and `Wordmark` still have no test. Small, and
 the a11y suite already covers the six that carry semantics.
 
-### FS-653. 23 of 51 alert rules cannot be shown to fire · M · *carried (FS-621)*
+### FS-653. 15 of 51 alert rules cannot be shown to fire · M · **eight done 2026-08-11**
 
 `promtool check rules` proves an expression parses and nothing about whether a series exists to
 make it true. Named, not counted — the ratchet cannot be satisfied by deleting a rule.
+
+**Done:** the two agent-liveness rules, the collector, the buffer pair, the broker, the asset
+and the disk. **Left (15):** `APILatencyP95High`, `CNPGInstanceExporterDown`,
+`DatabaseBackupStale`, `DigitalTwinOptimizeSlow`, `EdgeAgentBuffering`,
+`EdgeAgentCertExpiringSoon`, `EdgeBackfillLagHigh`, `EdgeCollectorErrors`,
+`ErrorTrackerFlushFailing`, `HighMemoryUsage`, `HistorianQueriesSlow`, `IngestionLagHigh`,
+`NotificationDeliverySlow`, `OcrAccuracyLow`, `SlowDatabaseQueries`.
+
+Generate the expectations from `alerts.yml` — promtool compares annotations even when they are
+omitted, and a hand-written guess asserts something plausible and wrong.
 
 ### FS-654. The contract floor cannot rise until the broker is guaranteed · M · *carried (FS-620)*
 
@@ -163,8 +173,9 @@ raise is a CI change, not a code fix.**
 a defect**: `all([])` is True, so a shop-floor event that reached no target at all reported
 `fully_posted: true`. The operator is told the work went through when it went nowhere.
 
-**Left:** `inference_client.py` (137 lines, 2 importers) and `agent_release_storage.py`
-(165, 4 importers).
+**Also done:** `agent_release_storage.py` — the OTA write path, mutation-verified on its
+containment check. **Left:** `inference_client.py` (137 lines), whose only consumers are
+`rag_retriever` and `rag_ingestion` — **htreinen's lane**, and it belongs with FS-665.
 
 ---
 

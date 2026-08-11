@@ -8420,3 +8420,57 @@ configured, satisfies that vacuously.
 So a shop-floor event that went nowhere reported that it went everywhere. A verdict computed
 from emptiness, in a service with **four production importers and no test naming the module**
 — found by the first test ever written against it.
+
+---
+
+## FS-653 / FS-655 — eight rules that could not be shown to fire, and a path-traversal guard nothing tested
+
+### The alert rules, and why the quiet cases are the harder half
+
+Eight of the twenty-three now have promtool tests: the two that say an agent is gone, the
+collector, the buffer **pair**, the broker, the asset and the disk. `promtool check rules`
+proves an expression parses; this repository has paid twice for the difference —
+`EdgeAgentBufferHigh` was syntactically perfect and unfirable for its whole existence, and
+`edge_agent_dropped` had no rule at all while the two recoverable counters beside it were both
+alerted on.
+
+**The buffer pair had to be done together.** `EdgeBufferGrowing` is data still held;
+`EdgeBufferExpiring` is data already gone. Testing only the first leaves the loss unproven,
+which is precisely the inversion FS-591 found — the recoverable figures instrumented and the
+permanent one not.
+
+**The must-stay-quiet cases are built from healthy signals, not absent ones.** A buffer at zero
+or an asset with no series proves less than it looks: it shows the rule is quiet when there is
+nothing to read, not when things are working. So the quiet buffer carries 400 messages and the
+quiet asset reports a timestamp that keeps up with `time()`.
+
+**Expectations generated from `alerts.yml`, not written by hand.** promtool compares
+annotations even when they are omitted — an omission asserts empty and a guess asserts
+something plausible and wrong. Three drafts failed that way during FS-583; this time the file
+was generated from the rules themselves, and the only hand-written parts are the input series
+and the reasoning.
+
+`MAX_UNTESTED_RULES` 23 → **15**.
+
+### The OTA storage guard, and why it is worth testing while unreachable
+
+`agent_release_storage.py` — 165 lines, **four production importers, no test naming it** — is
+the path that writes the binary a fleet of edge agents will download, verify and execute.
+
+`resolve_bundle_path` builds a path from two UUIDs and checks the result is still under the
+root. Through today's callers the traversal is **not reachable**, and that is exactly what
+makes it worth a test rather than a comment: the check is the only thing between a future
+caller that passes a string and an arbitrary write.
+
+`absolute_bundle_path` has a real surface — it takes a `storage_key` **string straight from a
+database column**, and `delete_release_artifact` hands it to `unlink`. Mutation-verified:
+removing the containment check fails four tests, including the absolute-path escape.
+
+The atomic-write property is asserted too. An agent that downloads a half-written bundle fails
+its signature check, which is recoverable — but the release row would already claim a checksum
+for bytes nobody wrote.
+
+**`inference_client.py` was left alone deliberately.** Its only consumers are `rag_retriever`
+and `rag_ingestion`, which is htreinen's lane, and he has an item to re-scope that work against
+what just landed. Testing it would not have collided with him; assigning myself his module
+would.

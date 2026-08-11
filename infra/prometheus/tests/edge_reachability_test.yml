@@ -1,0 +1,248 @@
+# Eight rules that could be shown to parse and never to fire (FS-653).
+#
+# `promtool check rules` validates syntax. It says nothing about whether a series exists that
+# would make an expression true — and this repository has paid for that twice already:
+# `EdgeAgentBufferHigh` was syntactically perfect and unfirable for its entire existence
+# because the metric it watched was never published under that name, and `edge_agent_dropped`
+# had no rule at all while the two RECOVERABLE counters beside it were both alerted on.
+#
+# Every rule below is driven true from a series the product actually publishes, and every one
+# also carries a must-stay-quiet case. An alert that fires on a healthy system is muted within
+# a day, which is the same as not having one.
+
+rule_files:
+  - ../alerts.yml
+
+evaluation_interval: 1m
+
+tests:
+  # --- a broker that is gone -----------------------------------------------------------
+  - interval: 1m
+    input_series:
+      - series: 'up{job="redpanda", instance="redpanda:9644"}'
+        values: '0+0x10'
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: RedpandaDown
+        exp_alerts:
+          - exp_labels:
+              instance: "redpanda:9644"
+              job: "redpanda"
+              severity: "critical"
+              team: "infrastructure"
+            exp_annotations:
+              description: "Redpanda has been down for more than 1 minute. Edge agents are buffering locally."
+              runbook_url: "https://github.com/SoundSafe-Dev/OmniusGrid-X/blob/main/docs/deployment/dr-redpanda-failure.md"
+              summary: "Redpanda message broker is down"
+
+  - interval: 1m
+    input_series:
+      - series: 'up{job="redpanda", instance="redpanda:9644"}'
+        values: '1+0x10'
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: RedpandaDown
+        exp_alerts: []
+
+  # --- an edge agent that stopped answering --------------------------------------------
+  - interval: 1m
+    input_series:
+      - series: 'up{job="edge-agent", instance="agent-7:9108"}'
+        values: '0+0x10'
+    alert_rule_test:
+      - eval_time: 6m
+        alertname: EdgeAgentUnreachable
+        exp_alerts:
+          - exp_labels:
+              instance: "agent-7:9108"
+              job: "edge-agent"
+              severity: "high"
+              team: "edge"
+            exp_annotations:
+              description: "Agent target agent-7:9108 has not answered scrapes for 3m (crashed, network-partitioned, or metrics disabled)"
+              summary: "Edge agent unreachable"
+
+  - interval: 1m
+    input_series:
+      - series: 'up{job="edge-agent", instance="agent-7:9108"}'
+        values: '1+0x10'
+    alert_rule_test:
+      - eval_time: 6m
+        alertname: EdgeAgentUnreachable
+        exp_alerts: []
+
+  # --- the agent's own liveness gauge, which is a different question from scrape health --
+  #
+  # `up` says Prometheus could reach the exporter. `edge_agent_up` is the agent's own
+  # verdict on itself, and the two disagree exactly when the process is alive and broken.
+  - interval: 1m
+    input_series:
+      - series: 'edge_agent_up{agent_id="agent-7"}'
+        values: '0+0x10'
+    alert_rule_test:
+      - eval_time: 6m
+        alertname: EdgeAgentOffline
+        exp_alerts:
+          - exp_labels:
+              agent_id: "agent-7"
+              severity: "high"
+              team: "edge"
+            exp_annotations:
+              description: "Agent agent-7 has not sent a healthy heartbeat for 5m"
+              summary: "Edge agent offline"
+
+  - interval: 1m
+    input_series:
+      - series: 'edge_agent_up{agent_id="agent-7"}'
+        values: '1+0x10'
+    alert_rule_test:
+      - eval_time: 6m
+        alertname: EdgeAgentOffline
+        exp_alerts: []
+
+  # --- a collector that lost its connection ---------------------------------------------
+  - interval: 1m
+    input_series:
+      - series: 'edge_collector_connection_state{agent_id="agent-7", collector="opcua-1"}'
+        values: '0+0x10'
+    alert_rule_test:
+      - eval_time: 6m
+        alertname: EdgeCollectorDown
+        exp_alerts:
+          - exp_labels:
+              agent_id: "agent-7"
+              collector: "opcua-1"
+              severity: "high"
+              team: "edge"
+            exp_annotations:
+              description: "Collector for asset  () has been down for 5m"
+              summary: "Edge collector down"
+
+  - interval: 1m
+    input_series:
+      - series: 'edge_collector_connection_state{agent_id="agent-7", collector="opcua-1"}'
+        values: '1+0x10'
+    alert_rule_test:
+      - eval_time: 6m
+        alertname: EdgeCollectorDown
+        exp_alerts: []
+
+  # --- a buffer filling, and a buffer losing --------------------------------------------
+  #
+  # These two are a pair and the ORDER matters: growing is data still held, expiring is data
+  # already gone. Testing only the first would leave the loss unproven, which is the exact
+  # inversion FS-591 found — the recoverable figures instrumented and the permanent one not.
+  - interval: 1m
+    input_series:
+      - series: 'edge_buffer_messages{agent_id="agent-7"}'
+        values: '6000+0x10'
+    alert_rule_test:
+      - eval_time: 4m
+        alertname: EdgeBufferGrowing
+        exp_alerts:
+          - exp_labels:
+              agent_id: "agent-7"
+              severity: "medium"
+              team: "edge"
+            exp_annotations:
+              description: "Edge buffer holds 6000 pending messages (upstream likely unavailable)"
+              summary: "Edge store-and-forward buffer growing"
+
+  - interval: 1m
+    input_series:
+      # Below the threshold, and NOT zero: a buffer with traffic in it is the healthy
+      # steady state, so a test that stays quiet only at zero proves less than it looks.
+      - series: 'edge_buffer_messages{agent_id="agent-7"}'
+        values: '400+0x10'
+    alert_rule_test:
+      - eval_time: 4m
+        alertname: EdgeBufferGrowing
+        exp_alerts: []
+
+  - interval: 1m
+    input_series:
+      - series: 'edge_buffer_expired_total{agent_id="agent-7"}'
+        values: '0 0 0 0 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3'
+    alert_rule_test:
+      - eval_time: 16m
+        alertname: EdgeBufferExpiring
+        exp_alerts:
+          - exp_labels:
+              agent_id: "agent-7"
+              severity: "high"
+              team: "edge"
+            exp_annotations:
+              description: "3 edge messages passed the retention window without ever being delivered \u2014 the agent has been disconnected longer than it can buffer for"
+              summary: "Edge buffer deleting undelivered messages (retention)"
+
+  - interval: 1m
+    input_series:
+      # A COUNTER THAT NEVER MOVES. The rule reads `increase(...[15m])`, so a fleet that
+      # expired messages last month must not page today — thresholding the raw total is the
+      # mistake that makes an alert permanent, and permanent alerts get muted.
+      - series: 'edge_buffer_expired_total{agent_id="agent-7"}'
+        values: '17+0x20'
+    alert_rule_test:
+      - eval_time: 16m
+        alertname: EdgeBufferExpiring
+        exp_alerts: []
+
+  # --- an asset that stopped reporting ---------------------------------------------------
+  - interval: 1m
+    input_series:
+      - series: 'opsgrid_asset_last_seen_timestamp_seconds{asset_id="a-1"}'
+        values: '0+0x20'
+    alert_rule_test:
+      - eval_time: 12m
+        alertname: AssetOffline
+        exp_alerts:
+          - exp_labels:
+              asset_id: "a-1"
+              severity: "medium"
+              team: "operations"
+            exp_annotations:
+              description: "Asset  hasn't been seen for 5 minutes"
+              summary: "Asset offline"
+
+  - interval: 1m
+    input_series:
+      # AN ASSET REPORTING NORMALLY. The series carries a timestamp that keeps up with
+      # `time()`, which is what a live asset looks like — a flat recent value would drift
+      # past the threshold on its own and make this case pass for the wrong reason.
+      - series: 'opsgrid_asset_last_seen_timestamp_seconds{asset_id="a-2"}'
+        values: '0+60x20'
+    alert_rule_test:
+      - eval_time: 12m
+        alertname: AssetOffline
+        exp_alerts: []
+
+  # --- a disk about to stop the database --------------------------------------------------
+  - interval: 1m
+    input_series:
+      - series: 'node_filesystem_avail_bytes{instance="db-1", mountpoint="/var/lib/postgresql"}'
+        values: '2+0x10'
+      - series: 'node_filesystem_size_bytes{instance="db-1", mountpoint="/var/lib/postgresql"}'
+        values: '100+0x10'
+    alert_rule_test:
+      - eval_time: 4m
+        alertname: DiskSpaceCritical
+        exp_alerts:
+          - exp_labels:
+              instance: "db-1"
+              mountpoint: "/var/lib/postgresql"
+              severity: "critical"
+              team: "infrastructure"
+            exp_annotations:
+              description: "db-1 has less than 5% disk space remaining."
+              summary: "Disk space critically low"
+
+  - interval: 1m
+    input_series:
+      - series: 'node_filesystem_avail_bytes{instance="db-1", mountpoint="/var/lib/postgresql"}'
+        values: '60+0x10'
+      - series: 'node_filesystem_size_bytes{instance="db-1", mountpoint="/var/lib/postgresql"}'
+        values: '100+0x10'
+    alert_rule_test:
+      - eval_time: 4m
+        alertname: DiskSpaceCritical
+        exp_alerts: []
