@@ -154,11 +154,23 @@ export default defineConfig({
       // FIFTH RAISE, after KanbanBoard. Lines 45.45 -> 48.57 in a day.
       //
       //   measured 2026-08-11: statements 47.13 · branches 47.60 · functions 39.91 · lines 48.57
+      //
+      // SIXTH RAISE, closing FS-651 and FS-652b: the last two kanban stubs (`CreateTaskModal`,
+      // `TaskDetailModal` — 820 lines between them) and the five `ui/` primitives that had no
+      // test of their own. The primitives moved the number barely at all, which is the point
+      // of having tested them: they already reported high line coverage from the pages that
+      // mount them, exactly as `ui/Select.tsx` did at 100% while rendering an unlabelled
+      // combobox. Coverage counts a line that executed, not a behaviour anybody asserted.
+      //
+      // Lines have gone 45.45 -> 50.24 in a day, entirely by replacing `() => null` stubs
+      // with tests. Functions clears 40 for the first time.
+      //
+      //   measured 2026-08-11: statements 48.69 · branches 48.63 · functions 41.23 · lines 50.24
       thresholds: {
-        statements: 47,
-        branches: 47,
-        functions: 39,
-        lines: 48,
+        statements: 48,
+        branches: 48,
+        functions: 41,
+        lines: 50,
       },
     },
   },

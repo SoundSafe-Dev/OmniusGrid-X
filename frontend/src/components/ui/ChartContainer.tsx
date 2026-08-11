@@ -48,7 +48,10 @@ export const ChartContainer: FC<ChartContainerProps> = ({
           </div>
         ) : error ? (
           <div className="flex items-center justify-center h-full">
-            <p className="text-status-alarm">{error}</p>
+            {/* Colour is the only cue this had; a chart that failed to load is exactly when
+                a screen-reader user has nothing else to go on. Same gap `ui/Select.tsx`
+                carried at 100% reported coverage. */}
+            <p className="text-status-alarm" role="alert">{error}</p>
           </div>
         ) : (
           children
