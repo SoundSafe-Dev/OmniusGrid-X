@@ -8,7 +8,13 @@ import { describe, expect, it, vi, beforeEach } from 'vitest'
 
 const useAlarms = vi.fn()
 const acknowledge = { mutate: vi.fn(), isPending: false }
-const activeAlarms = vi.fn(() => ({ data: { count: 0 }, isError: false }))
+// Typed explicitly: inferring from the default return narrows `data` to `{ count: number }`,
+// and the failure cases below hand it `undefined`. `tsc` caught this; `vitest run` does not
+// typecheck, so a test appended after the last typecheck can be green and still not compile.
+type ActiveAlarmsResult = { data: { count: number } | undefined; isError: boolean }
+const activeAlarms = vi.fn(
+  (): ActiveAlarmsResult => ({ data: { count: 0 }, isError: false }),
+)
 vi.mock('../hooks', () => ({
   useAlarms: (args: any) => useAlarms(args),
   useActiveAlarms: () => activeAlarms(),
