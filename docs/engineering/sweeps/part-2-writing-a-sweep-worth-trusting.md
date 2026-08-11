@@ -848,6 +848,18 @@ one of its findings. The habit that catches it:
      "acknowledged". When a fabricated default flows into a subtraction, a ratio or a
      percentage, look at what it computes before deciding the default was harmless.
 
+135. **When a sweep comes back clean, the reason is the result.**
+     Thirty-one hits, one defect. The value is not the fix; it is that the other thirty are
+     known-checked with the reason each is acceptable written down. A sweep reported as
+     "clean" and nothing else is indistinguishable from one nobody ran, and the next person
+     pays for it twice.
+
+136. **Two implementations of one question is a defect before either is wrong.**
+     A correct normaliser sat beside the broken one and callers had no way to know which they
+     held, so the honest one could be fixed forever and the UI would never benefit. Guard the
+     AGREEMENT, not the delegation: "A must call B" passes for any delegation and fails for
+     any honest reimplementation, which is backwards.
+
 ---
 
 ## Open observations, not yet tickets

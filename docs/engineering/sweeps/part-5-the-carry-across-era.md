@@ -1355,3 +1355,55 @@ and it is the more dangerous of the two cards: an unavailable active count did n
 default it to zero, it **turned the whole page into "acknowledged"**. Whenever a fabricated
 default flows into a subtraction, a ratio or a percentage, look at what it computes before
 deciding the default was harmless.
+
+## Class 95 — two normalisers for one question, and the caller cannot tell which it has (FS-656)
+
+Rule 133 said `|| 0` on a possibly-absent value is a measurement invented from nothing. The
+sweep that followed found the pattern **31 times in the frontend**, and the honest result is
+that almost all of them are fine — which is worth recording, because "proven clean" and "never
+checked" look identical afterwards.
+
+* Ten are `?.items || []` on a list, which is `failureIsNotEmptiness`'s existing subject.
+* Three are inside `if (USE_MOCK)` blocks, where the miss is a fixture lookup rather than a
+  network failure — including a **compliance score** and a **freight charge**, either of which
+  would be serious on a live path and neither of which is on one.
+* `Dashboard.tsx` renders `fmtNum(...)`, which answers `—` for absent, and its widget carries
+  `isError`; the `|| 0` there picks a *colour* beside a number that already says unknown.
+* `OEE.tsx` early-returns on `isError` before the expression can render.
+
+**One was live, and it was in the client every page depends on.** `handleApiError` computed
+`error.response?.status || 500`, so a request that never reached the server reported that the
+server had answered 500.
+
+The reason it survived is the interesting part. `src/api/errors.ts` already contains
+`normalizeApiError`, which answers `status: null` and `code: 'network_error'` for exactly this
+case. **Two normalisers, one directory, different contracts** — and no caller could see which one it
+had. Nearly all of them read only `.message`, so nothing was visibly wrong.
+
+I first reported that *all* of them did, from a regex matching `handleApiError(...).field`. It
+cannot see a destructure, and `ComplianceAssistant.tsx` destructures `{ status, message }` and
+compares `status === 503` to distinguish a RAG outage from a failed answer. Its behaviour is
+unchanged — `null === 503` is false exactly as `500 === 503` was — but the trap was one caller
+closer than the sweep said. The next one to write `status >= 500` would have retried requests
+that never left the machine, and error triage would have attributed every network outage to a
+server fault.
+
+The crude one also could not read the backend's actual `{ error: { message } }` envelope,
+which the delegation fixed as a side effect and which no test had noticed.
+
+## Rule 135 — when a sweep comes back clean, the reason is the result
+
+Thirty-one hits, one defect. The value of the pass is not the fix; it is that the other thirty
+are now known-checked, with the reason each is acceptable written down. A sweep reported as
+"clean" and nothing else is indistinguishable from a sweep nobody ran, and the next person
+pays for it twice — once redoing the work, or once assuming a class was handled when it was
+not. Both have happened in this document.
+
+## Rule 136 — two implementations of one question is a defect before either is wrong
+
+The `|| 500` was the visible half. The durable half is that a second, correct normaliser sat
+beside it and callers had no way to know which they were holding — so the honest one could be
+fixed forever and the UI would never benefit. Look for the duplicate before debating the
+behaviour, and guard the agreement rather than the delegation: "A must call B" passes for any
+delegation and fails for any honest reimplementation, which is backwards. Assert that both
+answer the same thing.

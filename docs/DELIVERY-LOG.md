@@ -8718,3 +8718,60 @@ and 134 (derived numbers inherit the honesty of their inputs).
 **Coverage 50.24 → 50.57 lines; 1,039 frontend tests.** Statements threshold to 49; the other
 three moved by less than a point and were left, because a floor raised inside the noise starts
 failing on variance rather than on regressions.
+
+### Thirty-one hits, one defect, and it was in the client every page depends on
+
+Rule 133 said `|| 0` on a possibly-absent value is a measurement invented from nothing. The
+sweep that followed found the pattern **31 times**, and the honest result is that almost all of
+them are fine — recorded here because "proven clean" and "never checked" look identical
+afterwards.
+
+Ten are `?.items || []` on a list, which is `failureIsNotEmptiness`'s subject. Three sit inside
+`if (USE_MOCK)` blocks where the miss is a fixture lookup, **including a compliance score and a
+freight charge** — either would be serious on a live path and neither is on one. `Dashboard`
+renders `fmtNum(...)`, which answers `—` for absent, and its widget carries `isError`; the
+`|| 0` there picks a colour beside a number already saying unknown. `OEE` early-returns on
+`isError` before its expression can render.
+
+**One was live: `handleApiError` computed `error.response?.status || 500`.** A request that
+never reached the server reported that the server had answered 500.
+
+Why it survived is the part worth keeping. `src/api/errors.ts` already holds
+`normalizeApiError`, which answers `status: null` and `code: 'network_error'` for exactly this
+case. Two normalisers, one directory, different contracts — and **all fifteen call sites read
+only `.message`**, so no caller could see which one it had and nothing was visibly wrong. That
+is the shape of a trap, not evidence of safety: the first caller to retry on `>= 500` would
+retry a request that never left the machine, and error triage would attribute every network
+outage to a server fault.
+
+`handleApiError` now delegates. `ApiError.status` is `number | null` for the same reason `??`
+replaced `||` in the alarm cards: absent and zero are different facts. The message for a
+no-response failure says something a user can act on rather than axios's "Network Error".
+
+**A caller branching on status already exists, and I said it did not.** I reported "all fifteen
+call sites read only `.message`" from a regex matching `handleApiError(...).field`, which
+cannot see a destructure — and `ComplianceAssistant.tsx` does exactly that, comparing
+`status === 503` to distinguish a RAG service outage from a failed answer. Behaviour there is
+unchanged, because `null === 503` is false exactly as `500 === 503` was. But the trap was one
+caller closer than I claimed: the next one to write `status >= 500` would have retried requests
+that never left the machine. Rule 37's neighbourhood again — the detector matched one spelling
+of the thing it was looking for.
+
+The delegation also fixed something no test had noticed: the crude normaliser could not read
+the backend's actual `{ error: { message } }` envelope, so it fell through to axios's generic
+text on every structured error the API returns.
+
+Fifteen tests, mutation-verified — restoring the old body fails four, including that envelope
+case. The invariant guarded is that **both normalisers answer the same status** for the same
+input, not that one calls the other: "A must call B" passes for any delegation and fails for
+any honest reimplementation, which is backwards.
+
+**A miss of my own, caught by this pass.** `tsc` flagged two errors in the `Alarms.test.tsx`
+block from the previous wave — the mock's return type was inferred from its default and the
+failure cases hand it `undefined`. I had run `npx tsc --noEmit` *before* appending that block
+and then only `vitest run`, which does not typecheck. A green test run is not a compile.
+
+Recorded as **class 95**, with rules 135 (when a sweep comes back clean, the reason is the
+result) and 136 (two implementations of one question is a defect before either is wrong).
+
+**1,054 frontend tests**; branches 48.97 → 49.06, the other three unchanged.
