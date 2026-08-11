@@ -42,6 +42,14 @@ export const TaskDetailModal: React.FC<TaskDetailModalProps> = ({
   const [showAssignDropdown, setShowAssignDropdown] = useState(false);
   const [isLoadingUsers, setIsLoadingUsers] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  // Every mutation below reaches the store, and the store's task mutations RE-RAISE —
+  // `updateTask` and `deleteTask` catch, log and rethrow; move, approve, start and complete
+  // do not catch at all. The handlers here were `try { … } finally { … }` with no catch, so a
+  // refused approve or a failed delete produced an unhandled rejection, reset the spinner,
+  // and left the modal sitting exactly as it was. The operator's only evidence that the click
+  // did anything is that it stopped spinning, which is also what success looks like on a
+  // route that closes nothing (start, move, assign).
+  const [actionError, setActionError] = useState<string | null>(null);
 
   // Fetch users when modal opens
   useEffect(() => {
@@ -67,28 +75,51 @@ export const TaskDetailModal: React.FC<TaskDetailModalProps> = ({
     fetchUsers();
   }, [isOpen]);
 
-  const handleAssign = async (userId: string) => {
-    if (!task) return;
+  /**
+   * Run a mutation, and say so when it fails.
+   *
+   * `what` completes the sentence "Could not …", so it reads as the action the operator
+   * just attempted rather than as an error code. The rejection is still logged — losing the
+   * stack would trade one blind spot for another.
+   *
+   * THE MESSAGE DOES NOT CLAIM THE WRITE DID NOT LAND, and that restraint is deliberate.
+   * Each store mutation POSTs and then refreshes the board, so a rejection from the POST does
+   * mean nothing changed — but a rejection from the REFRESH means the write succeeded and
+   * only the re-read failed. From here the two are the same exception. Telling the operator
+   * "nothing has been saved" would be a confident guess that is wrong exactly when it matters,
+   * which is the class of defect this whole helper exists to remove.
+   */
+  const runAction = async (what: string, action: () => Promise<void>) => {
     setIsSubmitting(true);
+    setActionError(null);
     try {
-      await updateTask(task.id, { assigned_to: userId });
-      setShowAssignDropdown(false);
+      await action();
+    } catch (error) {
+      console.error(`Failed to ${what}:`, error);
+      setActionError(
+        `Could not ${what}. Try again, and reopen the board to check the task's current state.`,
+      );
     } finally {
       setIsSubmitting(false);
     }
   };
 
+  const handleAssign = async (userId: string) => {
+    if (!task) return;
+    await runAction('assign this task', async () => {
+      await updateTask(task.id, { assigned_to: userId });
+      setShowAssignDropdown(false);
+    });
+  };
+
   const handleUnassign = async () => {
     if (!task) return;
-    setIsSubmitting(true);
-    try {
+    await runAction('unassign this task', async () => {
       // The API expects an explicit null to unassign; the store's Task type only
       // declares `assigned_to?: string`, so bridge the payload type here.
       await updateTask(task.id, { assigned_to: null as unknown as string });
       setShowAssignDropdown(false);
-    } finally {
-      setIsSubmitting(false);
-    }
+    });
   };
 
   // Get user initials for avatar
@@ -107,13 +138,10 @@ export const TaskDetailModal: React.FC<TaskDetailModalProps> = ({
   if (!isOpen || !task) return null;
 
   const handleApprove = async () => {
-    setIsSubmitting(true);
-    try {
+    await runAction('approve this task', async () => {
       await approveTask(task.id, 'approve');
       onClose();
-    } finally {
-      setIsSubmitting(false);
-    }
+    });
   };
 
   const handleReject = async () => {
@@ -126,51 +154,32 @@ export const TaskDetailModal: React.FC<TaskDetailModalProps> = ({
     });
     if (!reason) return;
 
-    setIsSubmitting(true);
-    try {
+    await runAction('reject this task', async () => {
       await approveTask(task.id, 'reject', reason);
       onClose();
-    } finally {
-      setIsSubmitting(false);
-    }
+    });
   };
 
   const handleStart = async () => {
-    setIsSubmitting(true);
-    try {
-      await startTask(task.id);
-    } finally {
-      setIsSubmitting(false);
-    }
+    await runAction('start this task', () => startTask(task.id));
   };
 
   const handleComplete = async () => {
-    setIsSubmitting(true);
-    try {
+    await runAction('complete this task', async () => {
       await completeTask(task.id);
       onClose();
-    } finally {
-      setIsSubmitting(false);
-    }
+    });
   };
 
   const handleMove = async (targetColumnId: string) => {
-    setIsSubmitting(true);
-    try {
-      await moveTask(task.id, targetColumnId);
-    } finally {
-      setIsSubmitting(false);
-    }
+    await runAction('move this task', () => moveTask(task.id, targetColumnId));
   };
 
   const handleSave = async () => {
-    setIsSubmitting(true);
-    try {
+    await runAction('save your changes', async () => {
       await updateTask(task.id, formData);
       setIsEditing(false);
-    } finally {
-      setIsSubmitting(false);
-    }
+    });
   };
 
   const handleDelete = async () => {
@@ -178,14 +187,11 @@ export const TaskDetailModal: React.FC<TaskDetailModalProps> = ({
   };
 
   const confirmDelete = async () => {
-    setIsSubmitting(true);
-    try {
+    await runAction('delete this task', async () => {
       await deleteTask(task.id);
       setShowDeleteConfirm(false);
       onClose();
-    } finally {
-      setIsSubmitting(false);
-    }
+    });
   };
 
   const cancelDelete = () => {
@@ -241,6 +247,15 @@ export const TaskDetailModal: React.FC<TaskDetailModalProps> = ({
         </div>
 
         <div className="p-4 space-y-4">
+          {actionError && (
+            <p
+              role="alert"
+              className="text-sm text-status-alarm bg-red-50 dark:bg-red-900/20 rounded-md px-3 py-2"
+            >
+              {actionError}
+            </p>
+          )}
+
           {/* Title */}
           {isEditing ? (
             <input

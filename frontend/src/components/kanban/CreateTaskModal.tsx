@@ -22,6 +22,11 @@ export const CreateTaskModal: React.FC<CreateTaskModalProps> = ({
 }) => {
   const { createTask } = useKanban();
   const [isSubmitting, setIsSubmitting] = useState(false);
+  // `createTask` answers `null` when the write fails and logs to the console — so without
+  // this the modal simply stopped spinning and sat there with the form still filled. A
+  // refused create and a slow one looked identical, and the only sensible thing a user can
+  // do with that is press the button again.
+  const [submitError, setSubmitError] = useState<string | null>(null);
   const [formData, setFormData] = useState<Partial<Task>>({
     title: '',
     description: '',
@@ -40,21 +45,32 @@ export const CreateTaskModal: React.FC<CreateTaskModalProps> = ({
     if (!formData.title || !formData.board_id || !formData.column_id) return;
 
     setIsSubmitting(true);
+    setSubmitError(null);
     try {
       const newTask = await createTask(formData);
-      if (newTask) {
-        setFormData({
-          title: '',
-          description: '',
-          task_type: 'custom',
-          priority: 'medium',
-          column_id: defaultColumnId,
-          board_id: boardId,
-          tags: [],
-          checklist_items: [],
-        });
-        onClose();
+      if (!newTask) {
+        // Deliberately does not claim the task was not created: `createTask` catches the
+        // POST and the board refresh together, so a null answer can also mean the write
+        // landed and only the re-read failed. A confident "nothing was saved" would be wrong
+        // exactly when it matters — and would invite a duplicate task.
+        setSubmitError(
+          'The task was not created, or the board could not be refreshed. Close this and '
+          + 'check the board before trying again.',
+        );
+        return;
       }
+
+      setFormData({
+        title: '',
+        description: '',
+        task_type: 'custom',
+        priority: 'medium',
+        column_id: defaultColumnId,
+        board_id: boardId,
+        tags: [],
+        checklist_items: [],
+      });
+      onClose();
     } finally {
       setIsSubmitting(false);
     }
@@ -79,6 +95,11 @@ export const CreateTaskModal: React.FC<CreateTaskModalProps> = ({
 
         {/* Form */}
         <form onSubmit={handleSubmit} className="p-4 space-y-4">
+          {submitError && (
+            <p className="text-sm text-status-alarm" role="alert">
+              {submitError}
+            </p>
+          )}
           {/* Title */}
           <div>
             <label htmlFor="createtaskmodal-title" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
