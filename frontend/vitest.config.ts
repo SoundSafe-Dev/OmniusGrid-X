@@ -132,9 +132,15 @@ export default defineConfig({
       // which is what that note said it would be.
       //
       //   measured 2026-08-11: statements 45.05 · branches 45.69 · functions 38.40 · lines 46.40
+      //
+      // RAISED AGAIN, same day, after FS-651 put the first tests on `components/kanban/` —
+      // 1,811 lines that had none. Every threshold is now above where it stood before the
+      // merge, and branches (46) is the highest this ratchet has ever held.
+      //
+      //   measured 2026-08-11: statements 45.60 · branches 46.58 · functions 38.86 · lines 47.00
       thresholds: {
-        statements: 44,
-        branches: 45,
+        statements: 45,
+        branches: 46,
         functions: 38,
         lines: 46,
       },

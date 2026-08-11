@@ -8474,3 +8474,36 @@ for bytes nobody wrote.
 and `rag_ingestion`, which is htreinen's lane, and he has an item to re-scope that work against
 what just landed. Testing it would not have collided with him; assigning myself his module
 would.
+
+---
+
+## FS-651 — the first tests on 1,811 lines of kanban, and two mutations that mattered
+
+`components/kanban/` had **zero test files** — the largest untested tree in the product and the
+one pulling coverage down hardest. The card and the column are the two halves of the same
+gesture, and both fail in ways nobody sees.
+
+**The drag payload.** `onDragStart` writes the task id into `dataTransfer`, and that string is
+the only thing the drop target has to identify what was dragged. Remove it and the drop moves a
+different task, or nothing — the board shows a card back where it started, which reads as a
+failed request rather than a bug.
+
+**A drop that is silently rejected.** HTML5 drag-and-drop **refuses by default**: a drop only
+happens on an element that cancelled the preceding `dragover`. So a missing `preventDefault` is
+a column that accepts nothing, with no error logged anywhere and nothing on screen but a card
+sliding back.
+
+**Overdue is a conjunction**, and the second half is the easy one to drop. Past due AND not
+completed — because every finished task has a due date in the past, so a check on the date
+alone paints the entire "Done" column red, and a colour that is always on is a colour nobody
+reads.
+
+**The WIP warning is `>`, not `>=`.** A column at exactly its limit is at the limit, not over
+it. Off by one nags an operator who is doing precisely what the board asked.
+
+All four mutation-verified: dropping each one fails exactly the test written for it, and no
+others.
+
+**Coverage 46.40 → 47.00 lines**, thresholds raised again to **45/46/38/46**. Every one is now
+above where it stood before the merge, and branches at 46 is the highest this ratchet has ever
+held — two days after it had to be lowered because nothing was enforcing it.

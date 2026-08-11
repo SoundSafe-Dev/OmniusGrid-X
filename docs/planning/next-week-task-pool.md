@@ -137,9 +137,16 @@ test that mounts them — plus `DialogProvider`, 181 lines that became load-bear
 admin Users page moved off `window.confirm`. **Lines 45.45 → 46.40** and the thresholds are
 back above where the merge pushed them under.
 
-### FS-651. `components/kanban/` — 1,811 lines, 7 components, **zero** test files · L · *carried (FS-632)*
+### FS-651. `components/kanban/` — 1,811 lines · L · **card and column done 2026-08-11**
 
-The largest untested component tree, and the one that pulls coverage down hardest.
+**Done:** `KanbanCard` (239) and `KanbanColumn` (252) — the two halves of the drag gesture,
+21 tests, four mutation-verified behaviours. The findings are worth reading before touching the
+rest: a drop that does not `preventDefault` is **silently rejected by the browser**, and
+"overdue" is a conjunction whose second half, if dropped, paints the whole Done column red.
+
+**Left (1,320 lines):** `TaskDetailModal` (604), `CreateTaskModal` (216), `KanbanBoard` (214),
+`KanbanFilters` (177), `KanbanMetricsBar` (109). And `stores/kanbanStore.tsx` (367) — mocked
+wholesale at `pages/Kanban.test.tsx`, and it owns board loading and every task mutation.
 
 ### FS-652b. The remaining `ui/` primitives · S · *what FS-652 left*
 
