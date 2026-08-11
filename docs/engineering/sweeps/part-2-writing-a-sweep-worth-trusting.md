@@ -885,6 +885,14 @@ one of its findings. The habit that catches it:
      cheap fix is on the other side of a seam, record what the expensive one would have been
      and guard the seam, because that is what the cheap fix leaves undefended.
 
+141. **Before writing a walker, look for the one that already exists.**
+     Three detectors failed in a row reaching one finding: an inverted prefix matcher, a module
+     name read as `split(".")[-1]` (which is `"router"` every time), and a hand-rolled route
+     walk reporting SIX routes for an app with 524 — `app.routes` holds lazy `_IncludedRouter`
+     entries whose children carry relative paths. `tests/_route_tree.py` had existed the whole
+     time and its docstring opens by naming that pitfall. The second wrong answer was a clean
+     tree, which is the kind that gets believed.
+
 ---
 
 ## Open observations, not yet tickets

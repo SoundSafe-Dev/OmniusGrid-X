@@ -1550,3 +1550,50 @@ was fixed. But the server still publishes a contract nobody would guess, in 22 p
 next caller written against it fails the same way. When the cheap fix is on the other side of
 the seam, record what the expensive one would have been — and guard the seam, since that is
 what the cheap fix leaves undefended.
+
+## Class 98 — a scope that stops at a lane boundary, and nothing records where (FS-659)
+
+Rule 140 said fixing the caller closes the instance and preserves the class. The carry-across
+is to ask where else this repository fixed one side of a seam — and the codebase answers in its
+own comments. Six of them admit a one-sided fix; three are distinct sites, and two were already
+closed by the previous guard.
+
+The third is `IdempotencyMiddleware`. It dedupes retried mutations by prefix, and `main.py`
+says the scope stops on purpose:
+
+> Correlation/kanban/intake/OTA/auth/RBAC surfaces are deliberately excluded — they are owned
+> by other lanes.
+
+That is the right call, and it leaves **167 of 208 mutating routes** outside the middleware
+with nothing distinguishing the ones that were considered from the ones nobody has looked at.
+A new mutation surface added to a protected lane lands outside protection in silence: the
+middleware does not fail, it simply does not apply.
+
+The guard asserts nothing about which surfaces *should* be protected — that is each lane's
+decision. It asserts that every mounted mutation surface is **accounted for**: protected, or
+named with the reason it is not. Thirty-one are named. "Lane ownership" is a reason;
+`/api/v1/api-keys` carries the sharpest one — it **must not** dedupe, because every call is
+required to mint a distinct key, and a replay guard there would be the defect.
+
+### A sweep that came back clean, and why it was worth running
+
+Three routers mount under `/api/v1/fleet` and two under `/api/v1/compliance`, so a route
+declared twice would be shadowed by whichever mounted first — FastAPI resolves first-match-wins
+and says nothing. **524 route-methods, zero collisions.** Recorded because a shared prefix
+looks exactly like a collision waiting to happen, and now nobody has to wonder.
+
+## Rule 141 — before writing a walker, look for the one that already exists
+
+Three detectors failed in a row on the way to this entry. A prefix matcher whose direction was
+inverted, so `/api/v1/assets` "covered" `/api/v1` and the whole tree read as protected. A
+module name taken as `name.split(".")[-1]`, which is `"router"` for every `include_router` call.
+And a hand-rolled route walk that reported **six routes** for an app with 524, because
+`app.routes` holds lazy `_IncludedRouter` entries whose children carry RELATIVE paths.
+
+That third one is the lesson. `tests/_route_tree.py` has existed the whole time and its
+docstring opens by naming that exact pitfall. The cost of not looking was two wrong answers,
+and the second of them — a clean tree — is the kind that gets believed.
+
+Grep for the thing you are about to build before building it. In a repository with 140 rules
+about detectors being wrong, the odds are good that somebody has already been wrong in this
+particular way and left the fix behind.

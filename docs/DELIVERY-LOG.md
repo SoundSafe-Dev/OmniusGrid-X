@@ -8911,3 +8911,44 @@ to skip.
 
 Recorded as **class 97**, with rule 140 — fixing the caller closes the instance and preserves
 the class.
+
+### The seam the middleware stops at, and a sweep that came back clean
+
+Rule 140 said fixing the caller closes the instance and preserves the class. So: where else did
+this repository fix one side of a seam? The codebase answers in its own comments — six admit a
+one-sided fix, three are distinct sites, and two were already closed by the previous guard.
+
+The third is `IdempotencyMiddleware`. It dedupes retried mutations by prefix, and `main.py`
+states the scope stops on purpose: correlation, kanban, intake, OTA, auth and RBAC are excluded
+because they belong to other lanes. Right call — and it leaves **167 of 208 mutating routes**
+outside the middleware with nothing separating the surfaces that were considered from the ones
+nobody has looked at. A new mutation surface in a protected lane lands outside protection
+silently: the middleware does not fail, it simply does not apply.
+
+The guard asserts nothing about which surfaces *should* be protected — each lane decides that.
+It asserts every mounted mutation surface is **accounted for**: protected, or named with the
+reason it is not. Thirty-one are named, and `/api/v1/api-keys` carries the sharpest reason —
+it **must not** dedupe, because every call is required to mint a distinct key.
+
+I wrote the first register from guesses rather than from the measurement, and the guard failed
+in both directions at once: seven real surfaces I had not accounted for, and fourteen entries
+for prefixes that do not exist. Rebuilt from the route walk.
+
+**A second sweep came back clean.** Three routers mount under `/api/v1/fleet` and two under
+`/api/v1/compliance`, so a route declared twice would be shadowed by whichever mounted first —
+FastAPI resolves first-match-wins and says nothing. **524 route-methods, zero collisions.**
+Worth recording: a shared prefix looks exactly like a collision waiting to happen.
+
+**Three detectors failed in a row getting here**, and the third is the lesson. A prefix matcher
+whose direction was inverted, so `/api/v1/assets` "covered" `/api/v1` and everything read as
+protected. A module name taken as `split(".")[-1]`, which is `"router"` for every
+`include_router` call. And a hand-rolled route walk that reported **six routes for an app with
+524**, because `app.routes` holds lazy `_IncludedRouter` entries whose children carry relative
+paths.
+
+`tests/_route_tree.py` has existed the whole time and its docstring opens by naming that exact
+pitfall. Two wrong answers were the cost of not looking, and the second was a clean tree —
+which is the kind that gets believed.
+
+Recorded as **class 98**, with rule 141: before writing a walker, look for the one that already
+exists.
