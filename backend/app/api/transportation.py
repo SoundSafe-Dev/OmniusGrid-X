@@ -126,6 +126,34 @@ class ShipmentDispatchResponse(BaseModel):
     status: str
 
 
+class ShipmentStatusUpdateRequest(BaseModel):
+    """The new status of a shipment, in a BODY (FS-658).
+
+    THIRD TIME FOR THIS SHAPE, and the second in this file. Declared as bare
+    `status: str, actual_pickup: ..., actual_delivery: ...`, FastAPI reads every one of them
+    as a QUERY parameter — a non-Pydantic scalar with no `Body(...)` marker always is. The
+    client posts `{ status, note }` as JSON (`api/transportation.ts`), so the required
+    `?status=` was never present and **every status update answered 422**. The two buttons
+    that call it — "Mark delivered" and "Cancel" on the Transportation page — have never
+    worked once.
+
+    `ShipmentDispatchRequest` twenty lines above carries the same correction for FS-420, and
+    FS-379 carried it for Strategic approve/reject. Fixing an instance is not fixing a class:
+    the neighbouring route was never looked at.
+
+    `note` is DECLARED AND REFUSED rather than quietly ignored. The client sends one and there
+    is nowhere for it to go — `Shipment` has no note column — so accepting the field would
+    make the API claim to record something it discards. Pydantic drops unknown fields
+    silently by default, which is the same lie with less effort.
+    """
+
+    model_config = {"extra": "forbid"}
+
+    status: str
+    actual_pickup: Optional[datetime] = None
+    actual_delivery: Optional[datetime] = None
+
+
 class ShipmentStatusUpdateResponse(BaseModel):
     message: str
     shipment_id: str
@@ -734,18 +762,16 @@ async def dispatch_shipment(
 @router.post("/shipments/{shipment_id}/status", response_model=ShipmentStatusUpdateResponse, dependencies=[Depends(require_operator_or_admin)])
 async def update_shipment_status(
     shipment_id: UUID,
-    status: str,
-    actual_pickup: Optional[datetime] = None,
-    actual_delivery: Optional[datetime] = None,
+    request: ShipmentStatusUpdateRequest,
     db: AsyncSession = Depends(get_tenant_db)
 ):
     """Update shipment status"""
     try:
         shipment = await transportation_management_service.update_shipment_status(
             shipment_id=shipment_id,
-            status=status,
-            actual_pickup=actual_pickup,
-            actual_delivery=actual_delivery,
+            status=request.status,
+            actual_pickup=request.actual_pickup,
+            actual_delivery=request.actual_delivery,
             db=db
         )
         return {

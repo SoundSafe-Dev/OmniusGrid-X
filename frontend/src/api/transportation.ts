@@ -704,8 +704,18 @@ export const transportationApi = {
     return response.data;
   },
 
-  // Lifecycle status transitions (delivered, exception, ...) — task D22.
-  updateShipmentStatus: async (id: string, status: Shipment['status'], note?: string): Promise<Shipment> => {
+  /**
+   * Lifecycle status transitions (delivered, exception, ...) — task D22.
+   *
+   * NO `note` PARAMETER (FS-658). This used to take one and post it, and there is nowhere for
+   * it to go: `Shipment` has no note column and the service never read the field. A parameter
+   * a caller can pass and the server cannot keep is a promise the API does not make — the
+   * server now declares `extra: "forbid"` and refuses it rather than dropping it silently.
+   *
+   * The body itself is the other half of that fix: the route declared `status` as a bare
+   * scalar, so FastAPI read it as a QUERY parameter, and every call from here answered 422.
+   */
+  updateShipmentStatus: async (id: string, status: Shipment['status']): Promise<Shipment> => {
     if (USE_MOCK) {
       await delay(MOCK_DELAY);
       const shipment = mockShipments.find(s => s.id === id);
@@ -717,7 +727,7 @@ export const transportationApi = {
     }
     const response = await api.post<Shipment>(
       `/api/v1/transportation/shipments/${id}/status`,
-      { status, note }
+      { status }
     );
     return response.data;
   },

@@ -167,3 +167,89 @@ class TestARefusedDispatch:
         )
         assert response.status_code == 400
         assert response.json()["detail"].rstrip().endswith("no recent logs")
+
+
+class TestAStatusUpdateTakesABody:
+    """`POST /shipments/{id}/dispatch`'s immediate neighbour, with the defect FS-420 fixed
+    here and left twenty lines away (FS-658).
+
+    `update_shipment_status` declared `status: str` as a bare scalar. FastAPI reads a
+    non-Pydantic scalar with no `Body(...)` marker as a QUERY parameter, and the client posts
+    `{ status }` as JSON — so the required `?status=` was never present and **every status
+    update answered 422**. The two buttons that call it, "Mark Delivered" and "Cancel" on the
+    Transportation page, have never worked once.
+
+    Third instance of this class: FS-379 on Strategic approve/reject, FS-420 on dispatch, and
+    now the route immediately below the one FS-420 fixed. Fixing an instance is not fixing a
+    class.
+    """
+
+    @pytest.fixture
+    def updated(self, monkeypatch):
+        calls: list[dict] = []
+
+        async def _update(**kwargs):
+            calls.append(kwargs)
+            return SimpleNamespace(status=kwargs["status"])
+
+        monkeypatch.setattr(
+            transportation_api.transportation_management_service,
+            "update_shipment_status",
+            _update,
+        )
+        return calls
+
+    def test_a_json_body_is_accepted(self, client, updated):
+        """THE DEFECT. This is exactly what the client sends, and it used to 422."""
+        response = client.post(
+            f"/api/v1/transportation/shipments/{uuid.uuid4()}/status",
+            json={"status": "delivered"},
+        )
+        assert response.status_code == 200, (
+            f"a status update posting a JSON body answered {response.status_code}. Declared "
+            f"as a bare scalar, `status` is a QUERY parameter and every call from the UI "
+            f"fails validation."
+        )
+        assert response.json()["status"] == "delivered"
+
+    def test_the_status_reaches_the_service(self, client, updated):
+        client.post(
+            f"/api/v1/transportation/shipments/{uuid.uuid4()}/status",
+            json={"status": "cancelled"},
+        )
+        assert updated[0]["status"] == "cancelled"
+
+    def test_the_optional_timestamps_are_carried_through(self, client, updated):
+        """They were bare parameters too, so they were query parameters too — and a delivery
+        time that cannot be recorded is the reason to have this route at all."""
+        client.post(
+            f"/api/v1/transportation/shipments/{uuid.uuid4()}/status",
+            json={"status": "delivered", "actual_delivery": "2026-08-11T09:00:00Z"},
+        )
+        assert updated[0]["actual_delivery"] is not None
+
+    def test_a_field_the_server_cannot_store_is_refused(self, client, updated):
+        """`note` was in the client's signature and posted on every call. `Shipment` has no
+        note column and the service never read it, so accepting the field would make the API
+        claim to record something it discards. Pydantic drops unknown fields silently by
+        default; `extra: "forbid"` is what turns that into an answer."""
+        response = client.post(
+            f"/api/v1/transportation/shipments/{uuid.uuid4()}/status",
+            json={"status": "delivered", "note": "left at the dock"},
+        )
+        assert response.status_code == 422
+
+    def test_a_missing_shipment_is_a_404(self, client, monkeypatch):
+        async def _refuse(**_kwargs):
+            raise ValueError("Shipment not found")
+
+        monkeypatch.setattr(
+            transportation_api.transportation_management_service,
+            "update_shipment_status",
+            _refuse,
+        )
+        response = client.post(
+            f"/api/v1/transportation/shipments/{uuid.uuid4()}/status",
+            json={"status": "delivered"},
+        )
+        assert response.status_code == 404
