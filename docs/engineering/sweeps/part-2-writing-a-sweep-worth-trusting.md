@@ -817,6 +817,19 @@ one of its findings. The habit that catches it:
      exists and the lines exist — so only a reader who already knows what they expected to
      find can tell. A section heading moves with its text.
 
+130. **`finally` without `catch` is a spinner reset, not error handling.**
+     `try { await write() } finally { setSubmitting(false) }` reads like care and guarantees
+     the opposite: the UI returns to rest whether the write landed or not, which is exactly
+     the state that makes success and failure indistinguishable. Ten task mutations across two
+     modals shipped this way; on six of them a rejection and a success were pixel identical.
+
+131. **A store that returns `null` and a store that raises need the same call site.**
+     Two modals in one directory over one store handled failure two different ways because the
+     store does — `createTask` catches and answers `null`, `updateTask` catches, logs and
+     re-raises. A caller cannot get this right by reading its own file. Route every write in a
+     component through one helper, so "what happens when this fails" has one answer per
+     component rather than one per button.
+
 ---
 
 ## Open observations, not yet tickets

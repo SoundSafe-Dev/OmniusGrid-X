@@ -1256,3 +1256,48 @@ file exists, the lines exist, and only a reader who already knows what they expe
 can tell that they are the wrong ones. A section heading moves with its text.
 
 (Written out in words rather than in the citation's own form. The guard matches the shape, and rule 37 says the prose describing a defect gathers around the defect — a document is allowed to describe one without committing it.)
+
+## Class 93 — a modal that catches nothing over a store that re-raises (FS-651)
+
+Two kanban modals, 820 lines between them, held every task mutation the product has: create,
+assign, unassign, approve, reject, start, complete, move, save, delete. Ten writes. Not one of
+them could tell the operator it had failed.
+
+The two halves failed differently and neither was visible:
+
+`CreateTaskModal` called a store function that **answers `null`** on failure and logs to the
+console. The modal read the answer, found it falsy, skipped the close, and returned. The
+spinner stopped. Nothing else changed. A refused create and a slow one were the same screen.
+
+`TaskDetailModal` called nine functions that **re-raise**. Its handlers were `try { … }
+finally { … }` — a shape that resets the spinner and swallows nothing, because there was
+nothing to swallow it with. Each rejection went to an unhandled promise, which in a browser is
+a console line. On the three routes that close the modal (approve, complete, delete) a failure
+at least left it open, which is a weak signal but a signal. On the six that do not — start,
+move, assign, unassign, save, reject — **a rejected write and a successful one were pixel
+identical.**
+
+Both halves passed `mutationFailureIsVisible`. That sweep reads `useMutation` hooks; these are
+hand-rolled `async` calls on a store. The sweep was not wrong, it was scoped — and its scope
+was a hypothesis about where mutations live, which stopped being true the moment somebody
+wrote one a different way (rule 62).
+
+The reason both sat this long is the same reason: `pages/Kanban.test.tsx` mocked all five
+kanban components to `() => null`. The page suite proved the page mounts them. Coverage
+counted the stub. Nothing rendered a real one until FS-651.
+
+## Rule 130 — `finally` without `catch` is a spinner reset, not error handling
+
+`try { await write() } finally { setSubmitting(false) }` reads like care and is the opposite:
+it guarantees the UI returns to rest whether the write landed or not, which is precisely the
+state that makes success and failure indistinguishable. Whenever the pattern appears, ask what
+the caller does with a rejection. If the answer is "the browser logs it", the operator has
+been told nothing.
+
+## Rule 131 — a store that returns `null` and a store that raises need the same call site
+
+The two modals sat in one directory over one store and handled failure in two different ways,
+because the store itself does — `createTask` catches and returns `null`, `updateTask` catches,
+logs and re-raises. A caller cannot get this right by reading its own file. Both are now
+routed through a single `runAction`-shaped helper per modal, so the question "what happens
+when this fails" has one answer per component rather than one per button.

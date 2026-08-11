@@ -26,7 +26,7 @@ mutation-tested — reverting the fix must fail the test, or the guard proves no
 
 ---
 
-## The ninety-two numbered classes
+## The ninety-three numbered classes
 
 **The count is the numbering, and it was already stale before this line was corrected.**
 This heading read "forty-seven" while the document's own highest class was 60 — the summary
@@ -70,6 +70,7 @@ to ask where else it could live.
 | A qualifier the frontend never reads | every boolean qualifier on the wire | **3 fields, 2 defects, both live** | `test_qualifiers_reach_the_frontend.py` |
 | A cache key that omits what the fetch varies on | every `useQuery` in the frontend | **clean — 0 of 30+; nearly introduced during this work** | `queryKeysAreComplete.test.ts` |
 | A write whose result the UI never re-reads | every `useMutation` and invalidation | **3 live: ERP sync, command history, emergency stop** | `ERPIntegrations.sync.test.tsx`, `CommandPanel.test.tsx` |
+| A modal that catches nothing over a store that re-raises | all 10 task mutations in `components/kanban/` | **10 of 10 silent — 6 of them pixel-identical to success** | `CreateTaskModal.test.tsx`, `TaskDetailModal.test.tsx` |
 | A capped list that cannot say it was capped | every `limit`-bearing GET | **12 bare arrays; `/rul` fixed, the rest recorded** | `test_rul_truncation_is_reported_realdb.py` |
 | An audit write with no tenant bound | every `audit_logs` writer | **4 of 8 — exports, bulk jobs and flag changes recorded nothing** | `test_audit_writers_bind_a_tenant_realdb.py` |
 | A handler that builds its own unbound session | every inline `AsyncSessionLocal` in `app/api` | **5 live: 3 endpoints 404ing on your own asset, 2 reporting an empty fleet** | `test_tenant_session_guard.py` (second idiom) |

@@ -96,15 +96,25 @@ ticket below.
 
 ### Hamad — platform, contract gate, frontend primitives
 
-1. **P0-a and P0-c** (above) — the integration is the job.
+1. ~~**P0-a and P0-c**~~ — **done 2026-08-09.** Both developers' stranded work is on `main`.
 2. **FS-593** · the contract floor cannot rise until the broker is guaranteed — a CI change,
-   the one blocking-gate item with real headroom.
-3. **FS-594 / FS-595** · `common/` and `ui/` have 346 and 1,214 lines with almost no tests, and
-   FS-597 says the coverage thresholds now have **0.94 points** of headroom. These are the same
-   task twice: tests here buy the room the ratchet needs.
-4. **FS-596** · the 23 alert rules that cannot be shown to fire — pick a batch.
+   the one blocking-gate item with real headroom. **The only item of mine still open.**
+3. ~~**FS-594 / FS-595**~~ — **done 2026-08-11.** `common/`, `ui/` and the whole of
+   `components/kanban/` now have tests. The 0.94 points of headroom FS-597 measured is
+   **4.79**: lines 45.45 → 50.24 in a day, thresholds raised five times to 48/48/41/50, and
+   functions past 40 for the first time. Every one of those lines was a `() => null` stub that
+   coverage was already counting as exercised.
+4. ~~**FS-596**~~ — **done 2026-08-11.** All 51 rules, not a batch. `UNTESTED` in the
+   firability guard went 23 → 15 → 0 and is now closed; a new rule ships with its promtool
+   test or it does not ship.
 
 *Not FS-598 or D3 until D3 is decided; wiring or deleting 1,777 lines is not mine to choose.*
+
+**What the closures cost, recorded because the pool will be rewritten from it:** ten task
+mutations that could not report a failure (class 93), a `ChartContainer` error with no
+`role="alert"`, and two promtool cases that needed the harness understood rather than the rule
+changed. None of that was in the pool, because none of it was visible until something rendered
+or called the code.
 
 ### Hridyansh — OTA, edge agent
 

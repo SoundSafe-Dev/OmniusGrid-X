@@ -8570,3 +8570,99 @@ now a cleanup that only runs on success. Each is a branch nobody took while writ
 and each was invisible until something rendered or called it.
 
 **Coverage 48.21 → 48.57 lines**, 969 frontend tests.
+
+### The last two modals, and ten writes that could not say no
+
+`CreateTaskModal` and `TaskDetailModal` — 820 lines between them, both `() => null` in every
+page test — hold every task mutation the product has. Ten of them. **Not one could tell the
+operator it had failed**, and the two failed differently enough that fixing one would not have
+suggested the other.
+
+`createTask` **answers `null`** and logs to the console. The modal read the answer, found it
+falsy, skipped the close and returned. The spinner stopped. Nothing else changed, and the form
+sat there still filled — a refused create and a slow one were the same screen, and the only
+move available was to press the button again.
+
+The detail modal's nine handlers were `try { … } finally { … }` over a store that **re-raises**.
+No catch, because there was nothing to catch with. Each rejection became an unhandled promise —
+a console line. On approve, complete and delete the failure at least left the modal open, which
+is a weak signal but a signal. On start, move, assign, unassign, save and reject there was
+nothing at all: **a rejected write and a successful one were pixel identical.**
+
+Both now route every write through one helper that names the action it could not do. Six
+`TaskDetailModal` tests and four `CreateTaskModal` tests fail with the catch removed.
+
+**The first draft of the fix committed the same class it was fixing.** Its message read *"Nothing
+has been changed"* — and every store mutation POSTs and then refreshes the board, so a rejection
+from the POST does mean nothing changed while a rejection from the **refresh** means the write
+succeeded and only the re-read failed. From the modal the two are one exception. Telling the
+operator nothing was saved would be a confident guess that is wrong exactly when it matters, and
+on the create path it would invite a duplicate task. Both messages now say what is known — the
+action did not complete — and ask the operator to check the board.
+
+Both had passed `mutationFailureIsVisible`, which reads `useMutation` hooks; these are
+hand-rolled async calls on a store. The sweep was not wrong, it was scoped — and a sweep's
+scope is a hypothesis about where a thing lives. Recorded as **class 93**, with rules 130 and
+131.
+
+### The five primitives that were already "covered"
+
+`Card`, `ChartContainer`, `Skeleton`, `Tooltip` and `Wordmark` reported high line coverage and
+had no test of their own — the pages that mount them executed their lines. That is the same
+state `ui/Select.tsx` was in at **100%** while rendering an unlabelled combobox. Twenty-one
+tests now pin the branch each one owns, and `ChartContainer`'s error text gained the
+`role="alert"` it was missing, on the same argument: a chart that failed to load is exactly
+when a screen-reader user has no other cue.
+
+**Coverage 48.57 → 50.24 lines; 1,017 frontend tests.** Across the day: **45.45 → 50.24**, and
+functions clear 40 for the first time. Thresholds raised to 48/48/41/50.
+
+### Every alert rule can now be shown to fire
+
+The last fifteen rules in `alerts.yml` had no promtool test — `HighMemoryUsage`,
+`APILatencyP95High`, `DatabaseBackupStale` and twelve others. Each is now driven true from a
+series the product publishes, and each carries a must-stay-quiet companion. **51 of 51.**
+
+The expectations were generated from `alerts.yml` rather than transcribed, because promtool
+compares annotations even when a test omits them — three earlier drafts failed on copied text,
+not on rule defects.
+
+Two needed the harness understood rather than the rule changed. `SlowDatabaseQueries` wraps a
+`rate()`, so its expression is not true until the range vector fills and the `for:` clock
+starts around 3m rather than 0. `DatabaseBackupStale` compares against wall-clock `time()` and
+needs a 27-hour window; sampled hourly it is **stale for 55 minutes out of every hour**, which
+resets the `for:` clock before it can elapse — so the series is sampled every minute even
+though the CronJob it describes runs hourly.
+
+`UNTESTED` in the firability guard is now empty, and closed: the ratchet went 23 → 15 → 0, and
+with nothing subtracted from it the guard asserts the strong form — every rule has a test. A
+new rule ships with one or it does not ship.
+
+### The contract floor, unblocked by admitting there are two of them
+
+FS-593/FS-654 had sat as "gated on a CI change" since 2026-08-08. The impasse: a healthy run
+scores **402** and a run whose broker step removed its own container scores **387**, and one
+floor had to survive both — so it survived the worse one at 380. A healthy build carried 22
+operations of headroom it could never spend, and the gate would have sat through a regression
+of 22 rather than fail a build whose broker did not come up. That trade is exactly how this
+job's predecessor became advisory and got killed at six hours.
+
+There are two floors now — **393** with a broker, **380** without — and the run decides which
+applies by **probing** the bootstrap address the app was given, after the suite. Not by a flag.
+A flag is a claim, the lower floor is the one somebody would want on a red build, and *"the
+broker must have been down"* is unfalsifiable after the fact for 13 operations of protection.
+Selecting the lower floor now requires the broker to actually be unreachable.
+
+Verified on the case that matters: a run scoring **390** now passes with no broker and fails
+with one. That discrimination is the whole feature, and a single floor could not express it.
+
+A broker that dies mid-run scores like one that was never there and gets the lower floor, which
+is correct. A broker that recovers between the last request and the probe leaves the run held
+to the *higher* floor, which fails safe.
+
+**The guard that read the floor with a regex broke on this change, and was right to.** FS-654
+turned `BASELINE_PASSING = 380` into `BASELINE_PASSING = BASELINE_WITHOUT_BROKER`, and a regex
+over source cannot follow an indirection — it would have reported the constant "gone" while it
+sat one line below. It now imports the module. Same shape as the sweep that called a live
+module dead by grepping for its name in the file that already listed it as a positive control:
+**reading source is not reading a value.**
