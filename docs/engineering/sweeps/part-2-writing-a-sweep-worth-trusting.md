@@ -914,6 +914,19 @@ one of its findings. The habit that catches it:
      Run the reader's own expression over what the writer stored — and assert the negative
      case too, because a fix that makes everything valid is worse than the defect it replaced.
 
+145. **Read the reader before deciding which way a dropped field is wrong.**
+     Class 99 has two opposite fixes. Wire it through when something already depends on the
+     value (`ctpat_expires_at`, the HOS hours). Take it off the schema when something else
+     already PRODUCES it — `detention_charge` is computed at checkout, and honouring a
+     caller's would let an operator bill their own figure. The discriminator is not severity
+     or whether the column exists; it is whether the value has another producer.
+
+146. **A field name is not a field; check the module before believing the reader.**
+     A "has a reader" ranking reported `approved_at` read by `kanban.py` — a task's approval,
+     not a freight charge's — plus `duration_seconds` by `dashboard.py` and `priority` by
+     `data_shedding.py`. Common column names live on a dozen models. Same-module readers were
+     the only signal that survived. Third name-collision false positive this week.
+
 ---
 
 ## Open observations, not yet tickets

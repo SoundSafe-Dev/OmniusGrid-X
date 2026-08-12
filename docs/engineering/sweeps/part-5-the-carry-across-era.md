@@ -1671,3 +1671,39 @@ rejects. The test that matters runs the **reader's own expression** over what th
 
 and its companion asserts an expired certificate still reads expired — because a fix that makes
 everything valid is worse than the defect it replaces.
+
+## Rule 145 — read the reader before deciding which way a dropped field is wrong
+
+Class 99 has two fixes and they are opposites: wire the field through, or take it off the
+schema. Three routes settled it three different ways, and in every case the answer came from
+reading what consumes the field — never from how the field looked.
+
+**Wire it.** `POST /carriers` dropped `ctpat_expires_at`, and `get_carrier_compliance` computes
+`certified AND expires_at AND expires_at > now`. `POST /drivers` dropped four HOS figures, and
+`check_compliance` refuses to assess a driver without them. Both had readers already depending
+on the dropped value, so both were wrong answers rather than absent data.
+
+**Take it off the schema.** `POST /driver-wait-times` drops `detention_charge`,
+`demurrage_charge`, `total_wait_minutes` and four more — and `close_driver_wait_time` **computes
+every one of them** at checkout from the timestamps and the rates. Dropping is correct here, and
+honouring them would be worse than the defect: an operator could post their own detention charge
+on create and the system would bill it. The lie is the schema's, for accepting them.
+
+The discriminator is not severity, plausibility, or whether the column exists — the wait-time
+columns all exist. It is: **does something else already produce this value?** If yes, the
+schema should not accept it. If no, and something reads it, the handler must pass it.
+
+## Rule 146 — a field name is not a field; check the module before believing the reader
+
+The sweep that found these ranked routes by "has a reader" and its first answer was mostly
+wrong. `approved_at` was reported read by `kanban.py` — a *task's* approval, nothing to do with
+a freight charge. `duration_seconds` by `dashboard.py` and `alarm_rules.py`, `priority` by
+`data_shedding.py`. Common column names appear on a dozen models, and matching `\w+\.field`
+finds all of them.
+
+The signal that survived was **same-module readers**: `total_distance_miles` read by
+`transportation_management.py` for a route created in `transportation.py`, the wait-time figures
+read by `yard_management.py`. Third name-collision false positive this week, after
+`/insights/activations/{id}/reject` reported as a defect in `/strategic/recommendations/{id}/
+approve`, and a tail-match that conflated two unrelated routes. Anchor on the module, not the
+name.

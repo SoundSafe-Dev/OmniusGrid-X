@@ -9155,3 +9155,36 @@ when anything is left out, and the test now proves both.
 the moment the route was fixed the guard reported the entry stale and made me remove it. The
 note left in its place says what it cost, because a register entry is a place to put a
 decision, not a place to put a doubt.
+
+### Which way is a dropped field wrong? Read the reader
+
+The carrier and the driver were both fixed by wiring the field through. That is not the fix for
+the rest of the register, and assuming it was would have done real damage.
+
+Ranking the remaining entries by "does a reader depend on this field" produced two useful
+answers and one warning.
+
+**`POST /driver-wait-times` resolves the opposite way.** It drops `detention_charge`,
+`demurrage_charge`, `total_wait_minutes` and four more — and `close_driver_wait_time` **computes
+every one of them** at checkout from the two timestamps and the two rates. Dropping is correct,
+and honouring them would be worse than the defect: an operator could post their own detention
+charge on create and the system would bill it. The lie is the schema's, for accepting them; the
+fix is a contract change, not wiring. Recorded in the register with that reasoning.
+
+**`POST /routes` is the strongest remaining wiring case.** `total_distance_miles` is read by
+`transportation_management.py:939` and `estimated_duration_hours` by `:356` — creation input
+with dependent readers, the carrier's shape. Left for its own pass because it needs a decision
+about whether a route's distance is operator-supplied or derived from its stops, and that is a
+question rather than a doubt.
+
+**The ranking's first answer was mostly wrong**, and the reason is worth the rule. It reported
+`approved_at` as read by `kanban.py` — a *task's* approval, nothing to do with a freight charge
+— plus `duration_seconds` by `dashboard.py` and `priority` by `data_shedding.py`. Common column
+names live on a dozen models and `\w+\.field` finds all of them. Only same-module readers
+survived scrutiny.
+
+That is the **third name-collision false positive this week**, after
+`/insights/activations/{id}/reject` reported as a defect in
+`/strategic/recommendations/{id}/approve`, and a tail-match conflating two unrelated routes.
+Recorded as rule 146 — anchor on the module, not the name — alongside rule 145, read the reader
+before deciding which way a dropped field is wrong.

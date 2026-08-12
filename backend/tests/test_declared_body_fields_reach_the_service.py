@@ -62,6 +62,11 @@ UNREAD: dict[str, list[str]] = {
         "actual_delivery", "actual_pickup", "metadata", "priority", "route_id", "status",
         "temperature_max", "temperature_min",
     ],
+    #: WIRING-SIDE, and the strongest remaining case. `total_distance_miles` is read by
+    #: `transportation_management.py:939` and `estimated_duration_hours` by `:356` — real
+    #: creation input with readers that depend on it, the carrier's shape. Next after the
+    #: driver fix, and left here rather than done in the same pass because it needs its own
+    #: look at whether a route's distance is operator-supplied or derived from its stops.
     "transportation:POST /routes": [
         "estimated_duration_hours", "fuel_cost_estimate", "is_active", "toll_cost_estimate",
         "total_distance_miles",
@@ -77,6 +82,18 @@ UNREAD: dict[str, list[str]] = {
         "actual_end", "actual_start", "compliance_required", "driver_id", "metadata", "status",
     ],
     "yard:POST /moves": ["duration_seconds", "metadata"],
+    #: SCHEMA-SIDE, and confirmed by reading the reader — the opposite conclusion to the
+    #: carrier and the driver, from the same question.
+    #:
+    #: `total_wait_minutes`, `detention_minutes`, `detention_charge`, `demurrage_minutes` and
+    #: `demurrage_charge` are all COMPUTED by `close_driver_wait_time` at checkout from the
+    #: two timestamps and the two rates. `check_out_at`, `docked_at` and `unloaded_at` are
+    #: lifecycle stamps set as they happen. None of them is creation input.
+    #:
+    #: So dropping them is right, and honouring them would be worse than the defect: an
+    #: operator could post their own `detention_charge` on create and the system would bill
+    #: it. The fix here is to take them OFF `DriverWaitTimeCreate`, which is a contract change
+    #: with clients to check — not to wire them through.
     "yard:POST /driver-wait-times": [
         "check_out_at", "demurrage_charge", "demurrage_minutes", "detention_charge",
         "detention_minutes", "docked_at", "is_billed", "metadata", "total_wait_minutes",
