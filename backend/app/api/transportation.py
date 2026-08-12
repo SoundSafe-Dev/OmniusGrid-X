@@ -709,6 +709,10 @@ async def create_shipment(
         priority=data.priority,
         temperature_min=data.temperature_min,
         temperature_max=data.temperature_max,
+        # FS-669. `metadata` is declared on nine Create schemas across four modules and
+        # passed by almost none of them; every one of those tables has a `meta_data` column.
+        # A caller attaching a reference or a note to a shipment watched it vanish with a 200.
+        meta_data=data.metadata,
         db=db
     )
     return shipment
@@ -960,6 +964,10 @@ async def create_load_plan(
         space_utilization_percent=data.space_utilization_percent,
         special_instructions=data.special_instructions,
         planned_by=data.planned_by,
+        # FS-669. `temperature_zones` is the cold-chain layout of the trailer and `metadata`
+        # is the caller's own reference; both were declared and dropped.
+        temperature_zones=data.temperature_zones,
+        meta_data=data.metadata,
         db=db
     )
     return load_plan
@@ -1012,6 +1020,11 @@ async def create_freight_charge(
         rate_basis=data.rate_basis,
         quantity=data.quantity,
         rate=data.rate,
+        # FS-669. A charge in the wrong currency is a wrong number, not a missing one — and
+        # `currency` was declared on the schema and discarded, so every charge was recorded
+        # as USD whatever the caller said.
+        currency=data.currency,
+        meta_data=data.metadata,
         db=db
     )
     return charge

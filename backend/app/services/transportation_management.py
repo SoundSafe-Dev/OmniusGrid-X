@@ -381,6 +381,8 @@ class FreightBillingEngine:
         rate_basis: Optional[str] = None,
         quantity: Optional[float] = None,
         rate: Optional[float] = None,
+        currency: str = 'USD',
+        meta_data: Optional[dict] = None,
         db: Optional[AsyncSession] = None
     ) -> FreightCharge:
         """Create a freight charge record"""
@@ -394,7 +396,12 @@ class FreightBillingEngine:
                 rate_basis=rate_basis,
                 quantity=quantity,
                 rate=rate,
-                amount=amount
+                amount=amount,
+                # Declared on `FreightChargeCreate` and dropped until FS-669. `currency` in
+                # particular: a charge in the wrong currency is a wrong number, not a missing
+                # one.
+                currency=currency,
+                meta_data=meta_data or {},
             )
             session.add(charge)
             await session.commit()
@@ -623,6 +630,7 @@ class TransportationManagementService:
         carrier_id: Optional[UUID] = None,
         driver_id: Optional[UUID] = None,
         trailer_id: Optional[UUID] = None,
+        meta_data: Optional[dict] = None,
         total_weight_lbs: Optional[float] = None,
         total_pieces: Optional[int] = None,
         hazmat: bool = False,
@@ -659,6 +667,7 @@ class TransportationManagementService:
                 # bounds is a claim with nothing behind it.
                 temperature_min=temperature_min,
                 temperature_max=temperature_max,
+                meta_data=meta_data or {},
                 route_id=route_id,
                 # `ShipmentBase.priority` is `str = "normal"`, so a value always arrives; the
                 # guard is for a direct service caller that passes nothing, where the column
@@ -827,6 +836,8 @@ class TransportationManagementService:
         space_utilization_percent: Optional[float] = None,
         special_instructions: Optional[str] = None,
         planned_by: Optional[UUID] = None,
+        temperature_zones: Optional[list] = None,
+        meta_data: Optional[dict] = None,
         db: Optional[AsyncSession] = None
     ) -> LoadPlan:
         """Create load plan for shipment"""
@@ -849,7 +860,14 @@ class TransportationManagementService:
                 # gate (FS-259). Same trap the `_scope` helper in fleet_logistics documents
                 # from the other direction — a VARCHAR column holding ids is not a UUID
                 # column, and the difference only shows on the wire.
-                planned_by=str(planned_by) if planned_by is not None else None
+                planned_by=str(planned_by) if planned_by is not None else None,
+                # A LIST, not a dict — `List[Dict[str, Any]]` on the schema and
+                # `Column(JSON, default=[])` on the table. Defaulting it to `{}` stored an
+                # object and the response model then refused to serialise the row: 500 on
+                # every load-plan create. Caught by the suite before this shipped, which is
+                # the whole argument for running it rather than the files I touched.
+                temperature_zones=temperature_zones or [],
+                meta_data=meta_data or {},
             )
             session.add(load_plan)
             await session.commit()

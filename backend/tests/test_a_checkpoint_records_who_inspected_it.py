@@ -269,3 +269,72 @@ class TestATrailerCheckInKeepsWhatItWasTold:
             "an unstated seal is being reported as intact again — check the schema default "
             "and the column default together; either one alone restores the claim"
         )
+
+
+class TestTheMetadataPatternIsClosedInThisLane:
+    """`metadata` was declared on nine Create schemas and passed by almost none (FS-669).
+
+    Every one of those tables has a `meta_data` column, so a caller attaching a reference, a
+    BOL number or an operator's note to a shipment, a yard move or a dock appointment watched
+    it vanish with a 200. One defect wearing nine hats rather than nine findings — which is
+    only visible once the register is small enough to read, and is the argument for keeping
+    one.
+
+    Six routes in this lane are wired. The one that remains is Harsh's.
+    """
+
+    @pytest.fixture
+    def moved(self, monkeypatch):
+        calls: list[dict] = []
+
+        async def _record(**kwargs):
+            calls.append(kwargs)
+            return SimpleNamespace(
+                id=uuid.uuid4(),
+                organization_id=kwargs["organization_id"],
+                trailer_id=kwargs["trailer_id"],
+                from_location=kwargs["from_location"],
+                to_location=kwargs["to_location"],
+                move_type=kwargs["move_type"],
+                jockey_driver_id=kwargs.get("jockey_driver_id"),
+                meta_data=kwargs.get("meta_data") or {},
+                duration_seconds=None,
+                started_at="2026-08-12T09:00:00+00:00",
+                completed_at=None,
+                created_at="2026-08-12T09:00:00+00:00",
+            )
+
+        monkeypatch.setattr(yard_api.yard_management_service, "record_yard_move", _record)
+        return calls
+
+    def test_a_yard_move_keeps_its_metadata(self, client, moved):
+        c, _ = client
+        response = c.post(
+            "/api/v1/yard/moves",
+            json={
+                "trailer_id": str(uuid.uuid4()),
+                "from_location": "A-1",
+                "to_location": "DOCK_4",
+                "move_type": "dock",
+                "metadata": {"requested_by": "night shift"},
+            },
+        )
+        assert response.status_code == 200
+        assert moved[0]["meta_data"] == {"requested_by": "night shift"}
+
+    def test_an_omitted_metadata_is_an_empty_object_not_a_null(self, moved, client):
+        """The column defaults to `{}` and the service coerces None to it, so a move with no
+        metadata reads as "nothing attached" rather than "unknown". Unlike `seal_status`,
+        an empty object asserts nothing (rule from FS-666: a default is only a lie when the
+        value makes a claim)."""
+        c, _ = client
+        c.post(
+            "/api/v1/yard/moves",
+            json={
+                "trailer_id": str(uuid.uuid4()),
+                "from_location": "A-1",
+                "to_location": "DOCK_4",
+                "move_type": "dock",
+            },
+        )
+        assert moved[0]["meta_data"] == {}

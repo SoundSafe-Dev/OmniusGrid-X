@@ -829,10 +829,15 @@ class FreightChargeCreate(FreightChargeBase):
     # still sending one is unaffected.
     shipment_id: UUID
     carrier_id: Optional[UUID] = None
-    approved_by: Optional[UUID] = None
+    # `approved_by` was here and is now on the response with its siblings (FS-668/669).
+    # Nothing in the codebase approves a freight charge — `approved_at`, `is_billed`,
+    # `billed_at` and `invoice_number` moved for the same reason. A Create schema that
+    # accepts an approver for a flow that does not exist is the most misleading of the set,
+    # because it reads as an audit field.
 
 
 class FreightChargeResponse(FreightChargeBase):
+    approved_by: Optional[UUID] = None
     # LIFECYCLE STATE LIVES HERE, NOT ON THE BASE (FS-668). NOTHING IN THE CODEBASE SETS THESE EITHER. Approval and billing are declared and
     # unimplemented; a caller could mark a charge billed, with an invoice number, on
     # creation. Kept on the response so the fields exist when the flow is built.

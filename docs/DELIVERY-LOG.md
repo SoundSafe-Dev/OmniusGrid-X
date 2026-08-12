@@ -9432,3 +9432,45 @@ yard move or a dock appointment vanishes with a 200. `POST /yard/checkpoints` wa
 is already wired, which is why it is absent. Recorded as one pattern rather than fixed in nine
 blind edits across four modules — each needs its service signature widened, and that is how a
 mechanical change becomes somebody else's merge conflict.
+
+### The metadata pattern, closed in this lane
+
+`metadata` was declared on nine Create schemas across four modules and passed by almost none,
+with a `meta_data` column waiting on every one of those tables. A caller attaching a reference,
+a BOL number or an operator's note to a shipment, a yard move or a dock appointment watched it
+vanish with a 200.
+
+**One defect wearing nine hats, not nine findings** — and that was only visible once the
+register had shrunk enough to read. It is the argument for keeping one.
+
+Six routes wired in this lane: shipments, load plans, freight charges, dock appointments, yard
+moves and driver wait times. The genuine creation input alongside it went too:
+
+* **`currency`** on a freight charge — every charge was recorded as USD whatever the caller
+  said. A charge in the wrong currency is a wrong number, not a missing one.
+* **`temperature_zones`** on a load plan — the cold-chain layout of the trailer.
+* **`driver_id`** and **`compliance_required`** on a dock appointment — who is expected at the
+  door, and whether the visit needs a check. Booking facts, not lifecycle state.
+
+`approved_by` moved to the response with its siblings. Nothing approves a freight charge, and a
+Create schema accepting an *approver* for a flow that does not exist is the most misleading of
+that set, because it reads as an audit field.
+
+**My lane's register is now four entries, all schema-side or deliberate**, and one of the four
+(`is_active` on a route) is the only genuine creation input left in it.
+
+**Two of my own mistakes were caught mid-change, by two different gates.**
+
+The suite caught a regression I introduced: `temperature_zones` is `List[Dict[str, Any]]` on
+the schema and `Column(JSON, default=[])` on the table, and I defaulted it to `{}`. That stored
+an object, the response model refused to serialise the row, and **every load-plan create
+answered 500** — a route that had been working. `test_the_unblocked_creates_actually_create`
+failed with the exact reason, before it shipped. That is the argument for running the whole
+suite rather than the files I touched: nothing I edited was in that test.
+
+And **`flake8` caught the other**, which is worth recording because it is the gate I wired into
+branch pushes this morning. Locating a constructor with a bare `index("move =
+YardMove(")` found the **first** occurrence in the file — a different method with no
+`meta_data` in scope — and produced `F821 undefined name`. First-match-wins on a blind index is
+the same shape as the tail-matching and module-name collisions this week; anchoring the search
+inside the enclosing method fixed it. Ten seconds, because something was looking.

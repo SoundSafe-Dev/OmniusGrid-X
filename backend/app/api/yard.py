@@ -396,6 +396,12 @@ async def create_dock_appointment(
             shipment_id=data.shipment_id,
             operation_id=data.operation_id,
             priority=data.priority,
+            # FS-669. `driver_id` is who is expected at the door and `compliance_required` is
+            # whether the visit needs a check — booking facts, not lifecycle state, and both
+            # were declared and dropped.
+            driver_id=data.driver_id,
+            compliance_required=data.compliance_required,
+            meta_data=data.metadata,
             db=db
         )
         return appointment
@@ -500,6 +506,9 @@ async def record_yard_move(
         to_location=data.to_location,
         move_type=data.move_type or 'yard_relocate',
         jockey_driver_id=data.jockey_driver_id,
+        # FS-669, the metadata pattern: declared on nine Create schemas across four modules,
+        # passed by almost none, with a `meta_data` column waiting on every table.
+        meta_data=data.metadata,
         db=db
     )
     return move
@@ -568,6 +577,7 @@ async def create_driver_wait_time(
         check_in_at=data.check_in_at,
         detention_rate=data.detention_rate,
         demurrage_rate=data.demurrage_rate,
+        meta_data=data.metadata,
         db=db
     )
     return wait_time

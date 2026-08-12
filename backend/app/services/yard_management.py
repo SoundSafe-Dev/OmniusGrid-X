@@ -232,7 +232,7 @@ class YardManagementService:
                 from_location='yard',
                 to_location=f"DOCK_{door.door_number}",
                 move_type='dock',
-                started_at=datetime.now(timezone.utc)
+                started_at=datetime.now(timezone.utc),
             )
             session.add(move)
             
@@ -272,6 +272,7 @@ class YardManagementService:
         to_location: str,
         move_type: str,
         jockey_driver_id: Optional[UUID] = None,
+        meta_data: Optional[dict] = None,
         db: Optional[AsyncSession] = None
     ) -> YardMove:
         """Record a yard jockey move"""
@@ -283,7 +284,8 @@ class YardManagementService:
                 to_location=to_location,
                 move_type=move_type,
                 jockey_driver_id=jockey_driver_id,
-                started_at=datetime.now(timezone.utc)
+                started_at=datetime.now(timezone.utc),
+                meta_data=meta_data or {},
             )
             session.add(move)
             await session.commit()
@@ -566,6 +568,7 @@ class YardManagementService:
         check_in_at: Optional[datetime] = None,
         detention_rate: Optional[float] = None,
         demurrage_rate: Optional[float] = None,
+        meta_data: Optional[dict] = None,
         db: Optional[AsyncSession] = None
     ) -> DriverWaitTime:
         """Create driver wait time record at check-in"""
@@ -576,7 +579,8 @@ class YardManagementService:
                 trailer_id=trailer_id,
                 check_in_at=check_in_at or datetime.now(timezone.utc),
                 detention_rate=detention_rate or DetentionCalculator.DEFAULT_DETENTION_RATE,
-                demurrage_rate=demurrage_rate or DetentionCalculator.DEFAULT_DEMURRAGE_RATE
+                demurrage_rate=demurrage_rate or DetentionCalculator.DEFAULT_DEMURRAGE_RATE,
+                meta_data=meta_data or {},
             )
             session.add(wait_time)
             await session.commit()
@@ -642,6 +646,9 @@ class DockScheduler:
         shipment_id: Optional[UUID] = None,
         operation_id: Optional[UUID] = None,
         priority: str = 'normal',
+        driver_id: Optional[UUID] = None,
+        compliance_required: bool = False,
+        meta_data: Optional[dict] = None,
         db: Optional[AsyncSession] = None
     ) -> DockAppointment:
         """Schedule a dock appointment"""
@@ -686,7 +693,13 @@ class DockScheduler:
                 scheduled_start=scheduled_start,
                 scheduled_end=scheduled_end,
                 carrier_id=carrier_id,
-                priority=priority
+                priority=priority,
+                # Declared on `DockAppointmentCreate` and dropped until FS-669. `driver_id`
+                # is who is expected at the door, and `compliance_required` is whether the
+                # visit needs a check — both are booking facts, not lifecycle state.
+                driver_id=driver_id,
+                compliance_required=compliance_required,
+                meta_data=meta_data or {},
             )
             session.add(appointment)
             await session.commit()

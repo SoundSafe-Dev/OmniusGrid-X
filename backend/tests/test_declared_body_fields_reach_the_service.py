@@ -52,15 +52,12 @@ QUALIFIER = re.compile(r"(_expires_at|_at$|_by$|_status$|_id$|_reason$|_note)")
 
 #: Routes with a declared field the handler never reads, and why each is tolerated.
 #: **Only ever shrinks.** Measured 2026-08-12.
-#: `metadata` APPEARS ON NINE OF THESE THIRTEEN, which makes it one defect wearing nine hats
-#: rather than nine findings. Every one of those tables has a `meta_data` column; the create
-#: handlers simply never pass it, so a caller can attach metadata to a shipment, a yard move or
-#: a dock appointment and watch it vanish with a 200. `POST /yard/checkpoints` was the same and
-#: is wired (FS-660), which is why it is absent below.
-#:
-#: Left as one recorded pattern rather than nine wiring edits in a single pass: each handler
-#: needs its service signature widened, and doing that blind across four modules is how a
-#: mechanical change becomes a merge conflict in somebody else's lane.
+#: `metadata` ONCE APPEARED ON NINE OF THIRTEEN ENTRIES — one defect wearing nine hats rather
+#: than nine findings. Every one of those tables has a `meta_data` column the handler never
+#: passed, so metadata attached to a shipment, a yard move or a dock appointment vanished with
+#: a 200. Closed on the six routes in this lane by FS-669; the one that remains
+#: (`logistics_correlation:POST /load-quality`) is Harsh's, and is left for him rather than
+#: edited across a lane boundary.
 UNREAD: dict[str, list[str]] = {
     #: Harsh's lane.
     "analysis_sessions:POST /{session_id}/correlate": ["auto_integrate"],
@@ -68,29 +65,18 @@ UNREAD: dict[str, list[str]] = {
     "kanban:POST /rules": ["organization_id"],
     #: DELIBERATE, same shape as the check-in above. Harsh's lane.
     "kanban:POST /tasks": ["status"],
-    #: Harsh's lane.
+    #: Harsh's lane. Includes `metadata`, the pattern closed on my side by FS-669.
     "logistics_correlation:POST /load-quality": ["claim_amount", "claim_filed", "manufacturing_correlation_score", "metadata", "resolved_at", "root_cause_asset", "root_cause_operation", "trailer_id"],
     #: Harsh's lane.
     "nlp_correlation:POST /intake/cross-correlate": ["auto_integrate"],
-    #: `approved_by` has no producer — the approval flow does not exist, and the rest of it
-    #: moved to the response (FS-668). `currency` is genuine creation input.
-    "transportation:POST /freight-charges": ["approved_by", "currency", "metadata"],
-    "transportation:POST /load-plans": ["metadata", "temperature_zones"],
-    #: SCHEMA-SIDE. `create_route` always runs the optimizer and sets all four of these from
-    #: its result, so wiring a caller's value would let somebody override a computed route
-    #: distance — and that distance is billed per mile. `is_active` is the exception: nothing
-    #: computes it, and it is genuine creation input.
+    #: SCHEMA-SIDE. `create_route` always runs the optimizer and sets all four from its
+    #: result, so honouring a caller's value would let somebody override a computed route
+    #: distance — and that distance is billed per mile. `is_active` is the exception:
+    #: nothing computes it, and it is genuine creation input.
     "transportation:POST /routes": ["estimated_duration_hours", "fuel_cost_estimate", "is_active", "toll_cost_estimate", "total_distance_miles"],
-    #: Was eight fields; four were wired (FS-667) and three moved to the response schema
-    #: as lifecycle state (FS-668). `metadata` is the systematic one — see the note below.
-    "transportation:POST /shipments": ["metadata"],
-    #: `driver_id` and `compliance_required` are genuine creation input; the lifecycle
-    #: fields moved to the response (FS-668).
-    "yard:POST /dock/appointments": ["compliance_required", "driver_id", "metadata"],
-    #: SCHEMA-SIDE. Every figure here is COMPUTED by `close_driver_wait_time` at checkout.
+    #: SCHEMA-SIDE. Every figure is COMPUTED by `close_driver_wait_time` at checkout.
     #: Honouring a caller's `detention_charge` would let an operator bill their own number.
-    "yard:POST /driver-wait-times": ["check_out_at", "demurrage_charge", "demurrage_minutes", "detention_charge", "detention_minutes", "docked_at", "is_billed", "metadata", "total_wait_minutes", "unloaded_at"],
-    "yard:POST /moves": ["metadata"],
+    "yard:POST /driver-wait-times": ["check_out_at", "demurrage_charge", "demurrage_minutes", "detention_charge", "detention_minutes", "docked_at", "is_billed", "total_wait_minutes", "unloaded_at"],
     #: DELIBERATE. The service sets 'checked_in'; honouring a caller's status would let
     #: somebody check a trailer straight to 'checked_out' without it entering the yard.
     "yard:POST /trailers/checkin": ["status"],
