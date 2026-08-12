@@ -185,10 +185,24 @@ class TestTheReadmeAgreesOnTheCount:
 
 def _spell(n: int) -> str:
     """Just the range this document is plausibly in. A wrong word fails loudly, which is
-    the point — the alternative is a digit nobody reads."""
+    the point — the alternative is a digit nobody reads.
+
+    EXTENDED THROUGH 199 when class 100 landed and this raised "outside the range this
+    speller covers". The range was written when the highest class was in the sixties and the
+    ceiling was never revisited; the guard failed honestly rather than passing, which is the
+    behaviour that made it worth extending rather than replacing. It will need doing again at
+    200, and saying so here is cheaper than pretending otherwise.
+    """
     tens = {50: "fifty", 60: "sixty", 70: "seventy", 80: "eighty", 90: "ninety"}
     units = ["", "-one", "-two", "-three", "-four", "-five", "-six", "-seven", "-eight",
              "-nine"]
+    if n == 100:
+        return "one hundred"
+    if 100 < n < 200:
+        rest = n - 100
+        if rest < 10:
+            return "one hundred and" + units[rest].replace("-", " ")
+        return "one hundred and " + _spell(rest)
     if n in tens:
         return tens[n]
     base = (n // 10) * 10

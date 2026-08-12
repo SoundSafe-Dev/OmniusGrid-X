@@ -1707,3 +1707,50 @@ read by `yard_management.py`. Third name-collision false positive this week, aft
 `/insights/activations/{id}/reject` reported as a defect in `/strategic/recommendations/{id}/
 approve`, and a tail-match that conflated two unrelated routes. Anchor on the module, not the
 name.
+
+## Class 100 — two fabricated defaults compounding into a billed figure (FS-665)
+
+Rule 133 said `|| 0` on a possibly-absent value is a measurement invented from nothing. That
+sweep ran over the frontend. Running it over `app/services/` finds ten numeric fallbacks, of
+which most are harmless — sort keys, a peak-hour range the pattern misread — and two are in the
+same call chain:
+
+    get_shipment_costs:   distance = route.total_distance_miles if … else 500.0
+    calculate_linehaul:   rate_per_mile = rate_per_mile or 2.50
+
+Neither knows about the other, and neither reports that it fired. A shipment with no route and
+no contract rate is billed **500 invented miles at an invented $2.50** — quantified rather
+than asserted:
+
+    linehaul        $1,250.00
+    fuel surcharge  $   83.33
+    total           $1,333.33
+
+and the endpoint returns `distance_miles: 500.0`, which the Transportation page renders as
+"500 mi".
+
+**A fabricated rate and a contracted one at the same value produce byte-identical results**, so
+no caller can distinguish them. That is what makes the number dangerous rather than merely
+wrong, and it is the property a fix has to remove.
+
+Why each survived is worth recording, because neither looks careless in place. The 500 sits
+under a long correct comment about a Decimal/float `TypeError` — a real fix, beside which the
+fabrication went unremarked. The 2.50 is labelled *"Default rates if not specified"*, which is
+true and says nothing about the result being billed.
+
+Not fixed here: `linehaul.amount` and `total_cost` are non-optional floats, and answering 0 for
+an unknown distance fabricates a cheap shipment exactly as 500 fabricates an expensive one.
+There is no honest number — the endpoint needs to be able to say "not estimated", which is a
+contract change and a decision about what the figure means. Pinned as a passing test that
+states the amount, so the finding lives beside the code rather than in a commit message.
+
+## Rule 147 — defaults compound, and no single site looks wrong
+
+Each of these two literals is defensible alone: a nominal distance for an unrouted shipment, a
+list rate for an uncontracted carrier. Neither function can see the other, so neither can know
+it is the second guess in a chain. The damage is the product, and the product is invisible from
+either site.
+
+When a sweep finds fabricated defaults, do not rank them individually — **follow the call
+chain** and ask what the caller does with the result. Two three-line defaults produced a
+four-figure invoice that no reader of either function would predict.

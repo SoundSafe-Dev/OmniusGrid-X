@@ -927,6 +927,12 @@ one of its findings. The habit that catches it:
      `data_shedding.py`. Common column names live on a dozen models. Same-module readers were
      the only signal that survived. Third name-collision false positive this week.
 
+147. **Defaults compound, and no single site looks wrong.**
+     A nominal 500 miles for an unrouted shipment and a list rate of $2.50 for an uncontracted
+     carrier are each defensible alone, and neither function can see the other. The product was
+     a $1,333.33 invoice no reader of either would predict. Do not rank fabricated defaults
+     individually — follow the call chain and ask what the caller does with the result.
+
 ---
 
 ## Open observations, not yet tickets

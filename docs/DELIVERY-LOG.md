@@ -9236,3 +9236,46 @@ Rule 133, in a money calculation. The client is already able to be honest about 
 `linehaul.amount` and `total_cost` should say when distance is unknown: they are non-optional
 floats, and answering 0 fabricates a cheap shipment exactly as 500 fabricates an expensive one.
 That is a decision about what the endpoint promises, not a wiring fix.
+
+### Two fabricated defaults compounding into a billed figure — class 100
+
+Rule 133's sweep, run over `app/services/` for the first time. Ten numeric fallbacks; most
+harmless — sort keys, a peak-hour range the pattern misread — and **two in the same call
+chain**:
+
+    get_shipment_costs:   distance = route.total_distance_miles if … else 500.0
+    calculate_linehaul:   rate_per_mile = rate_per_mile or 2.50
+
+Neither knows about the other, and neither reports that it fired. Quantified rather than
+asserted, by running the real engine:
+
+    linehaul        $1,250.00     (500 invented miles x $2.50 invented rate)
+    fuel surcharge  $   83.33
+    total           $1,333.33
+
+and the endpoint returns `distance_miles: 500.0`, which the Transportation page renders as
+"500 mi".
+
+**A fabricated rate and a contracted one at the same value produce byte-identical results.**
+That is what makes the figure dangerous rather than merely wrong, and it is the property a fix
+has to remove.
+
+Neither literal looks careless in place, which is why both survived. The 500 sits under a long,
+correct comment about a Decimal/float `TypeError` — a real fix, beside which the fabrication
+went unremarked. The 2.50 is labelled *"Default rates if not specified"*, true and silent about
+the result being billed.
+
+Not fixed: `linehaul.amount` and `total_cost` are non-optional floats, and answering 0 for an
+unknown distance fabricates a cheap shipment exactly as 500 fabricates an expensive one. There
+is no honest number — the endpoint needs to be able to say "not estimated", which is a contract
+change and a decision about what the figure means. Pinned as five passing tests that state the
+amount, so the finding lives beside the code.
+
+Recorded as **class 100** with rule 147 — defaults compound, and no single site looks wrong;
+follow the call chain rather than ranking fallbacks individually.
+
+**Class 100 also broke the guard that counts the classes.** `_spell()` covered fifty to
+ninety-nine, written when the highest class was in the sixties, and raised *"class count 100 is
+outside the range this speller covers"*. It failed honestly rather than passing over a number
+it could not render, which is why it was worth extending rather than replacing — it now covers
+through 199 and says in its docstring that it will need doing again at 200.
