@@ -43,13 +43,26 @@ export const KanbanBoard: React.FC<KanbanBoardProps> = ({
     if (!draggedTaskId) return;
     try {
       await onDragEnd(draggedTaskId, columnId);
+    } catch (error) {
+      // NOT RETHROWN, AND THE PREVIOUS COMMENT HERE WAS WRONG ABOUT WHY. It said "the
+      // error still propagates to the caller" — but the caller is `KanbanColumn`'s
+      // `onDrop`, typed `(columnId: string) => void` and invoked from a DOM drop handler
+      // that discards the returned promise. Nothing can catch it, so a rejection became an
+      // unhandled rejection, which is how it showed up: one error in an otherwise green
+      // test run, sitting there ready to mask a real one.
+      //
+      // `Kanban.tsx` already catches this and shows the user "That task could not be moved
+      // — it is still in the column it started in", so today the promise never rejects in
+      // production. That makes this the trap rather than the failure — and the log is what
+      // keeps a future `onDragEnd` that forgets to catch from failing in silence.
+      console.error('Failed to move task:', error);
     } finally {
       // FINALLY, NOT AFTER THE AWAIT. `onDragEnd` rejects when the store's move is refused
       // — a WIP limit, a permission, a dropped connection — and the resets used to sit
       // after it, so a rejection skipped them. The board kept holding the task with the
       // target column still highlighted, and **the next drop anywhere moved that task**
       // rather than the one being dragged. The gesture has ended either way; whether it
-      // succeeded is a separate question, and the error still propagates to the caller.
+      // succeeded is a separate question.
       setDraggedTaskId(null);
       setDragOverColumnId(null);
     }

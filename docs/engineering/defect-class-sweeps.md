@@ -106,6 +106,8 @@ to ask where else it could live.
 | A container default that contradicts its column | every `field=x or {}` / `or []` in `app/` | **1 live, and I had shipped it an hour earlier: every load-plan create 500'd** | `test_json_defaults_match_their_column.py` |
 | A field you can set once and never correct | every `*Create` against its `*Update` sibling | **26 live across driver, shipment and trailer, incl. a seal replaced at the gate that could be marked intact while naming the old seal** | `test_what_can_be_created_can_be_corrected.py` |
 | A handler branching on a key its schema cannot carry | every key read off a dumped model, AST-followed | **1 live: a tenant-scoped workcell check that has never executed, so no asset could be moved between workcells** | `test_handlers_branch_on_keys_their_schema_carries.py` |
+| A write field TS calls optional that the server requires | every TS interface named like a backend model | **1 live: `AssetCreate.workcellId?` against a NOT NULL column** | `test_optional_in_typescript_is_optional_on_the_server.py` |
+| An async handler whose rejection has no owner | every awaiting async handler passed to a JSX prop | **1 live, found by an unhandled-rejection line under a green run rather than by any assertion** | `asyncHandlersOwnTheirRejections.test.ts` |
 
 Twenty-nine of these carry a numbered section below. **Response-shape mismatch is the
 exception**: it was swept in the same pass as the `get_db` work and came back clean, so

@@ -1868,3 +1868,34 @@ makes "assert the predicate is present in the source" not a weaker substitute fo
 test but the only test available — and it should say so, in the test, so the next reader does
 not delete it as a tautology or trust it as proof of behaviour. Both files here now name which
 control they actually hold.
+
+## Rule 154 — read the runner's own output, not only the pass count
+
+The frontend suite finished **1,056 passed**, and underneath it, in the same block as the
+timings, **`Errors 1`**.
+
+Nothing had failed. An unhandled rejection escaped during a kanban test, `vitest` noticed, and
+reported it in a place a green run trains you not to read. It had been there for as long as the
+test had.
+
+The pass count summarises what you thought to assert. The error line is what the runtime
+noticed without being asked, which makes it strictly more informative — it is the only part of
+the output that can tell you about a failure mode you did not think of. A run that is green
+except for a line nobody reads is exactly where the next real one will sit unnoticed.
+
+## Rule 155 — `() => Promise<void>` is assignable to `() => void`, and that is where rejections go
+
+`KanbanBoard.handleDrop` is `async`. It is passed to `KanbanColumn`'s `onDrop`, declared
+`(columnId: string) => void`, and called from a DOM drop handler that discards the return
+value. TypeScript permits this assignment deliberately — a caller that ignores a return value
+should not care that one exists — so the compiler has nothing to say, and the rejection has
+nowhere to go.
+
+What makes it worth a rule rather than a fix is the comment that sat above it: *"the error
+still propagates to the caller."* Written in good faith, plausible on the line, and false —
+there is no caller, only an event dispatcher. The claim survived because nobody traced the
+prop through the child component's type, and a claim about error propagation is exactly the
+kind that is never tested, because testing it means asserting on something invisible.
+
+When a handler is async, find who awaits it before believing anything about where its failure
+goes. If the answer is "a JSX prop", the answer is nobody.

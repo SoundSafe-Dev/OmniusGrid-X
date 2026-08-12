@@ -984,6 +984,20 @@ one of its findings. The habit that catches it:
      situation where each layer is individually unobservable, so asserting the second layer
      exists in the source is not a weaker test, it is the only one available.
 
+154. **Read the runner's own output, not only the pass count.**
+     1,056 passed and `Errors 1` underneath it — an unhandled rejection the runner reported
+     and no assertion covered. It had been there for as long as the test had, and a run that
+     is green except for a line nobody reads is where the next real error goes to hide. The
+     pass count is a summary of what you asserted; the error line is what the runtime noticed
+     on its own, and it is strictly more informative for being uninvited.
+
+155. **`() => Promise<void>` is assignable to `() => void`, and that is where rejections go.**
+     An async handler passed to a JSX prop returns a promise the DOM discards. The compiler
+     permits it by design, so nothing flags it — and a comment claiming "the error propagates
+     to the caller" can sit above it for months while the caller is an event dispatcher that
+     never looks. When a handler is async, find who awaits it before believing any claim
+     about where its failure goes.
+
 ---
 
 ## Open observations, not yet tickets

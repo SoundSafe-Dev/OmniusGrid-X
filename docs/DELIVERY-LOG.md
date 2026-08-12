@@ -9589,3 +9589,29 @@ constructed.
   RLS holding depends on the database ROLE and a BYPASSRLS connection turns the same request
   into a genuine cross-tenant write. But no behavioural test can currently distinguish it, so
   it is pinned statically instead, and both files now say which control they actually hold.
+
+### One error line in an otherwise green run
+
+The frontend suite reported **1,056 passed** and, underneath it, **`Errors 1`** — not a failing
+assertion, an unhandled rejection the runner noticed and nothing owned.
+
+`KanbanBoard.handleDrop` is `async` and is passed to `KanbanColumn`'s `onDrop`, which is typed
+`(columnId: string) => void` and called from a DOM drop handler. TypeScript allows
+`() => Promise<void>` where `() => void` is expected, so the compiler had nothing to say, and
+the promise it returns is discarded. Its own comment made the claim explicitly — *"the error
+still propagates to the caller"* — and there is no caller.
+
+`Kanban.tsx` catches this and shows the user *"That task could not be moved"*, so the promise
+never rejects in production today. That makes it a trap rather than a live failure — and the
+trap is that a future `onDragEnd` which forgets to catch fails in complete silence.
+
+**The sweep came back clean.** Thirty-six awaiting async handlers are passed to JSX props;
+after this fix every one is guarded. Two detector corrections got it there, both of the
+recurring kind — a handler that delegates to something that catches is safe, and the regex
+capturing async arrows used `\([^)]*\)`, so `runAction(what: string, action: () => Promise<void>)`
+was never captured and nothing could delegate to it. Uncorrected, either would have produced
+seven confident false positives in one file.
+
+The guard was written **because** the sweep was clean, with the try/finally that shipped as its
+positive control. A green run with an unread error line underneath is how the next real one
+gets missed.
