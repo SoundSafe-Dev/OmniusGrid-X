@@ -9035,3 +9035,39 @@ telling apart: fields that are genuine creation input being lost (`CarrierCreate
 and fields that are lifecycle state wrongly declared on a Create schema (`approved_at`,
 `billed_at`, `is_executed`). The first is data loss; the second is an API accepting values it
 will never honour. Both are class 99; the fix differs.
+
+### A carrier the compliance check could never call compliant
+
+The class-99 sweep listed `POST /transportation/carriers` as dropping `ctpat_expires_at`,
+`insurance_expires_at` and `is_active`. It is the sharpest of the three instances found today,
+because **the reader already existed and already depended on the dropped field**.
+
+`get_carrier_compliance` computes:
+
+    is_valid = certified AND expires_at AND expires_at > now
+
+and the create route passed `ctpat_certified` and `insurance_on_file` while discarding both
+dates. So every carrier created through the API had NULL expiries, and the compliance endpoint
+reported its C-TPAT **and** its insurance invalid — whatever the caller sent, having been told
+200 on the way in. Not merely incomplete data: a wrong answer computed from it.
+
+`is_active` went the same way, so a carrier created as inactive was stored active.
+
+Eight tests; six fail with the pass-through removed. The assertions run the **reader's own
+expression** over what the create path stored rather than checking the hand-off, because
+`assert kwargs["ctpat_expires_at"] is not None` would pass for a value the comparison still
+cannot use. Its companion asserts an expired certificate keeps reading expired — a fix that
+makes everything valid would be worse than the defect.
+
+**Three instances of one shape in a day**, and only the third made it obvious:
+
+| route | stored | dropped |
+|---|---|---|
+| `POST /yard/checkpoints` | an inspection happened | who inspected |
+| `POST /yard/trailers/checkin` | which seal | whether it was intact |
+| `POST /transportation/carriers` | certified, insured | until when |
+
+Each keeps a flag and discards the field that says what the flag is worth, and each reads as
+the more reassuring of the two possible answers. Recorded as rule 143 — when a boolean is
+stored, find the field that bounds it; the pair is almost always adjacent in the schema and
+split by the call. And rule 144 — assert the round trip through the reader, not the hand-off.

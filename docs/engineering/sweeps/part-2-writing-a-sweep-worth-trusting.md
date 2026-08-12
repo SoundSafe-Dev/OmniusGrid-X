@@ -901,6 +901,19 @@ one of its findings. The habit that catches it:
      the wiring exists, and let "does it have somewhere to land" decide whether to store it or
      refuse it.
 
+143. **When a boolean is stored, find the field that bounds it.**
+     Three instances in one day: an inspection with no inspector, a seal with no status, a
+     certification with no expiry. Each keeps a flag and discards the field saying what the
+     flag is worth, and each reads as the more reassuring of the two possible answers. The
+     carrier case had a reader already computing `certified AND expires_at AND expires_at >
+     now`, so every carrier created through the API reported invalid. Whenever a handler
+     passes a boolean, look for the adjacent qualifier — expiry, status, actor, timestamp.
+
+144. **Assert the round trip through the reader, not the hand-off.**
+     `assert kwargs["expires_at"] is not None` passes for a value the reader still cannot use.
+     Run the reader's own expression over what the writer stored — and assert the negative
+     case too, because a fix that makes everything valid is worse than the defect it replaced.
+
 ---
 
 ## Open observations, not yet tickets

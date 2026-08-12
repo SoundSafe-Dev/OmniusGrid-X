@@ -1632,3 +1632,42 @@ the default, and a column that stays empty — the caller has every reason to be
 was kept. Both ends of the round trip report success and the middle loses it. When a schema
 declares a field, follow it to storage before assuming the wiring exists; `metadata` and
 `inspector_id` were declared on the way in, declared on the way out, and connected to nothing.
+
+## Rule 143 — when a boolean is stored, find the field that bounds it
+
+Three instances of one shape landed in a single day, and only the third made it obvious.
+
+| route | stored | dropped |
+|---|---|---|
+| `POST /yard/checkpoints` | an inspection happened | **who inspected** |
+| `POST /yard/trailers/checkin` | which seal | **whether it was intact** |
+| `POST /transportation/carriers` | certified, insured | **until when** |
+
+Every one keeps a flag and discards the field that says what the flag is worth. A certification
+with no expiry, a seal with no status, an inspection with no inspector: each reads as a positive
+claim that cannot be checked, and each is the more reassuring of the two possible readings.
+
+The carrier case is the one to remember, because **the reader already existed and already
+depended on the dropped field**. `get_carrier_compliance` computes
+
+    is_valid = certified AND expires_at AND expires_at > now
+
+so a NULL expiry makes it false. Every carrier created through the API reported its C-TPAT and
+its insurance **invalid**, whatever the caller sent, having been told 200 on the way in. Not
+merely incomplete data — a wrong answer computed from it.
+
+The habit that catches this: whenever a handler passes a boolean, look for the neighbouring
+field that qualifies it — an expiry, a status, an actor, a timestamp — and check it goes too.
+The pair is almost always adjacent in the schema and split by the call.
+
+## Rule 144 — assert the round trip through the reader, not the hand-off
+
+`assert kwargs["ctpat_expires_at"] is not None` would have passed for a value the compliance
+check still could not use — a string in the wrong shape, a naive datetime, a date the comparison
+rejects. The test that matters runs the **reader's own expression** over what the writer stored:
+
+    is_valid = stored["ctpat_certified"] and stored["ctpat_expires_at"] \
+               and _as_utc(stored["ctpat_expires_at"]) > now
+
+and its companion asserts an expired certificate still reads expired — because a fix that makes
+everything valid is worse than the defect it replaces.
