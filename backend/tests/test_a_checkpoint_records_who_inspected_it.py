@@ -247,23 +247,25 @@ class TestATrailerCheckInKeepsWhatItWasTold:
         self._checkin(c, status="checked_out")
         assert "status" not in checked_in[0]
 
-    def test_an_unstated_seal_is_recorded_as_intact_which_is_a_finding(self, client, checked_in):
-        """PINS A DEFECT THIS FIX DID NOT CLOSE, deliberately.
+    def test_an_unstated_seal_is_not_recorded_as_intact(self, client, checked_in):
+        """THE FINDING THIS FILE ONCE PINNED AS OPEN, now closed (FS-666).
 
-        `YardTrailerBase.seal_status` is `str = "intact"` — not Optional. So a check-in that
-        says nothing about the seal records **"intact"** as a positive claim: a value invented
-        at the moment nothing is known, and the most reassuring possible answer. Rule 133, on
-        a security field.
+        `YardTrailerBase.seal_status` was `str = "intact"` and the column carried the same
+        server default from migration 050 — so a check-in that said nothing about the seal
+        recorded a positive security claim, the most reassuring of intact/broken/missing,
+        written precisely when nobody looked.
 
-        Not changed here, and the reason is worth stating rather than fixing quietly. The
-        column carries the same default, so making the schema `Optional[str] = None` moves the
-        fabrication one layer down rather than removing it — the honest fix is a migration to
-        a nullable column with no default, plus a decision about what existing rows mean. That
-        is a contract change with readers to find, not a wiring fix.
+        Both halves are gone: the schema field is `Optional[str] = None` and migration 068
+        drops the server default. Silence now stores NULL, which is what silence means.
 
-        Recorded as a test rather than a comment so it cannot be lost, and so the day somebody
-        makes the column nullable this fails and points at the reason.
+        What migration 068 could NOT do is reverse 050's backfill — every row that had never
+        recorded a check now says 'intact' and is indistinguishable from a real one. Undoing
+        that would erase the genuine checks along with the invented ones. Recorded in the
+        migration header rather than worked around.
         """
         c, _ = client
         self._checkin(c, seal_number="S-99")
-        assert checked_in[0].get("seal_status") == "intact"
+        assert checked_in[0].get("seal_status") is None, (
+            "an unstated seal is being reported as intact again — check the schema default "
+            "and the column default together; either one alone restores the claim"
+        )

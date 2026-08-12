@@ -229,7 +229,10 @@ class YardTrailerBase(BaseModel):
     status: str = "checked_in"  # checked_in, docked, yard, checked_out
     yard_location: Optional[str] = None
     seal_number: Optional[str] = None
-    seal_status: str = "intact"  # intact, broken, missing
+    #: Optional, not `str = "intact"` (FS-666). A caller who omits it is saying nothing
+    #: about the seal, and the schema used to turn that silence into a report of an intact
+    #: seal before the value ever reached the database.
+    seal_status: Optional[str] = None  # intact, broken, missing; None = not reported
     weight_lbs: Optional[float] = None
     temperature_setpoint: Optional[float] = None
     temperature_actual: Optional[float] = None

@@ -880,7 +880,11 @@ class YardTrailer(Base):
     status = Column(String(50), default="checked_in")  # checked_in, docked, yard, checked_out
     yard_location = Column(String(100))  # grid position or zone
     seal_number = Column(String(50))
-    seal_status = Column(String(20), default="intact")  # intact, broken, missing
+    #: NO DEFAULT (FS-666). `default="intact"` made a check-in that said nothing about the
+    #: seal record a positive security claim — the most reassuring of intact/broken/missing,
+    #: written precisely when nobody looked. Migration 068 drops the server default that
+    #: 050 added for the same reason.
+    seal_status = Column(String(20))  # intact, broken, missing; NULL = not reported
     weight_lbs = Column(Numeric)
     # migration 042 — fleet UI columns
     license_plate = Column(String(32))
