@@ -62,11 +62,20 @@ UNREAD: dict[str, list[str]] = {
         "actual_delivery", "actual_pickup", "metadata", "priority", "route_id", "status",
         "temperature_max", "temperature_min",
     ],
-    #: WIRING-SIDE, and the strongest remaining case. `total_distance_miles` is read by
-    #: `transportation_management.py:939` and `estimated_duration_hours` by `:356` — real
-    #: creation input with readers that depend on it, the carrier's shape. Next after the
-    #: driver fix, and left here rather than done in the same pass because it needs its own
-    #: look at whether a route's distance is operator-supplied or derived from its stops.
+    #: SCHEMA-SIDE. **This entry said the opposite for one pass, and rule 145 overturned it.**
+    #:
+    #: It was recorded as "the strongest remaining wiring case" because
+    #: `total_distance_miles` has a same-module reader. Reading the WRITER settled it the
+    #: other way: `create_route` always runs `route_optimizer.optimize_route` and sets all
+    #: four of these from its result — haversine, or OSRM road distance when configured.
+    #:
+    #: So they have another producer on every create, and wiring the caller's value through
+    #: would let somebody override a computed route distance with any number they liked —
+    #: and that number reaches `get_shipment_costs`, which bills linehaul and fuel surcharge
+    #: per mile. The honest fix is to take them off `RouteCreate`.
+    #:
+    #: `is_active` is the exception in this list: nothing computes it, and it is genuine
+    #: creation input being dropped.
     "transportation:POST /routes": [
         "estimated_duration_hours", "fuel_cost_estimate", "is_active", "toll_cost_estimate",
         "total_distance_miles",

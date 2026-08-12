@@ -9188,3 +9188,51 @@ That is the **third name-collision false positive this week**, after
 `/strategic/recommendations/{id}/approve`, and a tail-match conflating two unrelated routes.
 Recorded as rule 146 — anchor on the module, not the name — alongside rule 145, read the reader
 before deciding which way a dropped field is wrong.
+
+### Rule 145 overturning my own entry, one pass after I wrote it
+
+Last pass I recorded `POST /routes` as "the strongest remaining wiring case" because
+`total_distance_miles` has a same-module reader, and left it for its own pass. Applying rule
+145 — read the reader, and ask whether the value has another producer — settled it the other
+way in ten minutes.
+
+`create_route` **always** runs `route_optimizer.optimize_route` and sets `total_distance_miles`,
+`estimated_duration_hours`, `fuel_cost_estimate` and `toll_cost_estimate` from its result:
+haversine, or OSRM road distance when configured. Every route created through the API already
+has a computed distance.
+
+So wiring the caller's value through would be the wrong fix, and not harmlessly: it would let
+somebody override a computed route distance with any number they liked, and that number reaches
+`get_shipment_costs`, which bills linehaul and fuel surcharge **per mile**. The entry is now
+recorded as schema-side, with `is_active` called out as the one field in the list that is
+genuine creation input.
+
+Twice now the register has held an entry whose stated reason was wrong — the driver deferral,
+and this. Both were resolved by reading rather than deciding, and in both cases the reading took
+minutes. The register is doing what it should: holding a claim still long enough to be checked.
+
+### A fabricated 500 miles, in a billing calculation
+
+Found while reading the above, and left as a finding rather than a fix because it is a contract
+question.
+
+`get_shipment_costs` computes:
+
+    distance = float(route.total_distance_miles) if route and route.total_distance_miles
+               is not None else 500.0
+
+and feeds that into `calculate_linehaul` and `calculate_fuel_surcharge`, both per-mile. It then
+returns `'distance_miles': distance` — so the fabricated **500** is reported as the shipment's
+distance, and the frontend renders "500 mi".
+
+Since every route created through the API now carries a real distance, the fallback fires for
+shipments with **no route at all** — and the existing comment beside it says as much: *"the
+endpoint only worked for shipments with NO route — the case with the least to bill."* So a
+shipment with no route is billed 500 miles of linehaul plus fuel surcharge on the same 500.
+
+Rule 133, in a money calculation. The client is already able to be honest about it —
+`distanceMiles: number | null`, and `TransportationManagement.tsx:1235` hides the row when null
+— so the wire contract can express "unknown" today. What cannot be settled by reading is what
+`linehaul.amount` and `total_cost` should say when distance is unknown: they are non-optional
+floats, and answering 0 fabricates a cheap shipment exactly as 500 fabricates an expensive one.
+That is a decision about what the endpoint promises, not a wiring fix.
