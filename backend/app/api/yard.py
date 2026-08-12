@@ -572,6 +572,15 @@ async def record_checkpoint(
         checkpoint_name=data.checkpoint_name,
         weight_lbs=data.weight_lbs,
         inspection_status=data.inspection_status,
+        # BOTH OF THESE WERE DROPPED (FS-660). `YardCheckPointCreate` declares them and
+        # `YardCheckPointResponse` returns them, and the route passed neither on — so a
+        # caller recording a weigh-station or inspection checkpoint sent `inspector_id`,
+        # got 200, and read `inspector_id: null` back from a column that exists and stayed
+        # empty. On an inspection checkpoint that field IS the audit trail: who passed this
+        # trailer. Silently discarding it leaves a record that says the check happened and
+        # cannot say who made it.
+        inspector_id=data.inspector_id,
+        meta_data=data.metadata,
         db=db
     )
     return checkpoint

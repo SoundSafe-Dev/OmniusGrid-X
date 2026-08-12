@@ -576,6 +576,8 @@ class YardManagementService:
         checkpoint_name: Optional[str] = None,
         weight_lbs: Optional[float] = None,
         inspection_status: Optional[str] = None,
+        inspector_id: Optional[UUID] = None,
+        meta_data: Optional[dict] = None,
         db: Optional[AsyncSession] = None
     ) -> YardCheckPoint:
         """Record trailer passing a checkpoint"""
@@ -587,6 +589,11 @@ class YardManagementService:
                 checkpoint_name=checkpoint_name,
                 weight_lbs=weight_lbs,
                 inspection_status=inspection_status,
+                # `inspector_id` is a String(36) column, so the UUID is stringified here
+                # rather than at the call site — the route hands over what the schema
+                # parsed, and the storage shape is this layer's business.
+                inspector_id=str(inspector_id) if inspector_id else None,
+                meta_data=meta_data or {},
                 passed_at=datetime.now(timezone.utc)
             )
             session.add(checkpoint)
