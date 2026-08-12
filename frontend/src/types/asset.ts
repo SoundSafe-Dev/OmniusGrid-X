@@ -117,7 +117,12 @@ export interface AssetCreate {
   //
   // `Asset` (the RESPONSE type) keeps its `organizationId`. The server sends it; reading
   // it was never the problem.
-  workcellId?: string;
+  // REQUIRED, not optional (FS-672). `AssetCreate.workcell_id` is `UUID` with no default —
+  // migration 013 made `assets.workcell_id` NOT NULL — so omitting it is a 422, and the
+  // `?` here told TypeScript otherwise. No component constructs an `AssetCreate` today, so
+  // nothing failed; it was a trap set for whoever writes the asset form, which is the same
+  // reason the three fields below were removed rather than left as harmless noise.
+  workcellId: string;
   connectionConfig?: Record<string, any>;
   // `metadata` was declared here and `POST /assets/` does not accept it, so it was
   // discarded in silence — Pydantic ignores unknown body fields (FS-423). The column is
@@ -133,6 +138,18 @@ export interface AssetUpdate {
   serialNumber?: string;
   connectionConfig?: Record<string, any>;
   isActive?: boolean;
+  // `workcellId` IS BACK, and `assetTypeId` with it (FS-672). It was removed below for a
+  // reason that was true when it was written and is not true now: `PUT /assets/{id}` did
+  // not declare the field. The handler had always contained the tenant-scoped check for
+  // it — look the workcell up within the caller's organisation, 404 otherwise — and only
+  // the request schema was missing, so the check had never once executed and no asset
+  // could be moved between workcells. The schema now declares both.
+  //
+  // The comment below is kept rather than rewritten. It records why the field left, which
+  // is what makes it obvious that the condition has since changed; deleting it would leave
+  // this pair looking like it had always been here.
+  workcellId?: string;
+  assetTypeId?: string;
   // THREE FIELDS REMOVED HERE (FS-423): `workcellId`, `metadata` and `maintenanceMode`.
   //
   // `PUT /assets/{id}` declares none of them, and Pydantic drops unknown body fields

@@ -105,6 +105,7 @@ to ask where else it could live.
 | A field the compliance check reads that nothing writes | `hos_drive_hours_remaining` and its neighbours | **1 live, and the worst of the session: every fleet cleared of HOS violations** | `test_hos_remaining_is_derived.py` |
 | A container default that contradicts its column | every `field=x or {}` / `or []` in `app/` | **1 live, and I had shipped it an hour earlier: every load-plan create 500'd** | `test_json_defaults_match_their_column.py` |
 | A field you can set once and never correct | every `*Create` against its `*Update` sibling | **26 live across driver, shipment and trailer, incl. a seal replaced at the gate that could be marked intact while naming the old seal** | `test_what_can_be_created_can_be_corrected.py` |
+| A handler branching on a key its schema cannot carry | every key read off a dumped model, AST-followed | **1 live: a tenant-scoped workcell check that has never executed, so no asset could be moved between workcells** | `test_handlers_branch_on_keys_their_schema_carries.py` |
 
 Twenty-nine of these carry a numbered section below. **Response-shape mismatch is the
 exception**: it was swept in the same pass as the `get_db` work and came back clean, so

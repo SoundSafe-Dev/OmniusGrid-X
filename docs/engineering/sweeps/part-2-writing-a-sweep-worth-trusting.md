@@ -960,6 +960,30 @@ one of its findings. The habit that catches it:
      after a revert is one command; noticing at commit time is luck. Better: mutate a copy,
      or `git stash` first, or re-apply from the diff you still have on screen.
 
+151. **A validation block that cannot run is a defect report someone else already filed.**
+     `update_asset` checks that a caller-supplied `workcell_id` belongs to the caller's own
+     organization; `AssetUpdate` has no such field, so the check has never executed and an
+     asset could never be moved between workcells. The dead branch is the evidence: a missing
+     feature has nobody's intent behind it, and this had a tenant-scoped lookup and a 404
+     written out in full. When a handler reaches for a key its schema cannot carry, read the
+     branch before deleting it — it usually describes the capability that is missing.
+
+152. **Mutation-test the justification, not just the guard.**
+     Two claims went into this fix and both were false. *"Without an existence check a bad
+     foreign key is a 500"* — removing the check changed nothing, because the platform's error
+     handler already answers 400 with a better message, so the check was deleted. *"This test
+     proves the lookup is tenant-scoped"* — deleting the tenant predicate left every test
+     green, because RLS shadows it. A mutation that does not fail is not a formality passed;
+     it is the reason you gave being wrong, and the fix is to change the code or change the
+     claim, never to keep both.
+
+153. **A control that another control shadows can only be held statically.**
+     The workcell tenant predicate is real — RLS holding depends on the database ROLE, and a
+     BYPASSRLS connection turns the same request into a cross-tenant write — but no behavioural
+     test can distinguish it while RLS is also blocking. Defence in depth is precisely the
+     situation where each layer is individually unobservable, so asserting the second layer
+     exists in the source is not a weaker test, it is the only one available.
+
 ---
 
 ## Open observations, not yet tickets

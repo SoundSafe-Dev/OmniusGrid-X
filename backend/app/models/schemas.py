@@ -68,6 +68,20 @@ class AssetUpdate(BaseModel):
     media_config: Optional[Dict[str, Any]] = None
     is_active: Optional[bool] = None
     current_packml_state: Optional[str] = None
+    # THE HANDLER WAS ALREADY WRITTEN FOR THESE (FS-672). `update_asset` contains a
+    # tenant-scoped `if "workcell_id" in update_data` block — look the workcell up within
+    # the caller's organization, 404 if it belongs to someone else — and this schema did
+    # not declare the field, so the check has never run and an asset registered against
+    # the wrong workcell stayed there for the life of the row. The dead validation is what
+    # makes it a defect rather than a missing feature: the intent is in the file.
+    #
+    # `asset_type_id` is the same omission without the tell. It needs no handler-side
+    # check: asset types are a GLOBAL catalog and deliberately not tenant-scoped, and
+    # `app/core/errors.py` already turns a foreign-key violation into a 400 naming the
+    # column and table. A copy of the create path's check was written here and removed
+    # after mutation-testing showed it changed nothing a caller can see.
+    workcell_id: Optional[UUID] = None
+    asset_type_id: Optional[UUID] = None
 
 
 class AssetResponse(AssetBase):

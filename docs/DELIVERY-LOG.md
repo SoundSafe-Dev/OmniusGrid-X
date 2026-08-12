@@ -9548,3 +9548,44 @@ one `Optional[...]` wrapper and nothing more; `Optional[Location]` still fails, 
 case the check actually exists for. Rules 149 and 150 came out of this — the second because
 `git checkout app/models/schemas.py`, used to undo the mutation, silently took the entire
 uncommitted widening with it.
+
+### A validation block that has never run
+
+Carrying the FS-671 class across the rest of the schema file — every `*Create` against its
+`*Update` sibling, not just the three transportation ones — turned up one that is a different
+and worse shape.
+
+`update_asset` contains a **tenant-scoped validation block**: if the caller sends
+`workcell_id`, look the workcell up *within the caller's organization* and 404 if it belongs to
+someone else. Somebody wrote that deliberately; it is the same cross-tenant check the create
+path performs. `AssetUpdate` declares no `workcell_id`, so `"workcell_id" in update_data` is
+always False, **the block has never executed, and an asset cannot be moved between workcells at
+all** — a sensor registered against the wrong line stays there for the life of the row.
+
+The dead check is what makes this a defect rather than a missing feature. The intent is in the
+file; only the schema is missing. `asset_type_id` is the same omission without the tell.
+
+**The sweep, and two detectors thrown away before one worked.** For every API handler taking a
+pydantic model, follow the variable it dumps into and require every key read off that dump to
+exist on the model. The first version matched `'key' in update_data` textually against a list of
+likely variable names and found **one key across forty-three handlers** — a detector with no
+negative control is not a sweep, it is a restatement of what you already found by hand. The
+second followed the dump variable properly and flagged two `organization_id` sites that were
+`payload["organization_id"] = org_id`: assignments, not reads. A subscript is a read only when
+its AST context is `Load`. The third finds ten sites, eight of them reachable, with
+`update_user` reading `role` and `is_active` as a negative control that is real rather than
+constructed.
+
+**Two of my three claims were false, and mutation-testing is what said so.**
+
+* *"Without an `asset_type_id` existence check a bad id is a 500."* Removing the check left
+  everything green: `app/core/errors.py` already maps a foreign-key violation to a 400 reading
+  *"Reference in 'asset_type_id' does not exist in 'asset_types'"*, which is a better message
+  than the copy produced. **The check was deleted.** A guard whose mutation test does not fail
+  is asserting that the guard exists, not that it works.
+* *"The behavioural test proves the workcell lookup is tenant-scoped."* Deleting
+  `Workcell.organization_id == org_id` also left all five passing — RLS hides the other
+  tenant's workcell from that session regardless. The predicate is still a real control, because
+  RLS holding depends on the database ROLE and a BYPASSRLS connection turns the same request
+  into a genuine cross-tenant write. But no behavioural test can currently distinguish it, so
+  it is pinned statically instead, and both files now say which control they actually hold.

@@ -1812,3 +1812,59 @@ A mutation test is a deliberate temporary edit to a file you are actively changi
 it the worst possible place to reach for a HEAD-restoring command. Mutate a copy, or `git
 stash` first, or re-apply from the diff still on screen — and run `git status` after any
 revert, because "did my work survive that" is one command and noticing at commit time is luck.
+
+## Rule 151 — a validation block that cannot run is a defect report someone else already filed
+
+`update_asset` opens with a tenant-scoped check: if the caller sent `workcell_id`, look the
+workcell up **within the caller's organization** and 404 if it belongs to somebody else. It is
+the same cross-tenant check `create_asset` performs, written out in full — the scoped `select`,
+the `scalar_one_or_none`, the explicit 404.
+
+`AssetUpdate` declares no `workcell_id`. The condition has always been False.
+
+So the product cannot move an asset between workcells — a sensor registered against the wrong
+line stays there for the life of the row — and the file *looks* like it supports exactly that.
+The dead branch is what separates this from a missing feature. A feature nobody built has
+nobody's intent behind it and no artefact to find; this had a design decision (scope the
+lookup, 404 rather than 403) sitting unreachable in the handler, which is a note from a
+previous developer saying what the endpoint was meant to do.
+
+Read the branch before deleting it. The instinct on finding unreachable code is to remove it,
+and here that would have converted a defect with evidence into a missing feature with none.
+
+## Rule 152 — mutation-test the justification, not just the guard
+
+Two claims went into this fix. Both were false, and the only thing that said so was running the
+mutation and watching nothing fail.
+
+*"Adding a foreign key to an Update schema without the create path's existence check turns a
+bad id into a 500."* Removing the check left all five behavioural tests green. `core/errors.py`
+already maps a foreign-key violation to a 400 reading *"Reference in 'asset_type_id' does not
+exist in 'asset_types'"* — more specific than the message my copy produced. The check was
+deleted, and the test that was written to pin it now pins the platform's handler instead.
+
+*"This test proves the workcell lookup is tenant-scoped."* Deleting
+`Workcell.organization_id == org_id` also left all five green, because RLS hides the other
+tenant's workcell from that session anyway.
+
+A mutation that does not fail is not a formality you have discharged. It is your stated reason
+turning out to be wrong, and there are only two honest responses: change the code, or change
+the claim. Keeping both — a redundant check plus a comment explaining a danger that does not
+exist — is how a codebase accumulates defences against imaginary things while the real ones go
+unguarded.
+
+## Rule 153 — a control that another control shadows can only be held statically
+
+The workcell tenant predicate is not redundant. RLS holding depends on the database ROLE, and a
+connection with BYPASSRLS turns the same request into a genuine cross-tenant write — the
+argument `create_dock_door` already makes a few files over, about the same pair of controls.
+
+But it cannot be observed. While RLS is also blocking, no behavioural test can tell a handler
+that scopes its lookup from one that does not, and the mutation above proves it: the suite is
+green either way.
+
+Defence in depth is precisely the situation where each layer is individually invisible. That
+makes "assert the predicate is present in the source" not a weaker substitute for a behavioural
+test but the only test available — and it should say so, in the test, so the next reader does
+not delete it as a tautology or trust it as proof of behaviour. Both files here now name which
+control they actually hold.

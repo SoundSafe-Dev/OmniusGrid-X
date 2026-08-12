@@ -186,6 +186,13 @@ async def update_asset(
         raise HTTPException(status_code=404, detail="Asset not found")
 
     update_data = asset_data.model_dump(exclude_unset=True)
+    # NO EXPLICIT asset_type_id CHECK HERE, and that is deliberate. One was written to
+    # mirror `create_asset`, justified as "otherwise a bad id is a 500" — and
+    # mutation-testing it showed the claim was false: `app/core/errors.py` already maps a
+    # foreign-key violation to a 400 reading "Reference in 'asset_type_id' does not exist
+    # in 'asset_types'", which is more specific than the message the copy would have
+    # produced. Asset types are a global catalog (see `GET /assets/types/`), so there is
+    # no tenant predicate to add either, and the check was redundant in full.
     if "workcell_id" in update_data:
         workcell = (
             await db.execute(
