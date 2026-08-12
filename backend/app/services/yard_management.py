@@ -148,6 +148,11 @@ class YardManagementService:
         trailer_type: Optional[str] = None,
         seal_number: Optional[str] = None,
         weight_lbs: Optional[float] = None,
+        seal_status: Optional[str] = None,
+        temperature_setpoint: Optional[float] = None,
+        temperature_actual: Optional[float] = None,
+        yard_location: Optional[str] = None,
+        meta_data: Optional[dict] = None,
         db: Optional[AsyncSession] = None
     ) -> YardTrailer:
         """Process trailer check-in to yard"""
@@ -161,6 +166,16 @@ class YardManagementService:
                 trailer_type=trailer_type,
                 seal_number=seal_number,
                 weight_lbs=weight_lbs,
+                # `seal_status` falls back to the column default ('intact') when the caller
+                # says nothing, rather than being written as NULL — an unstated seal is not
+                # the same claim as a seal reported intact, but the column has carried that
+                # default since it was created and changing it is a migration, not a wiring
+                # fix. What matters here is that a caller who DOES report 'broken' is heard.
+                **({"seal_status": seal_status} if seal_status else {}),
+                temperature_setpoint=temperature_setpoint,
+                temperature_actual=temperature_actual,
+                yard_location=yard_location,
+                meta_data=meta_data or {},
                 status='checked_in',
                 check_in_at=datetime.now(timezone.utc)
             )

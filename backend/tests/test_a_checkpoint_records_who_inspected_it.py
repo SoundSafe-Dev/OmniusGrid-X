@@ -151,3 +151,119 @@ class TestWhatTheRouteAlreadyDidRight:
         )
         assert response.status_code == 200
         assert recorded[0]["inspector_id"] is None
+
+
+class TestATrailerCheckInKeepsWhatItWasTold:
+    """The same class, five fields wide, on the route beside it (FS-661).
+
+    `POST /yard/trailers/checkin` passed eight fields to the service and dropped five that
+    `YardTrailerCreate` declares and `yard_trailers` has columns for: `seal_status`,
+    `temperature_setpoint`, `temperature_actual`, `yard_location` and `metadata`.
+
+    `seal_number` was passed and `seal_status` was not, which is the pairing worth naming: the
+    record said WHICH seal and could not say whether it was intact. On a yard-security
+    check-in that is the same defect as the checkpoint with no inspector — the record of the
+    check exists and the finding does not.
+    """
+
+    @pytest.fixture
+    def checked_in(self, monkeypatch):
+        calls: list[dict] = []
+
+        async def _check_in(**kwargs):
+            calls.append(kwargs)
+            return SimpleNamespace(
+                id=uuid.uuid4(),
+                organization_id=kwargs["organization_id"],
+                trailer_number=kwargs["trailer_number"],
+                status="checked_in",
+                seal_status=kwargs.get("seal_status"),
+                yard_location=kwargs.get("yard_location"),
+                temperature_setpoint=kwargs.get("temperature_setpoint"),
+                temperature_actual=kwargs.get("temperature_actual"),
+                meta_data=kwargs.get("meta_data") or {},
+                # `YardTrailerResponse` requires these — nullable on the table with no server
+                # default, so a row written outside SQLAlchemy hands them an explicit None and
+                # the model declares them rather than defaulting. Omitting them here is a
+                # ResponseValidationError, not a pass.
+                trailer_type=kwargs.get("trailer_type"),
+                seal_number=kwargs.get("seal_number"),
+                weight_lbs=kwargs.get("weight_lbs"),
+                carrier_id=None,
+                driver_id=None,
+                shipment_id=None,
+                dock_door_id=None,
+                check_out_at=None,
+                # NOT None: `updated_at` is a non-nullable datetime on the response model,
+                # so a null here is a ResponseValidationError rather than the assertion under
+                # test failing — the fixture has to be at least as complete as a real row.
+                updated_at="2026-08-11T09:00:00+00:00",
+                check_in_at="2026-08-11T09:00:00+00:00",
+                created_at="2026-08-11T09:00:00+00:00",
+            )
+
+        monkeypatch.setattr(yard_api.yard_management_service, "check_in_trailer", _check_in)
+        return calls
+
+    def _checkin(self, client, **over):
+        return client.post(
+            "/api/v1/yard/trailers/checkin",
+            json={"trailer_number": "T-4471", **over},
+        )
+
+    def test_a_broken_seal_is_recorded(self, client, checked_in):
+        """THE DEFECT, in the form that matters most. A guard reporting a broken seal was
+        told 200 and the row said 'intact'."""
+        c, _ = client
+        assert self._checkin(c, seal_number="S-99", seal_status="broken").status_code == 200
+        assert checked_in[0]["seal_status"] == "broken", (
+            "a reported broken seal was discarded. The record names the seal and cannot say "
+            "whether it was intact — the same shape as a checkpoint with no inspector."
+        )
+
+    def test_the_reefer_temperatures_are_recorded(self, client, checked_in):
+        """Cold-chain evidence: what the box was set to and what it actually read."""
+        c, _ = client
+        self._checkin(c, temperature_setpoint=-18.0, temperature_actual=-11.5)
+        assert float(checked_in[0]["temperature_setpoint"]) == -18.0
+        assert float(checked_in[0]["temperature_actual"]) == -11.5
+
+    def test_the_yard_location_is_recorded(self, client, checked_in):
+        """The field the yard map reads. Dropped, every trailer parks at None."""
+        c, _ = client
+        self._checkin(c, yard_location="B-14")
+        assert checked_in[0]["yard_location"] == "B-14"
+
+    def test_the_metadata_is_recorded(self, client, checked_in):
+        c, _ = client
+        self._checkin(c, metadata={"bol": "9912"})
+        assert checked_in[0]["meta_data"] == {"bol": "9912"}
+
+    def test_a_caller_cannot_check_a_trailer_straight_out(self, client, checked_in):
+        """`status` is the one declared field this route SHOULD keep ignoring. The service
+        sets 'checked_in'; honouring a caller's status would let somebody move a trailer to
+        'checked_out' without it ever entering the yard."""
+        c, _ = client
+        self._checkin(c, status="checked_out")
+        assert "status" not in checked_in[0]
+
+    def test_an_unstated_seal_is_recorded_as_intact_which_is_a_finding(self, client, checked_in):
+        """PINS A DEFECT THIS FIX DID NOT CLOSE, deliberately.
+
+        `YardTrailerBase.seal_status` is `str = "intact"` — not Optional. So a check-in that
+        says nothing about the seal records **"intact"** as a positive claim: a value invented
+        at the moment nothing is known, and the most reassuring possible answer. Rule 133, on
+        a security field.
+
+        Not changed here, and the reason is worth stating rather than fixing quietly. The
+        column carries the same default, so making the schema `Optional[str] = None` moves the
+        fabrication one layer down rather than removing it — the honest fix is a migration to
+        a nullable column with no default, plus a decision about what existing rows mean. That
+        is a contract change with readers to find, not a wiring fix.
+
+        Recorded as a test rather than a comment so it cannot be lost, and so the day somebody
+        makes the column nullable this fails and points at the reason.
+        """
+        c, _ = client
+        self._checkin(c, seal_number="S-99")
+        assert checked_in[0].get("seal_status") == "intact"

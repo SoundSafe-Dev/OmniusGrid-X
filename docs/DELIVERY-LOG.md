@@ -8992,3 +8992,46 @@ an hour earlier: a text search matches the prose describing a defect as readily 
 Re-run against code rather than prose: **zero guards iterate `app.routes` without the
 flattener.** Six files carry a warning about it. The repository learned this before I did and
 wrote it down in six places; I am the one who did not look.
+
+### The same class, five fields wide, on the route beside it
+
+Rule 142's carry-across is a sweep: which routes declare a body field the handler never reads?
+**Eleven**, across six files. `POST /yard/trailers/checkin` is the one in my lane and the
+sharpest.
+
+It passed eight fields to the service and dropped five that `YardTrailerCreate` declares and
+`yard_trailers` has columns for: `seal_status`, `temperature_setpoint`, `temperature_actual`,
+`yard_location` and `metadata`.
+
+`seal_number` was passed and `seal_status` was not. That pairing is the finding: the record
+said **which** seal and could not say whether it was intact. A guard reporting a broken seal
+got a 200 and a row that said otherwise. The temperatures are cold-chain evidence on a reefer
+check-in, and `yard_location` is what the yard map reads — dropped, every trailer parks at
+None.
+
+`status` is the one declared field this route should keep ignoring, and now does so on
+purpose: the service sets `checked_in`, and honouring a caller's status would let somebody
+check a trailer straight to `checked_out` without it ever entering the yard. Declaring it on a
+Create schema is that schema's error, the same one `organization_id` carries.
+
+Fourteen tests; six fail with the pass-through removed.
+
+**A defect this fix did NOT close, pinned rather than papered over.**
+`YardTrailerBase.seal_status` is `str = "intact"` — not Optional. A check-in that says nothing
+about the seal records **"intact" as a positive claim**: a value invented at the moment nothing
+is known, and the most reassuring possible answer. Rule 133, on a security field.
+
+Not changed here, and the reason belongs in the record. The column carries the same default, so
+making the schema `Optional[str] = None` moves the fabrication one layer down rather than
+removing it. The honest fix is a migration to a nullable column with no default plus a decision
+about what existing rows mean — a contract change with readers to find, not a wiring fix. It is
+recorded as a passing test that asserts the current behaviour and explains itself, so the day
+somebody makes the column nullable it fails and points at the reason.
+
+**The other ten routes are recorded, not fixed.** Four are in Harsh's lane
+(`kanban`, `logistics_correlation`), and the transportation ones split into two kinds worth
+telling apart: fields that are genuine creation input being lost (`CarrierCreate` drops
+`insurance_expires_at` and `ctpat_expires_at` — compliance expiry dates on a carrier record),
+and fields that are lifecycle state wrongly declared on a Create schema (`approved_at`,
+`billed_at`, `is_executed`). The first is data loss; the second is an API accepting values it
+will never honour. Both are class 99; the fix differs.

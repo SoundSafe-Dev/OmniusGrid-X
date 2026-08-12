@@ -151,6 +151,26 @@ async def trailer_check_in(
         trailer_type=data.trailer_type,
         seal_number=data.seal_number,
         weight_lbs=data.weight_lbs,
+        # FIVE MORE FIELDS THE SCHEMA DECLARED AND THIS ROUTE DROPPED (FS-661). Every one
+        # has a column on `yard_trailers`, so they were accepted, discarded, and returned as
+        # their defaults.
+        #
+        # `seal_number` was passed and `seal_status` was not, which is the pairing that makes
+        # this worth fixing: the record says WHICH seal and could not say whether it was
+        # intact. Same shape as the checkpoint with no inspector.
+        #
+        # The temperatures are cold-chain evidence on a reefer check-in, and `yard_location`
+        # is where the trailer actually is — the field the yard map reads.
+        #
+        # `status` is deliberately NOT among them. The service sets 'checked_in', and a
+        # caller-supplied status would let somebody check a trailer straight to 'checked_out'
+        # without it ever entering the yard. Declaring it on the Create schema is that
+        # schema's error, the same one `organization_id` above carries.
+        seal_status=data.seal_status,
+        temperature_setpoint=data.temperature_setpoint,
+        temperature_actual=data.temperature_actual,
+        yard_location=data.yard_location,
+        meta_data=data.metadata,
         db=db
     )
     return trailer
