@@ -195,6 +195,19 @@ async def create_carrier(
         csa_score=data.csa_score,
         contract_rate=data.contract_rate,
         contact_info=data.contact_info,
+        # THE READER DEPENDS ON THESE AND THE WRITER DROPPED THEM (FS-662).
+        # `get_carrier_compliance` computes `ctpat_status.is_valid` as
+        # `certified AND expires_at AND expires_at > now`, and the same for insurance. This
+        # route passed `ctpat_certified` and `insurance_on_file` and discarded both dates —
+        # so every carrier created through the API had NULL expiries and reported **invalid**
+        # on both counts, whatever the caller sent.
+        #
+        # Same pairing as the checkpoint with no inspector and the check-in with no seal
+        # status: the flag was stored and the field that bounds it was not. Here the reader
+        # already existed, which is what makes it the sharpest of the three.
+        ctpat_expires_at=data.ctpat_expires_at,
+        insurance_expires_at=data.insurance_expires_at,
+        is_active=data.is_active,
         db=db
     )
     return carrier

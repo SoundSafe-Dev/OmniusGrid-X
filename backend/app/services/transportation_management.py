@@ -443,6 +443,9 @@ class TransportationManagementService:
         csa_score: Optional[float] = None,
         contract_rate: Optional[Dict] = None,
         contact_info: Optional[Dict] = None,
+        ctpat_expires_at: Optional[datetime] = None,
+        insurance_expires_at: Optional[datetime] = None,
+        is_active: bool = True,
         db: Optional[AsyncSession] = None
     ) -> Carrier:
         """Create new carrier profile"""
@@ -454,6 +457,11 @@ class TransportationManagementService:
                 mc_number=mc_number,
                 ctpat_certified=ctpat_certified,
                 insurance_on_file=insurance_on_file,
+                # `get_carrier_compliance` reads these to decide `is_valid`; without them a
+                # certified, insured carrier reports invalid on both.
+                ctpat_expires_at=ctpat_expires_at,
+                insurance_expires_at=insurance_expires_at,
+                is_active=is_active,
                 safety_rating=safety_rating,
                 csa_score=csa_score,
                 contract_rate=contract_rate or {},
