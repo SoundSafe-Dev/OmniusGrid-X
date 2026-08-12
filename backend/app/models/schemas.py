@@ -263,6 +263,18 @@ class YardTrailerUpdate(BaseModel):
     dock_door_id: Optional[UUID] = None
     driver_id: Optional[UUID] = None
     temperature_actual: Optional[float] = None
+    # SET ONCE AND NEVER CORRECTABLE (FS-671). `seal_status` and `temperature_actual` were
+    # already editable and `seal_number` and `temperature_setpoint` beside them were not,
+    # which is the pairing that makes the omission visible: a seal replaced at the gate
+    # could be marked intact WHILE STILL NAMING THE OLD SEAL.
+    #
+    # `trailer_number` is deliberately absent, for the reason given on `ShipmentUpdate`.
+    trailer_type: Optional[str] = None
+    seal_number: Optional[str] = None
+    temperature_setpoint: Optional[float] = None
+    carrier_id: Optional[UUID] = None
+    shipment_id: Optional[UUID] = None
+    metadata: Optional[Dict[str, Any]] = Field(default=None, validation_alias=AliasChoices('meta_data', 'metadata'), serialization_alias='metadata')
     check_out_at: Optional[datetime] = None
     metadata: Optional[Dict[str, Any]] = Field(default=None, validation_alias=AliasChoices('meta_data', 'metadata'), serialization_alias='metadata')
 
@@ -608,6 +620,15 @@ class DriverUpdate(BaseModel):
     hos_on_duty_hours_today: Optional[float] = None
     hos_cycle_hours: Optional[float] = None
     is_active: Optional[bool] = None
+    # SET ONCE AND NEVER CORRECTABLE (FS-671). These four were on `DriverCreate` and not
+    # here, so a driver's phone number, email, carrier and ELD device could be entered
+    # once and never fixed — on a route that already edits the ten HOS and licence fields
+    # above. Safe to add because the handler applies `model_dump(exclude_unset=True)` and
+    # `setattr`, so a field omitted by the caller is untouched rather than blanked.
+    eld_device_id: Optional[str] = None
+    phone: Optional[str] = None
+    email: Optional[str] = None
+    carrier_id: Optional[UUID] = None
 
 
 class DriverResponse(DriverBase):
@@ -663,6 +684,32 @@ class ShipmentUpdate(BaseModel):
     actual_pickup: Optional[datetime] = None
     actual_delivery: Optional[datetime] = None
     priority: Optional[str] = None
+    # SET ONCE AND NEVER CORRECTABLE (FS-671). Sixteen fields were on `ShipmentCreate` and
+    # not here — a pickup could not be rescheduled, an address could not be fixed, a weight
+    # could not be corrected, and these are the most ordinary events in dispatch.
+    #
+    # `route_id` closes a loop from FS-665: that fix stopped `get_shipment_costs` inventing
+    # 500 miles, so a shipment with no route now honestly reports "not estimated" — and
+    # nothing could assign it a route afterwards, which made the honest state inescapable
+    # short of recreating the shipment.
+    #
+    # `shipment_number` is deliberately NOT here. It identifies the row, and an API that
+    # lets a caller rename the thing it is addressing has a different problem.
+    pro_number: Optional[str] = None
+    bol_number: Optional[str] = None
+    shipment_type: Optional[str] = None
+    origin: Optional[Dict[str, Any]] = None
+    destination: Optional[Dict[str, Any]] = None
+    scheduled_pickup: Optional[datetime] = None
+    scheduled_delivery: Optional[datetime] = None
+    total_weight_lbs: Optional[float] = None
+    total_pieces: Optional[int] = None
+    hazmat: Optional[bool] = None
+    temperature_required: Optional[bool] = None
+    temperature_min: Optional[float] = None
+    temperature_max: Optional[float] = None
+    carrier_id: Optional[UUID] = None
+    route_id: Optional[UUID] = None
     metadata: Optional[Dict[str, Any]] = Field(default=None, validation_alias=AliasChoices('meta_data', 'metadata'), serialization_alias='metadata')
 
 

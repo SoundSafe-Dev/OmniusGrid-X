@@ -103,6 +103,8 @@ to ask where else it could live.
 | A response model declaring a field its table lacks | 34 `*Response` models | **clean after the DockDoor audit — 5 fields deleted there** | `test_response_models_match_their_tables.py` |
 | A TS field the wire never carries | every `types/*.ts` field a component reads | **3 live: a relabelled odometer, a UUID slice shown as a work-order number, 3 of 5 cost figures** | `test_frontend_fields_exist_on_the_wire.py` |
 | A field the compliance check reads that nothing writes | `hos_drive_hours_remaining` and its neighbours | **1 live, and the worst of the session: every fleet cleared of HOS violations** | `test_hos_remaining_is_derived.py` |
+| A container default that contradicts its column | every `field=x or {}` / `or []` in `app/` | **1 live, and I had shipped it an hour earlier: every load-plan create 500'd** | `test_json_defaults_match_their_column.py` |
+| A field you can set once and never correct | every `*Create` against its `*Update` sibling | **26 live across driver, shipment and trailer, incl. a seal replaced at the gate that could be marked intact while naming the old seal** | `test_what_can_be_created_can_be_corrected.py` |
 
 Twenty-nine of these carry a numbered section below. **Response-shape mismatch is the
 exception**: it was swept in the same pass as the `get_db` work and came back clean, so

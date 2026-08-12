@@ -943,6 +943,23 @@ one of its findings. The habit that catches it:
      positive control. Write it when the sweep comes back clean, because that is when it is
      cheapest.
 
+149. **When a fix trips a guard, ask whether the premise broke or only the string test did.**
+     Widening `ShipmentUpdate` failed a guard asserting every declaration of `origin` reads
+     `Dict[str, Any]` — because the new one reads `Optional[Dict[str, Any]]`. The guard's
+     premise is *the backend contracts no keys for this field*, and an optional untyped dict
+     contracts no keys either: the premise was intact and only the literal `startswith` was
+     too narrow. The opposite reading — loosen the guard because the fix is obviously fine —
+     is how a guard dies, so the repair strips exactly one `Optional[...]` wrapper and
+     nothing else, and was mutation-verified with `Optional[Location]`, which still fails.
+     A guard written against one spelling of a type will meet the second spelling eventually;
+     the fix is to name the property, not to widen the pattern until it stops complaining.
+
+150. **`git checkout <file>` to undo a mutation test throws away everything uncommitted in it.**
+     Reverting a one-line mutation took the whole FS-671 widening with it, silently — the
+     mutation test passed, and the fix it was verifying no longer existed. `git status`
+     after a revert is one command; noticing at commit time is luck. Better: mutate a copy,
+     or `git stash` first, or re-apply from the diff you still have on screen.
+
 ---
 
 ## Open observations, not yet tickets

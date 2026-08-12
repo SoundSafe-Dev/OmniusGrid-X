@@ -9504,3 +9504,47 @@ than a shape check. Recorded rather than bundled in.
 
 Rule 148 — turn your own regression into the guard that would have caught it, and write it when
 the sweep comes back clean, because that is when it is cheapest and feels least necessary.
+
+### Fields you could set once and never correct
+
+Following through on the fields wired today: **can they be changed?** Comparing every
+`*Create` schema against its `*Update` sibling found twenty-six that could not, on entities
+that already have a working PUT route updating ten other columns on the same row.
+
+* A **driver's phone number, email, carrier and ELD device.** The most ordinary correction
+  there is, on a route that already edits ten HOS and licence fields.
+* A **shipment's** pickup and delivery schedule, origin, destination, weights, hazmat flag and
+  temperature range — sixteen fields. A pickup moving is the most common event in dispatch.
+* A **trailer's** seal number and reefer setpoint — while `seal_status` and
+  `temperature_actual` beside them were already editable. A seal replaced at the gate could be
+  marked intact **while still naming the old seal**, which is the pairing that makes the
+  omission visible.
+
+**`route_id` closes a loop from earlier today.** FS-665 stopped `get_shipment_costs` inventing
+500 miles, so a shipment with no route now honestly reports *not estimated* — and nothing could
+assign it a route afterwards, which made the honest state inescapable short of recreating the
+shipment. An honest refusal with no way out is only half a fix.
+
+Safe to add because every one of these handlers applies `model_dump(exclude_unset=True)` and
+`setattr`, which `test_partial_updates_do_not_wipe_fields.py` already enforces: a field on the
+Update schema is editable when sent and untouched when omitted, so widening cannot blank
+anything. Both sibling guards were run and still pass.
+
+`shipment_number` and `trailer_number` stay uneditable, and the test asserts it — an API that
+lets a caller rename the thing it is addressing has a different problem, and that should read
+as a decision rather than an oversight.
+
+**Four entities have no update route at all** — dock appointments, load plans, freight charges
+and routes. That is a missing feature rather than a broken one, and a different conversation:
+an appointment that cannot be rescheduled and a freight charge that cannot be corrected are
+product gaps, not defects in something that claims to work. Recorded, not built.
+
+**A guard fired at the fix, and it was half right.** Widening `ShipmentUpdate` failed
+`test_frontend_fields_exist_on_the_wire.py`, which asserts every declaration of `origin` reads
+`Dict[str, Any]` — the new one reads `Optional[Dict[str, Any]]`. The guard's premise is *the
+backend contracts no keys for this field*, and an optional untyped dict contracts none either,
+so the premise held and only the literal `startswith` was too narrow. The repair strips exactly
+one `Optional[...]` wrapper and nothing more; `Optional[Location]` still fails, which is the
+case the check actually exists for. Rules 149 and 150 came out of this — the second because
+`git checkout app/models/schemas.py`, used to undo the mutation, silently took the entire
+uncommitted widening with it.

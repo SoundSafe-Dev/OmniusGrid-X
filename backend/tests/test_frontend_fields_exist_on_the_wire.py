@@ -1017,7 +1017,19 @@ class TestTheClientConstructedExemptionIsReal:
                     f"no declaration of `{field}` found in the backend schema; this "
                     f"exemption rests on a field that no longer exists"
                 )
-                contracted = [d for d in declarations if not d.startswith("Dict[str, Any]")]
+                # One `Optional[...]` wrapper is stripped first. FS-671 added
+                # `origin: Optional[Dict[str, Any]]` to `ShipmentUpdate` so a shipment's
+                # origin could be corrected, and this failed — the premise was intact
+                # (an optional untyped dict contracts no keys either) and only the string
+                # test was too literal. `Optional[Location]` still fails, which is the
+                # case the check is actually for.
+                contracted = [
+                    d
+                    for d in declarations
+                    if not re.sub(r"^Optional\[(.*)\]$", r"\1", d.strip()).startswith(
+                        "Dict[str, Any]"
+                    )
+                ]
                 assert not contracted, (
                     f"`{field}` is declared as {contracted} somewhere in the backend "
                     f"schema, not `Dict[str, Any]`. `{ts_type}` is then describing a "

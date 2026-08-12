@@ -1775,3 +1775,40 @@ control cannot go stale silently.
 
 The corollary is the harder half: **write it when the sweep comes back clean.** Zero other
 instances is exactly when the guard feels unnecessary and exactly when it is cheapest to add.
+
+## Rule 149 — when a fix trips a guard, ask whether the premise broke or only the string test did
+
+Widening `ShipmentUpdate` so a shipment's origin could be corrected failed a guard I had
+written days earlier: it asserts that **every** declaration of `origin` in the backend schema
+reads `Dict[str, Any]`, and the new one reads `Optional[Dict[str, Any]]`.
+
+Two readings, and they lead opposite ways. *The guard is right and the fix is wrong* — but it
+isn't: the guard exists because five entries sat in a ratchet asking "does the backend send
+`contactEmail`" of a field the backend contracts no keys for, and an **optional** untyped dict
+contracts no keys either. The premise is intact. *The guard is noise, loosen it* — that is how
+a guard dies, one accommodation at a time, until it asserts nothing.
+
+The third reading is the right one: the premise is the property, the `startswith` was only its
+spelling. So the repair strips exactly one `Optional[...]` wrapper and nothing else, carries
+the reason in a comment naming the fix that provoked it, and was mutation-verified in the
+direction that matters — `Optional[Location]` still fails, because that is a field that has
+gained a real contract and the exemption would then be hiding debt.
+
+A guard written against one spelling of a type will meet the second spelling eventually. Name
+the property it is checking; do not widen the pattern until it stops complaining.
+
+## Rule 150 — `git checkout <file>` to undo a mutation test throws away everything uncommitted in it
+
+Immediately after: mutation-verifying rule 149's repair meant editing `schemas.py`, checking
+the guard failed, and reverting. I reverted with `git checkout app/models/schemas.py`, which
+does not undo *the mutation* — it restores the file to **HEAD**, and the entire FS-671
+widening, twenty-six fields across three schemas, was still uncommitted in it.
+
+It vanished silently. The mutation test reported exactly what I wanted to see, and the fix it
+was verifying no longer existed. The next command I happened to run was `git status`, which is
+the only reason this cost minutes rather than a confused re-derivation later.
+
+A mutation test is a deliberate temporary edit to a file you are actively changing, which makes
+it the worst possible place to reach for a HEAD-restoring command. Mutate a copy, or `git
+stash` first, or re-apply from the diff still on screen — and run `git status` after any
+revert, because "did my work survive that" is one command and noticing at commit time is luck.
