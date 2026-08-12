@@ -933,6 +933,16 @@ one of its findings. The habit that catches it:
      a $1,333.33 invoice no reader of either would predict. Do not rank fabricated defaults
      individually — follow the call chain and ask what the caller does with the result.
 
+148. **Turn your own regression into the guard that would have caught it.**
+     `temperature_zones or {}` on a list column stored an object, the response model refused
+     the row, and every load-plan create 500'd — on the SUCCESS path, where `route_walk`
+     cannot look. The sweep afterwards found eighteen sites and zero other disagreements: the
+     tree was clean and I was the defect, which is the argument for the guard rather than
+     against it. A bug you just made is the best-specified guard you will ever write — you
+     know the line, you know why the existing checks missed it, and the line itself is your
+     positive control. Write it when the sweep comes back clean, because that is when it is
+     cheapest.
+
 ---
 
 ## Open observations, not yet tickets

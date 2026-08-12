@@ -1754,3 +1754,24 @@ either site.
 When a sweep finds fabricated defaults, do not rank them individually — **follow the call
 chain** and ask what the caller does with the result. Two three-line defaults produced a
 four-figure invoice that no reader of either function would predict.
+
+## Rule 148 — turn your own regression into the guard that would have caught it
+
+An hour after shipping `temperature_zones=temperature_zones or {}` on a column declared
+`Column(JSON, default=[])`, the sweep for that shape found **eighteen container defaults and
+zero other disagreements**. The tree was clean; I was the defect.
+
+That is the argument for the guard rather than against it. The failure mode is a 500 **on the
+success path only** — the wrong container is stored, the response model refuses to serialise
+the row, and `route_walk` cannot see any of it, because with generated inputs a create rejects
+before it ever reaches the response (rule 139). What caught mine was a real-database test in a
+file I had not touched, in a run I could easily have skipped as unrelated.
+
+A bug you have just made is the best-specified guard you will ever write. You know the exact
+line, you know why the existing checks missed it, and you can use the line itself as the
+positive control — `test_the_pattern_matches_the_line_that_caused_this` asserts the detector
+flags the literal text that shipped, and asserts the column still declares a list so the
+control cannot go stale silently.
+
+The corollary is the harder half: **write it when the sweep comes back clean.** Zero other
+instances is exactly when the guard feels unnecessary and exactly when it is cheapest to add.

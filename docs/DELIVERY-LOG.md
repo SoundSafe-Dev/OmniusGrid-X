@@ -9474,3 +9474,33 @@ YardMove(")` found the **first** occurrence in the file — a different method w
 `meta_data` in scope — and produced `F821 undefined name`. First-match-wins on a blind index is
 the same shape as the tail-matching and module-name collisions this week; anchoring the search
 inside the enclosing method fixed it. Ten seconds, because something was looking.
+
+### A guard built from my own regression
+
+The `temperature_zones or {}` mistake from the previous entry is now a guard, and the sweep it
+came from is worth reporting for its result as much as its finding: **eighteen container
+defaults across `app/`, zero other disagreements.** The tree was clean. I was the defect.
+
+That is the argument for the guard rather than against it. The failure mode is a 500 on the
+**success path only** — the wrong container is stored, the response model refuses to serialise
+the row, and `route_walk` cannot see any of it, because with generated inputs a create rejects
+before it reaches the response. What caught mine was a real-database test in a file I had not
+touched.
+
+`test_json_defaults_match_their_column.py` reads the column shapes from live SQLAlchemy
+metadata rather than from the source text — a regex over `Column(JSON, default=[])` would miss
+the columns whose default arrives through a shared helper, and this guard exists precisely
+because a text-level assumption was wrong once already.
+
+Its positive control is the line that shipped: it asserts the detector flags
+`temperature_zones=temperature_zones or {}` verbatim, **and** that the column still declares a
+list, so the control cannot go stale without saying so. Mutation-verified by reintroducing the
+bug — it names the file and line.
+
+One thing the guard deliberately does not fix: both containers are falsy when empty, so `or`
+cannot tell "caller sent nothing" from "caller sent an empty one" at any of the eighteen sites.
+That is a smaller problem than storing the wrong type and needs `is None` at every site rather
+than a shape check. Recorded rather than bundled in.
+
+Rule 148 — turn your own regression into the guard that would have caught it, and write it when
+the sweep comes back clean, because that is when it is cheapest and feels least necessary.
