@@ -9071,3 +9071,47 @@ Each keeps a flag and discards the field that says what the flag is worth, and e
 the more reassuring of the two possible answers. Recorded as rule 143 — when a boolean is
 stored, find the field that bounds it; the pair is almost always adjacent in the schema and
 split by the call. And rule 144 — assert the round trip through the reader, not the hand-off.
+
+### The register for class 99, and a detector that hid nine routes while looking right
+
+Rule 143's sweep — a boolean the handler passes whose qualifier it drops — comes back **empty**,
+and the control proves the zero: reverting the carrier fix makes the detector name both pairs
+(`ctpat_certified`/`ctpat_expires_at`, `insurance_on_file`/`insurance_expires_at`); restoring it
+returns zero. That is a real clean result, not a broken sweep.
+
+The general class needed a ratchet rather than more fixes, because most of it is in other
+lanes. `test_declared_body_fields_reach_the_service.py` has two tiers:
+
+**Absolute** — no route may pass a boolean and drop the field that bounds it. Empty, and may
+not gain a member.
+
+**Ratcheted** — fourteen routes carry a declared field the handler never reads, each recorded
+with the reason. Two kinds, and the fix differs: **lifecycle state wrongly on a Create schema**
+(`approved_at`, `billed_at`, `is_executed`) where the handler is right and the schema is wrong,
+and **genuine creation input being lost** (`temperature_min`/`max` on a shipment,
+`duration_seconds` on a yard move) which is data loss.
+
+Two entries are deliberate and say so: `status` on a trailer check-in and on a kanban task must
+be ignored, because honouring a caller's status would let somebody check a trailer straight to
+`checked_out` without it entering the yard.
+
+**One entry is named as the next fix rather than left in the pile.** `POST /drivers` drops six
+fields, four of them **DOT-regulated Hours of Service** — `current_hos_status`,
+`hos_cycle_hours`, `hos_drive_hours_today`, `hos_on_duty_hours_today`.
+`HOSMonitor.check_compliance` reads exactly those to decide whether a driver may be dispatched,
+and `dispatch_shipment` refuses on its verdict. That is the carrier defect's shape with a
+regulator attached: a reader that already exists and already depends on the dropped fields. Not
+fixed in this pass because HOS has a second writer — the ELD sync — and which one wins on
+create is a decision, not a wiring fix.
+
+**The detector was wrong first, and its failure is the interesting part.** The first version
+matched decorator-to-next-decorator with a bounded body window, so a handler longer than the
+window failed to match — and `finditer` resumed past the failed attempt, **taking the following
+decorator with it**. Nine of yard's twelve routes vanished, including the one this guard uses
+as its positive control. The sweep still produced a plausible eleven-route list; only the
+control caught it. Splitting the file on the decorator and parsing each chunk fixed it, and
+found five more routes the first version never saw.
+
+That is the third detector this week whose failure mode was **under-reporting while looking
+correct**, and the second caught only by a positive control. A sweep that names fewer things
+than exist reads exactly like a clean tree.
