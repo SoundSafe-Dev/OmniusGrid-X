@@ -97,8 +97,11 @@ ticket below.
 ### Hamad — platform, contract gate, frontend primitives
 
 1. ~~**P0-a and P0-c**~~ — **done 2026-08-09.** Both developers' stranded work is on `main`.
-2. **FS-593** · the contract floor cannot rise until the broker is guaranteed — a CI change,
-   the one blocking-gate item with real headroom. **The only item of mine still open.**
+2. ~~**FS-593**~~ — **done 2026-08-11 (FS-654).** The floor could not rise because one number
+   had to cover a healthy run (402) and a broker-less one (387), so it covered the worse. There
+   are two floors now — **393 with a broker, 380 without** — and the run decides by *probing*
+   the bootstrap address after the suite rather than being told. A flag would have been a
+   claim, and the lower floor is the one somebody would want on a red build.
 3. ~~**FS-594 / FS-595**~~ — **done 2026-08-11.** `common/`, `ui/` and the whole of
    `components/kanban/` now have tests. The 0.94 points of headroom FS-597 measured is
    **4.79**: lines 45.45 → 50.24 in a day, thresholds raised five times to 48/48/41/50, and
@@ -110,11 +113,39 @@ ticket below.
 
 *Not FS-598 or D3 until D3 is decided; wiring or deleting 1,777 lines is not mine to choose.*
 
-**What the closures cost, recorded because the pool will be rewritten from it:** ten task
-mutations that could not report a failure (class 93), a `ChartContainer` error with no
-`role="alert"`, and two promtool cases that needed the harness understood rather than the rule
-changed. None of that was in the pool, because none of it was visible until something rendered
-or called the code.
+**Every item in this lane is now closed.** What follows is what the closures cost, kept
+because the next pool gets written from this file and none of it was in the last one.
+
+**Eleven defects found by finishing the four items above** — every one invisible until
+something rendered or called the code:
+
+| what | where | consequence |
+|---|---|---|
+| ten task writes that could not report a failure | `components/kanban/` | class 93 |
+| a polled reading that cannot say it stopped arriving | alarm badge, alarms page, kanban metrics | **an alarm feed that never answered rendered as "no active alarms"** |
+| a request that never reached the server, reported as a server 500 | `api/client.ts` | class 95 |
+| **the gates ran where nobody pushes** | `quality-gates.yml` | no typecheck, lint, flake8 or build on ANY dev branch |
+| a dispatch that succeeded and answered 500 | `api/transportation.py` | the shipment WAS dispatched |
+| status updates that 422'd on every call | same file, 20 lines below FS-420's fix | "Mark Delivered" had never worked |
+| a checkpoint that could not say who inspected it | `api/yard.py` | class 99 |
+| a check-in that could not say the seal was broken | same file | five fields dropped |
+| a carrier the compliance check could never call compliant | `api/transportation.py` | every API-created carrier reported **invalid** |
+| a driver that could never be dispatched | same file | four DOT-regulated HOS fields dropped |
+| **$1,333.33 of invented freight cost** | `services/transportation_management.py` | class 100, pinned not fixed |
+
+**Three still open and named, because a register entry is a place for a decision, not a doubt:**
+
+* the `500.0`/`2.50` billing fallbacks — needs a contract that can say *not estimated*;
+* `seal_status: str = "intact"` — an unstated seal recorded as a positive claim; the honest
+  fix is a migration to a nullable column, not a schema tweak that moves the fabrication down
+  a layer;
+* nine routes declaring body fields their handlers never read — four in Harsh's lane, and the
+  rest split between *lifecycle state wrongly on a Create schema* and *creation input being
+  lost*. `test_declared_body_fields_reach_the_service.py` holds them; the register only shrinks.
+
+**Rules 130–147 came out of this**, and two of them are about my own errors: the check I
+skipped was the one that found my mistake, and a register entry whose stated reason was wrong
+twice, resolved both times by reading rather than deciding.
 
 ### Hridyansh — OTA, edge agent
 
