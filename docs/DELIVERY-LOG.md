@@ -8952,3 +8952,43 @@ which is the kind that gets believed.
 
 Recorded as **class 98**, with rule 141: before writing a walker, look for the one that already
 exists.
+
+### A checkpoint that could not say who inspected it
+
+Rule 139's question, asked of a second file. `yard.py` is in far better shape than
+`transportation.py` — eleven of its twelve mutating routes have a test asserting a 2xx. The
+twelfth was `POST /checkpoints`.
+
+`YardCheckPointCreate` declares `inspector_id` and `metadata`. `YardCheckPointResponse`
+returns them. `YardCheckPoint` has both columns. **The route passed neither to the service** —
+so both were accepted, discarded, and echoed back as `null` and `{}` from columns that stayed
+empty. A complete round trip that loses the value in the middle and reports success at both
+ends.
+
+`checkpoint_type` is gate_in, guard_shack, weigh_station or gate_out. On a weigh-station or
+guard-shack checkpoint the inspector **is** the audit trail: the record says an inspection
+happened and cannot say who made it. A failed inspection with no inspector is a finding nobody
+owns.
+
+Eight tests; five fail with the pass-through removed.
+
+**The same class, resolved the opposite way, an hour apart.** `POST /shipments/{id}/status`
+accepted a `note` the client sent on every call, and `Shipment` has no note column — so the fix
+was `extra: "forbid"`, refusing the field rather than appearing to record it. Here the column
+exists and was simply not wired, so the fix is to store it. The discriminator is not how
+harmless the field looks; it is **whether the field has somewhere to land**.
+
+Recorded as **class 99**, with rule 142 — a declared field that is dropped is worse than one
+that is refused. A refused field is a 422 the caller can read; a dropped field is a 200 and an
+empty column.
+
+### Two sweeps that came back clean, and one that found only my own mistake
+
+Rule 141 said to look for the existing walker first. Carrying that across: do other guards
+hand-roll a route walk? The first pass named eight files — and every one of them turned out to
+be a **comment warning about the pitfall**, not a hand-rolled walk. Rule 37, on a rule written
+an hour earlier: a text search matches the prose describing a defect as readily as the defect.
+
+Re-run against code rather than prose: **zero guards iterate `app.routes` without the
+flattener.** Six files carry a warning about it. The repository learned this before I did and
+wrote it down in six places; I am the one who did not look.

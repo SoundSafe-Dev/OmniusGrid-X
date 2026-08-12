@@ -893,6 +893,14 @@ one of its findings. The habit that catches it:
      time and its docstring opens by naming that pitfall. The second wrong answer was a clean
      tree, which is the kind that gets believed.
 
+142. **A declared field that is dropped is worse than one that is refused.**
+     A refused field is a 422 the caller can read. A dropped field is a 200, an echo of the
+     default, and an empty column — both ends of the round trip report success and the middle
+     loses the value. `inspector_id` and `metadata` were declared on the way in, declared on
+     the way out, and connected to nothing. Follow a declared field to storage before assuming
+     the wiring exists, and let "does it have somewhere to land" decide whether to store it or
+     refuse it.
+
 ---
 
 ## Open observations, not yet tickets

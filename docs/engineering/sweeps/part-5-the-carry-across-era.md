@@ -1597,3 +1597,38 @@ and the second of them — a clean tree — is the kind that gets believed.
 Grep for the thing you are about to build before building it. In a repository with 140 rules
 about detectors being wrong, the odds are good that somebody has already been wrong in this
 particular way and left the fix behind.
+
+## Class 99 — a field the schema declares, the response returns, and the route drops (FS-660)
+
+Rule 139's question asked of a second file. `yard.py` is in far better shape than
+`transportation.py` — eleven of its twelve mutating routes have a test asserting a 2xx. The
+twelfth was `POST /checkpoints`.
+
+`YardCheckPointCreate` declares `inspector_id` and `metadata`. `YardCheckPointResponse`
+returns them. `YardCheckPoint` has an `inspector_id` column and a `meta_data` column. **The
+route passed neither to the service.** Both were accepted, discarded, and echoed back as
+`null` and `{}` from columns that stayed empty — a complete round trip that loses the value in
+the middle and reports success at both ends.
+
+`checkpoint_type` is gate_in, guard_shack, weigh_station or gate_out, and `inspection_status`
+is passed/failed/pending. On a weigh-station or guard-shack checkpoint the inspector **is** the
+audit trail: the record says an inspection happened and cannot say who made it. A failed
+inspection with no inspector is a finding nobody owns.
+
+### The same class, resolved the opposite way, an hour apart
+
+`POST /shipments/{id}/status` accepted a `note` the client sent on every call, and `Shipment`
+has no note column — so the fix was `extra: "forbid"`, refusing the field rather than appearing
+to record it. Here the column exists and was simply not wired, so the fix is to store it.
+
+Two opposite corrections for one shape, and the discriminator is not how harmless the field
+looks. **It is whether the field has somewhere to land.** Ask that first; the answer decides
+which fix is the honest one.
+
+## Rule 142 — a declared field that is dropped is worse than one that is refused
+
+A refused field is a 422 the caller can read and act on. A dropped field is a 200, an echo of
+the default, and a column that stays empty — the caller has every reason to believe the value
+was kept. Both ends of the round trip report success and the middle loses it. When a schema
+declares a field, follow it to storage before assuming the wiring exists; `metadata` and
+`inspector_id` were declared on the way in, declared on the way out, and connected to nothing.
