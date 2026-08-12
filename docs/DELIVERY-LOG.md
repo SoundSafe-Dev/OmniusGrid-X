@@ -9115,3 +9115,43 @@ found five more routes the first version never saw.
 That is the third detector this week whose failure mode was **under-reporting while looking
 correct**, and the second caught only by a positive control. A sweep that names fewer things
 than exist reads exactly like a clean tree.
+
+### A driver created through the API could never be dispatched
+
+The register entry I wrote last pass said `POST /drivers` was the next fix but deferred it:
+*"HOS has a second writer, the ELD sync, and which one wins on create is a decision."* That was
+wrong, and it took ten minutes to establish once somebody looked at the writers.
+
+The chain, every link of which already existed:
+
+1. `POST /transportation/drivers` declared `current_hos_status`, `hos_drive_hours_today`,
+   `hos_on_duty_hours_today` and `hos_cycle_hours` — and passed none of them.
+2. `HOSComplianceMonitor.check_compliance` collects **what is missing before what is wrong**:
+   any of the three hour figures being `None` produces "cannot be assessed". By design —
+   `float(x or 0)` would turn "never reported" into "has driven zero hours" and read as a fresh
+   legal driver, which is the FS-421 defect this list was built to prevent.
+3. `dispatch_shipment` raises on that verdict.
+
+So a driver created through the API was **permanently undispatchable**, having been told 200
+with the hours in the request body.
+
+**And there was no other way in.** The GeoTab ELD webhook writes `hos_drive_hours_today` and
+`hos_on_duty_hours_today` — only those two, only when that gated integration is live.
+`hos_cycle_hours` and `current_hos_status` have no writer anywhere but `seed_demo_data.py`.
+That is why the demo fleet dispatches and a real one would not: **a defect the seed data hides
+is a defect nobody meets until production.**
+
+Ten tests, all failing with the pass-through removed. They run `check_compliance` over what the
+create path stored rather than asserting the hand-off (rule 144), and the negative cases hold
+the line: a driver with no hours still reports unassessable, a driver at 11.5 drive hours still
+reports in violation. A fix that made everyone dispatchable would be worse than the defect.
+
+Writing the test surfaced its own small lesson. `check_compliance` also requires a medical
+certificate, and the route already passes that one — so a "legal driver" payload needs it too.
+The missing-data list is not merely empty for a complete driver; it still names what is absent
+when anything is left out, and the test now proves both.
+
+**The register did its job in both directions.** It held the entry until it was resolved, and
+the moment the route was fixed the guard reported the entry stale and made me remove it. The
+note left in its place says what it cost, because a register entry is a place to put a
+decision, not a place to put a doubt.

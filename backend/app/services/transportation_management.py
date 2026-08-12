@@ -492,6 +492,12 @@ class TransportationManagementService:
         eld_device_id: Optional[str] = None,
         phone: Optional[str] = None,
         email: Optional[str] = None,
+        current_hos_status: Optional[str] = None,
+        hos_drive_hours_today: Optional[float] = None,
+        hos_on_duty_hours_today: Optional[float] = None,
+        hos_cycle_hours: Optional[float] = None,
+        dq_file_complete: bool = False,
+        is_active: bool = True,
         db: Optional[AsyncSession] = None
     ) -> Driver:
         """Create new driver profile"""
@@ -501,6 +507,15 @@ class TransportationManagementService:
                 carrier_id=carrier_id,
                 first_name=first_name,
                 last_name=last_name,
+                # `check_compliance` needs all three hour figures or it answers "cannot be
+                # assessed", and `dispatch_shipment` refuses on that verdict. Left unset, a
+                # driver is undispatchable and only the demo seeder ever filled them in.
+                current_hos_status=current_hos_status,
+                hos_drive_hours_today=hos_drive_hours_today,
+                hos_on_duty_hours_today=hos_on_duty_hours_today,
+                hos_cycle_hours=hos_cycle_hours,
+                dq_file_complete=dq_file_complete,
+                is_active=is_active,
                 license_number=license_number,
                 license_state=license_state,
                 cdl_class=cdl_class,

@@ -95,21 +95,20 @@ UNREAD: dict[str, list[str]] = {
     "analysis_sessions:POST /{session_id}/correlate": ["auto_integrate"],
     "nlp_correlation:POST /intake/cross-correlate": ["auto_integrate"],
 
-    #: NEXT FIX, and named rather than left in the pile. `DriverCreate` declares six fields
-    #: the handler drops, four of them **DOT-regulated Hours of Service**:
-    #: `current_hos_status`, `hos_cycle_hours`, `hos_drive_hours_today`,
-    #: `hos_on_duty_hours_today`. `HOSMonitor.check_compliance` reads exactly those to decide
-    #: whether a driver may be dispatched, and `dispatch_shipment` refuses on its verdict — so
-    #: this is the carrier defect's shape with a regulator attached: a reader that already
-    #: exists and already depends on the dropped fields.
+    #: `transportation:POST /drivers` WAS HERE and is fixed (FS-664). Kept as a note rather
+    #: than an entry, because what it cost is the argument for this register existing.
     #:
-    #: Not fixed in the same pass as the carrier because HOS has a second writer (the ELD
-    #: sync) and which one wins on create is a decision, not a wiring fix. Recorded here so it
-    #: cannot be lost, with the reason it outranks the rest of this register.
-    "transportation:POST /drivers": [
-        "current_hos_status", "dq_file_complete", "hos_cycle_hours", "hos_drive_hours_today",
-        "hos_on_duty_hours_today", "is_active",
-    ],
+    #: It dropped four DOT-regulated HOS figures. `check_compliance` reports "cannot be
+    #: assessed" when any is None and `dispatch_shipment` refuses on that verdict, so every
+    #: driver created through the API was permanently undispatchable. Two of the four
+    #: (`hos_cycle_hours`, `current_hos_status`) have NO writer anywhere but the demo seeder —
+    #: which is why the seeded fleet dispatches and a real one would not.
+    #:
+    #: It sat in this register for one pass with the reason "HOS has a second writer, the ELD
+    #: sync, and which one wins on create is a decision". That was wrong: create sets what the
+    #: operator knows, the webhook overwrites it when the ELD reports, and there is no race.
+    #: A register entry is a place to put a decision, not a place to put a doubt — the doubt
+    #: took ten minutes to resolve once somebody looked at the writers.
 }
 
 #: Why the register has members, recorded once rather than nine times. The two kinds are worth

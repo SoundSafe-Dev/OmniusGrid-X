@@ -452,6 +452,28 @@ async def create_driver(
         eld_device_id=data.eld_device_id,
         phone=data.phone,
         email=data.email,
+        # SIX FIELDS THE SCHEMA DECLARED AND THIS ROUTE DROPPED (FS-664), four of them
+        # DOT-regulated Hours of Service.
+        #
+        # `HOSComplianceMonitor.check_compliance` collects WHAT IS MISSING before what is
+        # wrong — it requires drive hours, on-duty hours AND cycle hours, and reports
+        # "cannot be assessed" when any is None. `dispatch_shipment` raises on that verdict.
+        # So a driver created through this endpoint could never be dispatched at all.
+        #
+        # And there was no other way in. The GeoTab ELD webhook writes `hos_drive_hours_today`
+        # and `hos_on_duty_hours_today` — only those two, only when that gated integration is
+        # live. **`hos_cycle_hours` and `current_hos_status` have no writer anywhere but the
+        # demo seeder**, which is why the seeded fleet dispatches and a real one would not.
+        #
+        # Accepting an initial value here does not race the sync: create sets the state the
+        # operator knows, the webhook overwrites it when the ELD reports. That was the
+        # question that deferred this fix, and the answer is that there is no conflict.
+        current_hos_status=data.current_hos_status,
+        hos_drive_hours_today=data.hos_drive_hours_today,
+        hos_on_duty_hours_today=data.hos_on_duty_hours_today,
+        hos_cycle_hours=data.hos_cycle_hours,
+        dq_file_complete=data.dq_file_complete,
+        is_active=data.is_active,
         db=db
     )
     return driver
