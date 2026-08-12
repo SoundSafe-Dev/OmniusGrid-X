@@ -348,7 +348,6 @@ class YardMoveBase(BaseModel):
     from_location: str
     to_location: str
     move_type: Optional[str] = None  # check_in, dock, yard_relocate, check_out
-    duration_seconds: Optional[float] = None
     metadata: JsonMetadata = Field(default_factory=dict, validation_alias=AliasChoices('meta_data', 'metadata'), serialization_alias='metadata')
 
 
@@ -368,6 +367,15 @@ class YardMoveCreate(YardMoveBase):
 
 
 class YardMoveResponse(YardMoveBase):
+    # LIFECYCLE STATE LIVES HERE, NOT ON THE BASE (FS-668). `duration_seconds` is computed by `complete_yard_move` from the two timestamps. A
+    # caller-supplied duration was accepted and overwritten.
+    #
+    # Moved rather than made Optional, on the argument FS-523 made for
+    # `organization_id`: a field a caller can set that changes nothing is its own
+    # small lie, and pydantic ignores extra keys by default, so a client still
+    # sending one is unaffected.
+    duration_seconds: Optional[float] = None
+
     # Mirrors the columns: nullable on the table with NO server default, so a row
     # written outside SQLAlchemy (migration, seeder, raw INSERT) hands these an
     # explicit None. A pydantic default does not help — the ORM passes the None
@@ -617,13 +625,10 @@ class ShipmentBase(BaseModel):
     pro_number: Optional[str] = None
     bol_number: Optional[str] = None
     shipment_type: str = "outbound"  # inbound, outbound, transfer
-    status: str = "planned"  # planned, dispatched, in_transit, delivered, cancelled
     origin: Dict[str, Any] = {}
     destination: Dict[str, Any] = {}
     scheduled_pickup: Optional[datetime] = None
-    actual_pickup: Optional[datetime] = None
     scheduled_delivery: Optional[datetime] = None
-    actual_delivery: Optional[datetime] = None
     priority: str = "normal"  # low, normal, high, critical
     total_weight_lbs: Optional[float] = None
     total_pieces: Optional[int] = None
@@ -662,6 +667,22 @@ class ShipmentUpdate(BaseModel):
 
 
 class ShipmentResponse(ShipmentBase):
+    # LIFECYCLE STATE LIVES HERE, NOT ON THE BASE (FS-668). `status`, `actual_pickup` and
+    # `actual_delivery` were on `ShipmentBase`, so `ShipmentCreate` advertised all three —
+    # and `create_shipment` writes `status='planned'` and never reads the other two, because
+    # they are set by `update_shipment_status` when the events happen. A caller could send an
+    # actual delivery date on a shipment that has not been picked up, get a 200, and find it
+    # discarded.
+    #
+    # Moved rather than made Optional, on the argument FS-523 already made for
+    # `organization_id` a few lines above: a field a caller can set that changes nothing is
+    # its own small lie, and pydantic ignores extra keys by default, so a client still
+    # sending one is unaffected. `ShipmentUpdate` carries all three, which is where a
+    # lifecycle transition belongs.
+    status: str = "planned"  # planned, dispatched, in_transit, delivered, cancelled
+    actual_pickup: Optional[datetime] = None
+    actual_delivery: Optional[datetime] = None
+
     # Mirrors the columns: nullable on the table with NO server default, so a row
     # written outside SQLAlchemy (migration, seeder, raw INSERT) hands these an
     # explicit None. A pydantic default does not help — the ORM passes the None
@@ -736,8 +757,6 @@ class LoadPlanBase(BaseModel):
     space_utilization_percent: Optional[float] = None
     temperature_zones: List[Dict[str, Any]] = []
     special_instructions: Optional[str] = None
-    is_executed: bool = False
-    executed_at: Optional[datetime] = None
     metadata: JsonMetadata = Field(default_factory=dict, validation_alias=AliasChoices('meta_data', 'metadata'), serialization_alias='metadata')
 
 
@@ -758,6 +777,17 @@ class LoadPlanCreate(LoadPlanBase):
 
 
 class LoadPlanResponse(LoadPlanBase):
+    # LIFECYCLE STATE LIVES HERE, NOT ON THE BASE (FS-668). NOTHING IN THE CODEBASE SETS THESE. There is no execute-a-load-plan flow, so the
+    # Create schema was advertising a lifecycle that does not exist — worse than an
+    # ignored field, because a caller has no way to discover the gap.
+    #
+    # Moved rather than made Optional, on the argument FS-523 made for
+    # `organization_id`: a field a caller can set that changes nothing is its own
+    # small lie, and pydantic ignores extra keys by default, so a client still
+    # sending one is unaffected.
+    is_executed: bool = False
+    executed_at: Optional[datetime] = None
+
     # Mirrors the columns: nullable on the table with NO server default, so a row
     # written outside SQLAlchemy (migration, seeder, raw INSERT) hands these an
     # explicit None. A pydantic default does not help — the ORM passes the None
@@ -783,10 +813,6 @@ class FreightChargeBase(BaseModel):
     rate: Optional[float] = None
     amount: float
     currency: str = "USD"
-    is_billed: bool = False
-    billed_at: Optional[datetime] = None
-    invoice_number: Optional[str] = None
-    approved_at: Optional[datetime] = None
     metadata: JsonMetadata = Field(default_factory=dict, validation_alias=AliasChoices('meta_data', 'metadata'), serialization_alias='metadata')
 
 
@@ -807,6 +833,19 @@ class FreightChargeCreate(FreightChargeBase):
 
 
 class FreightChargeResponse(FreightChargeBase):
+    # LIFECYCLE STATE LIVES HERE, NOT ON THE BASE (FS-668). NOTHING IN THE CODEBASE SETS THESE EITHER. Approval and billing are declared and
+    # unimplemented; a caller could mark a charge billed, with an invoice number, on
+    # creation. Kept on the response so the fields exist when the flow is built.
+    #
+    # Moved rather than made Optional, on the argument FS-523 made for
+    # `organization_id`: a field a caller can set that changes nothing is its own
+    # small lie, and pydantic ignores extra keys by default, so a client still
+    # sending one is unaffected.
+    is_billed: bool = False
+    billed_at: Optional[datetime] = None
+    invoice_number: Optional[str] = None
+    approved_at: Optional[datetime] = None
+
     # Mirrors the columns: nullable on the table with NO server default, so a row
     # written outside SQLAlchemy (migration, seeder, raw INSERT) hands these an
     # explicit None. A pydantic default does not help — the ORM passes the None
@@ -829,9 +868,6 @@ class DockAppointmentBase(BaseModel):
     appointment_type: str  # pickup, delivery, transfer
     scheduled_start: datetime
     scheduled_end: datetime
-    actual_start: Optional[datetime] = None
-    actual_end: Optional[datetime] = None
-    status: str = "scheduled"  # scheduled, in_progress, completed, cancelled, no_show
     priority: str = "normal"
     compliance_required: bool = False
     metadata: JsonMetadata = Field(default_factory=dict, validation_alias=AliasChoices('meta_data', 'metadata'), serialization_alias='metadata')
@@ -865,6 +901,18 @@ class DockAppointmentUpdate(BaseModel):
 
 
 class DockAppointmentResponse(DockAppointmentBase):
+    # LIFECYCLE STATE LIVES HERE, NOT ON THE BASE (FS-668). `actual_start` and `actual_end` are written by `start_dock_appointment` and
+    # `complete_dock_appointment`; `status` moves with them. A caller could declare an
+    # appointment already finished at create time and be told 200.
+    #
+    # Moved rather than made Optional, on the argument FS-523 made for
+    # `organization_id`: a field a caller can set that changes nothing is its own
+    # small lie, and pydantic ignores extra keys by default, so a client still
+    # sending one is unaffected.
+    actual_start: Optional[datetime] = None
+    actual_end: Optional[datetime] = None
+    status: str = "scheduled"  # scheduled, in_progress, completed, cancelled, no_show
+
     # Mirrors the columns: nullable on the table with NO server default, so a row
     # written outside SQLAlchemy (migration, seeder, raw INSERT) hands these an
     # explicit None. A pydantic default does not help — the ORM passes the None

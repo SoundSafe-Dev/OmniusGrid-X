@@ -52,97 +52,48 @@ QUALIFIER = re.compile(r"(_expires_at|_at$|_by$|_status$|_id$|_reason$|_note)")
 
 #: Routes with a declared field the handler never reads, and why each is tolerated.
 #: **Only ever shrinks.** Measured 2026-08-12.
+#: `metadata` APPEARS ON NINE OF THESE THIRTEEN, which makes it one defect wearing nine hats
+#: rather than nine findings. Every one of those tables has a `meta_data` column; the create
+#: handlers simply never pass it, so a caller can attach metadata to a shipment, a yard move or
+#: a dock appointment and watch it vanish with a 200. `POST /yard/checkpoints` was the same and
+#: is wired (FS-660), which is why it is absent below.
+#:
+#: Left as one recorded pattern rather than nine wiring edits in a single pass: each handler
+#: needs its service signature widened, and doing that blind across four modules is how a
+#: mechanical change becomes a merge conflict in somebody else's lane.
 UNREAD: dict[str, list[str]] = {
-    "kanban:POST /rules": ["organization_id"],
-    "logistics_correlation:POST /load-quality": [
-        "claim_amount", "claim_filed", "manufacturing_correlation_score", "metadata",
-        "resolved_at", "root_cause_asset", "root_cause_operation", "trailer_id",
-    ],
-    #: SHRUNK 2026-08-12 (FS-667), from eight fields to four. `route_id`, `priority`,
-    #: `temperature_min` and `temperature_max` were genuine creation input and are now wired:
-    #: `temperature_required` was passed while the range it refers to was dropped — the fourth
-    #: instance of a flag kept and its qualifier discarded (rule 143) — and `route_id` is how a
-    #: shipment gets the route whose distance `get_shipment_costs` bills per mile.
-    #:
-    #: The four that remain are lifecycle state: `actual_pickup`, `actual_delivery` and
-    #: `status` are all written by `update_shipment_status`, so the handler is right to ignore
-    #: them and the SCHEMA is what should stop accepting them.
-    "transportation:POST /shipments": [
-        "actual_delivery", "actual_pickup", "metadata", "status",
-    ],
-    #: SCHEMA-SIDE. **This entry said the opposite for one pass, and rule 145 overturned it.**
-    #:
-    #: It was recorded as "the strongest remaining wiring case" because
-    #: `total_distance_miles` has a same-module reader. Reading the WRITER settled it the
-    #: other way: `create_route` always runs `route_optimizer.optimize_route` and sets all
-    #: four of these from its result — haversine, or OSRM road distance when configured.
-    #:
-    #: So they have another producer on every create, and wiring the caller's value through
-    #: would let somebody override a computed route distance with any number they liked —
-    #: and that number reaches `get_shipment_costs`, which bills linehaul and fuel surcharge
-    #: per mile. The honest fix is to take them off `RouteCreate`.
-    #:
-    #: `is_active` is the exception in this list: nothing computes it, and it is genuine
-    #: creation input being dropped.
-    "transportation:POST /routes": [
-        "estimated_duration_hours", "fuel_cost_estimate", "is_active", "toll_cost_estimate",
-        "total_distance_miles",
-    ],
-    "transportation:POST /load-plans": [
-        "executed_at", "is_executed", "metadata", "temperature_zones",
-    ],
-    "transportation:POST /freight-charges": [
-        "approved_at", "approved_by", "billed_at", "currency", "invoice_number", "is_billed",
-        "metadata",
-    ],
-    "yard:POST /dock/appointments": [
-        "actual_end", "actual_start", "compliance_required", "driver_id", "metadata", "status",
-    ],
-    "yard:POST /moves": ["duration_seconds", "metadata"],
-    #: SCHEMA-SIDE, and confirmed by reading the reader — the opposite conclusion to the
-    #: carrier and the driver, from the same question.
-    #:
-    #: `total_wait_minutes`, `detention_minutes`, `detention_charge`, `demurrage_minutes` and
-    #: `demurrage_charge` are all COMPUTED by `close_driver_wait_time` at checkout from the
-    #: two timestamps and the two rates. `check_out_at`, `docked_at` and `unloaded_at` are
-    #: lifecycle stamps set as they happen. None of them is creation input.
-    #:
-    #: So dropping them is right, and honouring them would be worse than the defect: an
-    #: operator could post their own `detention_charge` on create and the system would bill
-    #: it. The fix here is to take them OFF `DriverWaitTimeCreate`, which is a contract change
-    #: with clients to check — not to wire them through.
-    "yard:POST /driver-wait-times": [
-        "check_out_at", "demurrage_charge", "demurrage_minutes", "detention_charge",
-        "detention_minutes", "docked_at", "is_billed", "metadata", "total_wait_minutes",
-        "unloaded_at",
-    ],
-
-    # --- DELIBERATE: the handler is right to ignore these ---------------------------------
-    #: `status` on a check-in is the one declared field this route SHOULD drop. The service
-    #: sets 'checked_in'; honouring a caller's status would let somebody check a trailer
-    #: straight to 'checked_out' without it ever entering the yard. The SCHEMA is wrong here,
-    #: not the handler — the same shape `organization_id` carries on every Create model.
-    "yard:POST /trailers/checkin": ["status"],
-    "kanban:POST /tasks": ["status"],
-
-    # --- other lanes ---------------------------------------------------------------------
+    #: Harsh's lane.
     "analysis_sessions:POST /{session_id}/correlate": ["auto_integrate"],
+    #: Harsh's lane.
+    "kanban:POST /rules": ["organization_id"],
+    #: DELIBERATE, same shape as the check-in above. Harsh's lane.
+    "kanban:POST /tasks": ["status"],
+    #: Harsh's lane.
+    "logistics_correlation:POST /load-quality": ["claim_amount", "claim_filed", "manufacturing_correlation_score", "metadata", "resolved_at", "root_cause_asset", "root_cause_operation", "trailer_id"],
+    #: Harsh's lane.
     "nlp_correlation:POST /intake/cross-correlate": ["auto_integrate"],
-
-    #: `transportation:POST /drivers` WAS HERE and is fixed (FS-664). Kept as a note rather
-    #: than an entry, because what it cost is the argument for this register existing.
-    #:
-    #: It dropped four DOT-regulated HOS figures. `check_compliance` reports "cannot be
-    #: assessed" when any is None and `dispatch_shipment` refuses on that verdict, so every
-    #: driver created through the API was permanently undispatchable. Two of the four
-    #: (`hos_cycle_hours`, `current_hos_status`) have NO writer anywhere but the demo seeder —
-    #: which is why the seeded fleet dispatches and a real one would not.
-    #:
-    #: It sat in this register for one pass with the reason "HOS has a second writer, the ELD
-    #: sync, and which one wins on create is a decision". That was wrong: create sets what the
-    #: operator knows, the webhook overwrites it when the ELD reports, and there is no race.
-    #: A register entry is a place to put a decision, not a place to put a doubt — the doubt
-    #: took ten minutes to resolve once somebody looked at the writers.
+    #: `approved_by` has no producer — the approval flow does not exist, and the rest of it
+    #: moved to the response (FS-668). `currency` is genuine creation input.
+    "transportation:POST /freight-charges": ["approved_by", "currency", "metadata"],
+    "transportation:POST /load-plans": ["metadata", "temperature_zones"],
+    #: SCHEMA-SIDE. `create_route` always runs the optimizer and sets all four of these from
+    #: its result, so wiring a caller's value would let somebody override a computed route
+    #: distance — and that distance is billed per mile. `is_active` is the exception: nothing
+    #: computes it, and it is genuine creation input.
+    "transportation:POST /routes": ["estimated_duration_hours", "fuel_cost_estimate", "is_active", "toll_cost_estimate", "total_distance_miles"],
+    #: Was eight fields; four were wired (FS-667) and three moved to the response schema
+    #: as lifecycle state (FS-668). `metadata` is the systematic one — see the note below.
+    "transportation:POST /shipments": ["metadata"],
+    #: `driver_id` and `compliance_required` are genuine creation input; the lifecycle
+    #: fields moved to the response (FS-668).
+    "yard:POST /dock/appointments": ["compliance_required", "driver_id", "metadata"],
+    #: SCHEMA-SIDE. Every figure here is COMPUTED by `close_driver_wait_time` at checkout.
+    #: Honouring a caller's `detention_charge` would let an operator bill their own number.
+    "yard:POST /driver-wait-times": ["check_out_at", "demurrage_charge", "demurrage_minutes", "detention_charge", "detention_minutes", "docked_at", "is_billed", "metadata", "total_wait_minutes", "unloaded_at"],
+    "yard:POST /moves": ["metadata"],
+    #: DELIBERATE. The service sets 'checked_in'; honouring a caller's status would let
+    #: somebody check a trailer straight to 'checked_out' without it entering the yard.
+    "yard:POST /trailers/checkin": ["status"],
 }
 
 #: Why the register has members, recorded once rather than nine times. The two kinds are worth

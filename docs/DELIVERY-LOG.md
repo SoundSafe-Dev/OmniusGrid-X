@@ -9389,3 +9389,46 @@ asserted an omitted `priority` would arrive as `None`; `ShipmentBase.priority` i
 `seal_status` failed — and the answer differs, which is the point. **"normal" is a genuinely
 neutral default: it asserts nothing a reader acts on, where "intact" asserted a security check
 that never happened.** A defaulted enum is only a lie when the value makes a claim.
+
+### The schema-side half, and a deferral that was wrong for the third time
+
+I recorded the twelve unhonoured fields as "a contract change with clients to check", which is
+what I said about the driver HOS fields before reading the writers proved otherwise. Checking
+first this time took one grep, and the precedent was already in the file I was about to edit:
+
+> Removed rather than made Optional. A field a caller can set that changes nothing is its own
+> small lie, and **pydantic ignores extra keys by default, so a client still sending one is
+> unaffected**. — FS-523, on `organization_id`
+
+So this is not a risky contract change. Client behaviour is **identical** either way, because
+the value is already discarded. The only thing that changes is that the OpenAPI schema stops
+advertising fields the server will not honour.
+
+Five `*Base` classes were shared between Create and Response, which is how the lifecycle fields
+reached Create at all. They moved down into the Response classes:
+
+| schema | moved | why |
+|---|---|---|
+| `ShipmentBase` | `status`, `actual_pickup`, `actual_delivery` | written by `update_shipment_status`; `ShipmentUpdate` already carried all three |
+| `DockAppointmentBase` | `actual_start`, `actual_end`, `status` | written when the appointment starts and completes |
+| `YardMoveBase` | `duration_seconds` | computed by `complete_yard_move` |
+| `LoadPlanBase` | `is_executed`, `executed_at` | **nothing sets these** |
+| `FreightChargeBase` | `is_billed`, `billed_at`, `invoice_number`, `approved_at` | **nothing sets these either** |
+
+The last two rows are worse than an ignored field. A caller could mark a freight charge billed,
+with an invoice number, at creation — and the approval and billing flow **has never been
+built**. The Create schema was advertising a lifecycle that does not exist, which a caller has
+no way to discover.
+
+`ShipmentUpdate` already carrying `status`/`actual_pickup`/`actual_delivery` is what confirms
+the intent: lifecycle belongs on Update. The Base was simply the wrong place to put them.
+
+The register went from 8 fields on shipments to 1, and 6 on freight charges to 3.
+
+**And the remainder made a pattern visible.** `metadata` is now on nine of the thirteen
+remaining entries — one defect wearing nine hats, not nine findings. Every one of those tables
+has a `meta_data` column and the handler never passes it, so metadata attached to a shipment, a
+yard move or a dock appointment vanishes with a 200. `POST /yard/checkpoints` was the same and
+is already wired, which is why it is absent. Recorded as one pattern rather than fixed in nine
+blind edits across four modules — each needs its service signature widened, and that is how a
+mechanical change becomes somebody else's merge conflict.
