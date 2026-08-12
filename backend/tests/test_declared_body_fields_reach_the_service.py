@@ -58,9 +58,17 @@ UNREAD: dict[str, list[str]] = {
         "claim_amount", "claim_filed", "manufacturing_correlation_score", "metadata",
         "resolved_at", "root_cause_asset", "root_cause_operation", "trailer_id",
     ],
+    #: SHRUNK 2026-08-12 (FS-667), from eight fields to four. `route_id`, `priority`,
+    #: `temperature_min` and `temperature_max` were genuine creation input and are now wired:
+    #: `temperature_required` was passed while the range it refers to was dropped — the fourth
+    #: instance of a flag kept and its qualifier discarded (rule 143) — and `route_id` is how a
+    #: shipment gets the route whose distance `get_shipment_costs` bills per mile.
+    #:
+    #: The four that remain are lifecycle state: `actual_pickup`, `actual_delivery` and
+    #: `status` are all written by `update_shipment_status`, so the handler is right to ignore
+    #: them and the SCHEMA is what should stop accepting them.
     "transportation:POST /shipments": [
-        "actual_delivery", "actual_pickup", "metadata", "priority", "route_id", "status",
-        "temperature_max", "temperature_min",
+        "actual_delivery", "actual_pickup", "metadata", "status",
     ],
     #: SCHEMA-SIDE. **This entry said the opposite for one pass, and rule 145 overturned it.**
     #:

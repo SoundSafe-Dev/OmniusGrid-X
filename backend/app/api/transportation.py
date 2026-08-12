@@ -691,6 +691,24 @@ async def create_shipment(
         temperature_required=data.temperature_required,
         pro_number=data.pro_number,
         bol_number=data.bol_number,
+        # FOUR FIELDS THE SCHEMA DECLARED AND THIS ROUTE DROPPED (FS-667).
+        #
+        # `temperature_required` was passed and `temperature_min`/`temperature_max` were not:
+        # a reefer shipment marked as needing temperature control, with no range to control
+        # to. The fourth instance of that pairing — a flag stored and the values that give it
+        # meaning discarded (rule 143), after the checkpoint's inspector, the trailer's seal
+        # status and the carrier's expiry dates.
+        #
+        # `route_id` is the one with reach beyond this route. It is how a shipment gets a
+        # route, a route is where `total_distance_miles` lives, and that distance is what
+        # `get_shipment_costs` bills per mile. Dropped, a shipment created through the API can
+        # never be routed at create time — and FS-665 has just made the honest consequence
+        # visible, since a shipment with no route now reports its charges as not estimated
+        # rather than inventing 500 miles.
+        route_id=data.route_id,
+        priority=data.priority,
+        temperature_min=data.temperature_min,
+        temperature_max=data.temperature_max,
         db=db
     )
     return shipment

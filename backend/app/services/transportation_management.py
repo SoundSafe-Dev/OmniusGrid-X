@@ -627,6 +627,10 @@ class TransportationManagementService:
         total_pieces: Optional[int] = None,
         hazmat: bool = False,
         temperature_required: bool = False,
+        temperature_min: Optional[float] = None,
+        temperature_max: Optional[float] = None,
+        route_id: Optional[UUID] = None,
+        priority: Optional[str] = None,
         pro_number: Optional[str] = None,
         bol_number: Optional[str] = None,
         db: Optional[AsyncSession] = None
@@ -650,7 +654,16 @@ class TransportationManagementService:
                 total_weight_lbs=total_weight_lbs,
                 total_pieces=total_pieces,
                 hazmat=hazmat,
-                temperature_required=temperature_required
+                temperature_required=temperature_required,
+                # The range the flag above refers to. `temperature_required=True` with no
+                # bounds is a claim with nothing behind it.
+                temperature_min=temperature_min,
+                temperature_max=temperature_max,
+                route_id=route_id,
+                # `ShipmentBase.priority` is `str = "normal"`, so a value always arrives; the
+                # guard is for a direct service caller that passes nothing, where the column
+                # default should win rather than being overwritten with NULL.
+                **({"priority": priority} if priority is not None else {}),
             )
             session.add(shipment)
             await session.commit()

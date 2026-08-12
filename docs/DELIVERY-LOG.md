@@ -9316,3 +9316,76 @@ under two charges that both say they are not estimates.
 
 Ten tests, and the file that pinned the defect now pins the fix — including a guard that the
 `500.0` literal has not come back. The frontend suite and `tsc` are clean.
+
+### The seal that was intact because nobody looked
+
+Second of the three. `yard_trailers.seal_status` is one of intact / broken / missing, and both
+the Pydantic schema (`str = "intact"`) and the column (a server default from migration 050)
+supplied "intact" when a check-in said nothing. That is not a neutral default — it is **the
+most reassuring of the three values, written precisely when nobody looked**.
+
+Reading migration 050 before overturning it was the right call, because its reasoning is sound
+and is why this slipped in. It gave server defaults to 39 logistics columns whose ORM `default=`
+fired only through SQLAlchemy, so a raw INSERT wrote NULL and the API could not serialise the
+row. Its argument:
+
+> a NULL `is_active` or `status` is a missing value, not an unknown moment, so writing the
+> documented default is a correction, not an invention
+
+True for `is_active`, for `{}` on a JSON column, for every other column in that list. **It does
+not hold where the value asserts something.** An absent `is_active` has an obvious intended
+reading; an absent seal check has none, and supplying one invents an inspection result.
+`seal_status` was swept along with 38 columns whose defaults are genuinely harmless.
+
+Migration 068 drops the server default; the ORM and the schema drop theirs. Silence now stores
+NULL, which is what silence means.
+
+**What it cannot do, stated in the migration header rather than worked around.** 050's backfill
+was `UPDATE yard_trailers SET seal_status = 'intact' WHERE seal_status IS NULL`, so every row
+that had never recorded a check now says 'intact' and is indistinguishable from one where a
+guard genuinely reported an intact seal. Setting them back to NULL would erase the real checks
+to undo the invented ones — a known fabrication traded for certain data loss. The rows are left
+alone. This stops the fabrication from here on; nothing can undo what is already written.
+
+The test that pinned this as an open finding now asserts the fix, and says which two defaults
+have to stay gone — either one alone restores the claim.
+
+### The third finding, split by rule 145 and half of it closed
+
+The nine routes declaring body fields their handlers never read. Ranking them by *does another
+writer produce this value* separated them cleanly:
+
+**Produced elsewhere → the schema is wrong, not the handler.** `actual_pickup`,
+`actual_delivery` and `status` on a shipment are written by `update_shipment_status`;
+`actual_start`/`actual_end` on a dock appointment and `duration_seconds` on a yard move are
+computed at their close. The handler is right to ignore all of them, and the fix is to stop the
+Create schema accepting values it will never honour — a contract change, recorded.
+
+**No producer anywhere → the workflow does not exist.** `executed_at`/`is_executed` on a load
+plan, `approved_at`/`approved_by`/`billed_at`/`is_billed` on a freight charge. Nothing in the
+codebase ever sets them, so the API is promising an approval and billing flow that has not been
+built. Also schema-side, and worth saying plainly rather than filing as data loss.
+
+**Genuine creation input → wired.** `POST /shipments` dropped four: `route_id`, `priority`,
+`temperature_min` and `temperature_max`.
+
+`temperature_required` was passed and the range it refers to was not — **the fourth instance of
+a flag kept while the field giving it meaning is discarded**, after the checkpoint's inspector,
+the trailer's seal status and the carrier's expiry dates. A reefer shipment marked as needing
+temperature control, with no range to control to.
+
+`route_id` is the one with reach. It is how a shipment gets a route, a route is where
+`total_distance_miles` lives, and that distance is what `get_shipment_costs` bills per mile.
+Dropped, a shipment created through the API could never be routed at create — and FS-665 has
+just made that consequence *visible* rather than hidden, since a shipment with no route now
+reports "not estimated" instead of inventing 500 miles. The two fixes meet.
+
+Five tests fail with the pass-through removed. The register entry shrank from eight fields to
+four, which is the ratchet doing what it is for.
+
+**A test premise of mine was wrong again, and the correction is the interesting part.** I
+asserted an omitted `priority` would arrive as `None`; `ShipmentBase.priority` is
+`str = "normal"`, so the schema supplies it before the handler runs. That is the same question
+`seal_status` failed — and the answer differs, which is the point. **"normal" is a genuinely
+neutral default: it asserts nothing a reader acts on, where "intact" asserted a security check
+that never happened.** A defaulted enum is only a lie when the value makes a claim.

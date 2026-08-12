@@ -168,3 +168,93 @@ class TestTheDatesTheComplianceCheckReads:
         c, org = client
         _create(c, organization_id=str(uuid.uuid4()))
         assert created[0]["organization_id"] == org
+
+
+class TestAShipmentKeepsWhatItWasCreatedWith:
+    """The fourth instance of the flag-without-its-qualifier pairing (FS-667).
+
+    `POST /shipments` passed `temperature_required` and dropped `temperature_min` and
+    `temperature_max` — a reefer shipment marked as needing temperature control, with no range
+    to control to. After the checkpoint's inspector, the trailer's seal status and the
+    carrier's expiry dates, that is rule 143 four times.
+
+    `route_id` is the one with reach beyond this route. It is how a shipment gets a route, a
+    route is where `total_distance_miles` lives, and that distance is what `get_shipment_costs`
+    bills per mile. Dropped, a shipment created through the API could never be routed at create
+    — and FS-665 has just made the consequence visible rather than hidden, since a shipment
+    with no route now reports its charges as **not estimated** instead of inventing 500 miles.
+    """
+
+    @pytest.fixture
+    def shipped(self, monkeypatch):
+        calls: list[dict] = []
+
+        async def _create(**kwargs):
+            calls.append(kwargs)
+            return SimpleNamespace(
+                id=uuid.uuid4(),
+                organization_id=kwargs["organization_id"],
+                shipment_number=kwargs["shipment_number"],
+                status="planned",
+                **{k: kwargs.get(k) for k in (
+                    "pro_number", "bol_number", "shipment_type", "origin", "destination",
+                    "scheduled_pickup", "scheduled_delivery", "actual_pickup",
+                    "actual_delivery", "carrier_id", "driver_id", "trailer_id", "route_id",
+                    "total_weight_lbs", "total_pieces", "hazmat", "temperature_required",
+                    "temperature_min", "temperature_max", "priority",
+                )},
+                created_at=datetime(2026, 8, 12, tzinfo=timezone.utc),
+                updated_at=datetime(2026, 8, 12, tzinfo=timezone.utc),
+            )
+
+        monkeypatch.setattr(
+            transportation_api.transportation_management_service, "create_shipment", _create
+        )
+        return calls
+
+    def _ship(self, client, **over):
+        return client.post(
+            "/api/v1/transportation/shipments",
+            json={"shipment_number": "SH-1", "origin": {}, "destination": {}, **over},
+        )
+
+    def test_the_temperature_range_reaches_the_service(self, client, shipped):
+        """THE PAIRING. The flag was kept and the bounds were discarded."""
+        c, _ = client
+        assert self._ship(
+            c, temperature_required=True, temperature_min=-18.0, temperature_max=-10.0
+        ).status_code == 200
+        assert float(shipped[0]["temperature_min"]) == -18.0
+        assert float(shipped[0]["temperature_max"]) == -10.0
+
+    def test_the_flag_still_reaches_the_service(self, client, shipped):
+        """The half that already worked, kept working."""
+        c, _ = client
+        self._ship(c, temperature_required=True)
+        assert shipped[0]["temperature_required"] is True
+
+    def test_the_route_reaches_the_service(self, client, shipped):
+        """The link to the distance the billing path reads."""
+        c, _ = client
+        route = str(uuid.uuid4())
+        self._ship(c, route_id=route)
+        assert str(shipped[0]["route_id"]) == route
+
+    def test_the_priority_reaches_the_service(self, client, shipped):
+        c, _ = client
+        self._ship(c, priority="expedited")
+        assert shipped[0]["priority"] == "expedited"
+
+    def test_an_omitted_priority_arrives_as_the_schema_default(self, client, shipped):
+        """`ShipmentBase.priority` is `str = "normal"`, so omission never reaches the route as
+        None — the schema supplies the documented value before the handler runs.
+
+        Worth an assertion rather than a comment, because this is the same question
+        `seal_status` failed (FS-666) and the answer is different here. "normal" is a
+        genuinely neutral priority: it asserts nothing a reader would act on, where "intact"
+        asserted a security check that never happened. A defaulted enum is only a lie when the
+        value makes a claim.
+        """
+        c, _ = client
+        self._ship(c)
+        assert shipped[0]["priority"] == "normal"
