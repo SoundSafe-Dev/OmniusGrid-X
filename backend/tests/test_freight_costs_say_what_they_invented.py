@@ -1,35 +1,43 @@
-"""Two fabricated defaults compounding into a billed figure (FS-665).
+"""Two fabricated defaults compounding into a billed figure — and the fix (FS-665).
 
-**PINS A DEFECT THIS DOES NOT CLOSE.** Every assertion below passes against today's code and
-describes what it does, because the fix is a decision about what the endpoint promises rather
-than a wiring change — and a finding worth $1,333.33 should not live in a commit message.
+**THIS FILE PINNED A DEFECT AND NOW PINS ITS FIX.** It was written first as a description of
+what the code did, because the repair was a decision about what the endpoint promises rather
+than a wiring change. The decision was taken: **when the distance is unknown the endpoint
+reports the charge as not estimated rather than inventing one**, which is the same answer
+FS-533 gave for the fuel surcharge and the same shape `distance_miles: Optional[float]`
+already had on the wire.
 
 THE TWO DEFAULTS, independent and in the same call chain:
 
   * `get_shipment_costs` — `distance = route.total_distance_miles if … else **500.0**`
   * `calculate_linehaul` — `rate_per_mile = rate_per_mile or **2.50**`
 
-Neither is reachable from the other, and neither says it fired. A shipment with no route and
-no contract rate is billed 500 invented miles at an invented $2.50, and the endpoint reports
-`distance_miles: 500.0` as fact — the Transportation page renders "500 mi".
+Neither was reachable from the other, and neither said it fired. A shipment with no route and
+no contract rate was billed 500 invented miles at an invented $2.50 — $1,333.33 in total — and
+the endpoint reported `distance_miles: 500.0` as fact, which the Transportation page rendered
+as "500 mi".
+
+WHAT EACH BECAME. The distance fallback is **gone**: `None` now reaches both calculators and
+both answer `amount: None` with `rate_basis: "not_estimated"`. The rate default is **kept and
+labelled**, exactly as FS-533 kept the fleet-average surcharge and labelled it — an
+uncontracted carrier is still billed the list rate, and `assumptions.basis` now says
+`default_list_rate` where a contracted one says `contract_rate`. Those two were previously
+byte-identical at the same value.
 
 WHY IT SURVIVED. The 500 has a comment beside it explaining a Decimal/float TypeError, and
 that comment is correct and load-bearing; the fabrication went unremarked next to a real fix.
 The 2.50 is labelled `# Default rates if not specified`, which is true and says nothing about
 the fact that the result is then billed.
 
-WHY IT IS NOT FIXED HERE. `ShipmentCostsOut.linehaul.amount` and `.total_cost` are
-non-optional floats. Answering 0 for an unknown distance fabricates a cheap shipment exactly
-as 500 fabricates an expensive one, so there is no honest number — the endpoint has to be able
-to say "not estimated", and `LinehaulCharge`/`FuelSurchargeCharge` would need a way to carry
-that. There is precedent: `FuelSurchargeCharge` already exists *because* the surcharge is not
-always a measurement. Extending the same idea to the linehaul is a contract change with
-clients to check, and it is a product decision about what the figure means.
+WHAT THE CONTRACT CHANGE COST. `linehaul.amount`, `fuel_surcharge.amount`, `mileage_charge`,
+`weight_charge` and `total_cost` are now `Optional[float]`, and the TypeScript follows. The
+page renders an em dash rather than `$0.00` and carries one line saying why — the same
+argument its own comment already made about accessorials: *a zero in a cost breakdown reads
+as "nothing was charged" rather than "not calculated here"*.
 
-WHAT IS ALREADY HONEST, and worth keeping: `distance_miles` is `Optional[float]` on the wire,
-the TypeScript declares `distanceMiles: number | null`, and `TransportationManagement.tsx`
-hides the row when it is null. The contract can express "unknown" today; only the server
-declines to.
+That `distance_miles` was already `Optional[float]`, already `number | null` in the client,
+and already hidden by the page when absent is what made the change small. The contract could
+express "unknown" the whole time; only the server declined to.
 """
 
 from __future__ import annotations
@@ -48,71 +56,108 @@ def engine() -> FreightBillingEngine:
     return FreightBillingEngine()
 
 
-class TestWhatAnUnpricedShipmentIsBilled:
-    async def test_the_rate_is_invented_when_no_contract_says_otherwise(self, engine):
-        """`rate_per_mile or 2.50`. A shipment on a carrier with no negotiated rate is billed
-        at a number nobody agreed to, and nothing in the response says so."""
+class TestTheRateIsLabelledRatherThanHidden:
+    async def test_an_uncontracted_carrier_is_billed_the_list_rate(self, engine):
+        """Unchanged behaviour, deliberately. Removing the default would refuse to price
+        every uncontracted shipment, which is a bigger change than this defect warrants —
+        FS-533 made the same call for the fuel surcharge."""
         charge = await engine.calculate_linehaul(
             distance_miles=1.0, weight_lbs=0.0, contract_rates=None
         )
         assert charge["amount"] == FABRICATED_RATE
 
-    async def test_a_real_contract_rate_is_used_when_there_is_one(self, engine):
-        """The control. If this failed, the default would be overriding real rates and the
-        finding would be far worse than described."""
+    async def test_and_the_response_says_the_rate_was_a_default(self, engine):
+        """THE FIX for the rate. Previously nothing in the payload distinguished this from a
+        negotiated rate."""
+        charge = await engine.calculate_linehaul(
+            distance_miles=1.0, weight_lbs=0.0, contract_rates=None
+        )
+        assert charge["assumptions"]["basis"] == "default_list_rate"
+
+    async def test_a_contract_rate_is_named_as_one(self, engine):
         charge = await engine.calculate_linehaul(
             distance_miles=1.0, weight_lbs=0.0, contract_rates={"per_mile": 4.10}
         )
         assert charge["amount"] == 4.10
+        assert charge["assumptions"]["basis"] == "contract_rate"
 
-    async def test_the_two_defaults_compound(self, engine):
-        """THE FINDING, quantified. This is exactly the call `get_shipment_costs` makes for a
-        shipment whose route has no distance and whose carrier has no contract."""
+    async def test_the_two_are_no_longer_byte_identical(self, engine):
+        """The property that made the figure dangerous. A fabricated rate and a contracted
+        one at the SAME VALUE used to produce identical results, so no caller could tell them
+        apart. This is the assertion that inverts."""
+        invented = await engine.calculate_linehaul(
+            distance_miles=500.0, weight_lbs=0.0, contract_rates=None
+        )
+        contracted = await engine.calculate_linehaul(
+            distance_miles=500.0, weight_lbs=0.0, contract_rates={"per_mile": FABRICATED_RATE}
+        )
+        assert invented["amount"] == contracted["amount"], "same rate, same money"
+        assert invented != contracted, (
+            "a defaulted rate and a contracted one at the same value are still "
+            "indistinguishable — the label is not reaching the payload"
+        )
+
+
+class TestNoDistanceMeansNoEstimate:
+    async def test_the_linehaul_is_not_estimated(self, engine):
+        """THE FIX for the distance. There is no honest number: 0 fabricates a cheap shipment
+        exactly as 500 fabricated an expensive one, so the charge declines."""
+        charge = await engine.calculate_linehaul(
+            distance_miles=None, weight_lbs=0.0, contract_rates=None
+        )
+        assert charge["amount"] is None
+        assert charge["rate_basis"] == "not_estimated"
+        assert charge["assumptions"]["basis"] == "distance_unavailable"
+
+    async def test_the_fuel_surcharge_is_not_estimated_either(self, engine):
+        """`distance * rate` on both sides, so both decline together. A surcharge estimated
+        beside a linehaul that could not be would be the same lie, half as large."""
+        charge = await engine.calculate_fuel_surcharge(
+            distance_miles=None, contract_rates=None
+        )
+        assert charge["amount"] is None
+        assert charge["rate_basis"] == "not_estimated"
+
+    async def test_the_charge_says_what_to_do_about_it(self, engine):
+        """A refusal with no next step is only marginally better than a wrong number."""
+        charge = await engine.calculate_linehaul(
+            distance_miles=None, weight_lbs=0.0, contract_rates=None
+        )
+        assert "route" in charge["assumptions"]["note"].lower()
+
+    async def test_a_real_distance_still_bills(self, engine):
+        """The control. If this failed the fix would have stopped pricing every shipment."""
+        charge = await engine.calculate_linehaul(
+            distance_miles=500.0, weight_lbs=0.0, contract_rates={"per_mile": 2.00}
+        )
+        assert charge["amount"] == 1000.00
+
+
+class TestTheCompoundingIsGone:
+    async def test_the_thirteen_hundred_dollars_is_no_longer_invented(self, engine):
+        """The finding, inverted. This exact call produced $1,333.33 of fabricated cost for a
+        shipment with no route and no contract; both components now decline."""
         linehaul = await engine.calculate_linehaul(
-            distance_miles=FABRICATED_DISTANCE, weight_lbs=0.0, contract_rates=None
+            distance_miles=None, weight_lbs=0.0, contract_rates=None
         )
         surcharge = await engine.calculate_fuel_surcharge(
-            distance_miles=FABRICATED_DISTANCE, contract_rates=None
+            distance_miles=None, contract_rates=None
         )
-        total = linehaul["amount"] + surcharge["amount"]
-
-        assert linehaul["amount"] == 1250.00, "500 invented miles at an invented $2.50"
-        assert round(total, 2) == 1333.33, (
-            "a shipment with no route and no contract rate is billed $1,333.33, every cent "
-            "of it from two defaults that do not know about each other and neither of which "
-            "reports that it fired"
+        assert linehaul["amount"] is None and surcharge["amount"] is None, (
+            "a shipment with no route and no contract rate was billed $1,333.33, every cent "
+            "from two defaults that did not know about each other"
         )
 
-    async def test_nothing_in_the_result_marks_the_figure_as_invented(self, engine):
-        """The reason the number is dangerous rather than merely wrong. `rateBasis` is the
-        field that could carry it — `FuelSurchargeCharge` exists precisely because the
-        surcharge is not always a measurement — and it says `per_mile` either way."""
-        invented = await engine.calculate_linehaul(
-            distance_miles=FABRICATED_DISTANCE, weight_lbs=0.0, contract_rates=None
-        )
-        real = await engine.calculate_linehaul(
-            distance_miles=FABRICATED_DISTANCE, weight_lbs=0.0, contract_rates={"per_mile": 2.50}
-        )
-        assert invented == real, (
-            "a fabricated rate and a contracted one at the same value produce byte-identical "
-            "results, so no caller can tell them apart. That is what has to change, and it "
-            "is a contract decision rather than a wiring fix."
-        )
-
-
-class TestTheDistanceFallbackIsStillThere:
-    def test_the_literal_is_where_this_file_says_it_is(self):
-        """Pins the citation, not the behaviour. Rule 129 says cite a section rather than a
-        line, and this is the compromise for a bare literal: assert the code still contains
-        it, so the day somebody makes it honest this test fails and points here."""
+    def test_the_distance_fallback_is_gone_from_the_source(self):
+        """Pins the removal. If somebody reintroduces a numeric fallback for an absent
+        distance, this is the test that should stop them."""
         import pathlib
 
         source = (
             pathlib.Path(__file__).resolve().parents[1]
             / "app" / "services" / "transportation_management.py"
         ).read_text()
-        assert "else 500.0" in source, (
-            "the 500-mile fallback is gone — if that was deliberate, delete this test and the "
-            "finding in the delivery log with it"
+        assert "else 500.0" not in source, (
+            "the 500-mile fallback is back. There is no honest number for an unknown "
+            "distance — see this module's docstring."
         )
-        assert "rate_per_mile or 2.50" in source

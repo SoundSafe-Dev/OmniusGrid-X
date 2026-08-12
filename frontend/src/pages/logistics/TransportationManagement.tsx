@@ -75,6 +75,15 @@ const hosClass = (hours: number | null | undefined): string =>
 
 const TRANSPORT_QUERY_KEY = 'transportation';
 
+/** A money figure, or an em dash when the server could not estimate one (FS-665).
+ *
+ *  `$0.00` is not the honest render for "not calculated": the comment on the cost breakdown
+ *  already makes that argument about accessorials, and it applies identically to a charge the
+ *  server declines to estimate. Null reaches here whenever a shipment has no route distance.
+ */
+const money = (amount: number | null): string =>
+  amount === null ? '—' : `$${amount.toFixed(2)}`;
+
 export const TransportationManagement: FC = () => {
   const [selectedShipment, setSelectedShipment] = useState<Shipment | null>(null);
   const [selectedDriver, setSelectedDriver] = useState<Driver | null>(null);
@@ -1221,16 +1230,27 @@ const ShipmentDetailModal: FC<{
                     endpoint does not bill either, and a zero in a cost breakdown reads as
                     "nothing was charged" rather than "not calculated here". The mock
                     computed both, which is why the panel looked complete in development. */}
+                {/* NOT ESTIMATED is a state, not a zero (FS-665). The same argument as the
+                    missing accessorials above: the server used to substitute 500 miles for a
+                    shipment with no route and bill $1,250 against it, reporting
+                    `distanceMiles: 500` as fact — this panel rendered "500 mi" and a
+                    confident total. It now answers null, and a dash is the honest render. */}
+                {costs.linehaul.rateBasis === 'not_estimated' && (
+                  <p role="status" className="text-xs text-status-warning">
+                    No route distance on this shipment, so the per-mile charges cannot be
+                    estimated. Assign a route, or price it by hand.
+                  </p>
+                )}
                 <div className="flex justify-between">
                   <span className="text-opsgrid-text-secondary">Linehaul</span>
-                  <span>${costs.linehaul.amount.toFixed(2)}</span>
+                  <span>{money(costs.linehaul.amount)}</span>
                 </div>
                 <div className="flex justify-between">
                   <span className="text-opsgrid-text-secondary">
                     Fuel Surcharge
                     <span className="ml-1 text-xs">({costs.fuelSurcharge.rateBasis})</span>
                   </span>
-                  <span>${costs.fuelSurcharge.amount.toFixed(2)}</span>
+                  <span>{money(costs.fuelSurcharge.amount)}</span>
                 </div>
                 {costs.distanceMiles !== null && (
                   <div className="flex justify-between">
@@ -1240,7 +1260,7 @@ const ShipmentDetailModal: FC<{
                 )}
                 <div className="pt-2 border-t border-opsgrid-border flex justify-between font-semibold">
                   <span>Total</span>
-                  <span>${costs.totalCost.toFixed(2)}</span>
+                  <span>{money(costs.totalCost)}</span>
                 </div>
               </div>
             </div>

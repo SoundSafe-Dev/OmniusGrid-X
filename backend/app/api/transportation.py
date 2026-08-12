@@ -346,14 +346,38 @@ class DriverHOSOut(BaseModel):
     hours_summary: DriverHoursSummary
 
 
+class LinehaulAssumptions(BaseModel):
+    """Where the linehaul rate came from (FS-665).
+
+    The sibling of `FuelSurchargeAssumptions`, and for the same reason its docstring gives:
+    a fallback should be labelled as one. `rate_per_mile or 2.50` billed an uncontracted
+    carrier at a number nobody agreed to, and a fabricated rate and a contracted one at the
+    same value produced byte-identical results — so no consumer could distinguish them.
+    """
+
+    basis: str
+    rate_per_mile: float
+    rate_source: str
+    note: str
+
+
 class LinehaulCharge(BaseModel):
+    """`amount` is None when the charge could NOT be estimated.
+
+    A shipment with no route has no distance, and the per-mile charge is
+    `distance * rate` — so there is no honest figure. Returning 0 would fabricate a cheap
+    shipment exactly as the old 500-mile fallback fabricated an expensive one. `rate_basis`
+    reads `not_estimated` and `assumptions.basis` says why.
+    """
+
     charge_type: str
     rate_basis: str
     distance_miles: Optional[float] = None
     weight_lbs: Optional[float] = None
-    mileage_charge: float
-    weight_charge: float
-    amount: float
+    mileage_charge: Optional[float] = None
+    weight_charge: Optional[float] = None
+    assumptions: Optional[LinehaulAssumptions] = None
+    amount: Optional[float] = None
 
 
 class FuelSurchargeAssumptions(BaseModel):
@@ -392,14 +416,17 @@ class FuelSurchargeCharge(BaseModel):
     base_fuel_price: Optional[float] = None
     current_fuel_price: Optional[float] = None
     assumptions: Optional[FuelSurchargeAssumptions] = None
-    amount: float
+    #: None when there is no distance to estimate from — see `LinehaulCharge`.
+    amount: Optional[float] = None
 
 
 class ShipmentCostsOut(BaseModel):
     shipment_id: str
     linehaul: LinehaulCharge
     fuel_surcharge: FuelSurchargeCharge
-    total_cost: float
+    #: None when either component could not be estimated. A total of 0 under two charges
+    #: that both say "not estimated" would be the same fabrication one layer up.
+    total_cost: Optional[float] = None
     distance_miles: Optional[float] = None
     weight_lbs: Optional[float] = None
 

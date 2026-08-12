@@ -57,20 +57,28 @@ export interface DriverHOS {
  *  endpoint sends. */
 export interface ShipmentCosts {
   shipmentId: string;
+  /** `amount` is NULL when the charge could not be estimated (FS-665).
+   *
+   *  A shipment with no route has no distance, and the per-mile charge is `distance * rate`.
+   *  The server used to substitute 500 miles and bill against it — $1,250 of linehaul for a
+   *  shipment that had no route at all, reported with `distanceMiles: 500` as fact. It now
+   *  answers `null` with `rateBasis: 'not_estimated'`, so the page must render the absence
+   *  rather than call `.toFixed()` on it. */
   linehaul: {
-    amount: number;
+    amount: number | null;
     rateBasis: string;
-    mileageCharge: number;
-    weightCharge: number;
+    mileageCharge: number | null;
+    weightCharge: number | null;
   };
   /** NOT ALWAYS A MEASUREMENT — `FuelSurchargeCharge` records that without a contract
    *  surcharge table the engine falls back to a computed estimate, so `rateBasis` is
-   *  carried rather than flattened away. */
+   *  carried rather than flattened away. Null on the same terms as the linehaul. */
   fuelSurcharge: {
-    amount: number;
+    amount: number | null;
     rateBasis: string;
   };
-  totalCost: number;
+  /** Null when either component could not be estimated. */
+  totalCost: number | null;
   distanceMiles: number | null;
   weightLbs: number | null;
 }

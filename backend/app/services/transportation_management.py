@@ -20,6 +20,12 @@ from app.db.models import (
 
 logger = structlog.get_logger()
 
+#: The rate applied when no contract rate is on file. It was an inline `or 2.50` inside
+#: `calculate_linehaul`, labelled "Default rates if not specified" — true, and silent about
+#: the result being billed. Named here so it can be cited, and so the response can say which
+#: of the two it used (FS-665). Changing it changes what an uncontracted carrier is billed.
+DEFAULT_LINEHAUL_RATE_PER_MILE = 2.50
+
 
 def _as_utc(value):
     """Coerce a stored timestamp to timezone-aware UTC; naive is assumed UTC (FS-400).
@@ -185,10 +191,44 @@ class FreightBillingEngine:
         if contract_rates:
             rate_per_mile = contract_rates.get('per_mile', rate_per_mile)
             rate_per_hundredweight = contract_rates.get('per_cwt', rate_per_hundredweight)
-        
-        # Default rates if not specified
-        rate_per_mile = rate_per_mile or 2.50
-        
+
+        # WHERE THE RATE CAME FROM, in the shape FS-533 established for the fuel surcharge.
+        # `rate_per_mile or 2.50` billed an uncontracted carrier at a number nobody agreed
+        # to, and a fabricated rate and a contracted one at the same value produced
+        # byte-identical results — so no caller could tell them apart (FS-665). The default
+        # is kept and labelled, which is what FS-533 did with the fleet-average surcharge.
+        if rate_per_mile is None:
+            rate_per_mile = DEFAULT_LINEHAUL_RATE_PER_MILE
+            rate_basis_source = 'default_list_rate'
+        else:
+            rate_basis_source = 'contract_rate' if contract_rates else 'caller_supplied_rate'
+
+        # NO DISTANCE, NO ESTIMATE. `get_shipment_costs` used to substitute 500.0 miles here
+        # and bill against it; combined with the default rate that produced $1,250 of
+        # linehaul for a shipment with no route at all. There is no honest number for an
+        # unknown distance — 0 fabricates a cheap shipment exactly as 500 fabricated an
+        # expensive one — so the charge reports that it could not be estimated and the
+        # caller decides what to show.
+        if distance_miles is None:
+            return {
+                'charge_type': 'linehaul',
+                'rate_basis': 'not_estimated',
+                'distance_miles': None,
+                'weight_lbs': weight_lbs,
+                'mileage_charge': None,
+                'weight_charge': None,
+                'amount': None,
+                'assumptions': {
+                    'basis': 'distance_unavailable',
+                    'rate_per_mile': rate_per_mile,
+                    'rate_source': rate_basis_source,
+                    'note': (
+                        'This shipment has no route distance, so no per-mile charge can be '
+                        'estimated. Assign a route, or price the shipment by hand.'
+                    ),
+                },
+            }
+
         mileage_charge = distance_miles * rate_per_mile
         
         # Weight-based charge if applicable
@@ -206,7 +246,19 @@ class FreightBillingEngine:
             'weight_lbs': weight_lbs,
             'mileage_charge': round(mileage_charge, 2),
             'weight_charge': round(weight_charge, 2),
-            'amount': round(total, 2)
+            'amount': round(total, 2),
+            'assumptions': {
+                'basis': rate_basis_source,
+                'rate_per_mile': rate_per_mile,
+                'rate_source': rate_basis_source,
+                'note': (
+                    'Billed against a contract rate.'
+                    if rate_basis_source == 'contract_rate'
+                    else 'No contract rate on file; the default list rate was applied.'
+                    if rate_basis_source == 'default_list_rate'
+                    else 'Rate supplied by the caller.'
+                ),
+            },
         }
     
     async def calculate_fuel_surcharge(
@@ -252,6 +304,29 @@ class FreightBillingEngine:
             if current_fuel_price is None else current_fuel_price
         )
         mpg = settings.FLEET_AVERAGE_MPG if mpg is None else mpg
+
+        if distance_miles is None:
+            # Same reasoning as the linehaul above: the surcharge is `distance * rate`, so
+            # without a distance there is nothing to estimate from.
+            return {
+                'charge_type': 'fuel_surcharge',
+                'rate_basis': 'not_estimated',
+                'distance_miles': None,
+                'base_fuel_price': base_fuel_price,
+                'current_fuel_price': current_fuel_price,
+                'amount': None,
+                'assumptions': {
+                    'basis': 'distance_unavailable',
+                    'base_fuel_price_usd_per_gallon': base_fuel_price,
+                    'current_fuel_price_usd_per_gallon': current_fuel_price,
+                    'average_mpg': mpg,
+                    'rate_per_mile': 0.0,
+                    'note': (
+                        'This shipment has no route distance, so no fuel surcharge can be '
+                        'estimated.'
+                    ),
+                },
+            }
 
         table = (contract_rates or {}).get('fuel_surcharge_table')
         if table:
@@ -936,7 +1011,17 @@ class TransportationManagementService:
             # declares `distance_miles: float` / `weight_lbs: float` and returns floats into a
             # float schema, so this is the boundary where the storage type should end. These
             # are rate-times-distance estimates, not ledger amounts.
-            distance = float(route.total_distance_miles) if route and route.total_distance_miles is not None else 500.0
+            # NO LONGER 500.0. That fallback billed a shipment with no route against an
+            # invented distance, and combined with the default rate produced $1,333.33 of
+            # entirely fabricated cost reported as fact — the endpoint even returned
+            # `distance_miles: 500.0`, which the Transportation page rendered as "500 mi"
+            # (FS-665). `None` now reaches both calculators, and both answer that the charge
+            # could not be estimated rather than estimating from a number nobody measured.
+            distance = (
+                float(route.total_distance_miles)
+                if route and route.total_distance_miles is not None
+                else None
+            )
             weight = float(shipment.total_weight_lbs or 0)
             
             # Calculate linehaul
@@ -952,13 +1037,19 @@ class TransportationManagementService:
                 contract_rates=contract_rates
             )
             
-            total_cost = linehaul['amount'] + fuel_surcharge['amount']
+            # None when either component could not be estimated. Summing with 0 would put a
+            # confident total under two charges that both say they are not estimates.
+            total_cost = (
+                None
+                if linehaul['amount'] is None or fuel_surcharge['amount'] is None
+                else linehaul['amount'] + fuel_surcharge['amount']
+            )
             
             return {
                 'shipment_id': str(shipment_id),
                 'linehaul': linehaul,
                 'fuel_surcharge': fuel_surcharge,
-                'total_cost': round(total_cost, 2),
+                'total_cost': None if total_cost is None else round(total_cost, 2),
                 'distance_miles': distance,
                 'weight_lbs': weight
             }

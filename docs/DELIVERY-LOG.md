@@ -9279,3 +9279,40 @@ ninety-nine, written when the highest class was in the sixties, and raised *"cla
 outside the range this speller covers"*. It failed honestly rather than passing over a number
 it could not render, which is why it was worth extending rather than replacing — it now covers
 through 199 and says in its docstring that it will need doing again at 200.
+
+### The billing fallbacks, fixed — "not estimated" is a state, not a zero
+
+The first of the three open findings, and the decision it needed: **when the distance is
+unknown the endpoint reports the charge as not estimated rather than inventing one.** That is
+the answer FS-533 already gave for the fuel surcharge, and the shape `distance_miles` already
+had on the wire.
+
+The two defaults resolved differently, which is the point:
+
+**The distance fallback is gone.** `None` now reaches both calculators and both answer
+`amount: None` with `rate_basis: "not_estimated"` and an `assumptions.basis` of
+`distance_unavailable`. There is no honest number for an unknown distance — `0` fabricates a
+cheap shipment exactly as `500` fabricated an expensive one.
+
+**The rate default is kept and labelled.** Removing it would refuse to price every uncontracted
+shipment, a far bigger change than this defect warrants — and FS-533 made the same call, keeping
+the fleet-average surcharge and labelling it. `assumptions.basis` now reads `default_list_rate`
+where a contracted rate reads `contract_rate`. Those two were previously **byte-identical at
+the same value**, which is the property that made the figure dangerous rather than merely
+wrong, and the test that used to assert they were identical now asserts they differ.
+
+`2.50` moved out of an inline `or` into `DEFAULT_LINEHAUL_RATE_PER_MILE`, so it can be cited
+and so changing what an uncontracted carrier is billed is a visible edit.
+
+**The contract change cost five fields.** `linehaul.amount`, `fuel_surcharge.amount`,
+`mileage_charge`, `weight_charge` and `total_cost` are `Optional[float]` now, and the
+TypeScript follows. `tsc` named the three render sites immediately. The page shows an em dash
+rather than `$0.00` and carries one line explaining why — which is the argument its own comment
+already made about the missing accessorials: *a zero in a cost breakdown reads as "nothing was
+charged" rather than "not calculated here"*.
+
+`total_cost` is `None` when either component is: summing with zero would put a confident total
+under two charges that both say they are not estimates.
+
+Ten tests, and the file that pinned the defect now pins the fix — including a guard that the
+`500.0` literal has not come back. The frontend suite and `tsc` are clean.
