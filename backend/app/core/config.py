@@ -139,6 +139,35 @@ class Settings(BaseSettings):
     CORRELATION_CHAT_COMPACT_THRESHOLD: int = 4
     CORRELATION_GROUNDED_PACKET_MAX_CHARS: int = 24000
 
+    # Evidence-first correlation ingestion.  These guardrails protect the API
+    # process while the asynchronous intake lane handles larger data sets.
+    # Raw bytes are written to the configured S3-compatible document store when
+    # it is available; inline storage remains a development fallback only.
+    CORRELATION_MAX_UPLOAD_BYTES: int = 50 * 1024 * 1024
+    CORRELATION_MAX_ROWS_PER_TABLE: int = 1_000_000
+    CORRELATION_MAX_COLUMNS_PER_TABLE: int = 1_000
+    # The bundled operational-data archives contain 141 entries.  250 accepts
+    # normal multi-year exports while the independent size, expansion-ratio,
+    # row, and table caps still bound batch work.
+    CORRELATION_MAX_ARCHIVE_ENTRIES: int = 250
+    CORRELATION_MAX_ARCHIVE_UNCOMPRESSED_BYTES: int = 250 * 1024 * 1024
+    CORRELATION_SYNC_MAX_ROWS: int = 100_000
+    # LLM/scenario analysis is explanatory only. Full-scale matching belongs
+    # to the deterministic evidence worker, so cap its model-facing sample.
+    CORRELATION_AI_MAX_SCENARIOS: int = 250
+    # Ingestion capacity is separate from evidence-graph capacity. A normal
+    # multi-year ZIP can contain hundreds of *selectable* child tables; retain
+    # their catalog safely, then require the question/evidence request to work
+    # from a bounded relevant subset rather than silently dropping files.
+    CORRELATION_MAX_INGESTED_TABLES_PER_SOURCE: int = 250
+    # Candidate profiling is pairwise across tables. Keep the request-level
+    # graph bounded even when each selected workbook contains many sheets.
+    CORRELATION_MAX_EVIDENCE_TABLES: int = 50
+    CORRELATION_MAX_EVIDENCE_RELATIONSHIPS: int = 25
+    CORRELATION_USE_OBJECT_STORAGE: bool = True
+    CORRELATION_JOB_USE_REDIS: bool = True
+    CORRELATION_JOB_TTL_SECONDS: int = 24 * 60 * 60
+
     # Vision / image text extraction (Gemma multimodal or Gemini fallback)
     VISION_MODEL_ENABLED: bool = False
     VISION_MODEL_PROVIDER: str = "gemini"  # "gemini" | "gemma"

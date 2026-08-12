@@ -1,0 +1,94 @@
+{
+  "case": {
+    "case_id": "asset-facility-time-v1",
+    "name": "Asset and facility protected by a time bucket",
+    "description": "A production shortfall and a maintenance event share the same asset, facility, and shift. A same-named asset at another facility must not match.",
+    "version": "1",
+    "tags": ["excel", "multi-sheet", "false-match-guard"],
+    "expected_matches": [
+      {
+        "left": {
+          "source_id": "production-january.xlsx",
+          "table_id": "Production",
+          "row_id": "12",
+          "sheet_name": "Production"
+        },
+        "right": {
+          "source_id": "maintenance-january.xlsx",
+          "table_id": "WorkOrders",
+          "row_id": "5",
+          "sheet_name": "Work Orders"
+        },
+        "minimum_confidence": 0.8,
+        "note": "MIX-01 / PHX / 2026-01-15 night shift"
+      }
+    ],
+    "expected_non_matches": [
+      {
+        "left": {
+          "source_id": "production-january.xlsx",
+          "table_id": "Production",
+          "row_id": "12",
+          "sheet_name": "Production"
+        },
+        "right": {
+          "source_id": "quality-january.xlsx",
+          "table_id": "Defects",
+          "row_id": "9",
+          "sheet_name": "Defects"
+        },
+        "maximum_confidence": 0.2,
+        "note": "MIX-01 belongs to DAL rather than PHX"
+      }
+    ]
+  },
+  "observed_matches": [
+    {
+      "left": {
+        "source_id": "production-january.xlsx",
+        "table_id": "Production",
+        "row_id": "12",
+        "sheet_name": "Production"
+      },
+      "right": {
+        "source_id": "maintenance-january.xlsx",
+        "table_id": "WorkOrders",
+        "row_id": "5",
+        "sheet_name": "Work Orders"
+      },
+      "confidence": 0.94,
+      "join_keys": {
+        "asset_id": "MIX-01",
+        "facility": "PHX",
+        "time_bucket": "2026-01-15T22:00:00-07:00/PT8H"
+      },
+      "evidence": [
+        "Same approved asset alias",
+        "Same normalized facility",
+        "Same shift time bucket"
+      ]
+    },
+    {
+      "left": {
+        "source_id": "production-january.xlsx",
+        "table_id": "Production",
+        "row_id": "12",
+        "sheet_name": "Production"
+      },
+      "right": {
+        "source_id": "quality-january.xlsx",
+        "table_id": "Defects",
+        "row_id": "9",
+        "sheet_name": "Defects"
+      },
+      "confidence": 0.1,
+      "is_match": true,
+      "join_keys": {
+        "asset_id": "MIX-01"
+      },
+      "evidence": [
+        "Same asset label only; facility mismatch prevented promotion"
+      ]
+    }
+  ]
+}

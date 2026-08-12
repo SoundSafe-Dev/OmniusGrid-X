@@ -1,6 +1,31 @@
 from uuid import uuid4
 
 
+async def test_board_metrics_and_workload_use_a_tenant_bound_session(
+    client_a, client_b
+):
+    """The Kanban dashboard must read through the authenticated tenant scope.
+
+    A plain ``get_db`` session has no RLS organization setting and makes these
+    endpoints appear empty or fail while creating their default board. Exercise
+    both organizations to prove each can create and read only its own board.
+    """
+    board_a = await client_a.get("/api/v1/kanban/board")
+    board_b = await client_b.get("/api/v1/kanban/board")
+
+    assert board_a.status_code == 200
+    assert board_b.status_code == 200
+    assert board_a.json()["board"]["id"] != board_b.json()["board"]["id"]
+
+    metrics = await client_a.get("/api/v1/kanban/metrics")
+    workload = await client_a.get("/api/v1/kanban/workload")
+
+    assert metrics.status_code == 200
+    assert metrics.json()["total_tasks"] == 0
+    assert workload.status_code == 200
+    assert workload.json() == {"workloads": []}
+
+
 async def test_task_endpoints_are_scoped_to_authenticated_organization(
     client_a, client_b, admin_sync_url, seeded_orgs
 ):

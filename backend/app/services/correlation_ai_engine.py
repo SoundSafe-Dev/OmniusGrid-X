@@ -8,6 +8,7 @@ This service handles both training-time scenario generation and runtime inferenc
 from typing import List, Dict, Any, Optional, Tuple, Set
 from uuid import UUID
 from datetime import datetime, timezone
+from pathlib import Path
 import asyncio
 import ast
 import json
@@ -25,6 +26,10 @@ from app.models.domain_interaction import (
 from app.models.finetuning_schema import DEFAULT_SYSTEM_PROMPT
 
 logger = structlog.get_logger()
+
+
+class CorrelationModelUnavailableError(RuntimeError):
+    """The configured Gemma adapter cannot be loaded or used."""
 
 
 class CorrelationAIEngine:
@@ -60,6 +65,7 @@ class CorrelationAIEngine:
         self._model_version = self.NO_MODEL_VERSION
         self._tokenizer = None
         self._model = None
+        self._model_load_error: Optional[str] = None
     
     async def analyze_scenario(
         self,
@@ -98,9 +104,21 @@ class CorrelationAIEngine:
                 analysis = await self._analyze_with_gemma(scenario, domain_names, context or {})
             except Exception as e:
                 logger.error("gemma_correlation_inference_failed", error=str(e))
+                # Enabling the adapter is an explicit deployment choice. Do not
+                # quietly serve a heuristic result as model inference when that
+                # deployment is broken.
+                raise CorrelationModelUnavailableError(
+                    "The configured Correlation AI model is unavailable. "
+                    "Check the Gemma base-model and LoRA adapter configuration."
+                ) from e
 
         if analysis is None:
             analysis = self._simulate_analysis(scenario, domain_names)
+            analysis["simulated"] = True
+            analysis["response_mode"] = "heuristic"
+        else:
+            analysis["simulated"] = False
+            analysis["response_mode"] = "model"
         
         logger.info(
             "correlation_analysis_complete",
@@ -168,7 +186,11 @@ class CorrelationAIEngine:
                 deterministic_response,
             )
             if drafted_response:
+                drafted_response["simulated"] = False
+                drafted_response["response_mode"] = "evidence"
                 return drafted_response
+            deterministic_response["simulated"] = False
+            deterministic_response["response_mode"] = "evidence"
             return deterministic_response
 
         if settings.CORRELATION_MODEL_ENABLED and (has_data or not self._is_data_analysis_question(message)):
@@ -197,9 +219,15 @@ class CorrelationAIEngine:
                         "simulated": False,
                         "response_type": "conversational",
                         "follow_up_questions": follow_up_questions,
+                        "simulated": False,
+                        "response_mode": "model",
                     }
             except Exception as e:
                 logger.exception("gemma_chat_inference_failed", error=str(e))
+                raise CorrelationModelUnavailableError(
+                    "The configured Correlation AI model is unavailable. "
+                    "Check the Gemma base-model and LoRA adapter configuration."
+                ) from e
 
         content = self._fallback_chat_response(message, context)
         return {
@@ -215,6 +243,8 @@ class CorrelationAIEngine:
             "simulation_reason": "heuristic chat fallback, not a model inference",
             "response_type": "conversational_fallback",
             "follow_up_questions": self._generate_chat_follow_ups(message, context),
+            "simulated": True,
+            "response_mode": "heuristic",
         }
 
     def _simulate_analysis(
@@ -264,6 +294,8 @@ class CorrelationAIEngine:
                 self._generate_commands(domain_names),
             ),
             "follow_up_questions": self._generate_follow_ups(domain_names),
+            "simulated": True,
+            "response_mode": "heuristic",
         }
 
     async def _analyze_with_gemma(
@@ -284,12 +316,23 @@ class CorrelationAIEngine:
             "confidence": 0.85,
             "response_text": generated_text.strip(),
             "follow_up_questions": self._generate_follow_ups(domain_names),
+            "simulated": False,
+            "response_mode": "model",
         })
         return parsed
 
     async def _ensure_model_loaded(self) -> None:
         if self._model_loaded:
             return
+        if self._model_load_error:
+            raise CorrelationModelUnavailableError(self._model_load_error)
+
+        adapter_path = Path(settings.CORRELATION_ADAPTER_PATH).expanduser()
+        if not adapter_path.is_dir():
+            self._model_load_error = (
+                f"Correlation LoRA adapter directory does not exist: {adapter_path}"
+            )
+            raise CorrelationModelUnavailableError(self._model_load_error)
 
         def load_model():
             import torch
@@ -306,10 +349,18 @@ class CorrelationAIEngine:
             model.eval()
             return tokenizer, model
 
-        self._tokenizer, self._model = await asyncio.to_thread(load_model)
+        try:
+            self._tokenizer, self._model = await asyncio.to_thread(load_model)
+        except Exception as exc:
+            self._model_load_error = f"Could not load Correlation AI model: {exc}"
+            raise CorrelationModelUnavailableError(self._model_load_error) from exc
         self._model_loaded = True
         self._model_version = f"{settings.CORRELATION_BASE_MODEL}+lora"
         logger.info("gemma_correlation_model_loaded", adapter=settings.CORRELATION_ADAPTER_PATH)
+
+    async def ensure_model_ready(self) -> None:
+        """Public startup preflight for a deliberately enabled model deployment."""
+        await self._ensure_model_loaded()
 
     def _generate_text(self, prompt: str) -> str:
         return self._generate_text_with_system(self._system_prompt(), prompt)
@@ -3016,7 +3067,13 @@ class CorrelationAIEngine:
         return lines
 
     def _build_chat_prompt(self, message: str, context: Dict[str, Any]) -> str:
-        lines = []
+        lines = [
+            "Presentation rule: write in plain operational English. Convert underscores, file extensions, "
+            "snake_case names, and technical unit labels into readable words. Do not expose raw filenames, "
+            "sheet names, or internal identifiers unless the user explicitly asks for them or an exact identifier "
+            "is necessary to distinguish evidence. Keep exact source identifiers in citations only.",
+            "",
+        ]
 
         multi_block = self._build_multi_file_gemma_block(context)
         if multi_block:

@@ -21,7 +21,7 @@ application layer was correct throughout. Only the GUC was missing.
 """
 
 from typing import List, Dict, Any, Optional, Union
-from uuid import UUID
+from uuid import UUID, uuid4
 from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks, UploadFile, File, Query, Response
 
@@ -40,6 +40,8 @@ from app.services.correlation_ai_engine import correlation_ai_engine
 from app.services.cross_file_scenario_builder import build_cross_file_scenarios
 from app.services.multi_spreadsheet_correlator import correlate_spreadsheet_sources
 from app.services.session_suggested_questions import generate_suggested_questions
+from app.core.config import settings
+from app.services.correlation_artifact_store import store_correlation_artifact
 
 logger = structlog.get_logger()
 
@@ -803,14 +805,47 @@ async def add_intake_data(
     if not intake_item:
         raise HTTPException(status_code=404, detail="Intake item not found")
     
-    # Create data source from intake item
+    # A session may attach an Intake item only once.  Retrying after a slow
+    # browser response must not create a duplicate source or a duplicate
+    # correlation input.
+    intake_source_id = str(intake_id)
+    existing_query = select(SessionDataSource).where(
+        and_(
+            SessionDataSource.session_id == session_id_str,
+            SessionDataSource.source_type == "intake",
+            SessionDataSource.source_id == intake_source_id,
+        )
+    )
+    existing_result = await db.execute(existing_query)
+    existing_source = existing_result.scalar_one_or_none()
+    if existing_source:
+        return DataSourceResponse(
+            id=existing_source.id,
+            session_id=existing_source.session_id,
+            source_type=existing_source.source_type,
+            source_id=existing_source.source_id,
+            file_name=existing_source.file_name,
+            data_type=existing_source.data_type,
+            added_at=existing_source.added_at,
+        )
+
+    # Preserve the source artifact pointer as well as the extracted profile.
+    # This keeps a session attachment usable after the Intake item is no longer
+    # held inline in Postgres.
+    source_metadata = dict(intake_item.meta_data or {})
+    source_metadata["intake_item_id"] = intake_source_id
+
+    # Create data source from intake item.  source_id is a VARCHAR column, so
+    # passing the request UUID directly causes asyncpg to roll the transaction
+    # back before the chat can show the source.
     data_source = SessionDataSource(
         session_id=session_id_str,
         source_type="intake",
-        source_id=intake_id,
+        source_id=intake_source_id,
         file_name=intake_item.file_name,
         data_type=intake_item.data_type,
-        processed_data=intake_item.processed_data
+        processed_data=intake_item.processed_data,
+        meta_data=source_metadata,
     )
     
     db.add(data_source)
@@ -844,13 +879,27 @@ async def upload_data_to_session(
     session_id_str = _session_id_str(session_id)
     await _get_analysis_session(db, session_id, current_user)
     
-    # Read file content
-    content = await file.read()
+    # Keep API memory bounded before the evidence/async correlation lane takes
+    # ownership of larger parsing and join work.
+    content = await file.read(settings.CORRELATION_MAX_UPLOAD_BYTES + 1)
+    if len(content) > settings.CORRELATION_MAX_UPLOAD_BYTES:
+        raise HTTPException(
+            status_code=413,
+            detail=(
+                f"File exceeds the {settings.CORRELATION_MAX_UPLOAD_BYTES // (1024 * 1024)} MB "
+                "correlation intake limit"
+            ),
+        )
     filename = file.filename or "upload"
 
-    # Auto-detect spreadsheets so direct session uploads match Intake parsing.
+    # Auto-detect every locally supported structured-table format so direct
+    # session uploads follow the same evidence-ready path as Intake uploads.
     ext = filename.split(".")[-1].lower() if "." in filename else ""
-    if ext in ("csv", "xlsx", "xls"):
+    if ext in {
+        "csv", "tsv", "tab", "xlsx", "xls", "xlsm", "xlsb", "ods",
+        "numbers", "parquet", "pq", "arrow", "feather", "json", "jsonl",
+        "ndjson", "xml", "zip",
+    }:
         data_type = "spreadsheet"
 
     processed_data = await _process_uploaded_file(content, data_type, filename)
@@ -860,17 +909,30 @@ async def upload_data_to_session(
     if processed_data.get("error"):
         raise HTTPException(
             status_code=400,
-            detail=f"Could not parse spreadsheet: {processed_data['error']}",
+            detail=f"Could not parse {data_type}: {processed_data['error']}",
         )
     
+    # Session sources need a durable raw pointer too; processed_data deliberately
+    # contains only profiles and evidence summaries, never a second full copy.
+    source_id = str(uuid4())
+    artifact = await store_correlation_artifact(
+        content,
+        organization_id=current_user.organization_id,
+        artifact_id=source_id,
+        filename=filename,
+        content_type=file.content_type,
+    )
+
     # Create data source
     data_source = SessionDataSource(
+        id=source_id,
         session_id=session_id_str,
         source_type="upload",
         source_id=None,
         file_name=filename,
         data_type=data_type,
-        processed_data=processed_data
+        processed_data=processed_data,
+        meta_data={"correlation_artifact": artifact.to_dict()},
     )
     
     db.add(data_source)
@@ -1220,6 +1282,9 @@ async def session_chat(
         )
     except Exception as e:
         logger.exception("correlation_chat_error", error=str(e))
+        from app.services.correlation_ai_engine import CorrelationModelUnavailableError
+        if isinstance(e, CorrelationModelUnavailableError):
+            raise HTTPException(status_code=503, detail=str(e)) from e
 
     # Legacy structured analysis fallback for non-chat deployments.
     try:

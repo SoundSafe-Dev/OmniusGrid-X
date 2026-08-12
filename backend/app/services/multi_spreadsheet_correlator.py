@@ -307,26 +307,20 @@ def correlate_spreadsheet_sources(
             "has_cost_column": snap.get("has_cost_column"),
         })
 
-    # Cross-file asset trend (when same asset in multiple files)
+    # The legacy session payload retains a per-file operational profile and a
+    # list of asset IDs, but not the raw rows needed to aggregate a metric by
+    # asset. Attaching a file-level downtime/cost total to every asset that
+    # merely appears in the file produced a convincing but false asset trend.
+    # Keep shared IDs as comparison anchors only; entity-level trends belong to
+    # the lineage-preserving evidence engine, which calculates them from rows.
     asset_trends: List[Dict[str, Any]] = []
-    for asset_key, file_names in list(shared_assets.items())[:12]:
-        points = []
-        for snap in snapshots:
-            if snap["file_name"] not in file_names:
-                continue
-            if asset_key not in {_asset_key(a) for a in snap["assets"]}:
-                continue
-            points.append({
-                "file_name": snap["file_name"],
-                "period": snap.get("date_range"),
-                "total_loss": snap.get("total_loss"),
-                "total_downtime": snap.get("total_downtime"),
-                "total_defects": snap.get("total_defects"),
-            })
-        if len(points) >= 2:
-            asset_trends.append({"asset": asset_key, "files": points})
-
-    asset_trends = enrich_asset_trends(asset_trends)
+    asset_trend_status = {
+        "status": "not_available",
+        "reason": (
+            "This legacy session summary has file-level metrics, not raw asset-level metric rows. "
+            "Shared assets are comparison anchors only; no downtime, cost, or defect total is attributed to an asset."
+        ),
+    }
     yoy_trends = compute_yoy_trends(snapshots)
 
     narrative_parts = [findings[0]]
@@ -335,6 +329,11 @@ def correlate_spreadsheet_sources(
         narrative_parts.append(
             f"**{worst_asset}** appears in the most files ({len(shared_assets[worst_asset])}) — "
             "use it as the anchor for cross-year comparisons."
+        )
+        narrative_parts.append(
+            "Shared asset IDs identify cross-file comparison anchors only. The available session profiles "
+            "do not contain asset-level metric rollups, so file-level downtime, cost, and defects are not "
+            "attributed to an individual asset."
         )
     if merged_range and years_span and years_span >= 2:
         narrative_parts.append(
@@ -365,6 +364,7 @@ def correlate_spreadsheet_sources(
         "shared_lines": shared_lines,
         "file_rollups": file_rollups,
         "asset_trends": asset_trends,
+        "asset_trend_status": asset_trend_status,
         "yoy_trends": yoy_trends,
         "cross_file_findings": findings,
         "narrative_summary": "\n\n".join(narrative_parts),

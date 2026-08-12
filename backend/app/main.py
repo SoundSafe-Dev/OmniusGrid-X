@@ -22,6 +22,7 @@ from app.api import health_index, simulation, notifications
 from app.api import edge_enroll, edge_ingest, edge_fleet
 from app.api import erp_webhooks
 from app.api import platform_correlation
+from app.api import correlation_evidence, operations_assistant
 from app.api import fleet_logistics
 from app.api import fleet_agents, fleet_targeting, maintenance_windows, agent_releases, agent_rollouts, models
 from app.api import kpi
@@ -82,6 +83,12 @@ async def lifespan(app: FastAPI):
     # python-jose, restart-looping with nothing saying "rebuild the image".
     verify_installed_dependencies()
     await init_db()
+    # When an operator enables Gemma, confirm the configured base model and
+    # LoRA adapter before accepting traffic. A broken adapter must be visible
+    # at deployment time rather than silently falling back to heuristics.
+    if settings.CORRELATION_MODEL_ENABLED:
+        from app.services.correlation_ai_engine import correlation_ai_engine
+        await correlation_ai_engine.ensure_model_ready()
     # Converged: integration branch enables the realtime/worker services that
     # fixed-sprints had commented out (the audit's "wire the machinery" item).
     await websocket_manager.connect()
@@ -395,6 +402,8 @@ app.include_router(geotab.router, prefix="/api/v1", tags=["GeoTab"], responses=c
 app.include_router(geotab.webhook_router, prefix="/api/v1", tags=["GeoTab"], responses=common_responses)
 app.include_router(correlation_integration.router, tags=["Correlation Integration"], responses=common_responses)
 app.include_router(nlp_correlation.router, tags=["NLP Correlation"], responses=common_responses)
+app.include_router(correlation_evidence.router, tags=["Evidence Correlation"], responses=common_responses)
+app.include_router(operations_assistant.router, tags=["Operations Lead Assistant"], responses=common_responses)
 app.include_router(analysis_sessions.router, tags=["Analysis Sessions"], responses=common_responses)
 app.include_router(user_context.router, tags=["User Context"], responses=common_responses)
 app.include_router(audit.router, prefix="/api/v1/audit", tags=["Audit Logs"], responses=common_responses)

@@ -12,6 +12,7 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 
 from app.models.domain_interaction import DomainType
 from app.services.multi_spreadsheet_correlator import correlate_spreadsheet_sources
+from app.services.presentation_labels import humanize_label
 from app.services.spreadsheet_domain_mapper import map_tab_to_domain, map_workbook_domains
 
 _FINANCE_HINTS = ("finance", "financial", "budget", "revenue", "cost", "p&l", "margin", "expense")
@@ -122,14 +123,14 @@ def _build_session_intelligence(
                         str(tab.get("name") or "Sheet"),
                         tab.get("column_names") or [],
                     )
-                    label = f"{file_name} → {tab.get('name')}"
+                    label = f"{humanize_label(file_name)} → {humanize_label(tab.get('name'))}"
                     sheet_roles[role].append(label)
             else:
                 role = _classify_sheet(
                     file_name,
                     processed.get("column_names") or [],
                 )
-                sheet_roles[role].append(file_name)
+                sheet_roles[role].append(humanize_label(file_name))
         elif processed.get("type") in ("report", "document") or source.get("data_type") in ("report", "document"):
             documents.append({"file_name": file_name, "processed": processed})
 
@@ -178,7 +179,7 @@ def _build_session_intelligence(
 
 def _pick_line(intel: Dict[str, Any]) -> Optional[str]:
     lines = intel.get("lines") or []
-    return lines[0] if lines else None
+    return humanize_label(lines[0]) if lines else None
 
 
 def _pick_asset(intel: Dict[str, Any]) -> Optional[str]:
@@ -228,22 +229,19 @@ def generate_suggested_questions(
     has_docs = intel["document_count"] > 0
 
     if has_cross_tabs or (has_cross_files and (finance_sheets or production_sheets)):
-        finance_ref = finance_sheets[0] if finance_sheets else intel["file_names"][0]
-        production_ref = production_sheets[0] if production_sheets else intel["file_names"][-1]
         line_bit = f" on {line}" if line else ""
-        pdf_bit = f", and what {pdf_names[0]} adds" if has_pdf else ""
+        pdf_bit = ", including the uploaded operating documents" if has_pdf else ""
         candidates.append((
             100,
             f"If we increase orders or ramp production{line_bit}, how should we plan for growth using "
-            f"{finance_ref} and {production_ref}{pdf_bit}?",
+            f"our finance and production data{pdf_bit}?",
             "cross_source_growth",
         ))
 
     if has_pdf and (finance_sheets or production_sheets):
-        ops_ref = production_sheets[0] if production_sheets else finance_sheets[0]
         candidates.append((
             95,
-            f"Cross-reference {pdf_names[0]} with {ops_ref} — where do the numbers and the plan align or drift?",
+            "Where do the operating documents and the finance or production data align or drift?",
             "pdf_cross_reference",
         ))
 
@@ -263,19 +261,17 @@ def generate_suggested_questions(
         ))
 
     if production_sheets or quality_sheets:
-        ref = production_sheets[0] if production_sheets else quality_sheets[0]
         candidates.append((
             85,
-            f"What is going well in {ref}, and how do we do more of it without creating new bottlenecks?",
+            "What is going well in operations, and how do we do more of it without creating new bottlenecks?",
             "amplify_strengths",
         ))
 
     if intel["doc_topics"]:
         topic = intel["doc_topics"][0]
-        doc_ref = pdf_names[0] if pdf_names else "your uploaded document"
         candidates.append((
             82,
-            f"Based on {doc_ref}, what should we prioritize around {topic} in the next planning cycle?",
+            f"Based on the uploaded documents, what should we prioritize around {humanize_label(topic)} in the next planning cycle?",
             "document_topic",
         ))
 
@@ -296,26 +292,26 @@ def generate_suggested_questions(
     if finance_sheets and not has_cross_tabs:
         candidates.append((
             70,
-            f"From {finance_sheets[0]}, where are we leaving money on the table and what is the fastest fix?",
+            "Where are we leaving money on the table, and what is the fastest fix?",
             "finance_focus",
         ))
 
     if production_sheets:
         candidates.append((
             68,
-            f"Which production line or shift in {production_sheets[0]} is hurting throughput the most?",
+            "Which production line or shift is hurting throughput the most?",
             "production_drilldown",
         ))
 
     if quality_sheets:
         candidates.append((
             66,
-            f"In {quality_sheets[0]}, which defect pattern should we contain first before it spreads?",
+            "Which defect pattern should we contain first before it spreads?",
             "quality_focus",
         ))
 
     # Spreadsheet drill-down fallbacks — still slightly personalized
-    first_sheet = intel["file_names"][0] if intel["file_names"] else "the uploaded file"
+    first_sheet = humanize_label(intel["file_names"][0]) if intel["file_names"] else "the uploaded data"
     candidates.extend([
         (50, f"Give me a consultant-style rundown of {first_sheet} — what's working, what's at risk, and why.", "executive_rundown"),
         (45, f"What should we tackle first on the next shift based on {first_sheet}?", "next_shift"),

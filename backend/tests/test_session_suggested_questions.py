@@ -6,6 +6,17 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from app.services.session_suggested_questions import generate_suggested_questions
+from app.services.presentation_labels import humanize_label
+
+
+def test_humanize_operator_facing_labels():
+    assert humanize_label("company_14_construction_equipment_FY2015.xlsx") == (
+        "Company 14 Construction Equipment Fiscal Year 2015"
+    )
+    assert humanize_label("Business_Operations") == "Business Operations"
+    assert humanize_label("LINE-9") == "Line 9"
+    # Evidence identifiers remain exact and can still be searched/cited.
+    assert humanize_label("AST-014-72") == "AST-014-72"
 
 
 def test_cross_tab_growth_question():
@@ -68,4 +79,4 @@ def test_pdf_cross_reference_question():
     ]
     result = generate_suggested_questions(sources, limit=3)
     joined = " ".join(result["questions"]).lower()
-    assert "plan.pdf" in joined or "cross-reference" in joined or "high season" in joined
+    assert "operating documents" in joined or "high season" in joined

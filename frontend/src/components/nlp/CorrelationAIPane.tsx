@@ -11,6 +11,7 @@ import { ChatHistoryModal } from './ChatHistoryModal';
 import { ContextPanel } from './ContextPanel';
 import { RealTimeDataPanel } from './RealTimeDataPanel';
 import { ActionableInsight } from './ActionableInsight';
+import { useSuggestedQuestions } from '../../hooks/useSuggestedQuestions';
 import { Send, Loader2, CheckCircle, History, Inbox, Plus, Upload } from 'lucide-react';
 
 interface CorrelationAIPaneProps {
@@ -150,15 +151,21 @@ export const CorrelationAIPane: React.FC<CorrelationAIPaneProps> = ({ className 
   const [dataSourcesKey, setDataSourcesKey] = useState(0);
   const [sessionListKey, setSessionListKey] = useState(0);
   const [pendingUpload, setPendingUpload] = useState(false);
-  const [suggestedQuestions, setSuggestedQuestions] = useState<string[]>([]);
-  const [suggestionsSummary, setSuggestionsSummary] = useState<string>('');
-  const [isLoadingSuggestions, setIsLoadingSuggestions] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const dataSourcesRef = useRef<DataSourcesPanelHandle>(null);
   const progressTimerRef = useRef<number | null>(null);
   const activeProgressSteps = (currentSession?.data_sources_count || 0) > 0
     ? ANALYSIS_PROGRESS_STEPS
     : CHAT_PROGRESS_STEPS;
+  const {
+    questions: suggestedQuestions,
+    summary: suggestionsSummary,
+    loading: isLoadingSuggestions,
+  } = useSuggestedQuestions(
+    currentSession?.id,
+    currentSession?.data_sources_count,
+    dataSourcesKey,
+  );
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -173,42 +180,6 @@ export const CorrelationAIPane: React.FC<CorrelationAIPaneProps> = ({ className 
       if (progressTimerRef.current) window.clearInterval(progressTimerRef.current);
     };
   }, []);
-
-  useEffect(() => {
-    let cancelled = false;
-
-    const loadSuggestions = async () => {
-      if (!currentSession?.id) {
-        setSuggestedQuestions([]);
-        setSuggestionsSummary('');
-        return;
-      }
-
-      setIsLoadingSuggestions(true);
-      try {
-        const response = await analysisSessionsApi.getSuggestedQuestions(currentSession.id, 3);
-        if (!cancelled) {
-          setSuggestedQuestions(response.questions || []);
-          setSuggestionsSummary(response.context_summary || '');
-        }
-      } catch (error) {
-        console.error('[CorrelationAIPane] Failed to load suggested questions:', error);
-        if (!cancelled) {
-          setSuggestedQuestions([]);
-          setSuggestionsSummary('');
-        }
-      } finally {
-        if (!cancelled) {
-          setIsLoadingSuggestions(false);
-        }
-      }
-    };
-
-    loadSuggestions();
-    return () => {
-      cancelled = true;
-    };
-  }, [currentSession?.id, currentSession?.data_sources_count, dataSourcesKey]);
 
   useEffect(() => {
     if (!pendingUpload || !currentSession) return;
@@ -319,9 +290,14 @@ export const CorrelationAIPane: React.FC<CorrelationAIPaneProps> = ({ className 
   const handleAddIntakeData = async (intakeId: string) => {
     if (!currentSession) return;
     try {
-      await analysisSessionsApi.addIntakeData(currentSession.id, intakeId);
-      // Force refresh of data sources panel
+      const sessionId = currentSession.id;
+      await analysisSessionsApi.addIntakeData(sessionId, intakeId);
+      // Refresh the session header as well as the source panel, so a successful
+      // attachment is immediately reflected in both places.
+      const refreshedSession = await analysisSessionsApi.getSession(sessionId);
+      setCurrentSession(refreshedSession);
       setDataSourcesKey(prev => prev + 1);
+      setSessionListKey(prev => prev + 1);
     } catch (error) {
       console.error('Error adding intake data:', error);
       // FS-481. Silently, the document simply never appears in the panel — and the next
@@ -589,8 +565,8 @@ export const CorrelationAIPane: React.FC<CorrelationAIPaneProps> = ({ className 
           </div>
         ) : (
           <div className="flex-1 p-4 text-xs text-opsgrid-text-secondary">
-            Click <strong>+ New</strong> above to create a session, then upload Excel here or use
-            <strong> Upload Excel</strong> in the chat header.
+            Click <strong>+ New</strong> above to create a session, then upload files here or use
+            <strong> Upload files</strong> in the chat header.
           </div>
         )}
       </div>
@@ -616,19 +592,19 @@ export const CorrelationAIPane: React.FC<CorrelationAIPaneProps> = ({ className 
               <TooltipTrigger asChild>
                 <Button variant="outline" size="sm" onClick={handleUploadExcel}>
                   <Upload className="w-4 h-4 mr-2" />
-                  Upload Excel
+                  Upload files
                 </Button>
               </TooltipTrigger>
-              <TooltipContent>Upload .xlsx, .xls, or .csv for this session</TooltipContent>
+              <TooltipContent>Upload spreadsheets, ZIP batches, or supporting files for this session</TooltipContent>
             </Tooltip>
             <Tooltip>
               <TooltipTrigger asChild>
                 <Button variant="outline" size="sm" onClick={() => setShowIntakeDialog(true)} disabled={!currentSession}>
                   <Inbox className="w-4 h-4 mr-2" />
-                  Intake
+                  Add from Intake
                 </Button>
               </TooltipTrigger>
-              <TooltipContent>Add items from Intake Inbox (optional)</TooltipContent>
+              <TooltipContent>Add files already uploaded in Intake Inbox</TooltipContent>
             </Tooltip>
             <Tooltip>
               <TooltipTrigger asChild>
@@ -773,6 +749,12 @@ export const CorrelationAIPane: React.FC<CorrelationAIPaneProps> = ({ className 
                         </div>
                       );
                     })()}
+
+                    {message.role === 'assistant' && message.analysis?.simulated === true && (
+                      <div className="mb-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+                        Heuristic preview — this response was generated without Gemma model inference.
+                      </div>
+                    )}
 
                     {message.domains && message.domains.length > 0 && (
                       <div className="mb-2 flex flex-wrap gap-1">

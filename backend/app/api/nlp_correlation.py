@@ -7,9 +7,9 @@ and Intake Inbox for data upload and analysis.
 
 import json
 from typing import List, Dict, Any, Optional, Set
-from uuid import UUID
+from uuid import UUID, uuid4
 from datetime import datetime, timezone
-from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks, UploadFile, File, Query
+from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks, UploadFile, File, Form, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from pydantic import BaseModel, Field
 import math
@@ -24,11 +24,33 @@ from app.db.models import User
 from app.db.models import IntakeItem as IntakeItemModel
 from app.services.correlation_ai_engine import correlation_ai_engine
 from app.services.correlation_registry_integration import correlation_registry_integration
+from app.core.config import settings
+from app.services.correlation_artifact_store import (
+    load_correlation_artifact,
+    store_correlation_artifact,
+)
+from app.services.ingestion_adapters import IngestionLimits, ingest_file
 from sqlalchemy import select, func
 
 logger = structlog.get_logger()
 
 router = APIRouter(prefix="/api/v1/nlp/correlation", tags=["NLP Correlation"])
+
+
+def _has_raw_intake_content(item: "IntakeItemModel") -> bool:
+    """Support object-store evidence artifacts alongside legacy inline blobs."""
+    return bool(
+        item.file_content
+        or ((item.meta_data or {}).get("correlation_artifact"))
+    )
+
+
+async def load_intake_content(item: "IntakeItemModel") -> bytes:
+    """Load an Intake item without assuming raw bytes live in Postgres."""
+    return await load_correlation_artifact(
+        (item.meta_data or {}).get("correlation_artifact"),
+        legacy_inline_base64=item.file_content,
+    )
 
 
 def _json_safe(value: Any) -> Any:
@@ -1065,6 +1087,9 @@ class NLPQueryResponse(BaseModel):
     kanban_tasks: List[Dict[str, Any]]
     compliance_implications: Optional[List[str]]
     integration_result: Optional[Dict[str, List[str]]]
+    simulated: bool = Field(description="True when the result is a heuristic fallback, not model inference")
+    response_mode: str = Field(description="model, evidence, or heuristic")
+    model_version: Optional[str] = None
 
 
 class IntakeUploadRequest(BaseModel):
@@ -1167,7 +1192,10 @@ async def nlp_query(
         recommended_actions=recommended_commands,
         kanban_tasks=recommended_tasks,
         compliance_implications=compliance_implications,
-        integration_result=integration_result
+        integration_result=integration_result,
+        simulated=bool(analysis_result.get("simulated", True)),
+        response_mode=str(analysis_result.get("response_mode") or "heuristic"),
+        model_version=analysis_result.get("model_version"),
     )
 
 
@@ -1210,6 +1238,9 @@ async def nlp_chat(
         "risk_score": response.risk_score,
         "domains": response.domains_analyzed,
         "actions": response.recommended_actions,
+        "simulated": response.simulated,
+        "response_mode": response.response_mode,
+        "model_version": response.model_version,
         "timestamp": datetime.now(timezone.utc).isoformat()
     }
     
@@ -1221,10 +1252,14 @@ async def nlp_chat(
 @router.post("/intake/upload")
 async def upload_to_intake(
     file: UploadFile = File(...),
-    title: str = None,
-    description: str = "",
-    data_type: str = "document",
-    category: str = "general",
+    # These values travel with the file in the browser's multipart body.  Using
+    # Form keeps the API contract aligned with the Intake client; without it,
+    # FastAPI treats them as query parameters and silently defaults a ZIP to a
+    # generic document.
+    title: Optional[str] = Form(None),
+    description: str = Form(""),
+    data_type: str = Form("document"),
+    category: str = Form("general"),
     db: AsyncSession = Depends(get_tenant_db),
     current_user: User = Depends(get_current_active_user)
 ):
@@ -1243,40 +1278,69 @@ async def upload_to_intake(
         filename=file.filename,
         data_type=data_type
     )
+    filename = file.filename or "upload"
     
     # Validate file type
     allowed_extensions = {
-        "spreadsheet": [".csv", ".xlsx", ".xls"],
-        "report": [".pdf", ".docx", ".doc"],
-        "image": [".png", ".jpg", ".jpeg"],
-        "document": [".txt", ".md"]
+        # Tabular formats all enter the evidence-table adapters.  Some require
+        # optional parser packages, in which case the intake result reports a
+        # clear capability warning instead of pretending the file was read.
+        "spreadsheet": [
+            ".csv", ".tsv", ".tab", ".xlsx", ".xls", ".xlsm", ".xlsb",
+            ".ods", ".numbers", ".parquet", ".pq", ".arrow", ".feather",
+            ".json", ".jsonl", ".ndjson", ".xml", ".zip",
+        ],
+        "report": [".pdf", ".docx", ".doc", ".rtf", ".odt", ".html", ".htm", ".eml"],
+        "image": [".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".tiff", ".tif"],
+        "document": [".txt", ".md", ".yaml", ".yml"]
     }
     
-    file_ext = file.filename.split(".")[-1].lower() if file.filename else ""
+    file_ext = filename.split(".")[-1].lower() if "." in filename else ""
     if data_type in allowed_extensions and f".{file_ext}" not in allowed_extensions[data_type]:
         raise HTTPException(status_code=400, detail=f"Invalid file extension for type {data_type}")
     
-    # Read file content
-    content = await file.read()
+    # Read a bounded payload.  The raw bytes move to object storage below;
+    # this cap protects the API process before a background job can take over.
+    content = await file.read(settings.CORRELATION_MAX_UPLOAD_BYTES + 1)
+    if len(content) > settings.CORRELATION_MAX_UPLOAD_BYTES:
+        raise HTTPException(
+            status_code=413,
+            detail=(
+                f"File exceeds the {settings.CORRELATION_MAX_UPLOAD_BYTES // (1024 * 1024)} MB "
+                "correlation intake limit"
+            ),
+        )
     
     # Process file content based on type
-    processed_data = await _process_uploaded_file(content, data_type, file.filename)
+    processed_data = await _process_uploaded_file(content, data_type, filename)
     
-    # Store in database
-    import base64
-    file_content_b64 = base64.b64encode(content).decode('utf-8')
+    # Keep raw bytes out of Postgres whenever an S3-compatible object store is
+    # available.  Local development retains a legacy inline fallback so the
+    # feature remains usable without infrastructure.
+    intake_id = str(uuid4())
+    artifact = await store_correlation_artifact(
+        content,
+        organization_id=current_user.organization_id,
+        artifact_id=intake_id,
+        filename=filename,
+        content_type=file.content_type,
+    )
+    artifact_meta = artifact.to_dict()
+    file_content_b64 = artifact_meta.pop("inline_base64", None)
     
-    intake_item = IntakeItem(
+    intake_item = IntakeItemModel(
+        id=intake_id,
         user_id=current_user.id,
         organization_id=current_user.organization_id,
-        title=title or file.filename,
+        title=title or filename,
         description=description,
         data_type=data_type,
         category=category,
-        file_name=file.filename,
+        file_name=filename,
         file_content=file_content_b64,
         processed_data=processed_data,
-        status="pending"
+        status="pending",
+        meta_data={"correlation_artifact": artifact_meta},
     )
     
     db.add(intake_item)
@@ -1318,12 +1382,11 @@ async def analyze_intake(
     Analyze uploaded data in Intake Inbox with correlation AI.
 
     For spreadsheets/workbooks this:
-    1. Retrieves the uploaded item and decodes the stored file
-    2. Parses ALL tabs into DataFrames
-    3. Builds cross-tab-linked CorrelationScenarios (mode: window|tab|row)
-    4. Runs the correlation AI engine over every scenario (full coverage)
-    5. Aggregates per-domain findings and cross-tab correlations
-    6. Persists the combined analysis on the intake item
+    1. Retrieves the durable raw artifact and parses every supported table
+    2. Builds bounded, cross-tab scenarios for an AI explanation
+    3. Aggregates operational findings without letting the model invent joins
+    4. Directs complete row-level matching to the evidence preview/job APIs
+    5. Persists the explanatory summary on the intake item
     """
     logger.info(
         "intake_analysis",
@@ -1346,15 +1409,15 @@ async def analyze_intake(
     # Route by data type: each path builds cross-linked scenarios and runs the
     # correlation AI engine over every scenario (full coverage).
     try:
-        if item.data_type == "spreadsheet" and item.file_content:
+        if item.data_type == "spreadsheet" and _has_raw_intake_content(item):
             analysis_result = await _analyze_spreadsheet_item(
                 item, query, auto_integrate, mode, db, current_user
             )
-        elif item.data_type in ("report", "document") and item.file_content:
+        elif item.data_type in ("report", "document") and _has_raw_intake_content(item):
             analysis_result = await _analyze_document_item(
                 item, query, auto_integrate, mode, db, current_user
             )
-        elif item.data_type == "image" and item.file_content:
+        elif item.data_type == "image" and _has_raw_intake_content(item):
             analysis_result = await _analyze_image_item(
                 item, query, auto_integrate, mode, db, current_user
             )
@@ -1403,23 +1466,46 @@ async def _analyze_spreadsheet_item(
     db: AsyncSession,
     current_user: User,
 ) -> Dict[str, Any]:
-    """Parse all tabs of a stored workbook and run correlation analysis per scenario."""
-    import base64
-    import io
+    """Parse every supported structured table and run the legacy scenario view.
+
+    The scenario view is retained for the conversational UI.  It deliberately
+    delegates parsing to the bounded adapter layer so CSV/Excel is no longer a
+    special case and newer structured formats behave consistently with the
+    deterministic evidence-table endpoints.
+    """
     import pandas as pd
     from app.services.spreadsheet_scenario_builder import build_scenarios
     from app.services.spreadsheet_domain_mapper import map_workbook_domains
 
     # Decode the stored file
-    content = base64.b64decode(item.file_content)
+    content = await load_intake_content(item)
     filename = item.file_name or "upload.xlsx"
 
-    if filename.endswith(".csv"):
-        tabs = {"Sheet1": pd.read_csv(io.BytesIO(content))}
-    elif filename.endswith((".xlsx", ".xls")):
-        tabs = pd.read_excel(io.BytesIO(content), sheet_name=None)
-    else:
-        tabs = {"Sheet1": pd.read_csv(io.StringIO(content.decode("utf-8")))}
+    parsed = ingest_file(
+        content,
+        filename,
+        limits=IngestionLimits(
+            max_file_bytes=settings.CORRELATION_MAX_UPLOAD_BYTES,
+            max_rows_per_table=settings.CORRELATION_MAX_ROWS_PER_TABLE,
+            max_total_rows=settings.CORRELATION_MAX_ROWS_PER_TABLE,
+            max_columns=settings.CORRELATION_MAX_COLUMNS_PER_TABLE,
+            max_zip_entries=settings.CORRELATION_MAX_ARCHIVE_ENTRIES,
+            max_zip_uncompressed_bytes=settings.CORRELATION_MAX_ARCHIVE_UNCOMPRESSED_BYTES,
+        ),
+    )
+    if not parsed.get("tables"):
+        errors = parsed.get("errors") or []
+        message = errors[0].get("message") if errors else "No readable structured table was found."
+        raise ValueError(message)
+
+    schemas = {
+        schema.get("name"): schema.get("columns") or []
+        for schema in (parsed.get("manifest") or {}).get("tables") or []
+    }
+    tabs = {
+        name: pd.DataFrame(rows, columns=schemas.get(name) or None)
+        for name, rows in (parsed.get("tables") or {}).items()
+    }
 
     # Domain mapping summary for transparency
     tab_columns = {name: [str(c) for c in df.columns] for name, df in tabs.items()}
@@ -1436,7 +1522,13 @@ async def _analyze_spreadsheet_item(
     scenario_count = 0
     per_scenario: List[Dict[str, Any]] = []
 
-    for scenario in build_scenarios(tabs, mode=mode, source_id=source_id):
+    scenario_limit = settings.CORRELATION_AI_MAX_SCENARIOS
+    for scenario in build_scenarios(
+        tabs,
+        mode=mode,
+        max_scenarios=scenario_limit,
+        source_id=source_id,
+    ):
         scenario_count += 1
         if len(scenario.active_domains) >= 2:
             cross_tab_links += len(scenario.domain_links)
@@ -1477,6 +1569,12 @@ async def _analyze_spreadsheet_item(
         f"{cross_tab_links} cross-domain links detected. "
         f"Peak risk score {overall_risk}/100."
     )
+    scenario_sampled = mode != "tab" and scenario_count >= scenario_limit
+    if scenario_sampled:
+        summary_text += (
+            " AI explanation used a bounded scenario sample; use the deterministic "
+            "evidence job for complete, lineage-preserving correlation coverage."
+        )
 
     return {
         "intake_id": str(item.id),
@@ -1492,6 +1590,13 @@ async def _analyze_spreadsheet_item(
         "kanban_tasks": kanban_tasks[:20],
         "compliance_implications": compliance or None,
         "scenario_samples": per_scenario,
+        "scenario_sampled": scenario_sampled,
+        "scenario_sample_limit": scenario_limit,
+        "evidence_preview_endpoint": "/api/v1/correlation/evidence/intake/preview",
+        "evidence_job_endpoint": "/api/v1/correlation/evidence/intake/jobs",
+        "ingestion_manifest": parsed.get("manifest"),
+        "ingestion_warnings": parsed.get("warnings") or [],
+        "ingestion_status": parsed.get("status"),
     }
 
 
@@ -1567,17 +1672,45 @@ async def _analyze_document_item(
     current_user: User,
 ) -> Dict[str, Any]:
     """Parse a stored PDF/DOCX/text document and run cross-section correlation."""
-    import base64
     from app.services.document_domain_mapper import map_document_domains
     from app.services import document_scenario_builder
 
-    content = base64.b64decode(item.file_content)
+    content = await load_intake_content(item)
     filename = (item.file_name or "document").lower()
 
+    if filename.endswith(".doc"):
+        conversion = ingest_file(
+            content,
+            item.file_name or "document.doc",
+            limits=IngestionLimits(
+                max_file_bytes=settings.CORRELATION_MAX_UPLOAD_BYTES,
+                max_rows_per_table=settings.CORRELATION_SYNC_MAX_ROWS,
+                max_total_rows=settings.CORRELATION_SYNC_MAX_ROWS,
+            ),
+        )
+        error = (conversion.get("errors") or [{}])[0].get(
+            "message", "Legacy .doc conversion is required before analysis."
+        )
+        return {
+            "intake_id": str(item.id),
+            "analysis": error,
+            "document_type": "legacy_doc",
+            "requires_conversion": True,
+            "ingestion_manifest": conversion.get("manifest") or {},
+            "ingestion_capabilities": conversion.get("capabilities") or {},
+            "recommended_actions": [
+                "Convert the document to DOCX or PDF, or route it through an approved legacy conversion worker."
+            ],
+            "risk_score": 0.0,
+            "domains_analyzed": [],
+            "kanban_tasks": [],
+            "compliance_implications": None,
+            "scenario_samples": [],
+        }
     if filename.endswith(".pdf"):
         from app.services.pdf_parser import parse_pdf_structure
         structure = parse_pdf_structure(content, item.file_name)
-    elif filename.endswith((".docx", ".doc")):
+    elif filename.endswith(".docx"):
         from app.services.docx_parser import parse_docx_structure
         structure = parse_docx_structure(content, item.file_name)
     else:
@@ -1643,12 +1776,11 @@ async def _analyze_image_item(
     current_user: User,
 ) -> Dict[str, Any]:
     """Extract text from a stored image and run correlation on it."""
-    import base64
     from app.services.image_text_extractor import extract_text_from_image
     from app.services.image_domain_mapper import map_image_domains
     from app.services import image_scenario_builder
 
-    content = base64.b64decode(item.file_content)
+    content = await load_intake_content(item)
     # Prefer cached extraction from upload; re-extract if absent.
     processed = item.processed_data or {}
     if processed.get("extracted_text"):
@@ -2136,20 +2268,36 @@ async def _process_uploaded_file(content: bytes, data_type: str, filename: str) 
     
     try:
         if data_type == "spreadsheet":
-            # For CSV/Excel files
+            # All structured uploads flow through one bounded adapter contract.
+            # Raw source bytes are saved separately, allowing the async
+            # evidence job to reprocess a larger approved range later.
             import pandas as pd
-            import io
 
-            # Read ALL tabs/sheets. CSV is a single implicit sheet.
-            if filename.lower().endswith('.csv'):
-                sheets = {"Sheet1": pd.read_csv(io.BytesIO(content))}
-            elif filename.lower().endswith('.xlsx'):
-                # sheet_name=None returns an ordered dict of {sheet_name: DataFrame}
-                sheets = pd.read_excel(io.BytesIO(content), sheet_name=None, engine='openpyxl')
-            elif filename.lower().endswith('.xls'):
-                sheets = pd.read_excel(io.BytesIO(content), sheet_name=None, engine='xlrd')
-            else:
-                sheets = {"Sheet1": pd.read_csv(io.StringIO(content.decode('utf-8')))}
+            parsed = ingest_file(
+                content,
+                filename,
+                limits=IngestionLimits(
+                    max_file_bytes=settings.CORRELATION_MAX_UPLOAD_BYTES,
+                    # The ZIP catalog supports a normal multi-year batch
+                    # (141 files in the bundled operational datasets). Keep
+                    # upload-time parsing aligned with the evidence API rather
+                    # than falling back to IngestionLimits' smaller default.
+                    max_tables=settings.CORRELATION_MAX_INGESTED_TABLES_PER_SOURCE,
+                    max_rows_per_table=settings.CORRELATION_SYNC_MAX_ROWS,
+                    max_total_rows=settings.CORRELATION_SYNC_MAX_ROWS,
+                    max_columns=settings.CORRELATION_MAX_COLUMNS_PER_TABLE,
+                    max_zip_entries=settings.CORRELATION_MAX_ARCHIVE_ENTRIES,
+                    max_zip_uncompressed_bytes=settings.CORRELATION_MAX_ARCHIVE_UNCOMPRESSED_BYTES,
+                ),
+            )
+            schemas = {
+                schema.get("name"): schema.get("columns") or []
+                for schema in (parsed.get("manifest") or {}).get("tables") or []
+            }
+            sheets = {
+                name: pd.DataFrame(rows, columns=schemas.get(name) or None)
+                for name, rows in (parsed.get("tables") or {}).items()
+            }
 
             tabs = []
             total_rows = 0
@@ -2162,7 +2310,7 @@ async def _process_uploaded_file(content: bytes, data_type: str, filename: str) 
 
             workbook = _merge_workbook_tab_outputs(tabs)
             workbook_linking = _merge_workbook_linking(tab_linking)
-            return {
+            result = {
                 "type": "spreadsheet",
                 "tab_count": len(tabs),
                 "rows": total_rows,
@@ -2181,7 +2329,30 @@ async def _process_uploaded_file(content: bytes, data_type: str, filename: str) 
                 "concrete_action_plan": workbook.get("concrete_action_plan", []),
                 "numeric_comparisons": workbook.get("numeric_comparisons", []),
                 "distilled_findings": workbook.get("distilled_findings", []),
+                "ingestion_status": parsed.get("status"),
+                "ingestion_manifest": parsed.get("manifest") or {},
+                "ingestion_capabilities": parsed.get("capabilities") or {},
+                "ingestion_warnings": parsed.get("warnings") or [],
+                "ingestion_errors": parsed.get("errors") or [],
+                "truncated": bool((parsed.get("manifest") or {}).get("truncated")),
+                "requires_confirmation": (
+                    parsed.get("status") in {"partial", "manifested", "awaiting_ocr"}
+                    or bool(parsed.get("errors"))
+                ),
+                "estimated_seconds": round(max(total_rows / 50_000, 0.2), 1),
             }
+            if not sheets and parsed.get("errors"):
+                # Keep the structured diagnostic alongside the stored source.
+                # The session upload path turns this into a 400; Intake keeps
+                # it reviewable so an async conversion/OCR workflow can retry.
+                result["error"] = parsed["errors"][0].get(
+                    "message", "No readable structured table was found."
+                )
+            elif not sheets:
+                result["distilled_findings"] = [
+                    "No structured tables were extracted yet; review the ingestion manifest or submit a supported batch/conversion job."
+                ]
+            return result
         
         elif data_type == "image":
             # Vision-model text extraction (Gemma/Gemini) with graceful fallback.
@@ -2197,7 +2368,30 @@ async def _process_uploaded_file(content: bytes, data_type: str, filename: str) 
                 structure = parse_pdf_structure(content, filename)
                 structure["size"] = len(content)
                 return structure
-            if lower.endswith((".docx", ".doc")):
+            if lower.endswith(".doc"):
+                conversion = ingest_file(
+                    content,
+                    filename,
+                    limits=IngestionLimits(
+                        max_file_bytes=settings.CORRELATION_MAX_UPLOAD_BYTES,
+                        max_rows_per_table=settings.CORRELATION_SYNC_MAX_ROWS,
+                        max_total_rows=settings.CORRELATION_SYNC_MAX_ROWS,
+                    ),
+                )
+                error = (conversion.get("errors") or [{}])[0].get(
+                    "message", "Legacy .doc conversion is required before analysis."
+                )
+                return {
+                    "type": data_type,
+                    "subtype": "legacy_doc",
+                    "size": len(content),
+                    "error": error,
+                    "requires_confirmation": True,
+                    "ingestion_manifest": conversion.get("manifest") or {},
+                    "ingestion_capabilities": conversion.get("capabilities") or {},
+                    "ingestion_errors": conversion.get("errors") or [],
+                }
+            if lower.endswith(".docx"):
                 from app.services.docx_parser import parse_docx_structure
                 structure = parse_docx_structure(content, filename)
                 structure["size"] = len(content)

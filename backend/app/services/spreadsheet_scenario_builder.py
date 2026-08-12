@@ -18,6 +18,7 @@ Modes:
 from typing import Dict, List, Iterator, Optional, Any, Tuple
 from datetime import datetime, timezone
 import math
+from itertools import combinations
 
 from app.models.domain_interaction import (
     DomainType,
@@ -38,7 +39,10 @@ ASSET_KEYS = ["asset_id", "asset", "trailer_id", "equipment_id", "machine_id"]
 STATUS_KEYS = ["status", "maintenance_status", "incident_severity", "risk_level",
                "stockout_risk", "detention_risk", "priority"]
 
-# Caps to keep memory/compute bounded while preserving full coverage via paging.
+# Caps protect the legacy model-facing scenario view.  Callers that need full
+# row-level coverage must use the deterministic evidence worker, which reports
+# its own explicit truncation/continuation state rather than silently dropping
+# operational records.
 DEFAULT_MAX_SCENARIOS = 5000
 DEFAULT_MAX_ROW_MODE = 2000
 
@@ -125,9 +129,20 @@ def _find_key_column(columns: List[str], candidates: List[str]) -> Optional[str]
     return None
 
 
-def _window_key_for_row(row: Dict[str, Any], date_col: Optional[str],
-                        shift_col: Optional[str]) -> Optional[str]:
-    """Build a window grouping key (date[+shift]) for a row."""
+def _window_key_for_row(
+    row: Dict[str, Any],
+    date_col: Optional[str],
+    shift_col: Optional[str],
+    entity_col: Optional[str],
+) -> Optional[str]:
+    """Build a safe temporal/entity grain for a row.
+
+    A date and shift alone are never a sufficient operational join key: two
+    machines can run on the same shift.  When an asset/trailer/equipment key is
+    available it becomes part of the grouping grain.  Sources without a common
+    entity remain isolated rather than being falsely correlated; the evidence
+    engine can later propose an explicitly confirmed broader join plan.
+    """
     if not date_col:
         return None
     date_val = _json_safe(row.get(date_col))
@@ -135,9 +150,14 @@ def _window_key_for_row(row: Dict[str, Any], date_col: Optional[str],
         return None
     # normalize date to YYYY-MM-DD prefix when possible
     date_str = str(date_val)[:10]
+    parts = [date_str]
     if shift_col and row.get(shift_col) is not None:
-        return f"{date_str}|{_json_safe(row.get(shift_col))}"
-    return date_str
+        parts.append(str(_json_safe(row.get(shift_col))))
+    if entity_col and row.get(entity_col) is not None:
+        entity = str(_json_safe(row.get(entity_col))).strip()
+        if entity:
+            parts.append(f"entity={entity}")
+    return "|".join(parts)
 
 
 def _endpoint_for_domain(domain: DomainType, tab_name: str) -> str:
@@ -179,12 +199,18 @@ def build_scenarios(
 
 def _build_links(domains: List[DomainType], interaction_key: str,
                  severity: float) -> List[CrossDomainLink]:
-    """Create pairwise sequential links between co-occurring domains."""
+    """Create every pairwise link between co-occurring domains.
+
+    A sequential chain hid valid relationships in three-or-more-domain windows
+    (e.g. maintenance × quality was omitted in production → maintenance →
+    quality).  The small per-window domain set makes the complete pair graph
+    inexpensive and more faithful to the available evidence.
+    """
     links: List[CrossDomainLink] = []
-    for i in range(len(domains) - 1):
+    for source_domain, target_domain in combinations(domains, 2):
         links.append(CrossDomainLink(
-            source_domain=domains[i],
-            target_domain=domains[i + 1],
+            source_domain=source_domain,
+            target_domain=target_domain,
             interaction_key=interaction_key,
             severity_impact=round(min(max(severity, 0.0), 1.0), 2),
             correlation_type="temporal",
@@ -222,7 +248,7 @@ def _build_window_mode(tabs, mapping: WorkbookDomainMapping, source_id: str,
                 windows[key][tab_name].append(record)
             continue
         for record in df.to_dict(orient="records"):
-            wkey = _window_key_for_row(record, date_col, shift_col)
+            wkey = _window_key_for_row(record, date_col, shift_col, asset_col)
             if wkey is None:
                 continue
             windows.setdefault(wkey, {}).setdefault(tab_name, []).append(record)
