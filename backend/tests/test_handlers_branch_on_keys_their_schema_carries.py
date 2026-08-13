@@ -39,6 +39,11 @@ from pydantic import BaseModel
 
 from app.models import schemas
 
+#: `app/api` ONLY, AND THAT IS THE WHOLE SHAPE, not a convenient boundary. The same walk was
+#: run across `app/services`, `app/workers`, `app/middleware` and `app/core` and found **zero
+#: sites**: those layers take primitives rather than pydantic models, so there is no dump to
+#: read a key off. Recorded because "proven empty" and "never looked" are indistinguishable
+#: afterwards, and the next person tempted to widen this guard should know the answer is in.
 API = pathlib.Path(__file__).resolve().parents[1] / "app" / "api"
 
 

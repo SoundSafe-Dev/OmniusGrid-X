@@ -1621,6 +1621,23 @@ class DataCorrelationUpdate(BaseModel):
     correlation_strength: Optional[int] = None
     confidence_score: Optional[int] = None
     is_active: Optional[bool] = None
+    # A CORRELATION WITH NO ENDPOINTS COULD NEVER BE GIVEN ANY (FS-676). `source_id` and
+    # `target_id` are nullable columns and optional on create, so a correlation can be filed
+    # between "a task" and "an asset" with neither identified — and these three fields were
+    # the whole Update schema, so it could never be completed. That is the shape FS-665 left
+    # behind on shipments: an incomplete record with no route back.
+    #
+    # The rest are plain attributes of the correlation rather than its identity, and the
+    # asymmetry had no reason behind it — `correlation_meta_data` in particular is the field
+    # a caller is most likely to want to amend.
+    correlation_type: Optional[str] = None
+    source_type: Optional[str] = None
+    source_id: Optional[UUID] = None
+    target_type: Optional[str] = None
+    target_id: Optional[UUID] = None
+    correlation_method: Optional[str] = None
+    is_bidirectional: Optional[bool] = None
+    correlation_meta_data: Optional[Dict[str, Any]] = None
 
 
 class DataCorrelationResponse(DataCorrelationBase):

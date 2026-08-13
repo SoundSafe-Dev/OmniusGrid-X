@@ -1969,3 +1969,36 @@ tick, and certifies the bug.
 Reproduce the *conditions*, not just the call. For anything a third-party library dispatches —
 paho, watchdog, a driver's callback, a signal handler — that means a real `threading.Thread`,
 and the test above keeps a two-line `_call_off_loop` helper so there is no way to forget.
+
+## Rule 160 — excluding a file to suppress self-matches suppresses its real uses too
+
+The question was: which write schemas does nothing reference? Searching the whole tree answers
+"none of them" — every class matches its own `class X(BaseModel):` line. The obvious fix is to
+search everywhere *except* `schemas.py`.
+
+That reported three unused schemas. Two were wrong, and the reason is the same for both:
+`class AlarmResponse(AlarmCreate)` lives in `schemas.py` too. Inheritance is a use, it is
+frequently the *only* use, and it is exactly the kind that lives beside the definition.
+
+Exclude the **definition**, not the file. Parse the module, collect every name it references,
+and subtract only the class statement's own name. It is four more lines than the file-level
+exclusion and it is the difference between one real finding and three, two of which would have
+sent someone deleting live code.
+
+## Rule 161 — a schema with no caller is a design decision that was written down and dropped
+
+`DataCorrelationUpdate` had eleven fields' worth of intent behind three declared, sat in
+`schemas.py`, and was referenced by nothing. Meanwhile `PUT /correlations/{id}` — the route it
+so plainly belonged to — declared three bare scalars, which FastAPI serves as query parameters,
+so a client sending the obvious JSON body got 200 and no change.
+
+This is not dead code in the usual sense. Dead code is something that was live and got
+orphaned. This was never wired: someone designed the update contract, wrote the model, and
+stopped. The model is the only surviving record of what the endpoint was meant to accept, and
+to the next reader it looks like a promise the API already keeps.
+
+Sweeping for it is cheap — write schemas, minus everything any module references — and the
+finding is unusually actionable, because when the route exists you can tell from the file
+whether the answer is "wire it" or "delete it". Where you cannot tell, name it in a register
+with the reason, which is what `TruckAssetCorrelationCreate` got: a table with five
+relationships, no reader, no writer, and a question for whoever designed it.

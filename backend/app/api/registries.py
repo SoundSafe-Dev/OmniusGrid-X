@@ -26,7 +26,8 @@ from app.models.schemas import (
     ActionableRegistryItemCreate,
     ActionableRegistryItemUpdate,
     DataCorrelationResponse,
-    DataCorrelationCreate
+    DataCorrelationCreate,
+    DataCorrelationUpdate,
 )
 from app.middleware.rbac import require_admin
 from app.db.database import get_db
@@ -360,13 +361,26 @@ async def create_correlation(
 @router.put("/correlations/{correlation_id}", response_model=DataCorrelationResponse, dependencies=[Depends(require_admin)])
 async def update_correlation(
     correlation_id: uuid.UUID,
-    correlation_strength: Optional[int] = None,
-    confidence_score: Optional[int] = None,
-    is_active: Optional[bool] = None,
+    correlation: DataCorrelationUpdate,
     current_user: User = Depends(require_admin),
     db: AsyncSession = Depends(get_tenant_db)
 ):
-    """Update an existing data correlation"""
+    """Update an existing data correlation
+
+    TAKES A BODY, LIKE ITS THREE NEIGHBOURS (FS-676). This route declared three bare
+    scalars — `correlation_strength`, `confidence_score`, `is_active` — and FastAPI reads a
+    non-Pydantic scalar with no `Body()` marker as a QUERY PARAMETER. So the endpoint
+    required `?correlation_strength=80`, and the obvious `api.put(url, {...})` would have
+    changed nothing while returning 200.
+
+    `DataCorrelationUpdate` already existed in `schemas.py` and no code referenced it: the
+    intended design was written down and never wired. `update_registry`,
+    `update_registry_item` and `create_correlation` in this same file all take their model,
+    so this was the one route that missed it rather than a deliberate contract.
+
+    Safe to change: nothing calls this endpoint. No frontend client, and the only test
+    naming it is the auth walk, which asserts it requires a token and sends no parameters.
+    """
     result = await db.execute(
         select(DataCorrelation).where(
             and_(
@@ -376,17 +390,16 @@ async def update_correlation(
         )
     )
     existing_correlation = result.scalar_one_or_none()
-    
+
     if not existing_correlation:
         raise HTTPException(status_code=404, detail="Correlation not found")
-    
-    if correlation_strength is not None:
-        existing_correlation.correlation_strength = correlation_strength
-    if confidence_score is not None:
-        existing_correlation.confidence_score = confidence_score
-    if is_active is not None:
-        existing_correlation.is_active = is_active
-    
+
+    # `exclude_unset`, so an omitted field is untouched rather than blanked — the same
+    # pattern the two sibling update routes use and `test_partial_updates_do_not_wipe_fields`
+    # enforces.
+    for field, value in correlation.model_dump(exclude_unset=True).items():
+        setattr(existing_correlation, field, value)
+
     await db.commit()
     await db.refresh(existing_correlation)
     

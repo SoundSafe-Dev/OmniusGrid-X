@@ -1030,6 +1030,21 @@ one of its findings. The habit that catches it:
      call, and for anything a third-party library dispatches that means a real
      `threading.Thread`.
 
+160. **Excluding a file to suppress self-matches suppresses its real uses too.**
+     The sweep for write schemas nothing references searched every file except `schemas.py`,
+     so that `class AlarmCreate(BaseModel):` would not count as a use of `AlarmCreate`. It
+     also stopped `class AlarmResponse(AlarmCreate)` counting — inheritance, in the same file,
+     the only use there is. Two of three reported defects were artefacts. Exclude the
+     *definition*, never the file: parse it and skip the one node, rather than deleting the
+     whole haystack because the needle looks like the hay.
+
+161. **A schema with no caller is a design decision that was written down and dropped.**
+     `DataCorrelationUpdate` existed, was complete enough to be obviously intended, and no
+     route referenced it — while the route it belonged to took query parameters and silently
+     ignored bodies. That combination is not dead code; it is a plan someone made, half
+     executed, and nobody finished. Worth its own sweep, because the schema is the only
+     surviving evidence of the intent and reads to the next person as a promise the API keeps.
+
 ---
 
 ## Open observations, not yet tickets

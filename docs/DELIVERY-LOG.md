@@ -9695,3 +9695,40 @@ against the broken code; it proves nothing unless it calls from a real thread.
 
 Edge agent: **380 passed, 1 skipped**. Both mutations — either collector back to a bare
 `create_task` — fail exactly the tests that describe them.
+
+### A schema written down and never wired
+
+Chasing the last of the FS-671 Create/Update gaps into `registries.py` found something worse
+than an asymmetry: `PUT /registries/correlations/{id}` declared three **bare scalars**, and
+FastAPI reads a non-Pydantic scalar with no `Body()` marker as a query parameter. The endpoint
+wanted `?correlation_strength=80`, so the obvious `api.put(url, {...})` would have returned
+**200 having changed nothing** — the quietest failure available.
+
+`DataCorrelationUpdate` was sitting in `schemas.py` referenced by no code at all. The intended
+design had been written down and never connected. `update_registry`, `update_registry_item` and
+`create_correlation` in the same file all take their model, so this was the one route that
+missed it rather than a deliberate contract — and nothing calls it (no frontend client; the
+only test naming it is the auth walk), so aligning it breaks nothing.
+
+**And the schema was three fields of eleven.** `source_id` and `target_id` are nullable columns,
+optional on create, so a correlation could be filed between *a task* and *an asset* with neither
+identified and then never completed — the shape FS-665 left on shipments. The pair is now in
+`test_what_can_be_created_can_be_corrected.py` rather than fixed only here, because a one-off
+fix leaves the class open; the extended guard catches it on every run.
+
+**A new sub-sweep, and a detector correction inside it.** Which write schemas does nothing
+reference? The first answer was three — `AlarmCreate`, `DataCorrelationUpdate`,
+`TruckAssetCorrelationCreate`. It searched every file *except* `schemas.py`, to avoid matching
+each class's own definition, and therefore could not see `class AlarmResponse(AlarmCreate)`:
+excluding a file to suppress self-matches suppressed the legitimate intra-file use as well.
+**One of the three was real**, and the guard now asserts the correction directly — a base class
+must not be reported as unused.
+
+`TruckAssetCorrelationCreate` is recorded rather than acted on: `TruckAssetCorrelation` is a
+table with five relationships and no reader and no writer anywhere in `app/`. That is a dead
+*entity*, not a dead schema, and deleting a table is not a mechanical fix.
+
+Mutation-verified three ways: the route back to query parameters fails the contract tests, the
+endpoints dropped from the schema fails the completability tests *and* the extended FS-671
+guard, and a handler that accepts the body and discards it fails three of the four real-database
+tests.

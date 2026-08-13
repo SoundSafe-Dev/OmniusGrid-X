@@ -33,6 +33,8 @@ import uuid
 import pytest
 
 from app.models.schemas import (
+    DataCorrelationCreate,
+    DataCorrelationUpdate,
     DriverCreate,
     DriverUpdate,
     ShipmentCreate,
@@ -45,6 +47,14 @@ PAIRS = [
     ("driver", DriverCreate, DriverUpdate, set()),
     ("shipment", ShipmentCreate, ShipmentUpdate, {"shipment_number"}),
     ("trailer", YardTrailerCreate, YardTrailerUpdate, {"trailer_number"}),
+    # ADDED AFTER THE CLASS RECURRED (FS-676). `DataCorrelationUpdate` carried three of the
+    # eleven fields its Create declares, and `source_id`/`target_id` are optional on create —
+    # so a correlation filed between "a task" and "an asset" with neither identified could
+    # never be completed. The same shape FS-665 left on shipments.
+    #
+    # Listed here rather than fixed in place, because a one-off fix leaves the class open:
+    # this pair is now checked on every run alongside the three that motivated the file.
+    ("correlation", DataCorrelationCreate, DataCorrelationUpdate, set()),
 ]
 
 
@@ -75,7 +85,9 @@ class TestTheUpdateStaysPartial:
     the property directly rather than trusting the sibling guard, because the sibling guard
     checks the HANDLERS and this file changed the SCHEMAS."""
 
-    @pytest.mark.parametrize("update", [DriverUpdate, ShipmentUpdate, YardTrailerUpdate])
+    @pytest.mark.parametrize(
+        "update", [DriverUpdate, ShipmentUpdate, YardTrailerUpdate, DataCorrelationUpdate]
+    )
     def test_an_unsent_field_is_excluded_from_the_dump(self, update):
         sent = update()
         assert sent.model_dump(exclude_unset=True) == {}, (
