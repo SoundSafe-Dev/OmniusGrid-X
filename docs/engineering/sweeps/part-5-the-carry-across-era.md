@@ -2636,3 +2636,33 @@ applied to everything else the document says.
 So when choosing which prose numbers deserve a guard, weight them by who reads them and when.
 The figures deep in an architecture table are read by people who already know the system. The
 one in the quick-start block is read by someone with no way to check it.
+
+## Rule 191 — a fix verified against a double is a claim about the double
+
+FS-675 found that every MQTT reading was dropped: `asyncio.create_task` raises on paho's
+network thread, so the reading never reached the callback. The fix was verified with a test
+that calls `_on_message` from a `threading.Thread`.
+
+That test is worth having — rule 159 exists because the *first* version called it on the loop
+and passed against the defect. But notice what it actually asserts: that Python raises when you
+create a task off-loop. It does not observe paho at all. The premise *"paho dispatches
+`on_message` from its own thread"* is read from documentation and assumed.
+
+The infrastructure was one container away:
+
+    docker run -d -p 21883:1883 eclipse-mosquitto:2
+
+A real broker, the real collector connecting with `loop_start()`, a real second client
+publishing three messages:
+
+    pre-fix   0 delivered   mqtt_message_handler_error: no running event loop
+    fixed     3 delivered
+
+Same broker, same publisher, same payloads. The double proved the mechanism; the broker proved
+the defect — and produced the exact error string a production log would have carried while the
+agent quietly dropped everything.
+
+The first attempt published to a topic of my own choosing and got zero deliveries from *correct*
+code, because `_subscribe_to_topics` derives its topics from the asset id. The agent had logged
+`mqtt_subscribed topic=device/printer-1/report` in the same run. When a live drive returns
+nothing, read what the system said it was doing before concluding anything about what it did.

@@ -1268,6 +1268,14 @@ one of its findings. The habit that catches it:
      newcomer cannot tell a stale doc from a broken checkout, and the natural conclusion is
      that they broke something.
 
+191. **A fix verified against a double is a claim about the double.**
+     FS-675 was proven with a `threading.Thread` standing in for paho's network thread — which
+     asserts that Python raises off-loop, not that paho behaves as assumed. Against a real
+     mosquitto broker the numbers are 0 readings before the fix and 3 after, with the same
+     `no running event loop` error a production log would have shown. Where the infrastructure
+     is one container away, run it: the double proves the mechanism, the real thing proves the
+     defect.
+
 ---
 
 ## Open observations, not yet tickets

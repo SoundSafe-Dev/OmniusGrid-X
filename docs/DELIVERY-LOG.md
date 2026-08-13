@@ -10337,3 +10337,31 @@ could fall through. Mutation-verified in both directions.
 The two gate counts in the same document — "31 blocking jobs" across both workflows and "14
 blocking gates on every branch push" — were checked and are different scopes, not a
 contradiction.
+
+### Proving FS-675 against a real broker, not a test double
+
+The edge agent is the component this session changed most — every collector's delivery path,
+plus a task helper — and it had never actually been run. Its 386 unit tests pass, but the fix
+for FS-675 was verified with a `threading.Thread` standing in for paho's network thread, which
+is a claim about paho rather than an observation of it.
+
+So: a real `eclipse-mosquitto` broker, the real `MQTTCollector` connecting to it with
+`loop_start()`, a real second paho client publishing three messages, and the collector's own
+subscription delivering them.
+
+| | readings delivered |
+|---|---|
+| pre-FS-675 (`asyncio.create_task` on paho's thread) | **0** — `mqtt_message_handler_error: no running event loop` |
+| after the fix | **3** |
+
+Same broker, same publisher, same payloads; the only difference is the one line. The defect and
+its repair are now demonstrated against the infrastructure they concern, and the error string
+in the failing run is the exact one a production log would have carried while the collector
+dropped every reading.
+
+**One false start, and it is the same shape as the last two.** The first drive published to
+`opsgrid/test/#` and got nothing — because `_subscribe_to_topics` derives its topics from the
+asset id (`device/printer-1/report`), so I had published where nothing was listening. Zero
+deliveries, from correct code, because the harness was wrong. It took one line of the agent's
+own log — `mqtt_subscribed topic=device/printer-1/report` — to see it, and that line was in the
+output of the first run.
