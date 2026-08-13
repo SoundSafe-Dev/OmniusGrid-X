@@ -112,6 +112,87 @@ class TestAWorkingLoopIsNotReported:
         assert status.startswith("error") and "exited" in status
 
 
+class TestTheExportSchedulerToo:
+    """The first entry taken off the unwatched register, by writing the check rather than
+    deleting the line. `ExportScheduler._run` has the same swallow-and-continue shape, so a
+    scheduler whose every cycle throws leaves scheduled exports undelivered indefinitely and
+    the customer finds out before the operator does."""
+
+    async def test_a_scheduler_failing_every_iteration_is_an_error(self, monkeypatch):
+        from app.services import export_delivery
+
+        monkeypatch.setattr(export_delivery.export_scheduler, "_running", True)
+        monkeypatch.setattr(export_delivery.export_scheduler, "_consecutive_failures", 6)
+        status, details = health_module._check_export_scheduler()
+        assert status.startswith("error")
+        assert details["consecutive_failures"] == 6
+
+    async def test_a_working_scheduler_is_ok(self, monkeypatch):
+        from app.services import export_delivery
+
+        monkeypatch.setattr(export_delivery.export_scheduler, "_running", True)
+        monkeypatch.setattr(export_delivery.export_scheduler, "_consecutive_failures", 0)
+        assert health_module._check_export_scheduler()[0] == "ok"
+
+    async def test_disabled_is_reported_as_its_own_state(self, monkeypatch):
+        """DISABLED IS NOT BROKEN, and it is not healthy either. `start()` returns
+        immediately when the flag is off, so `_running` stays False and a check that only
+        knew ok/not_running would report a deployment posture as a fault — or, worse,
+        an operator would read `export_scheduler: ok` on an instance where exports were
+        never turned on."""
+        from app.core.config import settings
+
+        monkeypatch.setattr(settings, "EXPORT_SCHEDULER_ENABLED", False)
+        status, details = health_module._check_export_scheduler()
+        assert status == "disabled"
+        assert details["enabled"] is False
+
+    async def test_a_stopped_scheduler_is_distinguished_from_a_failing_one(self, monkeypatch):
+        from app.services import export_delivery
+
+        monkeypatch.setattr(export_delivery.export_scheduler, "_running", False)
+        monkeypatch.setattr(export_delivery.export_scheduler, "_consecutive_failures", 0)
+        assert health_module._check_export_scheduler()[0] == "not_running"
+
+    async def test_the_scheduler_loop_maintains_its_counter(self):
+        """Drives the real `_run`, because the check is only as good as the state it reads
+        and that state is written in another file."""
+        from app.services.export_delivery import ExportScheduler
+
+        scheduler = ExportScheduler()
+        scheduler._running = True
+        calls = {"n": 0}
+
+        async def _boom():
+            calls["n"] += 1
+            if calls["n"] >= 2:
+                scheduler._running = False
+            raise RuntimeError("redpanda is unreachable")
+
+        scheduler.dispatch_due = _boom
+        with pytest.MonkeyPatch.context() as mp:
+            from app.core.config import settings
+
+            mp.setattr(settings, "EXPORT_SCHEDULER_INTERVAL_SECONDS", 0.01)
+            await scheduler._run()
+
+        assert scheduler._consecutive_failures >= 2
+
+    async def test_the_export_check_reaches_the_detailed_report(self, monkeypatch):
+        """A check nothing calls is the FS-691 shape one level up. This asserts the wiring,
+        which is a separate fact from the check being correct."""
+        checks, details = await health_module._run_extended_checks(_Boom())
+        assert "export_scheduler" in checks
+        assert "export_scheduler" in details
+
+
+class _Boom:
+    """A session whose every use raises — the extended checks must survive one."""
+
+    async def execute(self, *_args, **_kwargs):
+        raise RuntimeError("connection refused")
+
+
 class TestTheCounterIsActuallyMaintained:
     """The health check is only as good as the state it reads, and that state is written in
     a different file. These drive the real loop bodies.

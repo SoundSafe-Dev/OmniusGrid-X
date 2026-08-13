@@ -119,6 +119,10 @@ class ExportScheduler:
         self._producer_bootstrap: Optional[str] = None
         self._task: Optional[asyncio.Task] = None
         self._running = False
+        #: Consecutive failed iterations (FS-693). `_run` swallows and continues, so the
+        #: task stays alive through a scheduler that dispatches nothing at all; whether it
+        #: is working is a question only its output can answer.
+        self._consecutive_failures = 0
 
     async def start(self) -> None:
         if not settings.EXPORT_SCHEDULER_ENABLED:
@@ -188,7 +192,9 @@ class ExportScheduler:
         while self._running:
             try:
                 await self.dispatch_due()
+                self._consecutive_failures = 0
             except Exception as exc:
+                self._consecutive_failures += 1
                 logger.error("export_scheduler_iteration_failed", error=str(exc))
             await asyncio.sleep(settings.EXPORT_SCHEDULER_INTERVAL_SECONDS)
 

@@ -1071,7 +1071,18 @@ class CommandExecutor:
             return payload
         try:
             return json.dumps(payload, sort_keys=True, default=str).encode("utf-8")
-        except Exception:  # noqa: BLE001
+        except (TypeError, ValueError, RecursionError):
+            # NARROWED to what json.dumps can actually raise here (FS-693's ratchet
+            # payment). `default=str` already absorbs unserialisable values, so the
+            # remaining cases are a circular reference (ValueError) and a structure deep
+            # enough to exhaust the stack (RecursionError); TypeError is kept because a
+            # `default` that itself fails raises it.
+            #
+            # The old `except Exception` also swallowed MemoryError and anything else
+            # raised while measuring a payload, and returned a 20-byte type name in its
+            # place — so `payload_size` in the dead-letter envelope would record the length
+            # of "<class 'dict'>" as if it were the message. Better that an unmeasurable
+            # payload propagates than that a wrong number is written down as a measurement.
             return repr(type(payload)).encode("utf-8")
 
     @staticmethod

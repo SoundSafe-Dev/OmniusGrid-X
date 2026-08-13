@@ -10542,3 +10542,49 @@ why this is a register and not seven guessed probes.
 recorded rather than exempted by reflex: the new register parses `main.py` directly rather
 than reading that list, so a service added to boot lands in its denominator whether or not
 anyone updated a declaration, and the 7-of-8 overlap is the finding rather than a copy.
+
+### The register shrinks by one, the intended way
+
+`export_scheduler` came off `UNWATCHED` by acquiring a check, not by deleting a line —
+`ExportScheduler._run` has the identical swallow-and-continue shape, so a scheduler whose
+every cycle throws leaves scheduled exports undelivered and the customer discovers it before
+the operator does.
+
+**"Disabled" had to become its own status.** `start()` returns immediately when
+`EXPORT_SCHEDULER_ENABLED` is false, so `_running` stays False and a check that knew only
+ok / not_running would report a deployment posture as a fault — or, on an instance where
+exports were never turned on, invite an operator to read `export_scheduler: ok`. It reports
+`disabled`, and because the extended checks do not feed the overall ready/degraded verdict
+(only database, broker, redis and ingestion do), that status changes no probe outcome.
+
+Four mutations, four caught: the failure branch, the wiring into `/health/detailed`, the
+counter in the loop, and — the one worth having — putting `export_scheduler` back on the
+register after its check landed, which
+`test_the_register_does_not_outlive_its_entries` rejects. A register that keeps solved
+entries stops being read.
+
+Six remain.
+
+### The swallow ratchet charged for it, and the payment was real
+
+Adding `_check_export_scheduler` took the broad-handler count from 201 to 202 and the build
+failed: *"if the new one is deliberate, lower some other allowance first. This number only
+goes down."*
+
+The new handler is not debt — `test_a_failing_dependency_is_reported_not_raised.py` (FS-687)
+exists precisely because health checkers must catch broadly and **return** the failure, or a
+readiness probe answers 500 whenever any one dependency is slow. The ratchet counts it anyway,
+which its own documentation calls coarse rather than wrong.
+
+So it was paid, and the cheapest honest payment turned out to be worth making on its own.
+`_payload_bytes` caught `Exception` around a `json.dumps` that already carries
+`default=str` — which absorbs unserialisable values, leaving a circular reference, a
+`default` that itself raises, and a stack-deep structure as the only real cases. The broad
+catch also swallowed `MemoryError` and returned a 20-byte type name in place of the payload,
+so the dead-letter envelope would have recorded the length of `"<class 'dict'>"` as
+`payload_size` — a wrong number written down as a measurement. Narrowed to
+`(TypeError, ValueError, RecursionError)`; anything else now propagates.
+
+Back to 201. Rule 187 asks what a ratchet's cheapest reduction would do; this is the same
+question from the other side — what its cheapest *payment* buys — and here it bought a
+correction.

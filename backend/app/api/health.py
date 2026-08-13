@@ -286,6 +286,41 @@ def _check_command_dispatch() -> tuple[str, dict[str, Any]]:
         return f"error: {exc}", {}
 
 
+def _check_export_scheduler() -> tuple[str, dict[str, Any]]:
+    """Report the export scheduler on what it dispatches, not on whether it exists (FS-693).
+
+    `ExportScheduler._run` has the same shape as the command loops — swallow the iteration's
+    exception and carry on — so its task outlives any failure and cannot report one. A
+    scheduler whose every cycle throws leaves scheduled exports undelivered indefinitely,
+    and the customer discovers it, not the operator.
+
+    DISABLED IS NOT BROKEN, and conflating them would be its own defect: `start()` returns
+    immediately when `EXPORT_SCHEDULER_ENABLED` is false, which is a deployment posture and
+    not a fault. It is reported as its own state so a health page cannot be read as "exports
+    are fine" on an instance where exports were never turned on.
+    """
+    try:
+        from app.core.config import settings
+        from app.services.export_delivery import export_scheduler
+
+        if not settings.EXPORT_SCHEDULER_ENABLED:
+            return "disabled", {"enabled": False}
+
+        failures = getattr(export_scheduler, "_consecutive_failures", 0)
+        details: dict[str, Any] = {
+            "enabled": True,
+            "running": bool(export_scheduler._running),
+            "consecutive_failures": failures,
+        }
+        if not export_scheduler._running:
+            return "not_running", details
+        if failures >= _MAX_CONSECUTIVE_LOOP_FAILURES:
+            return "error: export scheduler failing every iteration", details
+        return "ok", details
+    except Exception as exc:
+        return f"error: {exc}", {}
+
+
 async def _run_extended_checks(
     db: AsyncSession,
 ) -> tuple[dict[str, str], dict[str, dict[str, Any]]]:
@@ -295,18 +330,21 @@ async def _run_extended_checks(
     historian_status, historian_details = await _check_historian(db)
     registry_status, registry_details = _check_model_registry_storage()
     command_status, command_details = _check_command_dispatch()
+    export_status, export_details = _check_export_scheduler()
 
     checks = {
         "notifications": notifications_status,
         "historian": historian_status,
         "model_registry_storage": registry_status,
         "command_dispatch": command_status,
+        "export_scheduler": export_status,
     }
     details = {
         "notifications": notifications_details,
         "historian": historian_details,
         "model_registry_storage": registry_details,
         "command_dispatch": command_details,
+        "export_scheduler": export_details,
     }
     return checks, details
 

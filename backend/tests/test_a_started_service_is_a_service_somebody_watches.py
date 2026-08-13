@@ -39,8 +39,6 @@ UNWATCHED = {
     "oee_calculator": "needs a last-completed-cycle timestamp; a stalled calculator leaves "
                       "every OEE figure on the dashboard frozen at its last good value, "
                       "which reads as a quiet shift rather than a broken service",
-    "export_scheduler": "needs the same consecutive-failure counter FS-693 gave the command "
-                        "loops — the cheapest entry here to close",
     "compliance_report_dispatcher": "needs a definition of a due report that went out; a "
                                     "missed compliance report is discovered by an auditor",
     "rollout_orchestrator": "health.py mentions it only in a comment at :791. Needs a view "
