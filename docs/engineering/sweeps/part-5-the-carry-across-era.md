@@ -2666,3 +2666,50 @@ The first attempt published to a topic of my own choosing and got zero deliverie
 code, because `_subscribe_to_topics` derives its topics from the asset id. The agent had logged
 `mqtt_subscribed topic=device/printer-1/report` in the same run. When a live drive returns
 nothing, read what the system said it was doing before concluding anything about what it did.
+
+## Rule 192 — a guard that reads state written after an `await` can never win
+
+    def on_modified(self, event):
+        if event.src_path not in self._processed_files:      # the check
+            spawn(self._process_gcode(event.src_path), ...)
+
+    async def _process_gcode(self, file_path):
+        await self._wait_for_file_stable(path)               # suspension
+        ...
+        await self.on_file_callback(message)
+        self._processed_files.add(file_path)                 # the write
+
+A single file write emits `on_created` and `on_modified` within milliseconds. Both handlers run
+before `_wait_for_file_stable` has returned for either, so the set is still empty when the
+second one checks it. The guard reads state that is written two awaits later, and therefore
+never sees it.
+
+Measured against a real `Observer`: every G-code file processed and emitted **twice**, one print
+recorded as two, both messages carrying the same path and size so nothing downstream could
+distinguish them. `on_created` compounded it by not checking at all.
+
+The repair is the ordinary one for check-then-act: claim the resource *synchronously*, before
+the first suspension, and let the claim itself be the check. `set.add` on the observer thread
+is atomic under the GIL and both events arrive on that same thread, so a claim taken there
+cannot be raced.
+
+Whenever a check and its corresponding write straddle an `await`, ask what happens if the same
+event arrives twice before the first completes. In an event-driven collector, "twice" is not a
+rare interleaving — it is what the library does every time.
+
+## Rule 193 — run the real thing twice: once to prove the fix, once to see what else it does
+
+The live drive of the file watcher was set up to answer one question — does FS-675's fix work?
+It did: 0 files processed with the old code, 2 with the new.
+
+The answer contained a second finding. **2 was wrong.** One file should produce one reading, and
+the log showed `gcode_file_processed` twice for a single write.
+
+The unit tests could not have found it, and are not deficient for that: they deliver one
+synthetic `on_created` event and assert one call, which is precisely the behaviour the code gets
+right. The question they cannot ask is *what does the environment actually send?* — and watchdog
+sends two events for one write, always.
+
+So when a live drive is already standing up, read the whole of its output rather than the line
+that answers the question you came with. The environment is being honest about itself for a few
+seconds; most of what it says is about something other than the bug you are chasing.

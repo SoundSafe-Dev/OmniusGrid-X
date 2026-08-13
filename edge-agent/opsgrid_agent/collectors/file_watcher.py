@@ -42,20 +42,41 @@ class OrcaSlicerHandler(FileSystemEventHandler):
         # collector type, could not process a single file it was watching for.
         self._loop = loop
         
+    def _claim(self, path: str) -> bool:
+        """Claim a path for processing, returning False if it is already claimed.
+
+        SYNCHRONOUS, AND ON THE WATCHDOG THREAD, WHICH IS THE POINT (FS-690). A single file
+        write emits BOTH `on_created` and `on_modified`. The old guard lived in `on_modified`
+        alone and read `_processed_files`, a set written at the END of `_process_gcode` —
+        after `await self._wait_for_file_stable(path)`. Both coroutines were therefore in
+        flight long before either marked the file, so the check could never win, and
+        `on_created` did not check at all.
+
+        Measured against a real watchdog `Observer` and a real file: every G-code file was
+        processed and emitted TWICE, one print reported as two. Claiming the path before any
+        await is what makes the check mean anything — `set.add` on the observer thread is
+        atomic under the GIL, and both events arrive on that same thread.
+        """
+        if path in self._processed_files:
+            return False
+        self._processed_files.add(path)
+        return True
+
     def on_created(self, event):
         """Handle new file creation"""
         if not event.is_directory and event.src_path.endswith('.gcode'):
-            spawn(
-                self._process_gcode(event.src_path),
-                name="orca.on_created",
-                loop=self._loop,
-            )
+            if self._claim(event.src_path):
+                spawn(
+                    self._process_gcode(event.src_path),
+                    name="orca.on_created",
+                    loop=self._loop,
+                )
     
     def on_modified(self, event):
         """Handle file modification (ORCA updates files during slicing)"""
         if not event.is_directory and event.src_path.endswith('.gcode'):
             # Only process if not already processed
-            if event.src_path not in self._processed_files:
+            if self._claim(event.src_path):
                 spawn(
                     self._process_gcode(event.src_path),
                     name="orca.on_modified",

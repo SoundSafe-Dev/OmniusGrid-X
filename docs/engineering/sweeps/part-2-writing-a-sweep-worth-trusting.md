@@ -1276,6 +1276,20 @@ one of its findings. The habit that catches it:
      is one container away, run it: the double proves the mechanism, the real thing proves the
      defect.
 
+192. **A guard that reads state written after an `await` can never win.**
+     `on_modified` skipped files already in `_processed_files`, and `_process_gcode` added to
+     that set at its end — after `await _wait_for_file_stable(...)`. A single write emits both
+     `on_created` and `on_modified`, so both coroutines were in flight before either marked
+     anything, and every sliced file was emitted twice. Claim the resource synchronously,
+     before the first await; a check-then-act split across a suspension point is not a check.
+
+193. **Run the real thing twice: once to prove the fix, once to see what else it does.**
+     Driving the file watcher against a real `Observer` confirmed FS-675 (0 files processed
+     before the fix, 2 after) and, in the same output, revealed that 2 was itself wrong. The
+     unit tests could not have shown it — they deliver one synthetic event, which is exactly
+     what the code handles correctly. The live run answers a question the double never asks:
+     *what does the environment actually send?*
+
 ---
 
 ## Open observations, not yet tickets

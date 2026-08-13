@@ -10365,3 +10365,38 @@ asset id (`device/printer-1/report`), so I had published where nothing was liste
 deliveries, from correct code, because the harness was wrong. It took one line of the agent's
 own log — `mqtt_subscribed topic=device/printer-1/report` — to see it, and that line was in the
 output of the first run.
+
+### Both halves of FS-675, and a defect only the real thing showed
+
+Applying rule 191 to FS-675's *other* claim — that `orca_file` "could not process a single file
+it was watching for" — needed no container at all, just a real watchdog `Observer` and a real
+file in a temporary directory:
+
+| | files processed |
+|---|---|
+| pre-FS-675 (bare `create_task` on watchdog's thread) | **0** — `RuntimeError: no running event loop`, unhandled |
+| after the fix | **2** |
+
+Worth noting the difference in visibility between the two halves. paho's `_on_message` wraps
+its body in `except Exception`, so the MQTT failure was swallowed into a
+`mqtt_message_handler_error` log line; watchdog does not, so the file-watcher failure surfaced
+as a raw traceback. Same defect, same cause, and one of them was shouting while the other
+whispered.
+
+**And "2" is the finding.** One file write emits both `on_created` and `on_modified`, so the
+collector processed and emitted every sliced G-code file **twice** — one print recorded as two,
+with identical path and size, so nothing downstream could tell them apart.
+
+The dedupe was there and could never work: only `on_modified` checked `_processed_files`, and
+that set is written at the **end** of `_process_gcode`, after `await _wait_for_file_stable(...)`.
+Both coroutines were in flight long before either marked the file. `on_created` did not check
+at all.
+
+**No double could have shown this.** The unit tests call `on_created` with one synthetic event
+and correctly see one call; only a real `Observer` watching a real directory emits the pair.
+That is rule 191 paying for itself twice in one sitting — the double proves the mechanism, the
+real thing proves the behaviour.
+
+Fixed by claiming the path synchronously on the observer thread, before any await; the drive
+now reports one reading for one file. Guarded in both directions, because a claim that swallows
+a genuinely new file would pass the first assertion and fail the product.

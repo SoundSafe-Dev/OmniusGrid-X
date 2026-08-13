@@ -346,3 +346,70 @@ class TestEveryDriverThreadDeliversThroughTheLoop:
                 f"{name} runs on a driver's thread and uses none of {self.DELIVERY}. "
                 f"`asyncio.create_task` there raises rather than schedules."
             )
+
+
+class TestAFileIsProcessedOnce:
+    """One sliced file must produce one reading (FS-690).
+
+    A single write emits BOTH `on_created` and `on_modified`. The dedupe guard lived only in
+    `on_modified` and read `_processed_files` — a set written at the END of `_process_gcode`,
+    after `await self._wait_for_file_stable(path)`. Both coroutines were in flight before
+    either marked the file, so the check could never win; `on_created` did not check at all.
+
+    FOUND BY RUNNING IT, NOT BY READING IT. The unit tests above call `on_created` with one
+    synthetic event and see one call, which is correct and blind: only a real watchdog
+    `Observer` watching a real directory emits the pair. Rule 191 — the double proves the
+    mechanism, the real thing proves the behaviour.
+
+    The fix claims the path synchronously on the observer thread, before any await.
+    """
+
+    @pytest.mark.asyncio
+    async def test_the_created_and_modified_pair_yields_one_reading(self):
+        processed = []
+        handler = OrcaSlicerHandler(
+            asset_id="printer-1",
+            watch_path=None,
+            on_file_callback=None,
+            packml_mapper=create_mapper_for_asset_type("3d_printer"),
+            loop=asyncio.get_running_loop(),
+        )
+
+        async def record(path):
+            processed.append(path)
+
+        handler._process_gcode = record
+        event = types.SimpleNamespace(is_directory=False, src_path="/tmp/part_one.gcode")
+
+        # Exactly what a single file write produces, in the order watchdog produces it.
+        _call_off_loop(handler.on_created, event)
+        _call_off_loop(handler.on_modified, event)
+        await asyncio.sleep(0.05)
+
+        assert processed == ["/tmp/part_one.gcode"], (
+            f"one file write produced {len(processed)} readings. The platform records one "
+            f"print as two, and the duplicate carries the same file path and size, so "
+            f"nothing downstream can tell them apart."
+        )
+
+    @pytest.mark.asyncio
+    async def test_a_second_distinct_file_is_still_processed(self):
+        """The other direction: claiming must not swallow a genuinely new file."""
+        processed = []
+        handler = OrcaSlicerHandler(
+            asset_id="printer-1",
+            watch_path=None,
+            on_file_callback=None,
+            packml_mapper=create_mapper_for_asset_type("3d_printer"),
+            loop=asyncio.get_running_loop(),
+        )
+
+        async def record(path):
+            processed.append(path)
+
+        handler._process_gcode = record
+        for name in ("/tmp/a.gcode", "/tmp/b.gcode"):
+            _call_off_loop(handler.on_created, types.SimpleNamespace(is_directory=False, src_path=name))
+        await asyncio.sleep(0.05)
+
+        assert processed == ["/tmp/a.gcode", "/tmp/b.gcode"]
