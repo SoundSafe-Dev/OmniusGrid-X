@@ -2311,3 +2311,90 @@ tests took statements from 49.02 to 49.38.
 And then, deliberately, **do not raise the threshold to the new floor.** Raising it to 49.38
 would restore exactly the condition just escaped. Raise a ratchet when the margin is comfortable
 and the direction is proven, not the moment the number moves.
+
+## Rule 177 — a test that only runs in one environment is a test nobody has watched run
+
+`e2e/authenticated.spec.ts` contained this, and had since it was written:
+
+    await page.getByLabel(/username/i).fill(EMAIL)
+
+Nothing in the file defines or imports `EMAIL`. It is a local `const` in `auth.setup.ts` and in
+`writes-actually-persist.spec.ts` — near enough to read as if it were in scope, and it is not.
+Every execution ended in `ReferenceError` before the click.
+
+What kept it hidden is that the file skips unless `E2E_LIVE_BACKEND=1`. On a laptop the test
+reports as skipped, which looks like a choice rather than a defect. In CI it fails inside a job
+whose overall result is the only line anyone reads.
+
+So the claim — *a wrong password does not log you in* — had been taken entirely on trust, and
+it is not a claim anyone would want to take on trust.
+
+Anything gated behind an environment flag needs at least one deliberate run under that flag
+before it counts as coverage. A skipped test and a passing test are the same colour in most
+reports, and a test that has never once reached its assertion is worse than no test, because
+its name appears in the list.
+
+## Rule 178 — an assertion satisfied by the state *before* the action is not an assertion
+
+    await page.getByRole('button', { name: /sign in/i }).click()
+    await expect(page).toHaveURL(/\/login/)
+
+`toHaveURL` polls and resolves the moment it matches. A quarter-second after the click the URL
+is still `/login` — whatever the server is about to answer — so the assertion resolves against
+the *pre-action* state and the test passes unconditionally. Supplying the correct password
+proved it: still green, while a probe watched the same flow navigate to `/`.
+
+The shape generalises past URLs. Any assertion about "it did not change" is satisfied by the
+instant before it changes, and any polling matcher resolves at the first moment it can. Assert
+on something only the outcome can produce — the response status, the error the page renders,
+the navigation that did or did not happen after the request settled.
+
+## Rule 179 — rendering more correctly can break a test that was passing by racing
+
+`/accept-invite` had no `<main>` landmark. Adding one is a plain accessibility improvement: it
+and `Login` are the only pages outside `Layout.tsx`, so a screen-reader user had nothing to
+skip to on either.
+
+It broke `data-reaches-the-screen.spec.ts`, which opens with:
+
+    await expect(page.locator('main, body')).not.toBeEmpty()
+
+That locator matches **two** elements the moment React has mounted a layout, which Playwright
+treats as a strict-mode violation and fails immediately. It had passed on every route only
+because it evaluated in the instant after `goto`, when `<body>` exists and `<main>` does not
+yet. The page that mounts fastest loses that race — and making a page render *more* correctly
+made it mount fast enough to lose.
+
+The instinct when a change breaks a test is that the change is wrong. Check the other direction
+first: whether the test was depending on the timing of the thing you just fixed. Here the test
+had been one fast render away from failing on any route, and the accessibility fix simply
+collected the debt.
+
+## Rule 180 — check that every directory of code you own is read by some compiler
+
+`e2e/authenticated.spec.ts` referenced a name nothing in it declared, and did so for its whole
+life. The question worth asking is not how that was written — it is how it survived.
+
+`tsconfig.json`:
+
+    "include": ["src"]
+
+That is the entire explanation. The six Playwright specs and their setup project are outside
+it, so `tsc --noEmit` never opened them. `vitest run` does not typecheck — it transpiles and
+throws the types away. No linter was configured over that directory either. The one class of
+defect a compiler catches for nothing was invisible in precisely the directory whose tests skip
+silently without a live backend and whose assertions include *"a wrong password does not log
+you in"*.
+
+Nothing about the directory looks neglected from inside it. The imports resolve, the tests run,
+the suite is green. The gap is only visible from the config outward: which paths does any
+compiler actually read?
+
+Widening the include cost nothing — zero new errors — and `npx tsc --noEmit` was already a
+blocking CI step, so the gate widened with it. The guard that keeps it is about the config, not
+the code, because narrowing an include back is the edit that looks harmless in review.
+
+Worth adding: the first thing I reached for was a hand-written scanner for undeclared
+identifiers. It matched every capitalised word in every comment, including the ones in the note
+I had just written about this defect. The compiler answered the same question in one command
+(rules 37 and 167).

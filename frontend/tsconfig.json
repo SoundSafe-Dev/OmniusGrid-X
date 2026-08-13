@@ -16,6 +16,16 @@
     "noUnusedParameters": true,
     "noFallthroughCasesInSwitch": true
   },
-  "include": ["src"],
+  // `e2e` IS TYPECHECKED, AND WAS NOT (FS-684). This read `["src"]`, so the six Playwright
+  // specs and their setup were never seen by any compiler. That is how
+  // `authenticated.spec.ts` referenced an `EMAIL` that nothing declared and kept doing it:
+  // every run died with `ReferenceError` before its assertion, the file skips without a live
+  // backend so no laptop showed it, and `vitest run` does not typecheck either. Restoring the
+  // defect makes `tsc --noEmit` report `TS2304: Cannot find name 'EMAIL'` — one command, and
+  // the whole class with it.
+  //
+  // `npx tsc --noEmit` is already a blocking step in `quality-gates.yml`, so widening the
+  // include widens the gate; nothing else had to be wired.
+  "include": ["src", "e2e"],
   "references": [{ "path": "./tsconfig.node.json" }]
 }

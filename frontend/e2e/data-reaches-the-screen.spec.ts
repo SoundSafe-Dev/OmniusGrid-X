@@ -158,7 +158,14 @@ test.describe('data reaches the screen', () => {
       await page.goto(route)
       // Settled, not a fixed wait: something must have rendered before absence means
       // anything. An empty page trivially contains no "undefined".
-      await expect(page.locator('main, body')).not.toBeEmpty({ timeout: 20_000 })
+      // `.first()`, BECAUSE THIS ASSERTION WAS WINNING A RACE (FS-683). `locator('main, body')`
+      // matches two elements the moment React has mounted a layout, which is a Playwright
+      // strict-mode violation and an immediate failure. It passed on every route only because
+      // it evaluated in the instant after `goto`, when `<body>` exists and `<main>` does not
+      // yet — one match, non-empty, resolved. A page that mounts fast enough loses that race,
+      // which is exactly what happened when `/accept-invite` gained a `<main>` landmark: the
+      // route rendered *more* correctly and the test broke.
+      await expect(page.locator('main, body').first()).not.toBeEmpty({ timeout: 20_000 })
       await page.waitForLoadState('networkidle').catch(() => {})
 
       // NOT VACUOUS. "contains no `undefined`" is trivially true of an error page, an empty

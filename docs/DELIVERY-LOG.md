@@ -10026,3 +10026,73 @@ behaviours that are decisions rather than plumbing:
 Statements margin restored **0.02 -> 0.38**, lines to 0.97. Thresholds deliberately NOT raised:
 raising them to the new floor would consume the margin again and reproduce the condition this
 entry is about.
+
+### A wrong password showed the user nothing, and the test that would have said so had never run
+
+Standing the live stack up — dedicated Postgres on 55432, 67 migrations, both seeders, uvicorn,
+Playwright with `E2E_LIVE_BACKEND=1` — as a capstone check on a session that changed 26 schema
+fields, added six routes and rewrote two kanban handlers. **125 passed, 3 failed**, and the
+three unwound into one another.
+
+**The test had never executed.** `authenticated.spec.ts` referenced `EMAIL`; nothing in that
+file defines or imports it. It is a local `const` in `auth.setup.ts` and in
+`writes-actually-persist.spec.ts`, which is exactly why it reads as though it were in scope.
+Every run ended in `ReferenceError` at the `fill()` — before the click, before the assertion.
+The claim that a wrong password does not log you in had been taken on trust for as long as the
+file has existed. It skips without a live backend, so no laptop run would ever show it.
+
+**Reviving it revealed it was also vacuous.** The assertion was `toHaveURL(/\/login/)`
+immediately after the click, and `toHaveURL` passes the moment it matches — a quarter-second
+after clicking you are still on `/login` whatever the server is about to say. Proven by
+supplying the **correct** password and watching it pass anyway; a probe confirmed the app does
+navigate to `/`, well after the assertion had already resolved. It now waits for the login
+response, requires a 401, and requires the error to be *visible*.
+
+**And that exposed a live user-facing defect.** The global 401 interceptor in `api/client.ts`
+treats every 401 as an expired session: clear the tokens and `window.location.href = '/login'`,
+which is a full page load. A rejected sign-in is a 401 with no refresh token, so **the browser
+reloads and destroys the React tree and the zustand store before the error can render.**
+Measured against the live backend: the user types a wrong password and the page blinks back
+with no feedback at all. `authStore` sets `error: 'Login failed'` and `Login.tsx` renders
+`{error && …}` — both correct, and neither survives the reload, which is why nothing in either
+file looks wrong to a reader.
+
+**A fourth, which I caused and then found.** `/accept-invite` renders a proper error state
+("This invitation link is missing or invalid") but had no `<main>` landmark — it and `Login`
+are the only pages outside `Layout.tsx`, so neither had one, and a screen-reader user had
+nothing to skip to. Adding it broke `data-reaches-the-screen.spec.ts`, and the cause was a
+latent flake rather than the change: `locator('main, body')` matches two elements once React
+has mounted, which is a Playwright strict-mode violation. It had passed on every route only by
+evaluating in the instant after `goto`, when `<body>` exists and `<main>` does not yet. **A page
+that mounts fast enough loses that race** — so rendering *more* correctly broke it. Fixed with
+`.first()`.
+
+Final: **128 e2e passed against a live backend, 0 failed.** The `/alarms` 45s timeout from the
+first run passed on a quieter machine and was contention, not a defect (rule 175).
+
+### The compiler had never read the end-to-end tests
+
+The root cause behind the dead test above, found by asking why `ReferenceError: EMAIL is not
+defined` had survived: **`tsconfig.json` said `"include": ["src"]`.** The six Playwright specs
+and their setup project were never typechecked by anything, and `vitest run` does not typecheck
+either — it transpiles and discards the types.
+
+So the one class of defect a compiler catches for free was invisible in exactly the directory
+whose tests are hardest to run, skip silently without a live backend, and make the most
+security-relevant claims.
+
+Measured rather than argued: restoring the defect and running `npx tsc --noEmit` reports
+`TS2304: Cannot find name 'EMAIL'` in one command. Widening `include` to `["src", "e2e"]`
+produces **zero errors today** and needs no other wiring, because `npx tsc --noEmit` is already
+a blocking step in `quality-gates.yml`.
+
+`everyTestDirectoryIsTypechecked.test.ts` guards the config rather than the code — the compiler
+already reports the errors, and the only thing that can silently undo that is someone narrowing
+the include back, which is precisely the edit that looks harmless in review because the tests
+still run and still pass.
+
+**And the detector I tried first was rule 37 in a single line.** Before reaching for the
+compiler I wrote a scanner for "identifiers used but never declared" in the e2e files. It
+matched every capitalised word in every comment — `THE`, `WRONG`, `PASSWORD`, `NEVER`, `RUN` —
+including the words in the comment I had just written *about* the defect. The compiler answered
+the same question exactly, in one command, with no calibration required (rule 167).

@@ -23,6 +23,19 @@ import { test, expect, Page } from '@playwright/test'
 
 const LIVE = process.env.E2E_LIVE_BACKEND === '1'
 
+/** THE WRONG-PASSWORD TEST BELOW HAD NEVER RUN (FS-683).
+ *
+ * It referenced `EMAIL` and nothing in this file defined or imported it, so every execution
+ * ended in `ReferenceError: EMAIL is not defined` at the fill() — before the click, before
+ * the assertion. The name is a local `const` in `auth.setup.ts` and in
+ * `writes-actually-persist.spec.ts`, which is why it reads as though it were in scope.
+ *
+ * It skips without a live backend, so it is invisible on a laptop; with one, it fails for a
+ * reason that looks like a broken selector rather than a test that was never wired. The
+ * claim it makes — that a wrong password does not log you in — is one nobody would want to
+ * take on trust, and it has been taking exactly that. */
+const EMAIL = process.env.E2E_USER_EMAIL ?? 'e2e@omniusgrid.test'
+
 test.describe('authenticated journey', () => {
   test.skip(!LIVE, 'needs a live backend; set E2E_LIVE_BACKEND=1')
 
@@ -46,8 +59,28 @@ test.describe('authenticated journey', () => {
     await page.goto('/login')
     await page.getByLabel(/username/i).fill(EMAIL)
     await page.getByLabel(/password/i).fill('definitely-not-the-password')
+    const rejected = page.waitForResponse(
+      (r) => r.url().includes('/auth/login') && r.request().method() === 'POST',
+    )
     await page.getByRole('button', { name: /sign in|log ?in/i }).click()
 
+    // WAIT FOR THE SERVER TO ANSWER BEFORE ASSERTING ANYTHING (FS-683, second half).
+    //
+    // The original assertion was `await expect(page).toHaveURL(/\/login/)` immediately
+    // after the click, and `toHaveURL` passes the moment it matches. A quarter-second
+    // after clicking, the URL is still /login whatever the server is about to say — so the
+    // test passed for a CORRECT password too, which is how it was caught. Proven directly:
+    // a probe that submitted the real credentials watched the app navigate to `/`, while
+    // this assertion had already been satisfied by the pre-navigation state.
+    //
+    // A rejection is now identified by the two things only a rejection produces: a
+    // non-2xx from the login endpoint, and the error the page renders because of it.
+    const response = await rejected
+    expect(response.status(), 'the server accepted a password that should be wrong').toBe(401)
+
+    await expect(page.getByText(/invalid|incorrect|failed|unauthor/i).first()).toBeVisible({
+      timeout: 10_000,
+    })
     await expect(page).toHaveURL(/\/login/)
   })
 

@@ -53,7 +53,25 @@ api.interceptors.response.use(
   async (error: AxiosError) => {
     const originalRequest = error.config
 
-    if (error.response?.status === 401 && originalRequest) {
+    // A 401 FROM THE LOGIN ENDPOINT IS NOT AN EXPIRED SESSION (FS-683).
+    //
+    // Everything below treats a 401 as "your session ended": clear the tokens and send the
+    // browser to /login via `window.location.href`, which is a FULL PAGE LOAD. For a request
+    // made while signed in that is right. For the sign-in request itself it is a disaster in
+    // miniature — the user types a wrong password, the server correctly answers 401, and this
+    // reloads the page, destroying the React tree and the zustand store *before* the error it
+    // just set can render.
+    //
+    // The result, measured against a live backend: the login page blinks and comes back
+    // completely blank of feedback. `authStore` sets `error: 'Login failed'`, `Login.tsx`
+    // renders `{error && …}`, and both are correct — the state simply does not survive the
+    // reload. Nothing was broken in the code that anyone reading it would suspect.
+    //
+    // There is no session to salvage here and no refresh token to try, so the only sane thing
+    // is to let the caller see the rejection.
+    const isSignIn = (originalRequest?.url ?? '').includes('/auth/login')
+
+    if (error.response?.status === 401 && originalRequest && !isSignIn) {
       // Try to refresh token
       const refreshToken = localStorage.getItem('refreshToken')
       if (refreshToken) {

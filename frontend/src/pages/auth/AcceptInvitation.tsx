@@ -91,7 +91,13 @@ export const AcceptInvitation: FC = () => {
   };
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-gradient-to-br from-opsgrid-bg via-opsgrid-panel to-opsgrid-bg p-4">
+    // `<main>`, NOT a bare div (FS-683). Every authenticated page gets its landmark from
+    // `Layout.tsx`; the two pages OUTSIDE that layout — this one and Login — had none, so a
+    // screen-reader user had no way to skip to content, and `data-reaches-the-screen.spec.ts`
+    // measured this route as zero characters of main content and reported it as a page that
+    // had failed to load. It renders correctly; it simply had nothing for either the assistive
+    // technology or the test to address.
+    <main className="flex min-h-screen items-center justify-center bg-gradient-to-br from-opsgrid-bg via-opsgrid-panel to-opsgrid-bg p-4">
       <div className="w-full max-w-md">
         <div className="mb-8 text-center">
           <div className="mb-4 inline-flex h-16 w-16 items-center justify-center rounded-xl bg-opsgrid-primary/20">
@@ -217,6 +223,6 @@ export const AcceptInvitation: FC = () => {
           </div>
         </div>
       </div>
-    </div>
+    </main>
   );
 };

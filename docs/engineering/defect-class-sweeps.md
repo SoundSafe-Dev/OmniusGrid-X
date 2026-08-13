@@ -120,6 +120,9 @@ to ask where else it could live.
 | A non-null assertion on a nullable field | all 27 `!` assertions, via the TS checker | **24 flagged by type, 0 defects — every guard is upstream of a boundary narrowing cannot cross; not statically sweepable** | none, deliberately |
 | A driver thread calling back into us | every collector with `loop_start(` or `Observer(` | **3 found; the third was already correct and the earlier API-keyed sweep was blind to it either way** | `test_a_collectors_reading_reaches_the_callback.py` |
 | A ratchet with no margin left | the frontend coverage thresholds vs measured | **statements clearing by 0.02 points; restored to 0.38 by testing a 0%-covered client** | `vitest.config.ts` thresholds, enforced by `quality-gates.yml` |
+| A rejected login that tells the user nothing | the live sign-in path, driven end to end | **1 live: the global 401 interceptor reloads the page, destroying the error before it renders** | `e2e/authenticated.spec.ts` |
+| A test that has never reached its assertion | the live-backend e2e suite | **1: `ReferenceError` on every run since it was written, invisible because the file skips without a backend** | the same file, now with the name it referenced |
+| A directory no compiler reads | every TS directory vs the tsconfig include | **1: `e2e/` was outside the typecheck entirely, which is why the above survived** | `everyTestDirectoryIsTypechecked.test.ts` |
 
 Twenty-nine of these carry a numbered section below. **Response-shape mismatch is the
 exception**: it was swept in the same pass as the `get_db` work and came back clean, so

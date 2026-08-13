@@ -1165,6 +1165,34 @@ one of its findings. The habit that catches it:
      raising the threshold to the new floor, which would recreate exactly the state you just
      left.
 
+177. **A test that only runs in one environment is a test nobody has watched run.**
+     `authenticated.spec.ts` died on `ReferenceError: EMAIL is not defined` every single
+     execution, and had done since it was written. It skips without a live backend, so no
+     laptop run showed it; the failure was only ever visible in a job whose output nobody
+     reads when it is green overall. Anything gated behind an environment flag needs one
+     deliberate run under that flag before you may count it as coverage.
+
+178. **An assertion that can be satisfied by the state *before* the action is not an assertion.**
+     `click()` then `expect(page).toHaveURL(/\/login/)` passes because, a quarter-second after
+     the click, the URL has not changed yet — whatever the server is about to say. It passed
+     identically with the correct password. Assert on something only the outcome produces: the
+     response status, the rendered error, the navigation that did or did not happen.
+
+179. **Rendering more correctly can break a test that was passing by racing.**
+     Adding a `<main>` landmark to a page — a plain accessibility improvement — broke a guard
+     whose locator `main, body` matches two elements once React mounts, a strict-mode
+     violation. It had passed everywhere only by evaluating in the instant before `<main>`
+     existed. When a correct change breaks a test, check whether the test was relying on the
+     defect's timing before assuming the change is wrong.
+
+180. **Check that every directory of code you own is read by some compiler.**
+     `tsconfig.json` included `src` and nothing else, so `e2e/` — six Playwright specs making
+     the most security-relevant claims in the repository — was typechecked by nobody, and
+     `vitest run` does not typecheck. A `ReferenceError` sat in one of them for its entire
+     life. The gap is invisible from inside the directory: the files import cleanly, the tests
+     run, the suite is green. Ask instead, from the config outward, which paths any compiler
+     actually reads.
+
 ---
 
 ## Open observations, not yet tickets
