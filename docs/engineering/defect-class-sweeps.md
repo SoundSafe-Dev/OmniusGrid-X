@@ -128,6 +128,8 @@ to ask where else it could live.
 | An env var read outside the settings object | every `os.environ`/`getenv` read in `app/` | **5 found, all deliberate and correct — recorded as examined rather than left open** | none needed |
 | A source comment citing a guard that does not exist | 256 test filenames named in prose | **2 live: both guards real, both trails broken** | `test_cited_guards_exist.py` |
 | A test the runner never collects | every test file on disk vs what pytest/vitest execute | **clean: 357/358 pytest (1 deliberate opt-in, job verified), 133/133 vitest; playwright already guarded** | `test_every_e2e_spec_is_run.py` (pre-existing) |
+| A dependency failure that raises instead of reporting | the four health checkers and their aggregator | **clean, and now pinned — the swallow ratchet was tempting the opposite change** | `test_a_failing_dependency_is_reported_not_raised.py` |
+| A response model that declares nothing | all 454 routes carrying a `response_model` | **23 permissive; 5 legitimately dynamic, the rest invisible to the coverage ratchet** | `test_a_permissive_response_model_is_not_a_contract.py` |
 
 Twenty-nine of these carry a numbered section below. **Response-shape mismatch is the
 exception**: it was swept in the same pass as the `get_db` work and came back clean, so

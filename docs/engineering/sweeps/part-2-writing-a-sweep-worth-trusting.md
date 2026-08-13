@@ -1237,6 +1237,22 @@ one of its findings. The habit that catches it:
      instead of silently widened. If a guard fires on your explanation, the explanation is a
      real instance of the shape — write it down as one.
 
+187. **A ratchet that counts correct code names a change that would do harm.**
+     The swallow ratchet excludes handlers that re-raise but not handlers that return the
+     error as a value, so twelve correct health checks read as the largest block of debt in
+     their file. The cheapest way to shrink that number is to raise instead — turning a
+     per-component readiness report into a 500 whenever any dependency is slow. Before
+     reducing a ratchet, ask what the cheapest reduction would do; if the answer is "harm",
+     the population is wrong and the property needs pinning rather than the number reducing.
+
+188. **Stub the failing state the code actually has, not the one you imagine.**
+     Testing that a health aggregator survives a broken dependency, I stubbed the checker to
+     raise. Every assertion failed, and it looked like a finding for about a minute. The
+     aggregator deliberately does not wrap its checkers — each catches its own failure and
+     returns it — so a raising stub removes the behaviour under test and reports its absence
+     as a defect. Read how the real thing fails before writing the double that stands in for
+     failure.
+
 ---
 
 ## Open observations, not yet tickets

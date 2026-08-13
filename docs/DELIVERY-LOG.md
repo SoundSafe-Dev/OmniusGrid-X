@@ -10236,3 +10236,71 @@ TREE (`<Module x.py>`) rather than node ids, and I guessed the format twice befo
 lines of it. The lesson is the one already recorded as rule 165 — assert the denominator — and
 the corollary it earns here: when the denominator is impossible, stop and look at the raw
 output rather than adjusting the pattern again.
+
+### A ratchet that counts correct code, and the change it tempts you into
+
+The swallow ratchet (`test_the_swallow_surface_only_shrinks.py`) tracks 201 broad handlers, 188
+of them uncounted. Working through the largest clusters in this lane:
+
+**The ingest path is already closed.** All eight handlers in `workers/ingestion.py` are counted,
+so FS-537's *"an alarm rule that throws simply does not fire"* no longer holds. FS-540 is closed
+too, and the comment there corrects the plan's premise directly — the `available` flag does
+distinguish "no data" from "failed", and only the unguarded `psutil` calls were a real gap.
+
+**The next cluster is twelve handlers in `api/health.py`, and every one is correct.** They catch
+broadly and *return* the failure — `return f"error: {exc}", {}` — so `_run_health_checks` can
+report each component and grade the whole. The ratchet excludes handlers that **re-raise**, but
+not handlers that translate an error into a returned value, so these read as the largest block
+of debt in the file while being exactly right for their job.
+
+**That is not a harmless miscount.** The obvious way to shrink the number is to raise instead,
+and the result would be a readiness probe that 500s whenever any one dependency is unavailable:
+Kubernetes restarting a pod whose only problem is a slow Redis, and the operator losing the
+per-component report that says which dependency it actually was. Nothing pinned that behaviour.
+Now something does, and the mutation that proves it is precisely that tempting change.
+
+**37 of the 201 are error-translation-by-return**, measured. Excluding them from the population
+was considered and rejected: a returned error is only propagation if the **caller reads it**,
+which the shape cannot show. `_run_health_checks` does read it — and demonstrating that is
+worth more than editing the ratchet's definition, because it pins the behaviour rather than
+adjusting the number.
+
+**Two false starts, both mine, both in the test.** The stub passed a session to all four
+checkers when two take none (`TypeError: _check_message_broker() takes 0 positional arguments`),
+and then made the stub *raise* — which failed every aggregator test with `RuntimeError` and
+looked briefly like a finding. It was the premise: `_run_health_checks` deliberately does not
+wrap its checkers, because each catches its own failure and returns it. Stubbing a raise removed
+the behaviour under test.
+
+### A ratchet you can satisfy without doing the work
+
+Rule 187 asks of every ratchet: *what would the cheapest reduction do?* Applied to the four
+with non-zero floors:
+
+* **The contract ratchet is safe.** `scripts/contract_ratchet.py` computes
+  `total - failures - errors - skipped`, so marking an operation `skip` **lowers** the passing
+  count. The obvious cheat makes the gate angrier, which is the right design.
+* **The response-model ratchet is not.** `MAX_UNDECLARED = 52` asks only
+  `getattr(route, "response_model", None) is None`, so the cheapest reduction is
+  `response_model=Dict[str, Any]` — which counts as declared, emits an OpenAPI `object` with no
+  properties, hands the generated SDK an untyped blob, and gives every downstream guard that
+  reads declared models nothing to check. The route then *looks* documented, which is worse
+  than being visibly undocumented.
+
+**23 routes are already in that state.** Five are legitimately dynamic and are registered with
+reasons — a feature flag's value is arbitrary client JSON, a Monte-Carlo result follows the
+submitted scenario. The rest are debt that the existing ratchet cannot see.
+
+I did **not** edit the existing ratchet. A companion keeps a separate list at its measured
+figure, so the count is visible and can only shrink; the way down is a schema, not a new entry.
+
+**The clearest instance is named on its own, and is deliberately not fixed here.**
+`GET /transportation/drivers` answers `List[Dict[str, Any]]` while `DriverResponse` exists — but
+the handler dumps that model and then adds seven derived keys in **camelCase**
+(`carrierName`, `currentVehicleId`, `currentShipmentId`, `endorsements`, `licenseExpiry`,
+`hosDriveHoursRemaining`, `hosDutyHoursRemaining`) while the model's own keys emerge snake_case.
+Declaring a model that omits any one of them makes FastAPI **filter it out of the response** —
+the "declared field that is dropped" defect this codebase has fixed more than once — and the
+field it would land on is `hosDriveHoursRemaining`, which the compliance tab reads to count DOT
+violations. The guard names the route and fails the day it is fixed properly, which is a to-do
+with an expiry rather than an exemption.

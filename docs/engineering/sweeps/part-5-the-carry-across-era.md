@@ -2543,3 +2543,54 @@ guard first would have been the shortest route to the new one. And I claimed the
 shared a dotted-name bug I had just fixed in mine; it does not. Its pattern captures
 `geofencing.realmode.test.ts` whole. It flagged a fragment because I had written that fragment
 in backticks while explaining my own bug — a fault in my prose, reported accurately.
+
+## Rule 187 — a ratchet that counts correct code names a change that would do harm
+
+`test_the_swallow_surface_only_shrinks.py` tracks broad `except` handlers that do not re-raise.
+Twelve of them are in `api/health.py`, the largest block in that file, and every one is right:
+
+    async def _check_database(db) -> tuple[str, dict]:
+        try:
+            ...
+            return "ok", {}
+        except Exception as exc:
+            return f"error: {exc}", {}
+
+The failure is not swallowed. It is translated into a value, and `_run_health_checks` reads
+every value, reports each component, and grades the whole as `ready` / `degraded` / `not_ready`.
+The ratchet excludes `raise` and does not exclude this, so correct code reads as debt.
+
+That would be a harmless miscount if nobody acted on it. But the cheapest way to remove twelve
+entries is to raise instead — and a readiness probe that raises returns 500 the moment any one
+dependency is unavailable. Kubernetes restarts a pod whose only problem is that Redis is slow,
+and the operator loses the per-component report naming the dependency that actually broke.
+
+So the question to ask of any ratchet is not just *is the number honest* but **what would the
+cheapest reduction do?** If the answer is harm, the population is defined wrongly, and the
+response is to pin the property — a guard whose mutation test is exactly that tempting change —
+rather than to reduce the number or quietly edit the definition.
+
+Not edited here, deliberately. 37 of the 201 handlers return a value carrying the exception, and
+excluding them by shape was rejected because a returned error is only propagation if the caller
+reads it, which the shape cannot show. Demonstrating that the caller reads it is worth more than
+redefining the population.
+
+## Rule 188 — stub the failing state the code actually has, not the one you imagine
+
+To test that the health aggregator survives a broken dependency, the obvious double is a checker
+that raises:
+
+    async def _raise(*_args, **_kwargs):
+        raise RuntimeError("database is down")
+
+Every assertion failed with that `RuntimeError`, and for a minute it looked like a finding: the
+aggregator does not catch it, so surely a broken dependency 500s the endpoint?
+
+No. `_run_health_checks` deliberately does not wrap its checkers, because **each checker catches
+its own failure and returns it**. The failing state of `_check_database` is a returned
+`("error: …", {})`, not an exception. The stub had removed the behaviour under test and then
+reported its absence as a defect.
+
+Read how the real thing fails before writing the double that stands in for failure. A test
+double is a claim about the system, and a wrong one produces a confident failure that costs more
+than no test — it points at working code and takes the reader with it.
