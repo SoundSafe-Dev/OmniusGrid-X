@@ -396,11 +396,40 @@ jobs:
       # `edge-agent/opsgrid_agent` — so widening the scope costs nothing now and is the only
       # moment it ever will. `scripts/` holds the migration runner and the seeders; an
       # undefined name there fails a deployment rather than a request.
+      #
+      # AND `tests` NOW, WHICH THAT SENTENCE PROMISED AND THE COMMAND DID NOT DO (FS-685).
+      # The comment above named `backend/tests` and `edge-agent/opsgrid_agent` as measured
+      # clean and argued for widening; the command stayed at `app scripts` for both. 379
+      # backend test files and 120 edge-agent files were outside the one check that catches
+      # an undefined name — the same gap FS-684 found in the frontend, where `e2e/` sat
+      # outside `tsconfig`'s include and carried a `ReferenceError` for its whole life.
+      # Re-measured before widening: still zero in every directory.
       - name: flake8 errors (blocking)
         working-directory: ./backend
         run: |
           pip install flake8
-          flake8 app scripts --count --select=E9,F63,F7,F82 --show-source --statistics
+          flake8 app scripts tests --count --select=E9,F63,F7,F82 --show-source --statistics
+
+      # THE EDGE AGENT HAD NO GATE ON A BRANCH PUSH AT ALL (FS-685). `ci-cd.yml` runs these
+      # 386 tests, and it fires on `main` and pull_request only — so an edge-agent change was
+      # unchecked until somebody opened a PR. That is the shape class 76 exists for, and
+      # `test_branch_pushes_reach_the_gates.py` did not catch it because its required list is
+      # hand-maintained and named five things, none of them this one. The list now names it.
+      #
+      # This suite is where FS-675 lived: every MQTT reading dropped on a thread boundary,
+      # in the collector the agent is built around.
+      - name: flake8 errors, edge agent (blocking)
+        working-directory: ./edge-agent
+        run: flake8 opsgrid_agent tests --count --select=E9,F63,F7,F82 --show-source --statistics
+
+      - name: Edge agent suite
+        working-directory: ./edge-agent
+        # Same install as `ci-cd.yml` uses for this suite: `requirements-dev.txt` pins the
+        # validated pytest/pytest-asyncio and pulls the runtime deps with it. Copied rather
+        # than improvised, so the two workflows cannot drift into testing different things.
+        run: |
+          pip install -r requirements-dev.txt
+          python -m pytest -q
       - name: Full backend suite
         working-directory: ./backend
         # The three excluded files fail at COLLECTION (the intake/parsing lane's

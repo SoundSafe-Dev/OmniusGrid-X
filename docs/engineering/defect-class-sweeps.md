@@ -123,6 +123,7 @@ to ask where else it could live.
 | A rejected login that tells the user nothing | the live sign-in path, driven end to end | **1 live: the global 401 interceptor reloads the page, destroying the error before it renders** | `e2e/authenticated.spec.ts` |
 | A test that has never reached its assertion | the live-backend e2e suite | **1: `ReferenceError` on every run since it was written, invisible because the file skips without a backend** | the same file, now with the name it referenced |
 | A directory no compiler reads | every TS directory vs the tsconfig include | **1: `e2e/` was outside the typecheck entirely, which is why the above survived** | `everyTestDirectoryIsTypechecked.test.ts` |
+| A codebase with no gate on a branch push | every tested directory in `ci-cd.yml` vs the branch-push workflow | **1: the whole edge agent, 386 tests; the guard for this class was blind to it because its list is hand-typed** | `test_branch_pushes_reach_the_gates.py`, now derived |
 
 Twenty-nine of these carry a numbered section below. **Response-shape mismatch is the
 exception**: it was swept in the same pass as the `get_db` work and came back clean, so

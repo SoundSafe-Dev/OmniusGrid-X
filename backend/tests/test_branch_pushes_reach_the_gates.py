@@ -47,11 +47,28 @@ MAIN_ONLY = WORKFLOWS / "ci-cd.yml"
 #: Matched as a substring of the step's `run:`, which is deliberately loose — `npm run lint`
 #: and `npx eslint .` are the same gate, and a guard that insists on one spelling fails the
 #: next time somebody changes the script name for a good reason.
+#: HAND-MAINTAINED, WHICH IS THIS GUARD'S OWN WEAK POINT (FS-685). It named five gates and
+#: was therefore blind to everything else `ci-cd.yml` runs — including the entire edge-agent
+#: suite, 386 tests that fired on `main` and pull_request only, so an edge-agent change went
+#: unchecked until somebody opened a pull request. That is precisely the shape this file
+#: exists to prevent, missed because the list did not mention it.
+#:
+#: `test_every_ci_cd_test_step_has_a_branch_push_equivalent` below is the answer to the list
+#: itself: it derives the comparison from `ci-cd.yml` rather than from this dictionary, so a
+#: sixth gate added there cannot hide behind an entry nobody added here.
 REQUIRED_ON_BRANCH_PUSH = {
     "a typecheck": ("tsc --noEmit",),
     "a lint": ("npm run lint", "eslint"),
     "vitest with its coverage thresholds": ("npm run coverage",),
     "flake8 at error level": ("flake8 app", "--select=E9"),
+    "flake8 over the backend tests too": ("flake8 app scripts tests",),
+    "flake8 over the edge agent": ("flake8 opsgrid_agent",),
+    #: NO ENTRY FOR THE EDGE-AGENT SUITE ITSELF, DELIBERATELY. The obvious spelling —
+    #: `("edge-agent",)` — was written here first and passes even with the suite step
+    #: deleted, because `pip-audit -r edge-agent/requirements.txt` is also a run command
+    #: containing that string. A matcher that cannot fail is worse than no matcher: it
+    #: reports the gate as present forever. `TestTheListItselfIsNotTheBlindSpot` below
+    #: checks it properly, by working directory, and its mutation test fails.
     "the production build": ("vite build",),
 }
 
@@ -130,3 +147,48 @@ class TestEveryBranchPushCheckIsReachable:
                 f"{what} exists in {MAIN_ONLY.name} and not in {BRANCH_PUSH.name}. That is "
                 f"the arrangement this guard exists to refuse."
             )
+
+
+class TestTheListItselfIsNotTheBlindSpot:
+    """`REQUIRED_ON_BRANCH_PUSH` is hand-maintained, and that is how this guard missed the
+    edge agent (FS-685).
+
+    Every assertion above compares the two workflows through that dictionary, so a gate
+    nobody thought to add is a gate nobody checks. `ci-cd.yml` ran 386 edge-agent tests on
+    `main` and pull_request only — a whole codebase unchecked on branch pushes, in exactly
+    the arrangement class 76 exists to refuse — and this file passed, because the list said
+    nothing about it.
+
+    The comparison below is derived from `ci-cd.yml` instead. It is coarser by necessity: a
+    test STEP is identified by the directory it runs in, because that is the one thing both
+    workflows must agree on to be running the same suite.
+    """
+
+    #: Directories whose tests run in `ci-cd.yml`. Derived, then asserted — not typed out.
+    @staticmethod
+    def _test_directories(document: dict) -> set[str]:
+        found = set()
+        for job in (document.get("jobs") or {}).values():
+            for step in job.get("steps") or []:
+                run = step.get("run") or ""
+                if "pytest" not in run and "vitest" not in run and "playwright" not in run:
+                    continue
+                where = (step.get("working-directory") or "").strip("./")
+                if where:
+                    found.add(where)
+        return found
+
+    def test_the_derivation_finds_something(self):
+        """Vacuity: an empty set would make the comparison below trivially true."""
+        assert len(self._test_directories(_document(MAIN_ONLY))) >= 2
+
+    def test_every_directory_tested_on_main_is_tested_on_a_branch_push(self):
+        main_only = self._test_directories(_document(MAIN_ONLY))
+        branch = self._test_directories(_document(BRANCH_PUSH))
+        missing = sorted(main_only - branch)
+        assert not missing, (
+            f"{missing} have tests in {MAIN_ONLY.name} and none in {BRANCH_PUSH.name}. "
+            f"A developer working there gets no feedback until they open a pull request — "
+            f"which is the arrangement this file exists to refuse, and the one its "
+            f"hand-maintained list was blind to."
+        )

@@ -1193,6 +1193,20 @@ one of its findings. The habit that catches it:
      run, the suite is green. Ask instead, from the config outward, which paths any compiler
      actually reads.
 
+181. **A guard whose subject list is hand-typed is blind exactly where nobody was looking.**
+     `test_branch_pushes_reach_the_gates.py` exists to refuse "a check that only runs in the
+     wrong workflow", and it passed while 386 edge-agent tests ran on `main` only — because
+     its `REQUIRED_ON_BRANCH_PUSH` named five gates and not that one. The repair is not a
+     sixth entry; it is a second check DERIVED from the other workflow, so a gate nobody
+     thought of cannot hide behind a list nobody updated.
+
+182. **A comment describing an intention is not the intention being carried out.**
+     The flake8 step's own note argued for covering `backend/tests` and
+     `edge-agent/opsgrid_agent`, called the moment cheap, and explained why it mattered — and
+     the command under it covered neither. The prose was right, persuasive, and false, and it
+     read as evidence the work had been done. When a comment states a scope, check the line
+     below it against the claim.
+
 ---
 
 ## Open observations, not yet tickets

@@ -2398,3 +2398,54 @@ Worth adding: the first thing I reached for was a hand-written scanner for undec
 identifiers. It matched every capitalised word in every comment, including the ones in the note
 I had just written about this defect. The compiler answered the same question in one command
 (rules 37 and 167).
+
+## Rule 181 — a guard whose subject list is hand-typed is blind exactly where nobody was looking
+
+`test_branch_pushes_reach_the_gates.py` exists for one purpose: to refuse the arrangement where
+a check lives in the workflow that runs on `main` and not in the one that runs on every branch
+push. It is a good guard, written after a real incident, and it passed continuously while the
+entire edge agent — 386 tests, including the collector suite where FS-675 was found — ran on
+`main` and pull_request only.
+
+The reason is in its first ten lines:
+
+    REQUIRED_ON_BRANCH_PUSH = {
+        "a typecheck": …, "a lint": …, "vitest …": …, "flake8 …": …, "the build": …,
+    }
+
+Five gates, typed by hand. Everything else in `ci-cd.yml` is outside the comparison, so the
+guard could only ever find the gaps somebody had already thought of — and the gap somebody has
+thought of is not usually the one that bites.
+
+Adding a sixth entry is not the repair; it leaves the next omission exactly as invisible. The
+repair is a second check **derived from the other workflow**: every directory that has tests in
+`ci-cd.yml` must have tests in the branch-push workflow. Coarser, and it cannot be blind to
+something nobody listed.
+
+A note on the entry I did add. The obvious spelling for the new gate was `("edge-agent",)`, and
+it passes with the suite step deleted — `pip-audit -r edge-agent/requirements.txt` is also a
+run command containing that string. A matcher that cannot fail is worse than no matcher, so it
+came back out.
+
+## Rule 182 — a comment describing an intention is not the intention being carried out
+
+Above the flake8 step in `quality-gates.yml`:
+
+> `scripts` as well as `app`, which `ci-cd.yml` does not cover. Both were measured at zero the
+> day this step was added — along with `backend/tests` and `edge-agent/opsgrid_agent` — so
+> widening the scope costs nothing now and is the only moment it ever will.
+
+The command beneath it:
+
+    flake8 app scripts --count --select=E9,F63,F7,F82
+
+The comment names two more directories, measures them, argues for including them, and explains
+why the moment is cheap. It does not include them. 379 backend test files and 120 edge-agent
+files stayed outside the only check that catches an undefined name.
+
+This is worse than an absent comment, because it reads as evidence the work was done — by the
+author, later, and by anyone reviewing. It is the same shape as a stale docstring or a
+`TODO(fixed)`, except that it is arguing a case, which makes it more convincing.
+
+When a comment states a scope, a count, or a guarantee, read the line below it as though the
+comment were not there.

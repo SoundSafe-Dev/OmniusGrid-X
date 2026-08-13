@@ -10096,3 +10096,34 @@ compiler I wrote a scanner for "identifiers used but never declared" in the e2e 
 matched every capitalised word in every comment — `THE`, `WRONG`, `PASSWORD`, `NEVER`, `RUN` —
 including the words in the comment I had just written *about* the defect. The compiler answered
 the same question exactly, in one command, with no calibration required (rule 167).
+
+### The edge agent had no gate on a branch push, and the guard for that was blind to it
+
+Carrying FS-684's question — *which directories does a checker actually read?* — from the
+frontend to the Python side found three gaps, all in the workflow that runs on every branch
+push.
+
+**The flake8 step did not do what its own comment said.** The note above it names
+`backend/tests` and `edge-agent/opsgrid_agent` as measured clean and argues for widening the
+scope, calling it "the only moment it ever will" cost nothing. The command underneath stayed at
+`flake8 app scripts`. So 379 backend test files and 120 edge-agent files sat outside the one
+check that catches an undefined name — `F82`, the Python spelling of the very defect FS-684
+found in `e2e/`. Re-measured before widening: still zero everywhere.
+
+**The edge agent had no test gate at all on a branch push.** `ci-cd.yml` runs its 386 tests and
+fires on `main` and pull_request only. An edge-agent change was unchecked until somebody opened
+a pull request — and that suite is where FS-675 lived, every MQTT reading dropped on a thread
+boundary in the collector the agent is built around.
+
+**And `test_branch_pushes_reach_the_gates.py` passed throughout**, because its
+`REQUIRED_ON_BRANCH_PUSH` is a hand-maintained list of five gates and nobody had added this
+one. A guard against "the check that runs in the wrong workflow" was itself blind to a whole
+codebase, for the ordinary reason that its subject list was typed out by hand. It now carries a
+second check derived from `ci-cd.yml` — every directory tested there must be tested on a branch
+push — which fails when the new step is removed.
+
+**One false-confidence matcher caught on the way.** The obvious entry for the new gate,
+`("edge-agent",)`, passes with the suite step deleted: `pip-audit -r edge-agent/requirements.txt`
+is also a run command containing that string. A matcher that cannot fail reports the gate as
+present forever, so it was removed rather than kept — the derived check is what actually holds
+this one.
