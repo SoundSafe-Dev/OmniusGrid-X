@@ -10127,3 +10127,34 @@ push — which fails when the new step is removed.
 is also a run command containing that string. A matcher that cannot fail reports the gate as
 present forever, so it was removed rather than kept — the derived check is what actually holds
 this one.
+
+### Finishing the sweep: what every static checker in this repository actually reads
+
+Having asked the question twice and got a finding both times, it was worth finishing. Measured
+across the whole tree rather than argued:
+
+| directory | files | read by a checker before | now |
+|---|---|---|---|
+| `frontend/src` | — | `tsc` | unchanged |
+| `frontend/e2e` | 7 | **nothing** | `tsc` (FS-684) |
+| `backend/app`, `backend/scripts` | 258 | `flake8` | unchanged |
+| `backend/tests` | 379 | **nothing** | `flake8` (FS-685) |
+| `edge-agent/opsgrid_agent`, `edge-agent/tests` | 120 | **nothing** | `flake8` + its suite (FS-685) |
+| `tests/k8s`, `scripts`, `dataset_synthesis` | 22 | **nothing** | `flake8` |
+
+**528 Python files and 7 TypeScript files were outside every static check in the repository**,
+and every one of them measures clean today — which is exactly why closing the gap cost nothing,
+and the only moment it ever would.
+
+The root-level 22 are the instructive tail. `tests/k8s/` holds the cluster checkers this
+workflow *executes* — NetworkPolicy coverage, probe ports, placeholder secrets — so an
+undefined name there fails a gate rather than a request, but at the end of a long job instead
+of in the first thirty seconds. `scripts/` and `dataset_synthesis/` are run by hand and by
+nobody in CI, which is the worse half: nothing would ever have said.
+
+**The general lesson is about where to point the question.** Three consecutive findings —
+FS-684, FS-685, and this — came from asking *which paths does a checker actually read?* rather
+than looking inside any file. From inside a directory nothing looks wrong: the imports resolve,
+the tests run, the suite is green. The gap is only visible from the config outward, and it is
+invisible in exactly the places where it costs the most, because a directory nobody checks is
+usually a directory nobody visits.

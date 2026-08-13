@@ -422,6 +422,17 @@ jobs:
         working-directory: ./edge-agent
         run: flake8 opsgrid_agent tests --count --select=E9,F63,F7,F82 --show-source --statistics
 
+      # AND THE 22 PYTHON FILES AT THE ROOT, which finishes the sweep (FS-685). `tests/k8s/`
+      # holds the cluster checkers this workflow EXECUTES — a NetworkPolicy coverage check, a
+      # probe-port check, a placeholder-secret check — so an undefined name there fails a gate
+      # rather than a request, but it fails it at the end of a long job instead of in the
+      # first thirty seconds. `scripts/` and `dataset_synthesis/` are run by hand and by
+      # nobody in CI, which is the worse half: nothing would ever have said.
+      #
+      # Measured at zero across all 22 before this step was added.
+      - name: flake8 errors, repository scripts (blocking)
+        run: flake8 dataset_synthesis scripts tests --count --select=E9,F63,F7,F82 --show-source --statistics
+
       - name: Edge agent suite
         working-directory: ./edge-agent
         # Same install as `ci-cd.yml` uses for this suite: `requirements-dev.txt` pins the

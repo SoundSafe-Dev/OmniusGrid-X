@@ -1207,6 +1207,14 @@ one of its findings. The habit that catches it:
      read as evidence the work had been done. When a comment states a scope, check the line
      below it against the claim.
 
+183. **Point the question at the configuration, not at the code.**
+     Three consecutive findings — a `ReferenceError` living for years in `e2e/`, a whole
+     codebase with no branch-push gate, and 528 Python files no linter read — all came from
+     asking *which paths does a checker actually read?* and never from opening a source file.
+     From inside an unchecked directory nothing looks wrong: imports resolve, tests run, the
+     suite is green. The gap is only visible from the config outward, and it hides best where
+     it costs most, because a directory nobody checks is usually a directory nobody visits.
+
 ---
 
 ## Open observations, not yet tickets

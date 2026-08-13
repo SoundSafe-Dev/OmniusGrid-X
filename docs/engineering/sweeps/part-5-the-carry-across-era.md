@@ -2449,3 +2449,29 @@ author, later, and by anyone reviewing. It is the same shape as a stale docstrin
 
 When a comment states a scope, a count, or a guarantee, read the line below it as though the
 comment were not there.
+
+## Rule 183 — point the question at the configuration, not at the code
+
+Three findings in a row came from one question, asked three times, and never from reading a
+source file:
+
+* `frontend/e2e` was outside `tsconfig`'s `include`, so seven Playwright specs — the ones
+  making the most security-relevant claims in the repository — were typechecked by nobody, and
+  one of them had carried `ReferenceError: EMAIL is not defined` since it was written.
+* The edge agent had no gate at all on a branch push: 386 tests that ran on `main` only.
+* 528 Python files across `backend/tests`, `edge-agent/` and the repository root were read by
+  no linter, including the cluster checkers CI itself executes.
+
+None of this is visible from inside those directories. The imports resolve, the tests run, the
+suite is green, and every file looks like every other file. Nothing about `e2e/authenticated.spec.ts`
+suggests it has never once reached its assertion.
+
+It is visible immediately from the other direction. `"include": ["src"]` is one line.
+`flake8 app scripts` is one line. Both are short, both are legible, and neither is ever read
+during the work they fail to cover.
+
+So make the configuration a subject in its own right. List the directories that hold code you
+own; list the paths each checker is pointed at; subtract. The answer takes minutes and does not
+depend on suspecting anything in particular — which matters, because the places this finds are
+the ones nobody suspects. A directory nobody checks is usually a directory nobody visits, and
+those two facts protect each other.
