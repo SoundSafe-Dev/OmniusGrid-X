@@ -34,3 +34,23 @@ def test_update_fleet_metrics_publishes_gauges():
     )
     assert edge_agent_up.labels(agent_id="agent-metrics-test")._value.get() == 1
     assert edge_agent_buffer_pending.labels(agent_id="agent-metrics-test")._value.get() == 42
+
+
+def test_a_heartbeat_stamps_the_staleness_watchdog():
+    """FS-695. `edge_agent_up` is written only when a heartbeat ARRIVES, and its single
+    call site hardcodes "online" — so an agent that stops heartbeating freezes the gauge
+    at 1, and the old `edge_agent_up == 0` alert could never fire in production (its unit
+    test passed by hand-writing a series nothing can produce). EdgeAgentOffline now ages
+    this timestamp instead; every accepted heartbeat must move it, or the alert fires for
+    a fleet that is perfectly healthy — and the other failure, a stamp that never moves,
+    is the original defect back again."""
+    import time as _time
+
+    from app.services.edge_fleet import edge_agent_last_heartbeat
+
+    update_fleet_metrics("agent-watchdog-test", {}, live="online")
+    stamp = edge_agent_last_heartbeat.labels(agent_id="agent-watchdog-test")._value.get()
+    assert abs(stamp - _time.time()) < 2.0, (
+        f"the heartbeat stamp is {stamp}, not the current unix time — EdgeAgentOffline "
+        f"computes time() minus this, so anything else breaks the age"
+    )

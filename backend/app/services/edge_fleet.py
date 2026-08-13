@@ -6,6 +6,7 @@ time, and :func:`update_fleet_metrics` publishes per-agent gauges. The API layer
 (:mod:`app.api.edge_fleet`) owns persistence and calls these.
 """
 
+import time
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 
@@ -38,7 +39,17 @@ def agent_liveness(
 
 edge_agent_up = Gauge(
     "edge_agent_up",
-    "Edge agent liveness (1=online, 0=stale/offline) as seen by the backend",
+    "Edge agent liveness (1=online, 0=stale/offline) as seen by the backend. "
+    "CAVEAT (FS-695): written only when a heartbeat ARRIVES, so an agent that stops "
+    "heartbeating freezes at its last value — which is 1. Do not alert on this reaching "
+    "0; nothing writes 0. Alert on the last-heartbeat timestamp below going stale.",
+    ["agent_id"],
+)
+edge_agent_last_heartbeat = Gauge(
+    "edge_agent_last_heartbeat_timestamp_seconds",
+    "Unix time of the last accepted heartbeat (FS-695). The staleness signal "
+    "EdgeAgentOffline actually needs: time() - this grows the moment an agent goes "
+    "quiet, whereas a liveness gauge written at ingest can only ever record arrivals.",
     ["agent_id"],
 )
 edge_agent_buffer_pending = Gauge(
@@ -83,6 +94,7 @@ edge_agent_cert_expiry_seconds = Gauge(
 def update_fleet_metrics(agent_id: str, health: Dict[str, Any], live: str) -> None:
     """Publish per-agent gauges from a heartbeat payload."""
     edge_agent_up.labels(agent_id=agent_id).set(1 if live == "online" else 0)
+    edge_agent_last_heartbeat.labels(agent_id=agent_id).set(time.time())
     edge_agent_buffer_pending.labels(agent_id=agent_id).set(health.get("buffer_pending", 0) or 0)
     edge_agent_dead_lettered.labels(agent_id=agent_id).set(health.get("dead_lettered", 0) or 0)
     edge_agent_dropped.labels(agent_id=agent_id).set(health.get("dropped", 0) or 0)

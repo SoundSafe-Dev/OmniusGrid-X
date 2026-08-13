@@ -10674,3 +10674,36 @@ Three mutations, three caught: the helper stamp, the baseline stamp, and the rul
 comparison inverted (promtool: negative control fires, positive stops). Guarded on the edge
 side by `test_the_buffer_gauges_carry_a_freshness_stamp.py`, on the alert side by
 `infra/prometheus/tests/buffer_stats_staleness_test.yml`.
+
+---
+
+## FS-695 — EdgeAgentOffline, severity HIGH, could never fire
+
+The carry-across from FS-694's frozen-gauge class found the worst instance on the first
+sweep. `EdgeAgentOffline` — the alert whose description reads *"Agent has not sent a healthy
+heartbeat for 5m"* — watched `edge_agent_up == 0`. **Nothing writes 0.** The gauge is set
+only when a heartbeat *arrives* (`edge_fleet.update_fleet_metrics`), and its single call
+site hardcodes `"online"` — correctly, since a heartbeat arriving means online. An agent
+that stops heartbeating freezes its gauge at 1. The one condition the alert exists for is
+the one condition the metric cannot express.
+
+**Its unit test passed the whole time**, by hand-writing `edge_agent_up 0` into the input
+series — a value production cannot produce. Rule 188 named this for test stubs; it holds
+for promtool inputs identically: a test input the real system can never emit proves the
+rule parses, not that it fires.
+
+Fixed with the FS-694 pattern — heartbeat ingest stamps
+`edge_agent_last_heartbeat_timestamp_seconds`, and the alert ages it — deliberately NOT
+with a staleness sweeper loop, because a sweeper is a background loop, and this arc has
+spent the day establishing what an unwatched background loop costs. The timestamp needs no
+loop: `time() - stamp` grows by itself the moment the agent goes quiet.
+
+**Known gap, recorded rather than hidden**: gauges live in backend memory, so after a
+backend restart an already-dead agent has no series at all and cannot alert until something
+heartbeats. Closing it needs a DB-backed sweep of `edge_agent_status.last_seen` — which,
+per FS-693, must arrive with its own failure counter and health check, not as a quick fix
+inside this one. Noted in the alert's own comment.
+
+Mutations: the ingest stamp deleted (caught by `test_edge_fleet.py`), the alert reverted to
+the frozen gauge (caught by promtool — the updated test's dead-agent series now has no
+`edge_agent_up` at all, so the reverted rule finds nothing and fails the expectation).

@@ -71,16 +71,27 @@ tests:
         alertname: EdgeAgentUnreachable
         exp_alerts: []
 
-  # --- the agent's own liveness gauge, which is a different question from scrape health --
+  # --- an agent that stopped heartbeating (FS-695) ---------------------------------------
   #
-  # `up` says Prometheus could reach the exporter. `edge_agent_up` is the agent's own
-  # verdict on itself, and the two disagree exactly when the process is alive and broken.
+  # The earlier version of this block drove `edge_agent_up` to 0 by hand and passed — a
+  # series production cannot produce, because the gauge is written only when a heartbeat
+  # ARRIVES and its single call site hardcodes "online". Rule 188: a test input the real
+  # system can never emit proves the rule parses, not that it fires. The rule now watches
+  # the last-heartbeat timestamp's age, which is a value that exists the moment an agent
+  # has heartbeated once and grows the moment it goes quiet.
+  #
+  # The agent heartbeated at t=120s and never again. Threshold 300s + for 5m => fires
+  # a little after t=12m.
   - interval: 1m
     input_series:
-      - series: 'edge_agent_up{agent_id="agent-7"}'
-        values: '0+0x10'
+      - series: 'edge_agent_last_heartbeat_timestamp_seconds{agent_id="agent-7"}'
+        values: '120x30'
     alert_rule_test:
-      - eval_time: 6m
+      # At 8m the age is ~6.4m over a 5m threshold, but `for: 5m` is not yet served.
+      - eval_time: 8m
+        alertname: EdgeAgentOffline
+        exp_alerts: []
+      - eval_time: 14m
         alertname: EdgeAgentOffline
         exp_alerts:
           - exp_labels:
@@ -91,12 +102,13 @@ tests:
               description: "Agent agent-7 has not sent a healthy heartbeat for 5m"
               summary: "Edge agent offline"
 
+  # NEGATIVE CONTROL: an agent heartbeating on cadence keeps the age small and never fires.
   - interval: 1m
     input_series:
-      - series: 'edge_agent_up{agent_id="agent-7"}'
-        values: '1+0x10'
+      - series: 'edge_agent_last_heartbeat_timestamp_seconds{agent_id="agent-7"}'
+        values: '0+60x30'
     alert_rule_test:
-      - eval_time: 6m
+      - eval_time: 20m
         alertname: EdgeAgentOffline
         exp_alerts: []
 

@@ -273,9 +273,23 @@ groups:
 
   - name: opsgrid_edge_fleet
     rules:
-      # HIGH: an agent has stopped heartbeating (backend marks it down)
+      # HIGH: an agent has stopped heartbeating (FS-695).
+      #
+      # This watched `edge_agent_up == 0` — and NOTHING WRITES 0. The gauge is set only
+      # when a heartbeat arrives (`edge_fleet.update_fleet_metrics`, whose single caller
+      # hardcodes "online", correctly: a heartbeat arriving means online). An agent that
+      # stops heartbeating freezes at 1, so this HIGH alert could never fire in
+      # production; its unit test passed by hand-writing a series production cannot
+      # produce. Same class as EdgeBufferStatsStale: alert on the timestamp's age,
+      # which grows the moment the agent goes quiet.
+      #
+      # Known gap, recorded rather than hidden: gauges live in backend memory, so after
+      # a backend restart an already-dead agent has no series at all and cannot alert
+      # until something heartbeats. Closing that needs a DB-backed sweep of
+      # edge_agent_status.last_seen — a background loop, which per FS-693 must arrive
+      # with its own failure counter and health check, not as a quick fix here.
       - alert: EdgeAgentOffline
-        expr: edge_agent_up == 0
+        expr: time() - edge_agent_last_heartbeat_timestamp_seconds > 300
         for: 5m
         labels:
           severity: high
