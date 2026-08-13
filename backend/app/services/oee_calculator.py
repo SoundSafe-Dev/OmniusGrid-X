@@ -117,6 +117,11 @@ class OEECalculator:
         # Running flag
         self._running = False
         self._calculation_task: Optional[asyncio.Task] = None
+        #: Consecutive failed calculation cycles (FS-693). The loop swallows to survive,
+        #: so its task cannot signal that every cycle is failing — and a stalled
+        #: calculator leaves every OEE figure on the dashboard frozen at its last good
+        #: value, which reads as a quiet shift rather than a broken service.
+        self._consecutive_failures = 0
     
     async def start(self):
         """Start the OEE calculator"""
@@ -286,15 +291,17 @@ class OEECalculator:
                         org_id = self._asset_states[asset_id].get('organization_id')
                         if org_id:
                             await self._broadcast_oee(org_id, asset_id, oee)
-                    
+
                     except Exception as e:
                         logger.error(
                             "oee_calculation_error",
                             asset_id=asset_id,
                             error=str(e)
                         )
-            
+                self._consecutive_failures = 0
+
             except Exception as e:
+                self._consecutive_failures += 1
                 logger.error("oee_calculation_loop_error", error=str(e))
     
     async def calculate_oee(

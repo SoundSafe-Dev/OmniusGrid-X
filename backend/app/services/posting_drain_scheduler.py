@@ -44,6 +44,10 @@ class PostingDrainScheduler:
     def __init__(self) -> None:
         self._task: Optional[asyncio.Task] = None
         self._running = False
+        #: Consecutive failed passes (FS-693). `_run` swallows so one bad pass cannot end
+        #: the loop — which also means the loop cannot end when EVERY pass is bad, and a
+        #: ledger that stops draining looks exactly like a ledger with nothing to drain.
+        self._consecutive_failures = 0
 
     async def start(self) -> None:
         if not settings.POSTING_DRAIN_ENABLED or self._running:
@@ -69,8 +73,16 @@ class PostingDrainScheduler:
     async def _run(self) -> None:
         while self._running:
             try:
-                await self.drain_all_organizations()
+                totals = await self.drain_all_organizations()
+                # A pass in which every organisation failed is a failed pass, not a
+                # successful pass over a broken fleet. `organizations` counts successes,
+                # so this fires only when there were orgs and none drained.
+                if totals["organizations_failed"] and not totals["organizations"]:
+                    self._consecutive_failures += 1
+                else:
+                    self._consecutive_failures = 0
             except Exception as exc:  # noqa: BLE001 - one bad pass must not end the loop
+                self._consecutive_failures += 1
                 logger.error("posting_drain_iteration_failed", error=str(exc))
             await asyncio.sleep(settings.POSTING_DRAIN_INTERVAL_SECONDS)
 
@@ -90,7 +102,12 @@ class PostingDrainScheduler:
             org_ids = (await session.execute(select(Organization.id))).scalars().all()
 
         totals = {"considered": 0, "posted": 0, "failed": 0,
-                  "handed_to_a_person": 0, "orphaned": 0, "organizations": 0}
+                  "handed_to_a_person": 0, "orphaned": 0, "organizations": 0,
+                  # Orgs whose drain raised (FS-693). Without this, a pass in which EVERY
+                  # organisation failed still returned totals indistinguishable from a
+                  # pass over an empty fleet — the skip below is per-tenant isolation,
+                  # not permission to lose the count.
+                  "organizations_failed": 0}
         for org_id in org_ids:
             try:
                 async with AsyncSessionLocal() as session:
@@ -100,6 +117,7 @@ class PostingDrainScheduler:
                     )
                     await session.commit()
             except Exception as exc:  # noqa: BLE001
+                totals["organizations_failed"] += 1
                 logger.error(
                     "posting_drain_failed_for_organization",
                     organization_id=str(org_id), error=str(exc),

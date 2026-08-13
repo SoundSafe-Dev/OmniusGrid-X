@@ -382,6 +382,62 @@ def _check_error_tracker() -> tuple[str, dict[str, Any]]:
         return f"error: {exc}", {}
 
 
+def _check_oee_calculator() -> tuple[str, dict[str, Any]]:
+    """The OEE loop, reported on whether cycles complete (FS-693).
+
+    A stalled calculator leaves every OEE figure on the dashboard frozen at its last good
+    value — which reads as a quiet shift, not a broken service. Per-asset failures inside a
+    cycle are logged and tolerated (one bad asset must not starve the rest); what this
+    reports is the whole cycle failing repeatedly.
+    """
+    try:
+        from app.services.oee_calculator import oee_calculator
+
+        failures = getattr(oee_calculator, "_consecutive_failures", 0)
+        details: dict[str, Any] = {
+            "running": bool(oee_calculator._running),
+            "consecutive_failures": failures,
+            "tracked_assets": len(getattr(oee_calculator, "_asset_states", {})),
+        }
+        if not oee_calculator._running:
+            return "not_running", details
+        if failures >= _MAX_CONSECUTIVE_LOOP_FAILURES:
+            return "error: OEE cycles failing — dashboard figures are frozen", details
+        return "ok", details
+    except Exception as exc:
+        return f"error: {exc}", {}
+
+
+def _check_posting_drain() -> tuple[str, dict[str, Any]]:
+    """The ledger drain, reported on whether passes complete (FS-693).
+
+    A ledger that stops draining looks exactly like a ledger with nothing to drain: the
+    queue quietly grows, and postings raised overnight wait for someone to open the Shop
+    Floor page and press the button — the manual path FS-427 built this scheduler to
+    retire.
+    """
+    try:
+        from app.core.config import settings
+        from app.services.posting_drain_scheduler import posting_drain_scheduler
+
+        if not settings.POSTING_DRAIN_ENABLED:
+            return "disabled", {"enabled": False}
+
+        failures = getattr(posting_drain_scheduler, "_consecutive_failures", 0)
+        details: dict[str, Any] = {
+            "enabled": True,
+            "running": bool(posting_drain_scheduler._running),
+            "consecutive_failures": failures,
+        }
+        if not posting_drain_scheduler._running:
+            return "not_running", details
+        if failures >= _MAX_CONSECUTIVE_LOOP_FAILURES:
+            return "error: posting drain failing every pass", details
+        return "ok", details
+    except Exception as exc:
+        return f"error: {exc}", {}
+
+
 async def _run_extended_checks(
     db: AsyncSession,
 ) -> tuple[dict[str, str], dict[str, dict[str, Any]]]:
@@ -394,6 +450,8 @@ async def _run_extended_checks(
     export_status, export_details = _check_export_scheduler()
     report_status, report_details = _check_report_scheduler()
     tracker_status, tracker_details = _check_error_tracker()
+    oee_status, oee_details = _check_oee_calculator()
+    drain_status, drain_details = _check_posting_drain()
 
     checks = {
         "notifications": notifications_status,
@@ -403,6 +461,8 @@ async def _run_extended_checks(
         "export_scheduler": export_status,
         "report_scheduler": report_status,
         "error_tracker": tracker_status,
+        "oee_calculator": oee_status,
+        "posting_drain": drain_status,
     }
     details = {
         "notifications": notifications_details,
@@ -412,6 +472,8 @@ async def _run_extended_checks(
         "export_scheduler": export_details,
         "report_scheduler": report_details,
         "error_tracker": tracker_details,
+        "oee_calculator": oee_details,
+        "posting_drain": drain_details,
     }
     return checks, details
 

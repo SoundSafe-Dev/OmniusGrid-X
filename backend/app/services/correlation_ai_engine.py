@@ -3430,7 +3430,12 @@ class CorrelationAIEngine:
                 if isinstance(parsed, dict):
                     items.append(parsed)
                     continue
-            except Exception:
+            except (ValueError, SyntaxError, TypeError, MemoryError, RecursionError):
+                # Everything `ast.literal_eval` documents itself raising on a string
+                # that is not a literal — the case this fallback exists for. Mechanical
+                # narrowing only (FS-693's ratchet payment): the broad catch also ate
+                # KeyboardInterrupt-adjacent failures during a long parse, and any
+                # future bug in the `isinstance` line, as "not a dict".
                 pass
             items.append({"description": value})
         return items

@@ -36,16 +36,10 @@ HEALTH = APP / "api" / "health.py"
 #: Services started at boot with no health check, and what would close the entry.
 #: ONLY EVER SHRINKS. Removing a name means writing a check, not deleting a line.
 UNWATCHED = {
-    "oee_calculator": "needs a last-completed-cycle timestamp; a stalled calculator leaves "
-                      "every OEE figure on the dashboard frozen at its last good value, "
-                      "which reads as a quiet shift rather than a broken service",
     "compliance_report_dispatcher": "needs a definition of a due report that went out; a "
                                     "missed compliance report is discovered by an auditor",
     "rollout_orchestrator": "health.py mentions it only in a comment at :791. Needs a view "
                             "of in-flight rollouts that have stopped advancing",
-    "posting_drain_scheduler": "needs queue depth plus drain rate — depth alone repeats the "
-                               "EdgeAgentBufferHigh mistake, where an empty queue looks "
-                               "healthy whether it is drained or never filled",
 }
 
 

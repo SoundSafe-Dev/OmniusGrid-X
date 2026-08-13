@@ -10620,3 +10620,28 @@ rate-limit key derivation catches `(jwt.PyJWTError, ValueError, TypeError)` — 
 Four remain on the register: `oee_calculator`, `compliance_report_dispatcher`,
 `rollout_orchestrator`, `posting_drain_scheduler` — each needing a definition of "working"
 from its lane.
+
+### Two more: the OEE calculator and the posting drain. Two remain, both in other lanes.
+
+**The posting drain had the FS-691 seam one level down.** Per-organisation failures inside a
+pass are logged and skipped — correct tenant isolation; one unreachable ERP must not stop
+every other ledger — so `drain_all_organizations` returns normally with every organisation
+broken, and a counter keyed on the pass raising would read a fleet-wide outage as health.
+The totals now carry `organizations_failed`, and a pass with failures and zero successes
+counts as a failed pass while one broken tenant among working ones does not. Both directions
+guarded.
+
+**The OEE guard's first mutation run found its own hole.** Deleting the increment passed
+every test in the file: the per-asset-isolation test only exercised the outer handler's
+success path. A counter needs a test per direction, or half of it can vanish silently — the
+new failing-cycle test detonates inside the outer `try` (an `_asset_states` whose iteration
+raises), which a stubbed `calculate_oee` cannot reach because the inner per-asset handler
+absorbs it first.
+
+The ratchet charged two, paid with two more mechanical narrowings: `_rss_bytes` catches
+`(psutil.Error, OSError)` instead of converting a programming error into "memory unavailable
+forever", and the correlation engine's `ast.literal_eval` fallback catches the five
+exceptions that call documents itself raising. 201 holds.
+
+Remaining on the register: `compliance_report_dispatcher` and `rollout_orchestrator`
+(Hridyansh's OTA lane) — both need a lane-owner definition of "working", not a counter.

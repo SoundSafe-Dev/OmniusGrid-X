@@ -79,7 +79,11 @@ try:
     def _rss_bytes() -> Optional[int]:
         try:
             return _PROCESS.memory_info().rss
-        except Exception:
+        except (psutil.Error, OSError):
+            # What psutil actually raises when the process table cannot be read
+            # (FS-693's ratchet payment). The broad catch also converted a
+            # programming error in this line into "memory unavailable" forever,
+            # with nothing logged.
             return None
 
 except Exception:  # psutil not installed

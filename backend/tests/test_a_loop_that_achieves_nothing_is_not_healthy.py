@@ -319,6 +319,167 @@ class TestTheErrorTrackerToo:
             assert key in details
 
 
+class TestTheOeeCalculatorToo:
+    """A stalled calculator leaves every OEE figure frozen at its last good value, which
+    reads as a quiet shift rather than a broken service."""
+
+    async def test_cycles_failing_repeatedly_is_an_error(self, monkeypatch):
+        from app.services import oee_calculator as oc
+
+        monkeypatch.setattr(oc.oee_calculator, "_running", True)
+        monkeypatch.setattr(oc.oee_calculator, "_consecutive_failures", 3)
+        status, _ = health_module._check_oee_calculator()
+        assert status.startswith("error") and "frozen" in status
+
+    async def test_a_working_calculator_is_ok(self, monkeypatch):
+        from app.services import oee_calculator as oc
+
+        monkeypatch.setattr(oc.oee_calculator, "_running", True)
+        monkeypatch.setattr(oc.oee_calculator, "_consecutive_failures", 0)
+        assert health_module._check_oee_calculator()[0] == "ok"
+
+    async def test_per_asset_failures_do_not_trip_it(self):
+        """The cycle-level counter must stay untouched when individual assets fail — one
+        bad asset starving the check would page on every fleet with one broken machine,
+        and per-asset failures already have their own log line."""
+        from app.services.oee_calculator import OEECalculator
+
+        calculator = OEECalculator(calculation_interval_minutes=1)
+        calculator._running = True
+        calculator._asset_states = {"good-asset": {}, "bad-asset": {}}
+        calls = {"n": 0}
+
+        async def _mixed(asset_id, time_window_hours=1.0):
+            calls["n"] += 1
+            if calls["n"] >= 2:
+                calculator._running = False
+            if asset_id == "bad-asset":
+                raise RuntimeError("no telemetry")
+            from app.services.oee_calculator import OEEMetrics
+            return OEEMetrics(
+                availability=1.0, performance=1.0, quality=1.0, oee=1.0,
+                planned_time_hours=1.0, runtime_hours=1.0, downtime_hours=0.0,
+                total_count=0, good_count=0, scrap_count=0,
+            )
+
+        calculator.calculate_oee = _mixed
+        calculator._broadcast_oee = lambda *a, **k: _noop()
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr(calculator, "calculation_interval", 0.0002)
+            await calculator._calculation_loop()
+
+        assert calculator._consecutive_failures == 0, (
+            "a cycle that completed with one bad asset was counted as a failed cycle"
+        )
+
+    async def test_a_cycle_that_fails_outright_is_counted(self):
+        """The other direction — and the first mutation run proved it was missing: deleting
+        the increment passed every test in this file, because the per-asset test above only
+        exercises the success path of the outer handler. A guard for a counter needs a test
+        per direction or the counter can half-vanish silently."""
+        from app.services.oee_calculator import OEECalculator
+
+        calculator = OEECalculator(calculation_interval_minutes=1)
+        calculator._running = True
+        calls = {"n": 0}
+
+        class _Detonating(dict):
+            """Raises when the cycle iterates it — INSIDE the outer try, unlike a stubbed
+            calculate_oee, whose per-asset failures the inner handler absorbs."""
+
+            def __iter__(self):
+                calls["n"] += 1
+                if calls["n"] >= 3:
+                    calculator._running = False
+                raise RuntimeError("asset registry unreadable")
+
+        calculator._asset_states = _Detonating()
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr(calculator, "calculation_interval", 0.0002)
+            await calculator._calculation_loop()
+
+        assert calculator._consecutive_failures >= 2
+
+
+async def _noop():
+    return None
+
+
+class TestThePostingDrainToo:
+    """A ledger that stops draining looks exactly like a ledger with nothing to drain."""
+
+    async def test_passes_failing_repeatedly_is_an_error(self, monkeypatch):
+        from app.services import posting_drain_scheduler as pd
+
+        monkeypatch.setattr(pd.posting_drain_scheduler, "_running", True)
+        monkeypatch.setattr(pd.posting_drain_scheduler, "_consecutive_failures", 3)
+        status, _ = health_module._check_posting_drain()
+        assert status.startswith("error")
+
+    async def test_disabled_is_its_own_state(self, monkeypatch):
+        from app.core.config import settings
+
+        monkeypatch.setattr(settings, "POSTING_DRAIN_ENABLED", False)
+        assert health_module._check_posting_drain()[0] == "disabled"
+
+    async def test_a_pass_where_every_org_fails_counts_as_a_failed_pass(self):
+        """THE SEAM ONE LEVEL DOWN. Per-org failures are skipped inside the pass — correct
+        tenant isolation — so `drain_all_organizations` RETURNS normally with every org
+        broken, and a counter keyed only on the pass raising would read a fleet-wide outage
+        as health. The register's own reason for this entry warned that depth alone repeats
+        the EdgeAgentBufferHigh mistake; this is the drain-side half of that answer."""
+        from app.services.posting_drain_scheduler import PostingDrainScheduler
+
+        scheduler = PostingDrainScheduler()
+        scheduler._running = True
+        calls = {"n": 0}
+
+        async def _all_orgs_broken():
+            calls["n"] += 1
+            if calls["n"] >= 2:
+                scheduler._running = False
+            return {"considered": 0, "posted": 0, "failed": 0, "handed_to_a_person": 0,
+                    "orphaned": 0, "organizations": 0, "organizations_failed": 3}
+
+        scheduler.drain_all_organizations = _all_orgs_broken
+        with pytest.MonkeyPatch.context() as mp:
+            from app.core.config import settings
+
+            mp.setattr(settings, "POSTING_DRAIN_INTERVAL_SECONDS", 0.001)
+            await scheduler._run()
+
+        assert scheduler._consecutive_failures >= 2
+
+    async def test_a_pass_with_one_broken_tenant_is_not_a_failed_pass(self):
+        """One tenant with an unreachable ERP must not mark the drain broken — that is the
+        isolation the per-org skip exists to provide, kept."""
+        from app.services.posting_drain_scheduler import PostingDrainScheduler
+
+        scheduler = PostingDrainScheduler()
+        scheduler._running = True
+        scheduler._consecutive_failures = 4
+
+        async def _one_broken():
+            scheduler._running = False
+            return {"considered": 5, "posted": 5, "failed": 0, "handed_to_a_person": 0,
+                    "orphaned": 0, "organizations": 2, "organizations_failed": 1}
+
+        scheduler.drain_all_organizations = _one_broken
+        with pytest.MonkeyPatch.context() as mp:
+            from app.core.config import settings
+
+            mp.setattr(settings, "POSTING_DRAIN_INTERVAL_SECONDS", 0.001)
+            await scheduler._run()
+
+        assert scheduler._consecutive_failures == 0
+
+    async def test_all_four_new_checks_reach_the_detailed_report(self):
+        checks, details = await health_module._run_extended_checks(_Boom())
+        for key in ("oee_calculator", "posting_drain"):
+            assert key in checks, f"{key} check exists and nothing calls it"
+            assert key in details
+
+
 class TestTheCounterIsActuallyMaintained:
     """The health check is only as good as the state it reads, and that state is written in
     a different file. These drive the real loop bodies.
