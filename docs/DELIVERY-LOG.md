@@ -10645,3 +10645,32 @@ exceptions that call documents itself raising. 201 holds.
 
 Remaining on the register: `compliance_report_dispatcher` and `rollout_orchestrator`
 (Hridyansh's OTA lane) — both need a lane-owner definition of "working", not a counter.
+
+---
+
+## FS-694 — the buffer gauge freezes, and takes both buffer alerts with it
+
+Rule 196 applied to the instrument itself. `edge_buffer_messages` is refreshed by the
+agent's stats loop every five minutes, and a gauge is only as honest as its last write: if
+that loop fails every cycle — a corrupted SQLite file, a schema drift in `get_stats` — the
+gauge does not zero and does not disappear. **It freezes at its final value.**
+`EdgeBufferGrowing` then reasons about a number that stopped meaning anything, and the
+heartbeat's `_buffer_snapshot` freezes with it, so `EdgeAgentBufferHigh` goes quiet in the
+same breath. One failing loop mutes both buffer alerts, at exactly the moment the buffer may
+be growing. The gauge measured the buffer; nothing measured the measuring.
+
+Fixed with the standard watchdog: `set_buffer_stats` stamps
+`edge_buffer_stats_last_success_timestamp_seconds` on every successful refresh — inside the
+helper, not beside it, so the stamp cannot drift away from the gauges it vouches for — and
+`EdgeBufferStatsStale` alerts when the age passes four report cycles.
+
+**The absent-series trap, closed at the source this time.** A loop that never succeeds once
+never creates the series, and `time() - <absent>` evaluates to nothing — the alert cannot
+fire for precisely the agent broken since boot. `EdgeCollectorFailingEveryPoll` answered
+this with `unless`; here the agent stamps a baseline at loop start instead, which reads
+"stats were current as of startup" and then ages honestly.
+
+Three mutations, three caught: the helper stamp, the baseline stamp, and the rule's
+comparison inverted (promtool: negative control fires, positive stops). Guarded on the edge
+side by `test_the_buffer_gauges_carry_a_freshness_stamp.py`, on the alert side by
+`infra/prometheus/tests/buffer_stats_staleness_test.yml`.

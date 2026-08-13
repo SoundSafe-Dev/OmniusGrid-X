@@ -136,6 +136,7 @@ to ask where else it could live.
 | A failure reported to the log and to no instrument | 15 collectors, 59 `logger.error` sites, driven against a real 500 server | **`errors_total` incremented by nothing anywhere; a permanently-failing collector reads *up* and fires no alert** | `test_a_silent_collector_is_visible.py`, `test_every_collection_failure_is_counted.py` |
 | A metric exported and fed by nothing | all 25 metrics vs. every call site in the package | **1: `opsgrid_edge_collector_messages_total`, published at zero since the merge that duplicated it** | `test_no_metric_is_exported_and_never_fed.py` |
 | Health answered from the worker, not the work | every `.done()` / `is_alive()` in `app/`, then all 8 services `main.py` starts | **command dispatch reported `ok` while failing every iteration; 7 of 8 started services are in no health check at all** | `test_a_loop_that_achieves_nothing_is_not_healthy.py`, `test_a_started_service_is_a_service_somebody_watches.py` |
+| A gauge whose writer died, still being read | the stats loops feeding every exported gauge | **`edge_buffer_messages` freezes if its loop fails, silently disarming both buffer alerts** | `test_the_buffer_gauges_carry_a_freshness_stamp.py` + `EdgeBufferStatsStale` |
 
 Twenty-nine of these carry a numbered section below. **Response-shape mismatch is the
 exception**: it was swept in the same pass as the `get_db` work and came back clean, so

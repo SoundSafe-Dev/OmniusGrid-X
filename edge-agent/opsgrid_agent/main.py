@@ -569,6 +569,13 @@ class EdgeAgent:
     
     async def _stats_reporter(self):
         """Periodic stats reporting"""
+        # Baseline stamp (FS-694): the staleness alert measures time() minus the
+        # last-success timestamp, and a loop that NEVER succeeds would otherwise never
+        # create the series — leaving the alert nothing to evaluate, which is the same
+        # absent-series trap EdgeCollectorFailingEveryPoll's `unless` exists for. Stamping
+        # here means "stats were current as of startup", after which the age grows
+        # honestly until the first real success resets it.
+        metrics.buffer_stats_last_success.set(time.time())
         while self._running:
             try:
                 stats = await self.buffer.get_stats()

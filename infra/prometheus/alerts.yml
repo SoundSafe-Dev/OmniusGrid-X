@@ -187,6 +187,29 @@ groups:
           summary: "Edge store-and-forward buffer growing"
           description: "Edge buffer holds {{ $value }} pending messages (upstream likely unavailable)"
 
+      # HIGH: the buffer gauges have stopped being refreshed (FS-694).
+      #
+      # `edge_buffer_messages` is written by the agent's stats loop, and a gauge is only
+      # as honest as its last write: if that loop fails every cycle, the gauge FREEZES at
+      # its final value and EdgeBufferGrowing reasons about a number that stopped meaning
+      # anything — silenced precisely when the buffer may be growing. Same for the
+      # heartbeat's buffer snapshot, so EdgeAgentBufferHigh goes quiet in the same
+      # breath. One failing loop mutes both buffer alerts; this is the alert on the loop.
+      #
+      # The agent stamps the timestamp once at startup, so the series exists even if the
+      # loop never succeeds — the absent-series trap EdgeCollectorFailingEveryPoll's
+      # `unless` guards against, closed at the source this time. 20m is four report
+      # cycles (the loop reports every 5m).
+      - alert: EdgeBufferStatsStale
+        expr: time() - edge_buffer_stats_last_success_timestamp_seconds > 1200
+        for: 5m
+        labels:
+          severity: high
+          team: edge
+        annotations:
+          summary: "Edge buffer gauges are stale"
+          description: "The agent's stats loop has not refreshed the buffer gauges for over 20m — EdgeBufferGrowing and EdgeAgentBufferHigh are reasoning about frozen numbers"
+
       # MEDIUM: backfill lag high (oldest buffered message getting old)
       - alert: EdgeBackfillLagHigh
         expr: edge_buffer_backfill_lag_seconds > 3600

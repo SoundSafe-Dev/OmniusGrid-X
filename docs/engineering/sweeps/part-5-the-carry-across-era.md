@@ -2857,3 +2857,32 @@ having them. That is rule 196 in one sentence, and it is the same sentence as
 Both of those alerts are silenced *by* the thing they exist to detect. When a health signal
 is derived from the absence of bad news, check whether the failure being watched for would
 also suppress the news.
+
+## Rule 196, third application — the instrument this time
+
+FS-691 was a collector whose task outlived its work. FS-693 was a backend loop whose task
+outlived its work. FS-694 asks the question one level up: *the gauges those health checks
+and alerts read — what happens to them when their writer stops working?*
+
+The answer for `edge_buffer_messages` was: nothing visible. A gauge whose writer dies does
+not zero and does not disappear from `/metrics`. It freezes. And a frozen buffer gauge is
+worse than an absent one, because `EdgeBufferGrowing` keeps evaluating it, sees a steady
+number, and stays quiet — while the heartbeat's snapshot freezes in the same loop, muting
+`EdgeAgentBufferHigh` too. The failure of one 30-line loop silently disarms both alerts
+that watch the agent's most important failure mode.
+
+The pattern that fixes it is old and standard — a last-success timestamp beside the data,
+an alert on its age — and the interesting parts are the two corners:
+
+1. **The stamp lives inside `set_buffer_stats`, not beside its call site.** A stamp updated
+   in the loop but outside the helper keeps reading fresh through any refactor that calls
+   the helper from somewhere the stats are stale. The vouching must travel with the write.
+
+2. **The baseline stamp at loop start closes the absent-series trap without `unless`.**
+   A loop that never succeeds never creates the series, and `time() - <absent>` is nothing.
+   FS-691's alert answered the same trap with `unless` in the query; stamping at startup
+   answers it at the source, and the semantic is honest — "stats were current as of boot" —
+   after which the age grows until the first real success.
+
+When a health signal is itself produced by a loop, the loop needs a watchdog, or every
+alert downstream of the signal inherits the loop's failure mode silently.

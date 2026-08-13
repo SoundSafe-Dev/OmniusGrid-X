@@ -18,6 +18,7 @@ Dependency-light and free of collector imports, so it stays cheap and independen
 of the omniusgrid_agent -> opsgrid_agent rename.
 """
 
+import time
 from typing import Optional
 
 from prometheus_client import Counter, Gauge, Histogram
@@ -93,10 +94,20 @@ buffer_expired_total = Counter(
     "Undelivered messages deleted for passing the retention window",
 )
 
+buffer_stats_last_success = Gauge(
+    "edge_buffer_stats_last_success_timestamp_seconds",
+    "Unix time the buffer gauges above were last refreshed from a real read (FS-694). "
+    "A gauge is only as honest as its last write: if the stats loop fails, "
+    "edge_buffer_messages FREEZES at its final value, and the buffer-depth alerts "
+    "reason about a number that stopped meaning anything — silenced precisely when "
+    "the buffer may be growing. Alert on time() - this exceeding the report cadence.",
+)
+
 
 def set_buffer_stats(pending: int, backfill_lag_seconds: float) -> None:
     buffer_messages.set(pending)
     buffer_backfill_lag_seconds.set(backfill_lag_seconds)
+    buffer_stats_last_success.set(time.time())
 
 
 def record_dead_lettered(count: int) -> None:

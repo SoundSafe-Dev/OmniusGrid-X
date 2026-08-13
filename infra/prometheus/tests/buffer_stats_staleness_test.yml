@@ -1,0 +1,55 @@
+# promtool unit tests for EdgeBufferStatsStale. Run from infra/prometheus/:
+#   promtool test rules tests/buffer_stats_staleness_test.yml
+#
+# WHY THIS FILE EXISTS (FS-694). `edge_buffer_messages` is a gauge the agent's stats loop
+# refreshes every 5 minutes, and a gauge is only as honest as its last write: if that loop
+# fails every cycle the gauge freezes at its final value, EdgeBufferGrowing reasons about a
+# frozen number, and the heartbeat's buffer snapshot freezes with it — so EdgeAgentBufferHigh
+# goes quiet in the same breath. One failing loop mutes both buffer alerts, and this is the
+# alert on the loop itself.
+#
+# promtool evaluates time() as the test's eval_time offset from the epoch, so the series
+# below stamp small absolute values and eval_time supplies "now".
+rule_files:
+  - ../alerts.yml
+
+evaluation_interval: 1m
+
+tests:
+  # ---------------------------------------------------------------------------
+  # A timestamp that stops advancing goes stale and fires after threshold + for.
+  # The agent stamped at t=60s (startup or last success) and never again.
+  # ---------------------------------------------------------------------------
+  - interval: 1m
+    input_series:
+      - series: 'edge_buffer_stats_last_success_timestamp_seconds{agent_id="agent-1"}'
+        values: '60x45'
+    alert_rule_test:
+      # At 20m the age is ~19m — under the 20m threshold, nothing yet.
+      - eval_time: 20m
+        alertname: EdgeBufferStatsStale
+        exp_alerts: []
+      # At 30m the age passed 20m several minutes ago and `for: 5m` has been served.
+      - eval_time: 30m
+        alertname: EdgeBufferStatsStale
+        exp_alerts:
+          - exp_labels:
+              severity: high
+              team: edge
+              agent_id: agent-1
+            exp_annotations:
+              summary: "Edge buffer gauges are stale"
+              description: "The agent's stats loop has not refreshed the buffer gauges for over 20m — EdgeBufferGrowing and EdgeAgentBufferHigh are reasoning about frozen numbers"
+
+  # ---------------------------------------------------------------------------
+  # NEGATIVE CONTROL: a loop that keeps succeeding keeps the age near zero and
+  # must never fire. The timestamp advances with the clock (5m cadence).
+  # ---------------------------------------------------------------------------
+  - interval: 5m
+    input_series:
+      - series: 'edge_buffer_stats_last_success_timestamp_seconds{agent_id="agent-2"}'
+        values: '0+300x12'
+    alert_rule_test:
+      - eval_time: 55m
+        alertname: EdgeBufferStatsStale
+        exp_alerts: []
