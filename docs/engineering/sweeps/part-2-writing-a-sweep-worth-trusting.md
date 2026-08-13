@@ -1149,6 +1149,22 @@ one of its findings. The habit that catches it:
      in a single step. This is rule 141 again, and it keeps recurring because the reflex when
      you understand a defect is to write the cure rather than to look for it.
 
+175. **A measurement taken while something else is writing is not a measurement.**
+     Three concurrent coverage runs sharing `coverage/.tmp` produced twelve failures and four
+     timeouts, which read exactly like a broken CI gate — and I reported it as one. Vitest had
+     printed the cause in the same output. Earlier in the same session, two pytest suites
+     against one database produced the same class of phantom. Before believing any failure,
+     check what else is touching the resource: the tool usually says so, in the part of the
+     output you skip when you already have a hypothesis.
+
+176. **A ratchet with no margin fails on the next unrelated change, and that trains people to
+     lower it.** Statements cleared the gate by 0.02 points against a config documenting ~1
+     point of intended slack. Nothing was broken and nothing would have reported it until a
+     one-line change turned the build red for a reason that had nothing to do with that line.
+     The repair is tests, not a threshold edit — and after adding them, deliberately NOT
+     raising the threshold to the new floor, which would recreate exactly the state you just
+     left.
+
 ---
 
 ## Open observations, not yet tickets

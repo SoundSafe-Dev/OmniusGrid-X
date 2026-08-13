@@ -2262,3 +2262,52 @@ This is rule 141 wearing different clothes, and it recurs because the reflex on 
 defect is to write the cure. The moment you can describe the fix is the moment to search for
 it: a codebase that made the mistake in two places has often got it right in a third, and that
 third file usually explains why.
+
+## Rule 175 — a measurement taken while something else is writing is not a measurement
+
+A coverage run reported twelve failures across four file-walking guards, each timing out just
+past the 5-second default. `quality-gates.yml` runs `npm run coverage` as a blocking step on
+every branch push, so the conclusion was immediate and alarming: the gate is red for every
+developer, right now, for a reason unrelated to what it gates.
+
+The same output contained the answer:
+
+    Something removed the coverage directory ".../coverage/.tmp" Vitest created earlier.
+    Make sure you are not running multiple Vitests with the same "coverage.reportsDirectory"
+    at the same time.
+
+Three of my own coverage runs were racing. A single clean run: 131 files, 1,063 tests, zero
+failures. Every timeout was contention I had created, and the "finding" had to be withdrawn
+after it was stated.
+
+Earlier in the same session, two pytest suites against one Postgres produced the identical
+class of phantom. Different tool, different shared resource — a directory instead of a
+database — and the same failure of method: I had a hypothesis before I had a clean measurement,
+and the noise obligingly confirmed it.
+
+Two habits follow. Before believing a failure, ask what else was touching that resource. And
+read the whole output, including the part that looks like environmental chatter: the tool
+usually names the problem, in the lines you skip once you think you know what you are looking
+at.
+
+## Rule 176 — a ratchet with no margin fails on the next unrelated change
+
+`vitest.config.ts` sets its coverage thresholds with a stated design: *"~1 point of margin:
+enough that a single refactor does not fail the build, not enough to absorb a real
+regression."*
+
+Measured, statements cleared by **0.02 points** — about one and a half statements out of 7,486.
+Nothing was broken. Every gate was green. And the next uncovered statement added anywhere in
+the frontend would have turned the build red for a change that had nothing to do with coverage.
+
+That is worse than it sounds, because of what happens next: a developer whose unrelated
+one-liner fails a coverage gate does not write tests for somebody else's untested module. They
+lower the threshold, and the ratchet loses a point permanently. The margin is not slack — it is
+what keeps the gate's failures attributable to the change that caused them.
+
+The repair is tests. `src/api/shopFloor.ts` was at 0% with 228 lines behind a live page; 21
+tests took statements from 49.02 to 49.38.
+
+And then, deliberately, **do not raise the threshold to the new floor.** Raising it to 49.38
+would restore exactly the condition just escaped. Raise a ratchet when the margin is comfortable
+and the direction is proven, not the moment the number moves.

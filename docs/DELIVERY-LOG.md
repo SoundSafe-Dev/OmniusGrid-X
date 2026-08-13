@@ -9982,3 +9982,47 @@ The reusable part is uncomfortable: FS-675 spent its effort building a detector 
 correct implementation was already in the repository, in a sibling file, with an explanatory
 comment. Grepping for `run_coroutine_threadsafe` before writing anything would have produced
 the fix and the pattern in one step.
+
+### A ratchet holding by 0.02 points, and a finding I had to withdraw
+
+**The withdrawal first, because it is the more useful half.** A coverage run reported twelve
+failures across four file-walking guards, every one timing out just past the 5s default, and
+`quality-gates.yml` runs `npm run coverage` as a blocking step on every branch push. That reads
+as: CI is red for everyone right now. I said so.
+
+It was wrong. Vitest had already printed the reason and I had not read it —
+*"Make sure you are not running multiple Vitests with the same `coverage.reportsDirectory` at
+the same time."* Three of my own coverage runs were racing over `coverage/.tmp`. A single clean
+run: **131 files, 1,063 tests, zero failures.** The timeouts were contention I created.
+
+This is the second time in this session that concurrent runs manufactured a finding — the first
+was two pytest suites against one database. Different tool, different shared resource, same
+shape: a measurement taken while something else is writing the thing being measured.
+
+**What survived verification.** Coverage was **49.02 / 49.03 / 41.42 / 50.57** against
+thresholds 49/48/41/50 — statements clearing by **0.02 points, about one and a half
+statements**, in a config whose own comment describes a deliberate *"~1 point of margin: enough
+that a single refactor does not fail the build, not enough to absorb a real regression."* That
+margin was gone, so the next uncovered statement added anywhere would have turned the gate red
+for a reason unrelated to the change that tripped it.
+
+**The way back up is tests, which is that file's own doctrine.** `src/api/shopFloor.ts` was the
+target: 228 lines at **0%**, the client behind a live page that issues parts, clocks operators
+in and out, reports defects and opens downtime. Nothing had ever exercised it — the state
+`broadcast_to_org` was in when its endpoint was first driven for real.
+
+Reading it first found no defect; it agrees with the server. So the 21 tests pin the seam this
+codebase keeps failing at — path, method, and the shape of what goes out — plus three
+behaviours that are decisions rather than plumbing:
+
+* `openLaborEntry` answers **null** for "no running clock"; `undefined` reaching the page
+  renders as a loading state that never resolves.
+* `clockOut()` sends an explicit `notes: null` rather than omitting the key — an absent key and
+  a null are different requests to a pydantic body.
+* `listPostings` **throws** on a malformed page rather than returning an empty one. An empty
+  ledger means "nothing is waiting"; a malformed response means "we do not know", and rendering
+  the second as the first tells an operator every event landed when none may have.
+
+Statements margin restored **0.02 -> 0.38**, lines to 0.97. Thresholds deliberately NOT raised:
+raising them to the new floor would consume the margin again and reproduce the condition this
+entry is about.
