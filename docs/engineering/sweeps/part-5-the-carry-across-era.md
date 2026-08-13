@@ -2594,3 +2594,45 @@ reported its absence as a defect.
 Read how the real thing fails before writing the double that stands in for failure. A test
 double is a claim about the system, and a wrong one produces a confident failure that costs more
 than no test — it points at working code and takes the reader with it.
+
+## Rule 189 — a document that states the same quantity twice will eventually disagree with itself
+
+The README's run-command block said:
+
+    cd backend && pytest          # ~3,200 pass, ~92 skip
+
+and two hundred lines below, in the CI table:
+
+    `backend-full` (**4,090+ tests** … the figure is a FLOOR asserted by
+    `test_readme_test_count_is_not_stale.py`)
+
+Both describe the same suite. The second is guarded and stayed true; the first is not and
+drifted by thirteen hundred. The document contradicted itself, and no check in the repository
+could see it, because the check was pointed at the other sentence.
+
+This is worse than a single stale number. A reader who finds two answers in one document has no
+way to tell which is current, so the accurate one loses its authority along with the stale one
+— and the guarded figure was the accurate one.
+
+Where a quantity appears twice, either guard both occurrences or make one point at the other.
+The cheap version of "point at" is a sentence: *"the floor stated in the CI table below"*. What
+does not work is assuming the second mention will be updated alongside the first, which is the
+assumption that produced this.
+
+## Rule 190 — guard the number a newcomer meets first
+
+    cd frontend && npx vitest run  # ~525 across 73 files
+
+The real figures are 1,089 across 133. This line had no guard of any kind, while the backend
+floor beside it had one — and of the two, this is the one a new contributor meets first,
+because it is in the block titled "run the tests".
+
+Staleness costs most where it is met earliest. A developer who runs the suite and sees twice
+the documented count cannot distinguish a stale document from a broken checkout, and the
+natural reading is the unflattering one: *I have done something.* The cost is not the wrong
+number, it is the half hour spent proving the number wrong, and the small permanent discount
+applied to everything else the document says.
+
+So when choosing which prose numbers deserve a guard, weight them by who reads them and when.
+The figures deep in an architecture table are read by people who already know the system. The
+one in the quick-start block is read by someone with no way to check it.

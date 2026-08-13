@@ -10304,3 +10304,36 @@ the "declared field that is dropped" defect this codebase has fixed more than on
 field it would land on is `hosDriveHoursRemaining`, which the compliance tab reads to count DOT
 violations. The guard names the route and fails the day it is fixed properly, which is a to-do
 with an expiry rather than an exemption.
+
+### The README disagreed with itself, and only one half was guarded
+
+Continuing the ratchet audit into the zero ratchets first: all four assert their own
+populations — `len(ADAPTERS) >= 4`, `len(capped) >= 20`, `len(PAIRS) >= 8` — so none can pass
+vacuously over an empty subject. Clean, and the repository got there first.
+
+Applying rule 44 instead — *which numbers in prose does no guard check?* — found the run-command
+block:
+
+```
+cd backend && pytest          # ~3,200 pass, ~92 skip
+cd frontend && npx vitest run  # ~525 across 73 files
+```
+
+**The backend figure contradicted a guarded claim two hundred lines below it**, which states
+"4,090+ tests" and is asserted by `test_readme_test_count_is_not_stale.py`. One document, two
+numbers for the same suite, and only the second could ever be caught. The real figure is 4,489.
+
+**The frontend figure was low by more than half** — 1,089 tests across 133 files, against ~525
+across 73 — and nothing anywhere read it. It is the number a developer checks their very first
+run against, so the failure mode is a new contributor seeing twice the claimed count and
+wondering what they have broken.
+
+Both are now floors and both are asserted. The frontend *test* count cannot be measured from
+the backend suite without running vitest, so what is checked is the *file* count — a filesystem
+fact, and the half that had drifted worst. Each gets the two-sided treatment the existing floor
+already had: it must not overstate reality, and it must not sit so far below it that nobody
+could fall through. Mutation-verified in both directions.
+
+The two gate counts in the same document — "31 blocking jobs" across both workflows and "14
+blocking gates on every branch push" — were checked and are different scopes, not a
+contradiction.

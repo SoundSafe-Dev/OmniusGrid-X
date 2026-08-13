@@ -130,6 +130,7 @@ to ask where else it could live.
 | A test the runner never collects | every test file on disk vs what pytest/vitest execute | **clean: 357/358 pytest (1 deliberate opt-in, job verified), 133/133 vitest; playwright already guarded** | `test_every_e2e_spec_is_run.py` (pre-existing) |
 | A dependency failure that raises instead of reporting | the four health checkers and their aggregator | **clean, and now pinned — the swallow ratchet was tempting the opposite change** | `test_a_failing_dependency_is_reported_not_raised.py` |
 | A response model that declares nothing | all 454 routes carrying a `response_model` | **23 permissive; 5 legitimately dynamic, the rest invisible to the coverage ratchet** | `test_a_permissive_response_model_is_not_a_contract.py` |
+| A number in prose no guard reads | every count in the README | **2: the run-command block, one of which contradicted a guarded figure in the same document** | `test_readme_test_count_is_not_stale.py`, extended |
 
 Twenty-nine of these carry a numbered section below. **Response-shape mismatch is the
 exception**: it was swept in the same pass as the `get_db` work and came back clean, so

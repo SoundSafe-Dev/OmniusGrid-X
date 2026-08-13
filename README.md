@@ -37,7 +37,7 @@
 | [Documentation](#documentation) | The rest of `docs/` |
 
 **Engineering method.** The sweeps and guards in this repository follow a set of numbered
-rules, each written after a defect that a weaker check had missed. Rules 21–188 are recorded in
+rules, each written after a defect that a weaker check had missed. Rules 21–190 are recorded in
 `docs/engineering/defect-class-sweeps.md`, with the reasoning for each; the short list at the
 top of that file is what most people read.
 
@@ -247,9 +247,9 @@ python scripts/seed_demo_kanban.py
 ## Running the suites
 
 ```bash
-cd backend && pytest          # ~3,200 pass, ~92 skip. Docker is OPTIONAL: the real-DB
+cd backend && pytest          # 4,400+ pass, ~100 skip. Docker is OPTIONAL: the real-DB
                               # tests skip without it, the rest run anyway
-cd frontend && npx vitest run  # ~525 across 73 files
+cd frontend && npx vitest run  # 1,000+ across 130+ files
 cd frontend && npx tsc --noEmit
 ```
 

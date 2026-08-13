@@ -141,3 +141,69 @@ class TestTheOperationCountIsNotStale:
             f"the OpenAPI schema declares {actual:,}. This is the figure quoted to describe "
             f"how much of the API is covered, so it has to be the real one."
         )
+
+
+# --------------------------------------------------------------------------------------
+# The two figures in the run-command block, which had no guard at all (FS-689).
+#
+# `cd backend && pytest  # ~3,200 pass` sat two hundred lines above a GUARDED claim of
+# "4,090+ tests", so the document disagreed with itself and only one half could ever be
+# caught. `cd frontend && npx vitest run  # ~525 across 73 files` was worse: the real
+# figures are 1,089 across 133, so the number a developer checks their first run against
+# was low by more than half, and nothing anywhere read it.
+#
+# Both are now floors, and both are asserted. The frontend TEST count cannot be measured
+# from here without running vitest, so what is checked is the FILE count — a filesystem
+# fact, and the half that drifted worst.
+# --------------------------------------------------------------------------------------
+
+RUN_BLOCK_BACKEND = re.compile(r"cd backend && pytest\s+#\s*([\d,]+)\+ pass")
+RUN_BLOCK_FRONTEND = re.compile(r"cd frontend && npx vitest run\s+#\s*([\d,]+)\+ across ([\d,]+)\+ files")
+
+
+def _frontend_test_files() -> int:
+    src = REPO / "frontend" / "src"
+    return len([p for p in src.rglob("*.test.ts")] + [p for p in src.rglob("*.test.tsx")])
+
+
+class TestTheRunCommandFiguresAreFloors:
+    def test_the_backend_line_states_a_floor(self):
+        match = RUN_BLOCK_BACKEND.search(README.read_text())
+        assert match, (
+            "the README's `cd backend && pytest` line no longer states a floor of the form "
+            "`N+ pass`. It read `~3,200 pass` while a guarded claim two hundred lines below "
+            "said 4,090+, and a document that disagrees with itself teaches readers to "
+            "believe neither figure."
+        )
+
+    def test_the_backend_line_is_not_an_overstatement(self):
+        claimed = int(RUN_BLOCK_BACKEND.search(README.read_text()).group(1).replace(",", ""))
+        actual = _collected()
+        assert actual >= claimed, (
+            f"the run-command block claims {claimed:,}+ and pytest collects {actual:,}"
+        )
+
+    def test_the_frontend_line_states_both_floors(self):
+        match = RUN_BLOCK_FRONTEND.search(README.read_text())
+        assert match, (
+            "the README's `cd frontend && npx vitest run` line no longer states floors of "
+            "the form `N+ across M+ files`"
+        )
+
+    def test_the_frontend_file_count_is_not_an_overstatement(self):
+        claimed = int(RUN_BLOCK_FRONTEND.search(README.read_text()).group(2).replace(",", ""))
+        actual = _frontend_test_files()
+        assert actual >= claimed, (
+            f"the README claims {claimed}+ frontend test files and {actual} exist. Either "
+            f"lower the figure or find out which files stopped being test files."
+        )
+
+    def test_the_frontend_file_floor_is_not_meaninglessly_low(self):
+        """The same second half the backend floor already has: a floor nobody can fall
+        through asserts nothing. `73` was left standing while the tree grew to 133."""
+        claimed = int(RUN_BLOCK_FRONTEND.search(README.read_text()).group(2).replace(",", ""))
+        actual = _frontend_test_files()
+        assert actual - claimed <= 40, (
+            f"the README claims {claimed}+ frontend test files while {actual} exist — a "
+            f"{actual - claimed}-file gap. Raise the figure."
+        )

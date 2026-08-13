@@ -1253,6 +1253,21 @@ one of its findings. The habit that catches it:
      as a defect. Read how the real thing fails before writing the double that stands in for
      failure.
 
+189. **A document that states the same quantity twice will eventually disagree with itself.**
+     The README claimed `~3,200 pass` in its run-command block and `4,090+ tests` two hundred
+     lines below, where a guard asserts the second. The guarded figure stayed true and the
+     unguarded one drifted by thirteen hundred, so the document contradicted itself in a way
+     no check could see. When the same number appears twice, either guard both or make one of
+     them point at the other — a reader who finds two answers stops trusting the one that is
+     right.
+
+190. **Guard the number a newcomer meets first.**
+     The frontend line — `~525 across 73 files`, against 1,089 across 133 — was the figure a
+     developer compares their very first `vitest run` against, and it was the only major count
+     in the document with no guard at all. Staleness costs most where it is met earliest: the
+     newcomer cannot tell a stale doc from a broken checkout, and the natural conclusion is
+     that they broke something.
+
 ---
 
 ## Open observations, not yet tickets
