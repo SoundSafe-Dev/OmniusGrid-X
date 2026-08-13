@@ -2475,3 +2475,71 @@ own; list the paths each checker is pointed at; subtract. The answer takes minut
 depend on suspecting anything in particular — which matters, because the places this finds are
 the ones nobody suspects. A directory nobody checks is usually a directory nobody visits, and
 those two facts protect each other.
+
+## Rule 184 — a citation is a claim, and claims decay
+
+This repository explains itself by cross-reference. Comments say *"asserted by X"*, *"the guard
+that keeps this is Y"*, and 256 distinct test filenames are named in prose across the tree.
+That habit is most of what makes the reasoning followable a year later.
+
+Two of those names pointed at nothing:
+
+    # per driver — `test_fleet_health_filters_in_sql.py` asserts these reads do not loop.
+    * `test_production_settings_are_validated.py` refuses `GEOTAB_SIMULATED` in production.
+
+The first property is real and lives in `test_fleet_health_query_shape.py`. The second is real
+and lives in `app/core/config.py::validate_settings`. Both guards existed; both trails were
+broken.
+
+That is worse than no comment. A reader who follows a citation into nothing has to choose
+between two conclusions — the protection was deleted, or they searched wrongly — and neither is
+cheap. Do it twice and they stop following citations, which costs the codebase the thing that
+made it legible.
+
+A number in prose gets a guard here (rule 44). A filename in prose is the same kind of claim
+and had none.
+
+## Rule 185 — narrow the scope until the detector is right, rather than adding exclusions until it is quiet
+
+The first citation checker flagged thirteen lines. Among them: its own docstring, which names
+the missing files while explaining that they are missing; and the corrected sentence in the
+geotab test, which names the file that never existed in order to say so. Prose describing a
+stale filename matches a detector for stale filenames perfectly — rule 37, arrived at from a
+new direction.
+
+The obvious repair is an exclusion list: this file, that file, those four documents. It would
+have worked, and it would have grown with every future explanation anybody wrote, until nobody
+could tell which entries were reasons and which were surrender.
+
+The repair used instead was a principle. **A comment in a source tree naming a test file is a
+claim about the present; a test or a document may legitimately narrate history.** So the guard
+reads `app/`, `opsgrid_agent/` and `src/` only. 48 citations, all resolving, and it fails when
+the original stale line is restored.
+
+Scope states a reason. An allowlist records the occasions on which the reason was missing.
+Where both are available, the reason is the artefact worth keeping.
+
+## Rule 186 — writing up a defect can trip the guard for that defect, and that is the guard working
+
+Two comments cited test files that do not exist. Fixing them was a minute's work; documenting
+them meant naming both files in the delivery log, and `test_documented_files_exist.py` — which
+has checked every backticked path in `docs/` since FS-513 — failed on that prose in the same
+run.
+
+The reflex is to read that as an over-eager check catching prose it should not. It is the
+opposite. The document really does contain a name that resolves to nothing, and a future reader
+following it really would find nothing; the fact that the surrounding sentence explains why
+does not change what the string does. Rule 37 has been arrived at from several directions in
+this repository — a detector matching the comment that describes a defect — and this is the
+same shape with the roles swapped: the comment describing a defect *is* an instance of it.
+
+The answer is the register that guard already carries. Each name goes in with a reason, so the
+exception is stated rather than the check quietly widened. Three entries, three sentences, and
+the next person sees both the exception and why it is one.
+
+Two smaller lessons came with it. The documentation half of this class already existed and I
+built the source half without looking — rule 141, twice in one session, and reading the old
+guard first would have been the shortest route to the new one. And I claimed the existing guard
+shared a dotted-name bug I had just fixed in mine; it does not. Its pattern captures
+`geofencing.realmode.test.ts` whole. It flagged a fragment because I had written that fragment
+in backticks while explaining my own bug — a fault in my prose, reported accurately.

@@ -515,7 +515,7 @@ async def driver_safety(org_id: UUID = Depends(get_tenant_org_id), db: AsyncSess
 
     current = _counts_by_driver(await _exceptions(db, org_id, since=window_start))
     # The window before this one, for `trend`. Fetched whole and split rather than issued
-    # per driver — `test_fleet_health_filters_in_sql.py` asserts these reads do not loop.
+    # per driver — `test_fleet_health_query_shape.py` asserts these reads do not loop.
     earlier = _counts_by_driver(
         [
             e for e in await _exceptions(db, org_id, since=previous_start)

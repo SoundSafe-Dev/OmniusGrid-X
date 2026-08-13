@@ -125,6 +125,8 @@ to ask where else it could live.
 | A directory no compiler reads | every TS directory vs the tsconfig include | **1: `e2e/` was outside the typecheck entirely, which is why the above survived** | `everyTestDirectoryIsTypechecked.test.ts` |
 | A codebase with no gate on a branch push | every tested directory in `ci-cd.yml` vs the branch-push workflow | **1: the whole edge agent, 386 tests; the guard for this class was blind to it because its list is hand-typed** | `test_branch_pushes_reach_the_gates.py`, now derived |
 | Source outside every static checker | every directory of TS/Python vs the tsconfig include and the flake8 scopes | **528 Python and 7 TypeScript files read by nothing; all clean, all now gated** | `everyTestDirectoryIsTypechecked.test.ts` + the widened CI scopes |
+| An env var read outside the settings object | every `os.environ`/`getenv` read in `app/` | **5 found, all deliberate and correct — recorded as examined rather than left open** | none needed |
+| A source comment citing a guard that does not exist | 256 test filenames named in prose | **2 live: both guards real, both trails broken** | `test_cited_guards_exist.py` |
 
 Twenty-nine of these carry a numbered section below. **Response-shape mismatch is the
 exception**: it was swept in the same pass as the `get_db` work and came back clean, so

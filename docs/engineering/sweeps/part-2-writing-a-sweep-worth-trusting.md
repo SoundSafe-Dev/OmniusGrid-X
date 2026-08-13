@@ -1215,6 +1215,28 @@ one of its findings. The habit that catches it:
      suite is green. The gap is only visible from the config outward, and it hides best where
      it costs most, because a directory nobody checks is usually a directory nobody visits.
 
+184. **A citation is a claim, and claims decay.**
+     Two comments named guard files that do not exist — one of them a file that never has.
+     Both guards were real; only the trail was broken, which is worse than no comment, because
+     the reader who follows it must choose between "the protection was deleted" and "I
+     searched wrongly". In a codebase that explains itself by cross-reference, the references
+     need the same treatment as any other number in prose: something has to check them.
+
+185. **Narrow the scope until the detector is right, rather than adding exclusions until it is quiet.**
+     The citation checker first flagged thirteen lines, including its own explanation of the
+     defect and the sentence that corrects the original. An exclusion list would have grown
+     with every future explanation. The fix was a principle instead: source comments are claims
+     about the present, tests and documents narrate history — so check source only. Scope is a
+     reason; an allowlist is a record of the times the reason was absent.
+
+186. **Writing up a defect can trip the guard for that defect — and that is the guard working.**
+     Documenting two stale filename citations meant naming both files, and the existing
+     documentation guard failed on that prose in the same run. The reflex is to treat the
+     failure as noise from an over-eager check; it is not. The register of deliberate
+     exceptions is the designed answer, and using it leaves the exception stated with a reason
+     instead of silently widened. If a guard fires on your explanation, the explanation is a
+     real instance of the shape — write it down as one.
+
 ---
 
 ## Open observations, not yet tickets

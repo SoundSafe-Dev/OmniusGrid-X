@@ -6,7 +6,11 @@ and both are structural:
 
   * `test_simulated_data_says_so.py` (FS-267) pairs gating against stamping across the module,
     so a fifth gated function cannot be added without a provenance stamp.
-  * `test_production_settings_are_validated.py` refuses `GEOTAB_SIMULATED` in production.
+  * `app/core/config.py::validate_settings` refuses `GEOTAB_SIMULATED` in production, and
+    `test_simulated_data_says_so.py` is what holds it. This line named
+    `test_production_settings_are_validated.py` — a file that has never existed, so a
+    reader following the citation found nothing and could reasonably conclude the
+    protection was gone (FS-686).
 
 **Neither runs the code.** They assert the shape of the source, and the gate is spelled two
 different ways: four functions call `_require_simulated()`, and `get_device_location` inlines

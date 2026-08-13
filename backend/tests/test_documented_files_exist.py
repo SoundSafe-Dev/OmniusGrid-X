@@ -89,6 +89,14 @@ DELIBERATELY_ABSENT: Dict[str, str] = {
     "infra/k8s/timescaledb-patroni.yml": "his branch's path; here infrastructure/k8s/database-ha/ + legacy-patroni/",
     "infra/k8s/pgbackrest-backup.yml": "his branch's path; here infrastructure/k8s/legacy-patroni/pgbackrest-backup.yml",
     "frontend/.../RealtimeStreamChart.tsx": "an elided path in that same table; referenced by nothing on either branch",
+    # FS-686. The delivery log and the sweeps documents describe two citations that pointed
+    # at files which do not exist — one of which never has — and cannot make that point
+    # without naming them. This guard is what found the entries, by failing on the prose
+    # written about them, which is rule 37 arriving from a new direction: a document
+    # explaining a stale filename matches a detector for stale filenames exactly.
+    "test_fleet_health_filters_in_sql.py": "FS-686: the stale name `fleet_health.py` used to cite; the guard is test_fleet_health_query_shape.py",
+    "test_production_settings_are_validated.py": "FS-686: a file that has never existed, cited by the geotab test; the refusal lives in app/core/config.py::validate_settings",
+    "realmode.test.ts": "FS-686: the fragment a dotted-name regex captures out of geofencing.realmode.test.ts, quoted while explaining that bug",
 }
 
 

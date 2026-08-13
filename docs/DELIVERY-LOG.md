@@ -10158,3 +10158,57 @@ than looking inside any file. From inside a directory nothing looks wrong: the i
 the tests run, the suite is green. The gap is only visible from the config outward, and it is
 invisible in exactly the places where it costs the most, because a directory nobody checks is
 usually a directory nobody visits.
+
+### Comments citing guards that do not exist
+
+The env-var sweep produced no defects — all five direct `os.environ` reads are deliberate and
+correct, and worth recording as examined: `ERP_WEBHOOK_ACCEPT_LEGACY_SIGNATURE` is read
+per-request *on purpose* so the switch can be closed without a restart (moving it into the
+import-time `Settings` singleton would regress that), `WORKER_HEALTH_PORT` is injected by four
+Kubernetes manifests and correctly `None` outside them, and `GOOGLE_API_KEY` gates an opt-in
+vision feature that is off by default and **reports its own unavailability in the response**
+rather than returning an empty string as extracted text.
+
+But chasing one of them surfaced something else: the code cited a guard file that does not
+exist. Swept the class — 256 test filenames are named in prose across the tree — and two
+citations were live:
+
+* `fleet_health.py`: *"`test_fleet_health_filters_in_sql.py` asserts these reads do not loop"*.
+  The property is real; the file is `test_fleet_health_query_shape.py`.
+* `test_the_geotab_gate_actually_holds.py`: *"`test_production_settings_are_validated.py`
+  refuses `GEOTAB_SIMULATED` in production"*. **That file has never existed.** The refusal is
+  in `app/core/config.py::validate_settings`.
+
+In both cases the guard was real and only the trail was broken — the failure that costs an
+afternoon and teaches a reader to stop trusting the comments.
+
+**The detector needed narrowing, and the reason is the best part.** The first version flagged
+thirteen lines, including its own docstring explaining the defect, and including the very
+sentence in the geotab file that *corrects* the citation. Prose that names a stale filename in
+order to say it is stale matches the detector for stale filenames perfectly — rule 37 in its
+purest form. It also captured only `realmode.test.ts` out of `geofencing.realmode.test.ts`,
+because the dot sat outside the character class, reporting four existing files as missing.
+
+Narrowed to **source trees only**, which is a principle rather than an exclusion list: a
+comment in `app/`, `opsgrid_agent/` or `src/` naming a test file is a claim about the present,
+while a test or a document may legitimately narrate history. 48 citations in source, all
+resolving, and the guard fails when the original stale line is put back.
+
+**And the documentation half of that guard already existed.** `test_documented_files_exist.py`
+has checked every backticked path in `docs/` since FS-513, with a `DELIBERATELY_ABSENT`
+register for names the prose must mention while they do not exist. I built the source-side
+guard without looking for it — rule 141 for the second time in this session, and the shortest
+route to the new guard would have been to read the old one first. They are complementary
+rather than duplicate (`docs/` versus source comments), and
+`test_no_two_guards_keep_the_same_list.py` confirms they keep different lists.
+
+**It then caught me**, which is the part worth keeping. Writing this entry meant naming the two
+missing files, and the existing guard failed on that prose within the same run — rule 37 from
+yet another direction: a document explaining a stale filename matches a detector for stale
+filenames exactly. The three names went into its register with reasons, which is precisely what
+that register is for.
+
+**One correction.** I said the existing guard shared my detector's dotted-name bug. It does
+not: its pattern captures `geofencing.realmode.test.ts` whole. It flagged the fragment because
+**I wrote that fragment in backticks** while explaining my own bug. The fault was in my prose,
+not in its regex.
