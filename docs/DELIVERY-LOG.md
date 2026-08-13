@@ -10492,3 +10492,53 @@ spelling misses. `unless` keeps the left side when the right is absent.
 
 Mutation-verified by making that exact substitution: with `and`, the never-delivered test
 produces `got:[]`.
+
+---
+
+## FS-693 — the same defect in the backend, on the control path
+
+Rule 196 asks where else health is computed from the mechanism rather than the work. The
+backend has two sites that answer `.done()`, and one of them is `_check_command_dispatch`.
+
+```python
+if dispatch_task is not None and dispatch_task.done():
+    return "error: dispatch loop exited"
+return "ok"
+```
+
+`_dispatch_loop` catches every exception per iteration and continues — **which is correct**;
+one poisoned command must not stop dispatch for the fleet. It also means the task never
+exits, so `done()` is False forever and the check above can only ever say `ok`. A
+misconfigured producer, an unreadable row, a schema drift: `command_dispatch: ok` on the
+operator's health page, and not one command dispatched. Commands are how an operator reaches
+a machine, so this is the control path going quiet with a green light over it.
+
+`_timeout_loop` had no check at all: commands that should expire silently never do.
+
+Fixed by counting what the loops achieve. `_loop_failures` resets on a successful iteration
+and increments on a failed one; three consecutive failures is an error, which is past a
+transient DB hiccup and far short of an operator waiting on a command that will never be
+sent. Both halves mutation-verified separately — the health branch, the increment, and the
+reset each have a test that fails without them.
+
+### And the surface behind it: seven of eight started services are watched by nobody
+
+`main.py:88-104` starts eight background services. `/health/detailed` names one.
+
+`oee_calculator`, `export_scheduler`, `compliance_report_dispatcher`, `rollout_orchestrator`
+(mentioned in health.py only inside a comment), `posting_drain_scheduler`, `report_scheduler`
+and `error_tracker` run for the lifetime of the process and appear in no check. A stalled OEE
+calculator leaves every figure on the dashboard frozen at its last good value, which reads as
+a quiet shift. If the error tracker dies, errors stop being reported and the silence reads as
+a clean system.
+
+Registered in `test_a_started_service_is_a_service_somebody_watches.py` with what would close
+each entry, ratcheted so it can only shrink. Two are near-trivial (a counter, a last-run
+timestamp); the rest need a definition of "working" that belongs to the lane owner, which is
+why this is a register and not seven guessed probes.
+
+**`test_no_two_guards_keep_the_same_list.py` caught it immediately** — `EXPECTED_STARTED` in
+`test_service_lifecycle_is_declared.py` already enumerates these services. The overlap is
+recorded rather than exempted by reflex: the new register parses `main.py` directly rather
+than reading that list, so a service added to boot lands in its denominator whether or not
+anyone updated a declaration, and the 7-of-8 overlap is the finding rather than a copy.

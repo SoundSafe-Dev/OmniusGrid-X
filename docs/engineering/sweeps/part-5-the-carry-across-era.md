@@ -2815,3 +2815,45 @@ check, so labelling is skipped in silence and every wrapped collector reverts to
 which no longer joins the gauge. That mutation passed the entire package. The test now drives
 the real `_start_collector` and reads the label off the collector that will do the counting;
 rule 191 applies to guards as readily as to fixes.
+
+## Rule 196, carried into the backend — and the answer was the control path
+
+Rule 196 was written about a collector. The obvious next question is where else a service
+reports its own health from the existence of the thing doing the work, and the backend has
+exactly two sites that call `.done()`. One is the task-ownership helper. The other is
+`_check_command_dispatch`, and it was the whole of that check.
+
+The loop it watches is written like this, and correctly:
+
+```python
+while self._running:
+    try:
+        await self.dispatch_pending()
+    except Exception as exc:
+        logger.exception("command_dispatch_iteration_failed", error=str(exc))
+    await asyncio.sleep(self._poll_interval_seconds)
+```
+
+One poisoned command must not stop dispatch for the fleet, so the loop swallows and
+continues. **A loop written never to die cannot answer a health check phrased as "have you
+died".** `done()` is False for as long as the process lives, whether the loop is dispatching
+commands or throwing on every single iteration.
+
+The failure mode is the same as the collector's and lands somewhere worse: an operator sends
+a command to a machine, the command sits in pending forever, and `/health/detailed` reports
+`command_dispatch: ok` the entire time.
+
+The repair is the same too — count what the loop achieves rather than ask whether it exists.
+Consecutive failures, reset by a success, three of them being an error.
+
+**The register is the more useful half of this finding.** Applying the same question to the
+rest of the startup sequence: `main.py` starts eight background services and health reports
+on one. Seven run for the lifetime of the process, watched by nothing. The one that most
+deserves a note is `error_tracker` — if the error tracker dies, errors stop being reported,
+and a system that has stopped reporting errors looks exactly like a system that has stopped
+having them. That is rule 196 in one sentence, and it is the same sentence as
+`EdgeAgentBufferHigh` watching a buffer that stays empty because nothing was collected.
+
+Both of those alerts are silenced *by* the thing they exist to detect. When a health signal
+is derived from the absence of bad news, check whether the failure being watched for would
+also suppress the news.

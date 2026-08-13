@@ -89,6 +89,14 @@ class CommandExecutor:
         #: (FS-474). Set here rather than lazily so the loop cannot read it before the
         #: first failure has set it.
         self._ack_reconnect_delay: float = self._ACK_RECONNECT_INITIAL_SECONDS
+        #: Consecutive failed iterations per background loop (FS-693).
+        #:
+        #: Each loop catches every exception and continues, which is correct — one bad
+        #: command must not kill dispatch for the whole fleet. The consequence is that a
+        #: loop failing on EVERY iteration runs forever, so `_dispatch_task.done()` is
+        #: False and health reported `ok` while not one command was dispatched. The task
+        #: is the mechanism; these counters are the work.
+        self._loop_failures: dict[str, int] = {"dispatch": 0, "timeout": 0}
         self._timeout_seconds = 60
         self._max_retries = 3
         self._poll_interval_seconds = 1.0
@@ -545,9 +553,11 @@ class CommandExecutor:
         while self._running:
             try:
                 await self.dispatch_pending()
+                self._loop_failures["dispatch"] = 0
             except asyncio.CancelledError:
                 raise
             except Exception as exc:  # noqa: BLE001
+                self._loop_failures["dispatch"] += 1
                 logger.exception("command_dispatch_iteration_failed", error=str(exc))
             await asyncio.sleep(self._poll_interval_seconds)
 
@@ -555,9 +565,11 @@ class CommandExecutor:
         while self._running:
             try:
                 await self.expire_timed_out()
+                self._loop_failures["timeout"] = 0
             except asyncio.CancelledError:
                 raise
             except Exception as exc:  # noqa: BLE001
+                self._loop_failures["timeout"] += 1
                 logger.exception("command_timeout_iteration_failed", error=str(exc))
             await asyncio.sleep(10)
 

@@ -236,18 +236,51 @@ def _check_model_registry_storage() -> tuple[str, dict[str, Any]]:
         return f"error: {exc}", {}
 
 
+#: Consecutive failed iterations before a loop is reported as broken (FS-693). Dispatch
+#: polls once a second, so three is about three seconds of a loop achieving nothing —
+#: comfortably past a single transient DB hiccup, and far short of an operator waiting on
+#: a command that will never be sent.
+_MAX_CONSECUTIVE_LOOP_FAILURES = 3
+
+
 def _check_command_dispatch() -> tuple[str, dict[str, Any]]:
-    """Verify the durable command-dispatch loop is running."""
+    """Verify the durable command-dispatch loop is doing its work — not merely alive.
+
+    THE OLD CHECK ASKED WHETHER THE TASK HAD EXITED, and a loop that fails on every
+    iteration never exits: `_dispatch_loop` catches every exception and continues, which
+    is correct behaviour (one poisoned command must not stop dispatch for the fleet) and
+    which makes `done()` useless as a health signal. A misconfigured producer or a schema
+    the loop cannot read would leave `command_dispatch: ok` on the operator's health page
+    while **not one command was dispatched** — and commands are how an operator reaches a
+    machine.
+
+    That is rule 196: liveness derived from the worker is not liveness of the work. The
+    executor now counts consecutive failed iterations, which is the work, and this reads
+    that. Exiting is still checked — it is a real failure, just not the only one.
+    """
     try:
         from app.services.command_executor import command_executor
 
         running = bool(command_executor._running)
-        details: dict[str, Any] = {"running": running}
+        failures = getattr(command_executor, "_loop_failures", {})
+        details: dict[str, Any] = {"running": running, "consecutive_failures": dict(failures)}
         if not running:
             return "not_running", details
+
         dispatch_task = command_executor._dispatch_task
         if dispatch_task is not None and dispatch_task.done():
             return "error: dispatch loop exited", details
+
+        broken = sorted(
+            name
+            for name, count in failures.items()
+            if count >= _MAX_CONSECUTIVE_LOOP_FAILURES
+        )
+        if broken:
+            return (
+                f"error: {', '.join(broken)} loop failing every iteration",
+                details,
+            )
         return "ok", details
     except Exception as exc:
         return f"error: {exc}", {}

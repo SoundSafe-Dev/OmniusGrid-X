@@ -51,6 +51,20 @@ OVERLAP_THRESHOLD = 3
 #: compared them and found the overlap meaningful rather than accidental.
 DIFFERENT_QUESTIONS: Dict[frozenset, str] = {
     frozenset({
+        "test_service_lifecycle_is_declared.py::EXPECTED_STARTED",
+        "test_a_started_service_is_a_service_somebody_watches.py::UNWATCHED",
+    }): (
+        "Different questions about the same services, and NEITHER is a copy of the other. "
+        "EXPECTED_STARTED declares which services boot is expected to start, and fails when "
+        "that drifts. UNWATCHED asks which of the services boot ACTUALLY starts are named in "
+        "no health check, and carries per-service reasons — what would have to be true to "
+        "drop the entry — which the first list has no place for. Critically, the second does "
+        "not read the first: it parses `main.py` for `await <name>.start()` directly, so a "
+        "service added to boot appears in its denominator whether or not anybody updated a "
+        "declaration. The overlap is 7 of 8 because 7 of the 8 started services are "
+        "unwatched, which is the finding rather than a duplication (FS-693)."
+    ),
+    frozenset({
         "test_public_probes_do_not_disclose.py::PUBLIC_PROBES",
         "test_route_auth_walk.py::PUBLIC_REQUIRED_EXACT",
     }): (
