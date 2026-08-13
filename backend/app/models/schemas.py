@@ -331,9 +331,23 @@ class DockDoorCreate(DockDoorBase):
 
 class DockDoorUpdate(BaseModel):
     status: Optional[str] = None
-    equipment_capabilities: Dict[str, Any] = {}
+    # `Optional[...] = None`, NOT `Dict[str, Any] = {}` (FS-677). Every other field on every
+    # other Update schema in this file is optional-and-None; this one declared a non-optional
+    # dict defaulting to empty. `exclude_unset` saves it in the handler below, but a caller
+    # reading the schema is told an update must carry the capabilities map, and any future
+    # `model_dump()` without `exclude_unset` would wipe the column.
+    equipment_capabilities: Optional[Dict[str, Any]] = None
     is_active: Optional[bool] = None
     current_trailer_id: Optional[UUID] = None
+    # THE SCHEMA EXISTED AND NOTHING SERVED IT (FS-677) — the fifth instance, and the one my
+    # own summary missed until the create/update pairing was measured from the OpenAPI
+    # document rather than from route paths. A door could be created and never reconfigured:
+    # converting a bay from inbound to cross-dock meant deleting it and losing every
+    # appointment that referenced it.
+    #
+    # `door_number` stays immutable, with `shipment_number` and `trailer_number`, and is
+    # asserted so it reads as a decision rather than another omission.
+    door_type: Optional[str] = None
 
 
 class DockDoorResponse(DockDoorBase):
@@ -795,6 +809,17 @@ class RouteUpdate(BaseModel):
     total_distance_miles: Optional[float] = None
     estimated_duration_hours: Optional[float] = None
     is_active: Optional[bool] = None
+    # WIDENED, AND THE ROUTE THAT USES IT NOW EXISTS (FS-677). This schema was written and
+    # never wired — there was no `PUT /routes/{id}` at all — so a route's endpoints and cost
+    # estimates were fixed at creation forever. That matters more here than elsewhere:
+    # `get_shipment_costs` prices a shipment from its route's distance (FS-665), so a route
+    # entered with the wrong origin priced every shipment on it wrongly, with no correction
+    # short of creating a second route and re-pointing each shipment at it.
+    origin: Optional[Dict[str, Any]] = None
+    destination: Optional[Dict[str, Any]] = None
+    fuel_cost_estimate: Optional[float] = None
+    toll_cost_estimate: Optional[float] = None
+    optimization_criteria: Optional[str] = None
 
 
 class RouteResponse(RouteBase):
@@ -835,6 +860,29 @@ class LoadPlanCreate(LoadPlanBase):
     shipment_id: UUID
     trailer_id: Optional[UUID] = None
     planned_by: Optional[UUID] = None
+
+
+class LoadPlanUpdate(BaseModel):
+    """A load plan that could not be amended (FS-677).
+
+    There was no update schema and no route, so a plan's sequence, weight distribution and
+    reefer zones were whatever the first POST said. Loading is iterative — a pallet does not
+    fit, a zone is wrong — and the only remedy was to create a second plan for the same
+    shipment and leave two contradicting each other on the row.
+
+    `shipment_id` is deliberately absent: a load plan is a plan *for* a shipment, and moving
+    it to another one makes it a different plan rather than a corrected one. Asserted in
+    `test_what_can_be_created_can_be_corrected.py` so it reads as a decision.
+    """
+
+    load_sequence: Optional[List[Dict[str, Any]]] = None
+    weight_distribution: Optional[Dict[str, Any]] = None
+    space_utilization_percent: Optional[float] = None
+    temperature_zones: Optional[List[Dict[str, Any]]] = None
+    special_instructions: Optional[str] = None
+    trailer_id: Optional[UUID] = None
+    planned_by: Optional[UUID] = None
+    metadata: Optional[Dict[str, Any]] = Field(default=None, validation_alias=AliasChoices('meta_data', 'metadata'), serialization_alias='metadata')
 
 
 class LoadPlanResponse(LoadPlanBase):
@@ -895,6 +943,30 @@ class FreightChargeCreate(FreightChargeBase):
     # `billed_at` and `invoice_number` moved for the same reason. A Create schema that
     # accepts an approver for a flow that does not exist is the most misleading of the set,
     # because it reads as an audit field.
+
+
+class FreightChargeUpdate(BaseModel):
+    """A billed figure that could never be corrected (FS-677).
+
+    There was no update schema and no route. FS-665 found this same service inventing a
+    500-mile default and a $2.50 rate, compounding into a $1,333.33 linehaul charge that was
+    presented as computed — and once written, that number could not be amended by any means
+    the API offered. A charge you cannot correct is worse than one that is wrong, because the
+    wrongness becomes permanent at the moment it is noticed.
+
+    `shipment_id` is deliberately absent, for the reason given on `LoadPlanUpdate`: a charge
+    moved to a different shipment is a different charge.
+    """
+
+    charge_type: Optional[str] = None
+    charge_description: Optional[str] = None
+    rate_basis: Optional[str] = None
+    quantity: Optional[float] = None
+    rate: Optional[float] = None
+    amount: Optional[float] = None
+    currency: Optional[str] = None
+    carrier_id: Optional[UUID] = None
+    metadata: Optional[Dict[str, Any]] = Field(default=None, validation_alias=AliasChoices('meta_data', 'metadata'), serialization_alias='metadata')
 
 
 class FreightChargeResponse(FreightChargeBase):
@@ -963,6 +1035,21 @@ class DockAppointmentUpdate(BaseModel):
     actual_start: Optional[datetime] = None
     actual_end: Optional[datetime] = None
     priority: Optional[str] = None
+    # AN APPOINTMENT THAT COULD NOT BE RESCHEDULED (FS-677). This schema existed and no
+    # route took it, so a dock appointment could be started and completed but never MOVED —
+    # and rescheduling is the single most common thing that happens to an appointment. The
+    # door, the carrier and the driver are the same story: a truck reassigned to another
+    # bay meant cancelling and re-booking, losing the appointment's history with it.
+    appointment_type: Optional[str] = None
+    scheduled_start: Optional[datetime] = None
+    scheduled_end: Optional[datetime] = None
+    compliance_required: Optional[bool] = None
+    dock_door_id: Optional[UUID] = None
+    trailer_id: Optional[UUID] = None
+    shipment_id: Optional[UUID] = None
+    operation_id: Optional[UUID] = None
+    carrier_id: Optional[UUID] = None
+    driver_id: Optional[UUID] = None
     metadata: Optional[Dict[str, Any]] = Field(default=None, validation_alias=AliasChoices('meta_data', 'metadata'), serialization_alias='metadata')
 
 
@@ -1030,14 +1117,26 @@ class TruckAssetCorrelationBase(BaseModel):
     metadata: JsonMetadata = Field(default_factory=dict, validation_alias=AliasChoices('meta_data', 'metadata'), serialization_alias='metadata')
 
 
-class TruckAssetCorrelationCreate(TruckAssetCorrelationBase):
-    organization_id: UUID
-    shipment_id: Optional[UUID] = None
-    trailer_id: Optional[UUID] = None
-    asset_id: Optional[UUID] = None
-    operation_id: Optional[UUID] = None
-
-
+# `TruckAssetCorrelationCreate` WAS HERE AND IS DELETED (FS-677).
+#
+# Nothing referenced it. The entity itself is very much alive — `logistics_correlation_engine`
+# reads it twice and writes it once, deriving each row from a dock appointment and the
+# operation feeding it — but it is derived, never posted. There is no create endpoint and
+# there should not be one.
+#
+# Every field on the base is COMPUTED: `readiness_gap_minutes`, `efficiency_score`,
+# `asset_completion_forecast`, and `detention_charge`, which is billable. A create schema for
+# this shape is the FS-668/669 lie in its most expensive form — it advertises that a caller
+# may declare how long a truck waited and what to charge for it. It also carried a required
+# `organization_id`, the FS-523 shape, in a schema no route ever served.
+#
+# `TruckAssetCorrelationResponse` stays: `api/logistics_correlation.py` returns it, and
+# reading a computed correlation was never the problem.
+#
+# A CORRECTION IS RECORDED HERE DELIBERATELY. This was first written up as "a table with five
+# relationships and no reader and no writer anywhere", which was wrong. The grep that produced
+# it ended in `head -6`, and `db/models.py` alone supplies six matching lines — the truncation
+# hid every real use, and the truncated output read exactly like a complete answer.
 class TruckAssetCorrelationResponse(TruckAssetCorrelationBase):
     id: UUID
     organization_id: UUID
@@ -1263,6 +1362,33 @@ class TaskUpdate(BaseModel):
     custom_fields: Optional[Dict[str, Any]] = None
     due_date: Optional[datetime] = None
     color_code: Optional[str] = None
+    # TWELVE FIELDS A TASK COULD BE CREATED WITH AND NEVER CORRECTED (FS-677). A task's
+    # type, its planned start and duration, its effort estimate, its tags, and every link
+    # it carries — asset, operation, alarm, command, parent — were settable once and frozen,
+    # on a board whose whole purpose is that work changes.
+    #
+    # UNLIKE THE OTHER UPDATE SCHEMAS IN THIS FILE, widening this one is not sufficient on
+    # its own: `update_task` does not apply `model_dump(exclude_unset=True)`, it hand-writes
+    # an `if x is not None` block per field so it can build the activity-log changelog. A
+    # field added here and not added there is declared, accepted, and silently dropped —
+    # which is the defect FS-676 had just finished fixing elsewhere. Both halves are done,
+    # and `test_declared_body_fields_reach_the_service.py` is the guard that keeps them
+    # together.
+    #
+    # `board_id` and `parent_task_id` carry constraints the handler enforces: a column must
+    # belong to the task's effective board, and a task may not become its own ancestor.
+    task_type: Optional[str] = None
+    planned_start: Optional[datetime] = None
+    planned_duration: Optional[int] = None
+    estimated_effort_minutes: Optional[int] = None
+    tags: Optional[List[str]] = None
+    completion_actions: Optional[Dict[str, Any]] = None
+    board_id: Optional[str] = None
+    asset_id: Optional[str] = None
+    operation_id: Optional[str] = None
+    alarm_id: Optional[str] = None
+    command_id: Optional[str] = None
+    parent_task_id: Optional[str] = None
 
 
 class TaskResponse(TaskBase):
@@ -1371,7 +1497,16 @@ class TaskRuleBase(BaseModel):
 
 
 class TaskRuleCreate(TaskRuleBase):
-    organization_id: UUID
+    # THE THIRTEENTH (FS-677). FS-523 removed a required, server-discarded
+    # `organization_id` from twelve create schemas; this one was found by the guard,
+    # recorded in `test_declared_body_fields_reach_the_service.py` as another lane's, and
+    # left. `create_task_rule` writes `current_user.organization_id` and never reads the
+    # body's value, so every caller had to send a tenant id that was thrown away — and the
+    # natural client, which carries none, got a 422 on every attempt to create a rule.
+    #
+    # Removed rather than made Optional, for the reason the other twelve carry: a field a
+    # caller can set that changes nothing is its own small lie, and pydantic ignores extra
+    # keys, so a client still sending one is unaffected.
     target_board_id: Optional[UUID] = None
     target_column_id: Optional[UUID] = None
     specific_assignee_id: Optional[UUID] = None
@@ -1388,6 +1523,20 @@ class TaskRuleUpdate(BaseModel):
     auto_approve_timeout_minutes: Optional[int] = None
     assignee_rule: Optional[str] = None
     escalation_config: Optional[Dict[str, Any]] = None
+    # SIX FIELDS A RULE COULD BE CREATED WITH AND NEVER CORRECTED (FS-677). What fires the
+    # rule, where the task it creates lands, who it goes to, who gets told, and what happens
+    # on completion — every routing decision the rule makes was frozen at creation, while
+    # the rule's name and its escalation policy were editable beside them.
+    #
+    # `organization_id` is deliberately absent and is NOT part of this gap: the tenant comes
+    # from the token, and a body field naming it is the IDOR shape `app/core/tenant.py`
+    # forbids. It has been removed from the Create schema in the same change.
+    trigger_type: Optional[str] = None
+    target_board_id: Optional[UUID] = None
+    target_column_id: Optional[UUID] = None
+    specific_assignee_id: Optional[UUID] = None
+    notify_users: Optional[List[UUID]] = None
+    completion_actions: Optional[Dict[str, Any]] = None
 
 
 class TaskRuleResponse(TaskRuleBase):

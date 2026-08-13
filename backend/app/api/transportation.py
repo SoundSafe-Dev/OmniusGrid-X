@@ -22,8 +22,8 @@ from app.models.schemas import (
     DriverCreate, DriverUpdate, DriverResponse,
     ShipmentCreate, ShipmentUpdate, ShipmentResponse,
     RouteCreate, RouteUpdate, RouteResponse,
-    LoadPlanCreate, LoadPlanResponse,
-    FreightChargeCreate, FreightChargeResponse
+    LoadPlanCreate, LoadPlanUpdate, LoadPlanResponse,
+    FreightChargeCreate, FreightChargeUpdate, FreightChargeResponse
 )
 from app.services.transportation_management import transportation_management_service
 
@@ -936,6 +936,45 @@ async def get_routes(
     return result.scalars().all()
 
 
+@router.put("/routes/{route_id}", response_model=RouteResponse, dependencies=[Depends(require_operator_or_admin)])
+async def update_route(
+    route_id: UUID,
+    data: RouteUpdate,
+    organization_id: UUID = Depends(get_tenant_org_id),
+    db: AsyncSession = Depends(get_tenant_db)
+):
+    """Update a route.
+
+    THE SCHEMA EXISTED AND NOTHING SERVED IT (FS-677). `RouteUpdate` has been in
+    `schemas.py` since routes were added and no route took it, so a route's endpoints and
+    cost estimates were fixed at creation. `get_shipment_costs` prices a shipment from its
+    route's distance (FS-665), so a route entered with the wrong origin priced every
+    shipment on it wrongly, and the only remedy was a second route plus re-pointing each
+    shipment by hand.
+
+    Scoped on `organization_id` as well as the tenant session. RLS would refuse a
+    cross-tenant row anyway, but that depends on the database ROLE — the argument
+    `create_dock_door` and `update_asset` both make.
+    """
+    result = await db.execute(
+        select(Route).where(
+            Route.id == route_id,
+            Route.organization_id == organization_id,
+        )
+    )
+    route = result.scalar_one_or_none()
+    if not route:
+        raise HTTPException(status_code=404, detail="Route not found")
+
+    for field, value in data.model_dump(exclude_unset=True).items():
+        setattr(route, field, value)
+
+    route.updated_at = datetime.now(timezone.utc)
+    await db.commit()
+    await db.refresh(route)
+    return route
+
+
 # ==================== Load Plan Endpoints ====================
 
 @router.post("/load-plans", response_model=LoadPlanResponse, dependencies=[Depends(require_operator_or_admin)])
@@ -985,6 +1024,42 @@ async def get_load_plan(
     load_plan = result.scalar_one_or_none()
     if not load_plan:
         raise HTTPException(status_code=404, detail="Load plan not found")
+    return load_plan
+
+
+@router.put("/load-plans/{load_plan_id}", response_model=LoadPlanResponse, dependencies=[Depends(require_operator_or_admin)])
+async def update_load_plan(
+    load_plan_id: UUID,
+    data: LoadPlanUpdate,
+    organization_id: UUID = Depends(get_tenant_org_id),
+    db: AsyncSession = Depends(get_tenant_db)
+):
+    """Amend a load plan (FS-677).
+
+    There was no update schema and no route, so a plan's sequence, weight distribution and
+    reefer zones were whatever the first POST said. Loading is iterative — a pallet does not
+    fit, a zone is wrong — and the only remedy was a second plan for the same shipment,
+    leaving two on the row contradicting each other.
+
+    `shipment_id` is not on the update schema: a plan moved to another shipment is a
+    different plan, not a corrected one.
+    """
+    result = await db.execute(
+        select(LoadPlan).where(
+            LoadPlan.id == load_plan_id,
+            LoadPlan.organization_id == organization_id,
+        )
+    )
+    load_plan = result.scalar_one_or_none()
+    if not load_plan:
+        raise HTTPException(status_code=404, detail="Load plan not found")
+
+    for field, value in data.model_dump(exclude_unset=True).items():
+        setattr(load_plan, field, value)
+
+    load_plan.updated_at = datetime.now(timezone.utc)
+    await db.commit()
+    await db.refresh(load_plan)
     return load_plan
 
 
@@ -1040,6 +1115,43 @@ async def get_shipment_charges(
         select(FreightCharge).where(FreightCharge.shipment_id == shipment_id)
     )
     return result.scalars().all()
+
+
+@router.put("/freight-charges/{charge_id}", response_model=FreightChargeResponse, dependencies=[Depends(require_operator_or_admin)])
+async def update_freight_charge(
+    charge_id: UUID,
+    data: FreightChargeUpdate,
+    organization_id: UUID = Depends(get_tenant_org_id),
+    db: AsyncSession = Depends(get_tenant_db)
+):
+    """Correct a freight charge (FS-677).
+
+    There was no update schema and no route. FS-665 found this same service inventing a
+    500-mile default and a $2.50 rate, compounding into a $1,333.33 linehaul charge
+    presented as computed — and once written, that figure could not be amended by any means
+    the API offered. A charge you cannot correct is worse than one that is wrong, because
+    the wrongness becomes permanent at the moment somebody notices it.
+
+    `shipment_id` is not on the update schema: a charge moved to another shipment is a
+    different charge.
+    """
+    result = await db.execute(
+        select(FreightCharge).where(
+            FreightCharge.id == charge_id,
+            FreightCharge.organization_id == organization_id,
+        )
+    )
+    charge = result.scalar_one_or_none()
+    if not charge:
+        raise HTTPException(status_code=404, detail="Freight charge not found")
+
+    for field, value in data.model_dump(exclude_unset=True).items():
+        setattr(charge, field, value)
+
+    charge.updated_at = datetime.now(timezone.utc)
+    await db.commit()
+    await db.refresh(charge)
+    return charge
 
 
 # ==================== Vehicles (task D20; backed by migration 025) ====================

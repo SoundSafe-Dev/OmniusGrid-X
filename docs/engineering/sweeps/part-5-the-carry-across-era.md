@@ -2002,3 +2002,59 @@ finding is unusually actionable, because when the route exists you can tell from
 whether the answer is "wire it" or "delete it". Where you cannot tell, name it in a register
 with the reason, which is what `TruckAssetCorrelationCreate` got: a table with five
 relationships, no reader, no writer, and a question for whoever designed it.
+
+## Rule 162 — a detector that names ninety-five defects in a tree with five is not a first pass
+
+The question was: which entities can be created and never updated? The obvious detector walks
+route paths — every collection `POST` should have a sibling `PUT`.
+
+It reported **95 of 123 POSTs**. Most POSTs are actions, not entity creation: `/auth/login`,
+`/engines/cloud/flush`, `/data-retention/enforce`, `/alarms/acknowledge-all`. And it reported
+`POST /api/v1/assets/` as unupdatable next to `PUT /api/v1/assets/{id}`, because one has a
+trailing slash and the other does not.
+
+The instinct is to tune: strip trailing slashes, add a denylist of action verbs, exclude paths
+under `/auth`. Every one of those is a heuristic that will itself need calibrating, and a
+denylist of verbs is a list somebody has to maintain against a growing API.
+
+The fix was a different join. Pair by **schema**, from the OpenAPI document: find the operation
+whose request body is `XCreate`, find the one whose body is `XUpdate`, require that if the
+first exists so does the second. There is no heuristic in it — an action endpoint has no
+`*Create` model, so it never enters the comparison — and the answer came back as five, one of
+which my own hand-written summary of the problem had missed.
+
+When a detector's output is mostly noise, look for the join that makes the question exact,
+not the filter that makes the noise smaller.
+
+## Rule 163 — `head` truncates evidence, and truncated evidence reads like a complete answer
+
+    grep -rn "TruckAssetCorrelation" app/ | grep -v "models/schemas.py" | head -6
+
+Six lines came back, all from `db/models.py`. I concluded the entity had no reader and no
+writer anywhere, wrote that into a register entry with a reason, and shipped it in a delivery
+log.
+
+The class definition and its five `relationship()` lines are exactly six lines.
+`logistics_correlation_engine` reads the entity twice and writes it once, and none of that was
+ever displayed. The output did not look truncated — it looked like a short, clean answer to a
+narrow question, which is the most convincing kind of wrong.
+
+`head` is for sampling a large result. *Does anything use this?* is not a sampling question:
+the informative part is the tail, and the whole point is whether it is empty. Count first
+(`| wc -l`), or drop the limit. The correction, once made, made the decision easier rather than
+harder — the entity is derived and never posted, so the create schema could simply go.
+
+## Rule 164 — widening a schema whose handler does not use `exclude_unset` reintroduces the last bug
+
+FS-671's fix was mechanical because every update handler in this codebase does the same thing:
+`model_dump(exclude_unset=True)` and `setattr`. Add a field to the schema and the handler
+applies it, untouched when the caller omits it.
+
+`update_task` does not do that. It hand-writes an `if x is not None` block per field, because
+it builds an activity-log changelog as it goes. Adding twelve fields to `TaskUpdate` alone
+would have left all twelve **declared, accepted, validated and silently dropped** — which is
+precisely FS-676, the defect fixed two commits earlier, recreated by the fix for FS-671.
+
+The mechanical change is only mechanical where the handler is generic. Read the handler before
+widening its schema, and if it enumerates fields by hand, the schema edit is the smaller half
+of the work.

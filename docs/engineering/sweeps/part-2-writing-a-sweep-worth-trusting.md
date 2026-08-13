@@ -1045,6 +1045,32 @@ one of its findings. The habit that catches it:
      executed, and nobody finished. Worth its own sweep, because the schema is the only
      surviving evidence of the intent and reads to the next person as a promise the API keeps.
 
+162. **A detector that names ninety-five defects in a tree with five is not a first pass.**
+     "Every collection POST should have a sibling PUT" reported 95 of 123 POSTs, because most
+     POSTs are actions and because `/assets/` and `/assets/{id}` differ by a trailing slash.
+     The fix was not to tune it — it was to pair by SCHEMA instead of by path, using the
+     OpenAPI request bodies, which has no heuristic in it at all: an action endpoint has no
+     `*Create` model, so it never enters the comparison. The precise version found a fifth
+     instance my own hand-written summary had missed. When a detector's output is mostly
+     noise, look for the join that makes the question exact rather than the filter that makes
+     the noise smaller.
+
+163. **`head` truncates evidence, and truncated evidence reads like a complete answer.**
+     `grep -rn TruckAssetCorrelation app/ | grep -v models.py | head -6` returned six lines
+     from `db/models.py` and nothing else, so I wrote down "no reader and no writer anywhere"
+     and put it in a register with a reason. The entity is read twice and written once; the
+     class definition plus its five relationships had filled the limit exactly. Count first,
+     or drop the limit when the question is *does anything use this* — an empty tail is the
+     one part of that output you actually need.
+
+164. **Widening a schema whose handler does not use `exclude_unset` reintroduces the last bug.**
+     Every update handler in this codebase applies `model_dump(exclude_unset=True)` — except
+     `update_task`, which hand-writes a block per field to build its changelog. Adding twelve
+     fields to `TaskUpdate` alone would have declared, accepted, validated and silently
+     dropped all twelve: FS-676's defect, created by the fix for FS-671. Before widening,
+     read the handler; the safe mechanical change is only mechanical where the handler is
+     generic.
+
 ---
 
 ## Open observations, not yet tickets

@@ -111,6 +111,8 @@ to ask where else it could live.
 | A background task nobody holds and nobody watches | every `create_task` call in `app/` | **10 of 20 discarded, incl. one fired per request on the ingest path** | `test_background_tasks_have_an_owner.py` |
 | A task created from a thread that is not the loop's | every `create_task` in the edge agent, by CALLER | **3 of 6 raise rather than schedule: every MQTT reading and every watched file was dropped** | `test_a_collectors_reading_reaches_the_callback.py` |
 | A write schema no route ever wired | all 47 `*Create`/`*Update`/`*Request` models | **1 live: an update contract designed, written down, and never connected — the route took query parameters instead** | `test_a_correlation_can_be_completed.py` |
+| An entity you can create and never update | every Create/Update schema pair, joined via the OpenAPI request bodies | **5 live: a dock appointment that could not be rescheduled, a load plan, a freight charge, a route that prices shipments, a dock door** | `test_what_can_be_created_can_be_updated.py` |
+| A widened schema whose handler enumerates fields by hand | `update_task`, the one non-generic update handler | **19 kanban fields declared and dropped, caught before shipping** | `test_a_task_and_its_rule_can_be_corrected_realdb.py` |
 
 Twenty-nine of these carry a numbered section below. **Response-shape mismatch is the
 exception**: it was swept in the same pass as the `get_db` work and came back clean, so

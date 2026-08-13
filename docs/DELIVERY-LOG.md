@@ -9732,3 +9732,82 @@ Mutation-verified three ways: the route back to query parameters fails the contr
 endpoints dropped from the schema fails the completability tests *and* the extended FS-671
 guard, and a handler that accepts the body and discards it fails three of the four real-database
 tests.
+
+### The five entities you could create and never update
+
+Clearing the items recorded but not acted on. The Create-vs-Update comparison finds *fields*
+that are frozen; it cannot see the worse case, where the schemas agree perfectly and **no route
+serves the update at all**:
+
+* a **dock appointment** that could be started and completed but never RESCHEDULED, on a
+  surface whose most common event is a truck moving to another slot;
+* a **load plan** that could not be amended, so a pallet that would not fit meant a second plan
+  on the same shipment contradicting the first;
+* a **freight charge** that could not be corrected — FS-665 found this service inventing a
+  $1,333.33 linehaul from a 500-mile default, and once written that figure was permanent;
+* a **route** whose distance prices every shipment on it, fixed at creation;
+* a **dock door** that could not be reconfigured, so converting a bay from inbound to
+  cross-dock meant deleting it and losing every appointment referencing it.
+
+Four of the five had an `*Update` schema already written and wired to nothing — FS-676's shape,
+four more times. Two of them (`RouteUpdate`, `DockAppointmentUpdate`) were even *imported* by
+the module that failed to serve them.
+
+**The dock appointment carries real logic, not a `setattr` loop.** `schedule_appointment`
+enforces two invariants, and a reschedule that skipped them would make the update the way to
+create exactly what FS-392 removed: a reversed booking that blocks a legitimate slot while
+protecting none, and a double-booked door. Both are checked against the **effective** interval,
+because a caller who sends only `scheduled_end` still changes it. `_check_conflicts` has
+accepted an `exclude_id` since it was written and nothing ever passed one — without it an
+appointment being moved conflicts with itself and no reschedule could succeed.
+
+**The fifth was found by throwing a detector away.** The obvious check — every collection POST
+should have a sibling PUT — reported **95 of 123 POSTs as missing an update**, because most
+POSTs are actions (login, flush, enforce) and because `POST /assets/` and `PUT /assets/{id}`
+differ by a trailing slash. Ninety-five findings in a tree with five is not a rough first pass,
+it is noise that buries the answer. Pairing by **schema** instead, from the OpenAPI document,
+has no heuristic in it — an action endpoint has no `*Create` model, so it never enters the
+comparison — and it found the dock door that my own summary had missed.
+
+### Nineteen kanban fields, and the one that needed the handler
+
+Twelve on a task — type, planned start and duration, effort, tags, completion actions, and
+every link it carries — and six on an automation rule: what fires it, where the task lands, who
+it goes to, who is told, what happens on completion.
+
+**This is the one place where widening the schema was not the fix.** Every other update handler
+here applies `model_dump(exclude_unset=True)`; `update_task` hand-writes an `if x is not None`
+block per field so it can build the activity-log changelog. A field added to the schema and not
+to the handler is declared, accepted, validated and **silently dropped** — the FS-676 defect,
+reintroduced by the fix for FS-671. Two of the twelve carry constraints: a board move needs a
+column on the destination board (and the column check had to learn about the *effective* board,
+or a legitimate move 404s on a column that exists), and a parent link must not close a cycle.
+
+**The thirteenth `organization_id` is closed.** `TaskRuleCreate` required a tenant id that
+`create_task_rule` discards, so the natural client — which carries none — got a 422 on every
+rule it tried to create. FS-523 removed exactly this from twelve schemas; this one was found by
+the guard, recorded in the register as another lane's, and left there. The register entry is
+deleted rather than reworded: it only ever shrinks.
+
+### Two things found by accident, and one claim of mine that was false
+
+**`websocket_manager.broadcast_to_org` does not exist.** The method is
+`broadcast_to_organization`. Every kanban task create, update and move raised `AttributeError`
+inside a `BackgroundTasks` job — *after* the 200 had gone out, so `route_walk` sees a healthy
+route and the live board simply never receives an event. Found by the first real-database
+exercise of `POST /kanban/tasks` in this suite, written for something else entirely. It is
+rule 139's blind spot reached from the other side: the failure is on the success path, after
+the response.
+
+**`TruckAssetCorrelation` is not a dead entity, and I said it was.** The register entry read
+"a table with five relationships and no reader and no writer anywhere in `app/`". False —
+`logistics_correlation_engine` reads it twice and writes it once. The grep behind the claim
+ended in `head -6`, and `db/models.py` alone supplies six matching lines, so the truncation
+removed every real use and the output read exactly like a complete answer.
+
+With the premise corrected the decision got *easier*: the entity is **derived, never posted**,
+and every field on its base is computed — including `detention_charge`, which is billable. A
+create schema for that shape advertises that a caller may declare how long a truck waited and
+what to bill for it. `TruckAssetCorrelationCreate` is deleted; the Response schema stays,
+because `api/logistics_correlation.py` returns it and reading a computed correlation was never
+the problem. The register is now empty.

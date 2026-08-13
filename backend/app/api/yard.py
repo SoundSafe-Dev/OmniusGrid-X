@@ -311,6 +311,41 @@ async def create_dock_door(
     return door
 
 
+@router.put("/dock/doors/{door_id}", response_model=DockDoorResponse, dependencies=[Depends(require_operator_or_admin)])
+async def update_dock_door(
+    door_id: UUID,
+    data: DockDoorUpdate,
+    org_id: UUID = Depends(get_tenant_org_id),
+    db: AsyncSession = Depends(get_tenant_db)
+):
+    """Reconfigure a dock door (FS-677).
+
+    `DockDoorUpdate` existed and no route served it, so a door could be created and never
+    changed — converting a bay from inbound to cross-dock, or taking it out of service for
+    maintenance, meant deleting the door and losing every appointment that referenced it.
+
+    `door_number` is not on the update schema: it identifies the bay, and the same argument
+    applies as for `shipment_number` and `trailer_number`.
+    """
+    result = await db.execute(
+        select(DockDoor).where(
+            DockDoor.id == door_id,
+            DockDoor.organization_id == org_id,
+        )
+    )
+    door = result.scalar_one_or_none()
+    if not door:
+        raise HTTPException(status_code=404, detail="Dock door not found")
+
+    for field, value in data.model_dump(exclude_unset=True).items():
+        setattr(door, field, value)
+
+    door.updated_at = datetime.now(timezone.utc)
+    await db.commit()
+    await db.refresh(door)
+    return door
+
+
 @router.get("/dock/doors", response_model=List[DockDoorResponse])
 async def get_dock_doors(
     # organization_id comes from the TOKEN, not the query string. It was a
@@ -407,6 +442,76 @@ async def create_dock_appointment(
         return appointment
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.put("/dock/appointments/{appointment_id}", response_model=DockAppointmentResponse, dependencies=[Depends(require_operator_or_admin)])
+async def update_dock_appointment(
+    appointment_id: UUID,
+    data: DockAppointmentUpdate,
+    organization_id: UUID = Depends(get_tenant_org_id),
+    db: AsyncSession = Depends(get_tenant_db)
+):
+    """Reschedule or amend a dock appointment (FS-677).
+
+    `DockAppointmentUpdate` existed and no route took it — it was even imported by this
+    module and unused — so an appointment could be started and completed but never MOVED,
+    and rescheduling is the single most common thing that happens to one. Changing the door,
+    the carrier or the driver meant cancelling and re-booking, losing the appointment's
+    history with it.
+
+    THE TWO INVARIANTS `schedule_appointment` ENFORCES ARE ENFORCED HERE TOO, and that is
+    the whole difficulty of this route. Without them, rescheduling becomes the way to create
+    exactly what FS-392 removed: a reversed booking that blocks a legitimate slot while
+    protecting none, and a double-booked door. Both are checked against the EFFECTIVE values
+    — the new one where the caller sent it, the stored one where they did not — because a
+    caller who moves only `scheduled_end` still changes the interval.
+
+    `_check_conflicts` has taken an `exclude_id` since it was written and nothing ever passed
+    one; without it an appointment being moved conflicts with itself and no reschedule could
+    ever succeed.
+    """
+    result = await db.execute(
+        select(DockAppointment).where(
+            DockAppointment.id == appointment_id,
+            DockAppointment.organization_id == organization_id,
+        )
+    )
+    appointment = result.scalar_one_or_none()
+    if not appointment:
+        raise HTTPException(status_code=404, detail="Appointment not found")
+
+    fields = data.model_dump(exclude_unset=True)
+
+    start = fields.get("scheduled_start", appointment.scheduled_start)
+    end = fields.get("scheduled_end", appointment.scheduled_end)
+    door = fields.get("dock_door_id", appointment.dock_door_id)
+
+    if end <= start:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"scheduled_end ({end.isoformat()}) must be after "
+                f"scheduled_start ({start.isoformat()})"
+            ),
+        )
+
+    if {"scheduled_start", "scheduled_end", "dock_door_id"} & fields.keys():
+        conflicts = await dock_scheduler._check_conflicts(
+            db, door, start, end, exclude_id=appointment_id
+        )
+        if conflicts:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Dock door is already booked for {len(conflicts)} overlapping appointment(s)",
+            )
+
+    for field, value in fields.items():
+        setattr(appointment, field, value)
+
+    appointment.updated_at = datetime.now(timezone.utc)
+    await db.commit()
+    await db.refresh(appointment)
+    return appointment
 
 
 @router.get("/dock/appointments", response_model=List[Dict[str, Any]])

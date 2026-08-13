@@ -61,8 +61,11 @@ QUALIFIER = re.compile(r"(_expires_at|_at$|_by$|_status$|_id$|_reason$|_note)")
 UNREAD: dict[str, list[str]] = {
     #: Harsh's lane.
     "analysis_sessions:POST /{session_id}/correlate": ["auto_integrate"],
-    #: Harsh's lane.
-    "kanban:POST /rules": ["organization_id"],
+    #: `kanban:POST /rules": ["organization_id"]` WAS HERE AND IS CLOSED (FS-677).
+    #: It was the thirteenth instance of FS-523 — a required field the handler discards,
+    #: so the natural client got a 422 on every rule it tried to create — and it sat here
+    #: deferred as another lane's until that lane was explicitly opened. Deleted rather
+    #: than reworded: this register only ever shrinks.
     #: DELIBERATE, same shape as the check-in above. Harsh's lane.
     "kanban:POST /tasks": ["status"],
     #: Harsh's lane. Includes `metadata`, the pattern closed on my side by FS-669.

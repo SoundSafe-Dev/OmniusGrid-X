@@ -33,12 +33,26 @@ import uuid
 import pytest
 
 from app.models.schemas import (
+    AssetCreate,
+    AssetUpdate,
     DataCorrelationCreate,
     DataCorrelationUpdate,
+    DockAppointmentCreate,
+    DockAppointmentUpdate,
     DriverCreate,
     DriverUpdate,
+    FreightChargeCreate,
+    FreightChargeUpdate,
+    LoadPlanCreate,
+    LoadPlanUpdate,
+    RouteCreate,
+    RouteUpdate,
     ShipmentCreate,
     ShipmentUpdate,
+    TaskCreate,
+    TaskRuleCreate,
+    TaskRuleUpdate,
+    TaskUpdate,
     YardTrailerCreate,
     YardTrailerUpdate,
 )
@@ -55,6 +69,22 @@ PAIRS = [
     # Listed here rather than fixed in place, because a one-off fix leaves the class open:
     # this pair is now checked on every run alongside the three that motivated the file.
     ("correlation", DataCorrelationCreate, DataCorrelationUpdate, set()),
+    # EVERY REMAINING PAIR IN THE TREE (FS-677). The four above were the ones with a live
+    # PUT route; these are what was left once the missing routes were built. Four entities
+    # had NO update route at all — a dock appointment that could not be rescheduled, a load
+    # plan that could not be amended, a freight charge that could not be corrected, and a
+    # route whose distance prices every shipment on it. Two more had routes and frozen
+    # fields.
+    #
+    # Listed exhaustively rather than by sampling, because the point of this file is that
+    # the class is closed, and a pair nobody named is a pair nobody checked.
+    ("asset", AssetCreate, AssetUpdate, set()),
+    ("route", RouteCreate, RouteUpdate, set()),
+    ("dock appointment", DockAppointmentCreate, DockAppointmentUpdate, set()),
+    ("load plan", LoadPlanCreate, LoadPlanUpdate, {"shipment_id"}),
+    ("freight charge", FreightChargeCreate, FreightChargeUpdate, {"shipment_id"}),
+    ("task", TaskCreate, TaskUpdate, set()),
+    ("task rule", TaskRuleCreate, TaskRuleUpdate, set()),
 ]
 
 
@@ -85,9 +115,7 @@ class TestTheUpdateStaysPartial:
     the property directly rather than trusting the sibling guard, because the sibling guard
     checks the HANDLERS and this file changed the SCHEMAS."""
 
-    @pytest.mark.parametrize(
-        "update", [DriverUpdate, ShipmentUpdate, YardTrailerUpdate, DataCorrelationUpdate]
-    )
+    @pytest.mark.parametrize("update", [pair[2] for pair in PAIRS], ids=[p[0] for p in PAIRS])
     def test_an_unsent_field_is_excluded_from_the_dump(self, update):
         sent = update()
         assert sent.model_dump(exclude_unset=True) == {}, (

@@ -154,8 +154,20 @@ async def broadcast_task_update(
     event_type: str,
     task_data: Dict[str, Any]
 ):
-    """Broadcast task update via WebSocket"""
-    await websocket_manager.broadcast_to_org(
+    """Broadcast task update via WebSocket.
+
+    `broadcast_to_organization`, NOT `broadcast_to_org` (FS-677). The method has never
+    existed under the shorter name, so this raised `AttributeError` on every kanban task
+    create, update and move — inside a `BackgroundTasks` job, after the response had already
+    gone out with a 200. The live board simply never received an event, and nothing in the
+    request said so.
+
+    Found by a test written for something else entirely: the first real-database exercise of
+    `POST /kanban/tasks` in this suite. `route_walk` drives these routes and sees a 200,
+    because the failure happens after the response — the same blind spot as FS-670 (rule 139),
+    reached from the other direction.
+    """
+    await websocket_manager.broadcast_to_organization(
         organization_id=organization_id,
         message={
             "type": f"kanban_{event_type}",
@@ -443,10 +455,78 @@ async def update_task(
     task = await get_organization_task(
         session, task_id, current_user.organization_id
     )
-    
+
     # Track changes for activity log
     changes = []
-    
+
+    # THE TWELVE FIELDS THAT COULD BE SET ONCE AND NEVER CORRECTED (FS-677).
+    #
+    # Handled here, ahead of the hand-written blocks below, because two of them constrain
+    # what those blocks may do: the column check needs the task's EFFECTIVE board, and a
+    # parent link must not close a cycle.
+    #
+    # `exclude_unset` rather than `is not None`, which is deliberate and differs from the
+    # rest of this handler: these links are nullable, so a caller must be able to send an
+    # explicit `null` to UNLINK a task from an asset or a parent. The older fields keep
+    # their `is not None` behaviour, because changing it would silently alter what an
+    # existing client's `null` means.
+    supplied = task_update.model_dump(exclude_unset=True)
+
+    if "board_id" in supplied and supplied["board_id"] != task.board_id:
+        # A board move needs a column on the destination board, or the task lands in a
+        # column belonging to the board it just left. The column block below validates
+        # against `effective_board_id`, so sending both together works and sending
+        # `board_id` alone is refused there rather than silently corrupting the row.
+        if "column_id" not in supplied:
+            raise HTTPException(
+                status_code=400,
+                detail="Moving a task to another board requires column_id for the destination board",
+            )
+        changes.append(f"Moved to board {supplied['board_id']}")
+
+    effective_board_id = supplied.get("board_id", task.board_id)
+
+    if "parent_task_id" in supplied and supplied["parent_task_id"] is not None:
+        if str(supplied["parent_task_id"]) == str(task.id):
+            raise HTTPException(status_code=400, detail="A task cannot be its own parent")
+        # Walk the proposed ancestry. Without this a caller can make two tasks each
+        # other's parent, and anything that renders a task tree recurses until it dies.
+        # `get_organization_task`, not a hand-rolled query: a task carries no
+        # `organization_id` column — it is scoped through the board it sits on — and the
+        # first draft here selected `Task.organization_id` and 500'd. The helper already
+        # does the join and already 404s on a task the caller cannot see, which is exactly
+        # the answer an unreachable parent should get.
+        seen, cursor = {str(task.id)}, supplied["parent_task_id"]
+        while cursor is not None:
+            if str(cursor) in seen:
+                raise HTTPException(
+                    status_code=400, detail="That parent would create a cycle"
+                )
+            seen.add(str(cursor))
+            ancestor = await get_organization_task(
+                session, cursor, current_user.organization_id
+            )
+            cursor = ancestor.parent_task_id
+
+    for field in (
+        "task_type",
+        "planned_start",
+        "planned_duration",
+        "estimated_effort_minutes",
+        "tags",
+        "completion_actions",
+        "board_id",
+        "asset_id",
+        "operation_id",
+        "alarm_id",
+        "command_id",
+        "parent_task_id",
+    ):
+        if field in supplied and getattr(task, field) != supplied[field]:
+            if field != "board_id":  # already logged above, with its own wording
+                changes.append(f"{field} updated")
+            setattr(task, field, supplied[field])
+
     if task_update.title is not None and task_update.title != task.title:
         changes.append(f"Title changed from '{task.title}' to '{task_update.title}'")
         task.title = task_update.title
@@ -482,7 +562,12 @@ async def update_task(
         new_col_result = await session.execute(
             select(TaskColumn).where(
                 TaskColumn.id == task_update.column_id,
-                TaskColumn.board_id == task.board_id,
+                # THE EFFECTIVE BOARD, not `task.board_id` (FS-677). A task moving to
+                # another board is assigned that board above, and this check read the old
+                # one — so a legitimate cross-board move would 404 on a column that exists,
+                # and the wrong reading would have made `board_id` look editable while it
+                # could never actually be used.
+                TaskColumn.board_id == effective_board_id,
             )
         )
         new_col = new_col_result.scalar_one_or_none()
@@ -1463,7 +1548,23 @@ async def update_task_rule(
         rule.assignee_rule = rule_update.assignee_rule
     if rule_update.escalation_config is not None:
         rule.escalation_config = rule_update.escalation_config
-    
+
+    # THE SIX ROUTING FIELDS (FS-677). `exclude_unset` rather than `is not None`, because
+    # four of these are nullable links and unsetting one — no specific assignee, no target
+    # column — has to be expressible. The blocks above keep their `is not None` behaviour so
+    # an existing client's `null` keeps meaning what it meant.
+    supplied = rule_update.model_dump(exclude_unset=True)
+    for field in (
+        "trigger_type",
+        "target_board_id",
+        "target_column_id",
+        "specific_assignee_id",
+        "notify_users",
+        "completion_actions",
+    ):
+        if field in supplied:
+            setattr(rule, field, supplied[field])
+
     rule.updated_at = datetime.now(timezone.utc)
     await session.commit()
     await session.refresh(rule)

@@ -44,14 +44,18 @@ CORRELATION_PATH = "/api/v1/registries/correlations/{correlation_id}"
 #: Write schemas that exist and nothing references, with the reason each is still here.
 #: Names and reasons rather than a count, so the entry has to be argued with rather than
 #: decremented.
-UNWIRED = {
-    "TruckAssetCorrelationCreate": (
-        "`TruckAssetCorrelation` is a table with five relationships and no reader and no "
-        "writer anywhere in `app/` — not a dead schema so much as a dead entity, which is a "
-        "different conversation from this one and belongs to whoever designed it. Deleting a "
-        "table is not a mechanical fix; recorded rather than acted on."
-    ),
-}
+#: EMPTY, AND ITS ONE ENTRY WAS RETIRED ON A CORRECTED PREMISE (FS-677).
+#:
+#: `TruckAssetCorrelationCreate` was recorded here as belonging to "a table with five
+#: relationships and no reader and no writer anywhere in `app/`". That was false.
+#: `logistics_correlation_engine` reads the entity twice and writes it once. The grep that
+#: produced the claim ended in `head -6`, and `db/models.py` alone supplies six matching
+#: lines, so the truncation removed every real use and the output read like a full answer.
+#:
+#: With the premise corrected the answer got easier rather than harder: the entity is
+#: DERIVED, never posted, and every field on its base is computed — including
+#: `detention_charge`, which is billable. The schema was deleted rather than deferred.
+UNWIRED: dict[str, str] = {}
 
 
 def _write_schema_names() -> set[str]:
