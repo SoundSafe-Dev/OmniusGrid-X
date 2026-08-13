@@ -116,17 +116,19 @@ class HTTPRestCollector(BaseCollector):
                 status_code=response.status_code
             )
             
+        # COUNTED, NOT ONLY LOGGED (FS-691). A device answering 500 forever polls
+        # cleanly forever: the task stays alive, so `connection_state` reads up; no
+        # message reaches the coordinator, so nothing else moves. `record_failure`
+        # is what makes the asset's silence visible as a number.
         except httpx.HTTPError as e:
-            logger.error(
+            self.record_failure(
                 "http_request_failed",
-                asset_id=self.asset_id,
                 url=self.url,
                 error=str(e)
             )
         except Exception as e:
-            logger.error(
+            self.record_failure(
                 "http_collection_error",
-                asset_id=self.asset_id,
                 url=self.url,
                 error=str(e)
             )

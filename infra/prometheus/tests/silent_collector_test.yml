@@ -1,0 +1,84 @@
+# promtool unit tests for EdgeCollectorFailingEveryPoll. Run from infra/prometheus/:
+#   promtool test rules tests/silent_collector_test.yml
+#
+# WHY THIS FILE EXISTS (FS-691). A collector polling a device that answers 500 forever was
+# invisible to every instrument the fleet has. `EdgeCollectorDown` watches
+# `edge_collector_connection_state`, which is derived from whether the poll TASK is alive —
+# and it is; it is the device that is dead. `EdgeAgentUnreachable` watches scrape success,
+# and the agent serves /metrics perfectly well. `EdgeBufferGrowing` watches buffer depth,
+# which sits at zero *because nothing was collected*. The alert that should have caught the
+# silence was silenced by it.
+#
+# The rule could not be written before the fix, because `edge_collector_errors_total` was
+# incremented by nothing in any of fifteen collectors. Now that a failed poll counts, the
+# question "erroring, and delivering nothing" is finally expressible.
+#
+# `promtool check rules` passes on an alert that can never fire, so these drive the series.
+rule_files:
+  - ../alerts.yml
+
+evaluation_interval: 1m
+
+tests:
+  # ---------------------------------------------------------------------------
+  # THE CASE THAT HID: a collector that has NEVER delivered a reading.
+  #
+  # There is no edge_collector_messages_total series for this asset at all — not a series
+  # reading zero, an absent one. That is why the rule uses `unless` and not `and`: `and`
+  # requires a matching series on the right-hand side, finds none, and produces nothing, so
+  # a device broken before anyone looked would never alert. This test is the reason that
+  # word is not `and`.
+  # ---------------------------------------------------------------------------
+  - interval: 1m
+    input_series:
+      - series: 'edge_collector_errors_total{asset_id="press-2",collector_type="http_rest"}'
+        values: '0+2x40'
+    alert_rule_test:
+      # Held for `for: 15m` on top of the 15m rate window, so quiet early.
+      - eval_time: 10m
+        alertname: EdgeCollectorFailingEveryPoll
+        exp_alerts: []
+      - eval_time: 35m
+        alertname: EdgeCollectorFailingEveryPoll
+        exp_alerts:
+          - exp_labels:
+              severity: high
+              team: edge
+              asset_id: press-2
+              collector_type: http_rest
+            exp_annotations:
+              summary: "Edge collector failing every poll"
+              description: "Collector for asset press-2 (http_rest) has been erroring with zero successful readings for 15m — the agent is healthy, the device is not"
+
+  # ---------------------------------------------------------------------------
+  # NEGATIVE CONTROL: a healthy collector delivering readings and erroring
+  # occasionally must NOT fire. A rule on errors alone would page on every
+  # transient timeout in the fleet, and a rule that pages constantly is one
+  # nobody reads — which would leave the silent collector just as invisible.
+  # ---------------------------------------------------------------------------
+  - interval: 1m
+    input_series:
+      - series: 'edge_collector_errors_total{asset_id="press-3",collector_type="http_rest"}'
+        values: '0+1x40'
+      - series: 'edge_collector_messages_total{asset_id="press-3",collector_type="http_rest"}'
+        values: '0+30x40'
+    alert_rule_test:
+      - eval_time: 35m
+        alertname: EdgeCollectorFailingEveryPoll
+        exp_alerts: []
+
+  # ---------------------------------------------------------------------------
+  # NEGATIVE CONTROL: a collector that stopped erroring recovers the alert.
+  # Errors for the first 20 minutes, then clean. By 40m the 15m rate window has
+  # moved past the failures entirely and the alert must clear on its own.
+  # ---------------------------------------------------------------------------
+  - interval: 1m
+    input_series:
+      - series: 'edge_collector_errors_total{asset_id="press-4",collector_type="snmp"}'
+        values: '0+2x20 40x25'
+      - series: 'edge_collector_messages_total{asset_id="press-4",collector_type="snmp"}'
+        values: '0x20 0+30x25'
+    alert_rule_test:
+      - eval_time: 50m
+        alertname: EdgeCollectorFailingEveryPoll
+        exp_alerts: []

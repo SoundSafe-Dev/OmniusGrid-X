@@ -142,7 +142,7 @@ class SNMPCollector(BaseCollector):
                     if values:
                         await self.emit(self._normalize_data(values))
             except Exception as exc:
-                logger.error("snmp_poll_error", asset_id=self.asset_id, error=str(exc))
+                self.record_failure("snmp_poll_error", error=str(exc))
             await asyncio.sleep(self.poll_interval)
 
     def _normalize_data(self, values: Dict[str, Any]) -> Dict[str, Any]:

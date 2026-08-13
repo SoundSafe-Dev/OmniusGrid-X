@@ -6,6 +6,8 @@ from typing import Dict, Any, Callable, Optional
 from datetime import datetime
 import structlog
 
+from opsgrid_agent import metrics
+
 logger = structlog.get_logger()
 
 
@@ -33,6 +35,14 @@ class BaseCollector(ABC):
     #:
     #: A typo should stop the collector, not quietly change what it measures.
     known_sources: tuple[str, ...] = ()
+
+    #: Label the error counter carries. The coordinator overwrites this with the
+    #: CONFIGURED collector type so `errors_total` and `connection_state` can be
+    #: joined on (asset_id, collector_type) — a counter labelled with the class
+    #: name and a gauge labelled with the config type describe the same collector
+    #: and will not line up in a query. The class name is the fallback for a
+    #: collector constructed directly, as tests do.
+    collector_type: str = ""
 
     def __init__(self, config: Dict[str, Any]):
         self.config = config
@@ -105,6 +115,37 @@ class BaseCollector(ABC):
                     error=str(e)
                 )
     
+    def record_failure(self, event: str, **fields: Any) -> None:
+        """Report a failed collection cycle: log it AND count it (FS-691).
+
+        `emit()` is the shared seam for a reading that worked. There was no seam for
+        one that did not, and the consequence was measurable: `metrics.errors_total`
+        existed and **no collector incremented it, in any of the fifteen**. The
+        coordinator calls `record_error` only when a message *handler* raises, which
+        cannot fire for a poll that failed — a failed poll produces no message to
+        hand over. So the seam this module's docstring describes covers deliveries
+        completely and errors not at all.
+
+        What that looked like, driven against a real `http.server` returning 500:
+        three seconds of polling, **zero readings, `running` True, and no counter
+        anywhere naming the asset**. `connection_state` is derived from
+        `task is not None and not task.done()` (`coordinator.py:504`), and the poll
+        task is perfectly healthy — it is the device that is not. Nothing in
+        `infra/prometheus/alerts.yml` keys on a collector that is up and silent:
+        the agent heartbeats, so `EdgeAgentOffline` is quiet; the buffer is empty
+        because nothing was collected, so `EdgeAgentBufferHigh` is quiet. A machine
+        that stopped reporting a month ago looks exactly like a machine that is idle.
+
+        Use this instead of a bare `logger.error` on any path where a collection
+        cycle failed. Not for a config error at construction — that path raises, and
+        a collector that never started has no asset to attribute the failure to.
+        """
+        logger.error(event, asset_id=self.asset_id, **fields)
+        metrics.record_error(
+            self.asset_id or "unknown",
+            self.collector_type or type(self).__name__,
+        )
+
     @property
     def running(self) -> bool:
         """Check if collector is running."""

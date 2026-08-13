@@ -154,7 +154,7 @@ class DNP3Collector(BaseCollector):
                 self._backoff.reset()
                 self._breaker.record_success()
             except Exception as exc:
-                logger.error("dnp3_poll_error", asset_id=self.asset_id, error=str(exc))
+                self.record_failure("dnp3_poll_error", error=str(exc))
                 await self._disconnect()
                 self._breaker.record_failure()
                 delay = self._backoff.next_delay()

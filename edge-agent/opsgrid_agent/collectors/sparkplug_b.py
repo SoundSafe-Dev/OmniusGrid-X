@@ -260,8 +260,8 @@ class SparkplugBCollector(BaseCollector):
             logger.info("sparkplug_rebirth_requested",
                         asset_id=self.asset_id, group=group, node=node)
         except Exception as exc:  # pragma: no cover - defensive
-            logger.error("sparkplug_rebirth_failed", asset_id=self.asset_id,
-                         group=group, node=node, error=str(exc))
+            self.record_failure("sparkplug_rebirth_failed",
+                                group=group, node=node, error=str(exc))
 
     @staticmethod
     def _payload_timestamp(payload: Any) -> datetime:
@@ -282,7 +282,7 @@ class SparkplugBCollector(BaseCollector):
         try:
             envelope = self._process(getattr(msg, "topic", ""), msg.payload)
         except Exception as exc:
-            logger.error("sparkplug_decode_error", asset_id=self.asset_id, error=str(exc))
+            self.record_failure("sparkplug_decode_error", error=str(exc))
             return
         if envelope is None:
             return

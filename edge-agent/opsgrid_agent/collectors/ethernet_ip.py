@@ -161,9 +161,8 @@ class EthernetIPCollector(BaseCollector):
                 self._backoff.reset()
                 self._breaker.record_success()
             except Exception as exc:
-                logger.error(
+                self.record_failure(
                     "ethernet_ip_poll_error",
-                    asset_id=self.asset_id,
                     ip_address=self.ip_address,
                     error=str(exc),
                 )

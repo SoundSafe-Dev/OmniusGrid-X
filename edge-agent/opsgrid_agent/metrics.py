@@ -1,8 +1,18 @@
 """Prometheus metrics for the edge agent.
 
-Instrumentation lives at the coordinator/adapter seam (see coordinator.py), which
-every collector — mature and BaseCollector-style — funnels through, so a single
-set of metrics covers all collector types without editing individual collectors.
+Delivery instrumentation lives at the coordinator/adapter seam (see coordinator.py),
+which every reading funnels through, so message counts cover all collector types
+without editing individual collectors.
+
+THAT SEAM CANNOT SEE A FAILED COLLECTION (FS-691), and this docstring used to claim
+otherwise. A poll that fails produces no message, so it never reaches the seam;
+`record_error` there fires only when a message *handler* raises, which is the
+opposite case. For years the consequence was that `errors_total` was incremented by
+nothing at all, while a device returning 500 on every poll showed `connection_state`
+up — that gauge is derived from whether the poll TASK is alive, and it is.
+
+Failures are therefore reported by the collector, through `BaseCollector.record_failure`,
+which logs and counts together. See that method for the drive that exposed it.
 
 Dependency-light and free of collector imports, so it stays cheap and independent
 of the omniusgrid_agent -> opsgrid_agent rename.
@@ -20,7 +30,7 @@ messages_total = Counter(
 
 errors_total = Counter(
     "edge_collector_errors_total",
-    "Errors raised while handling a collector reading",
+    "Failed collection cycles, and errors raised while handling a reading",
     ["asset_id", "collector_type"],
 )
 

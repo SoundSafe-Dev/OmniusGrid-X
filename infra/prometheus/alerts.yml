@@ -152,6 +152,30 @@ groups:
           summary: "Edge collector down"
           description: "Collector for asset {{ $labels.asset_id }} ({{ $labels.collector_type }}) has been down for 5m"
 
+      # HIGH: the collector is alive and the device is not (FS-691).
+      #
+      # EdgeCollectorDown above cannot catch this. `connection_state` is derived from
+      # whether the poll TASK is alive, and a collector polling a device that answers 500
+      # forever has a perfectly healthy task — so that gauge reads 1 while the asset has
+      # produced nothing for a month. EdgeAgentUnreachable is quiet too (the agent serves
+      # /metrics fine), and EdgeBufferGrowing is quiet *because* nothing was collected.
+      #
+      # `unless` rather than `and`: a collector that has NEVER delivered has no
+      # edge_collector_messages_total series at all, so `and` would find nothing to match
+      # against and silently never fire — which is exactly the worst case, a device that
+      # was broken before anyone looked.
+      - alert: EdgeCollectorFailingEveryPoll
+        expr: >-
+          rate(edge_collector_errors_total[15m]) > 0
+          unless rate(edge_collector_messages_total[15m]) > 0
+        for: 15m
+        labels:
+          severity: high
+          team: edge
+        annotations:
+          summary: "Edge collector failing every poll"
+          description: "Collector for asset {{ $labels.asset_id }} ({{ $labels.collector_type }}) has been erroring with zero successful readings for 15m — the agent is healthy, the device is not"
+
       # MEDIUM: store-and-forward buffer growing (upstream/Kafka issue)
       - alert: EdgeBufferGrowing
         expr: edge_buffer_messages > 5000

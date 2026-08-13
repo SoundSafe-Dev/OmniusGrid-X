@@ -163,9 +163,8 @@ class BACnetCollector(BaseCollector):
                 self._backoff.reset()
                 self._breaker.record_success()
             except Exception as exc:
-                logger.error(
+                self.record_failure(
                     "bacnet_poll_error",
-                    asset_id=self.asset_id,
                     device_id=self.device_id,
                     error=str(exc),
                 )

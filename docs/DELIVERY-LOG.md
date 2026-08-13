@@ -10400,3 +10400,95 @@ real thing proves the behaviour.
 Fixed by claiming the path synchronously on the observer thread, before any await; the drive
 now reports one reading for one file. Guarded in both directions, because a claim that swallows
 a genuinely new file would pass the first assertion and fail the product.
+
+---
+
+## FS-691 — a collector polling a dead device was invisible to every instrument
+
+Carried across from FS-675 by the same method that found it: `http_rest` was the other
+collector whose tests drive the real object through a **stubbed transport**, and its own
+docstring says why that is dangerous — *"a poll that raises on every cycle looks exactly like
+a poll that works."*
+
+Driven against a live `http.server` returning 500, for three seconds:
+
+```
+readings from a server returning 500: 0
+collector reports running: True
+what the metrics say about press-2: (nothing — no counter names this asset)
+```
+
+**`metrics.errors_total` was incremented by nothing, in any of fifteen collectors.** The
+coordinator calls `record_error` only when a message *handler* raises, and a failed poll
+produces no message to hand to a handler, so the one call site could not fire for the case
+it was needed for. `metrics.py`'s docstring asserted the opposite — that the coordinator seam
+covered every collector "without editing individual collectors" — which is true of deliveries
+and false of failures.
+
+**And no alert covered it either.** `connection_state` is derived from
+`task is not None and not task.done()`; the poll task is perfectly healthy, it is the device
+that is dead, so the gauge reads *up*. `EdgeAgentOffline` watches `edge_agent_up`, which is 1
+because the agent heartbeats fine. `EdgeAgentBufferHigh` watches buffer depth, which is 0
+**because nothing was collected** — the alert that should catch the silence is silenced by it.
+A machine that stopped reporting a month ago and one that is idle produced identical
+monitoring.
+
+Fixed with a failure seam mirroring the success seam that already existed: `emit()` for a
+reading that worked, `record_failure()` for one that did not — same log line, plus the counter.
+Ten collection-failure paths across ten collectors converted; startup refusals
+(`*_driver_missing`, `*_no_host`) and teardown noise (`*_disconnect_error`) deliberately left
+alone and registered with reasons, since a collector that never started has no collection to
+attribute a failure to. The coordinator now hands the collector its configured type so the
+counter and the gauge carry labels that join.
+
+Guarded by `test_a_silent_collector_is_visible.py`, which drives a real socket in both
+directions — a 500 server that must move the counter, and a 200 server that must not.
+
+**The guard was nearly weaker than the fix.** Its first version pinned that the adapter still
+exposes `_collector`; it did not pin that the coordinator uses it, and replacing the unwrap
+with `inner = collector` skips labelling in silence — passing the whole package. It now drives
+the real `_start_collector`. Rule 191 applies to guards as readily as to fixes.
+
+Rules 194, 195, 196.
+
+## FS-692 — a metric exported at zero, from a merge that brought two of everything
+
+Found by running rule 194's other sweep — *which metrics does nobody emit?* —
+after being explicit that it would **not** have found FS-691 (that one had a caller).
+
+`COLLECTOR_MESSAGES` / `opsgrid_edge_collector_messages_total` arrived with the
+hridyansh/integration merge, which added a second agent-level metric family for readings the
+lowercase `messages_total` already counted. The merge kept both and wired one.
+
+`prometheus_client` publishes the entire default registry, so the unwired one was not absent —
+it was **exported, reading zero, with a description explaining what it would have meant.** A
+dashboard built on it shows a flat line that reads as "this agent received no telemetry".
+
+Wired at the site its twin was already wired, one line, same two arguments. Guarded by
+`test_no_metric_is_exported_and_never_fed.py`, whose docstring is explicit that it is the
+weaker sibling: a metric with one caller passes it, which is exactly how FS-691 survived.
+
+### And the alert that could finally be written
+
+A counter nobody alerts on is half a fix. Before FS-691 the rule was not merely missing — it
+was **inexpressible**, because the only metric that could express it was incremented by
+nothing.
+
+`EdgeCollectorFailingEveryPoll` now fires on a collector that is erroring and delivering
+nothing, with a promtool test driving each case (`tests/silent_collector_test.yml`).
+
+**The operator writing it would have got it wrong**, and the test is what says so. The natural
+spelling is
+
+```promql
+rate(errors_total[15m]) > 0 and rate(messages_total[15m]) == 0
+```
+
+and `and` requires a matching series on the right. A collector that has **never** delivered
+a reading has no `edge_collector_messages_total` series at all — not one reading zero, an
+absent one — so `and` finds nothing to match, produces nothing, and never fires. The worst
+case, a device that was already broken when monitoring was set up, is precisely the one that
+spelling misses. `unless` keeps the left side when the right is absent.
+
+Mutation-verified by making that exact substitution: with `and`, the never-delivered test
+produces `got:[]`.

@@ -2713,3 +2713,105 @@ sends two events for one write, always.
 So when a live drive is already standing up, read the whole of its output rather than the line
 that answers the question you came with. The environment is being honest about itself for a few
 seconds; most of what it says is about something other than the bug you are chasing.
+
+## Rule 194 — count a metric's call sites against what it claims to cover
+
+The carry-across from rule 193 was mechanical: the live drive of the file watcher had already
+paid for itself twice, so the same treatment went to `http_rest`, the other collector whose
+tests drive the real object through a stubbed transport. Its own docstring names the risk:
+*"a poll that raises on every cycle looks exactly like a poll that works."*
+
+Against a real `http.server` returning 500, for three seconds:
+
+```
+readings from a server returning 500: 0
+collector reports running: True
+what the metrics say about press-2: (nothing — no counter names this asset)
+```
+
+The first two lines were expected. The third was the finding.
+
+**`metrics.errors_total` was incremented by nothing, in any of fifteen collectors.** Fifty-nine
+`logger.error` sites across the package and not one `record_error` among them.
+
+The instinct is to write the sweep that would have caught it — *find metrics nobody emits* —
+and it is worth writing, but be clear that **it would not have found this one.** `record_error`
+had a caller: the coordinator, at one site, for a counter labelled per asset and per collector
+type across fifteen types. One call site is not zero, and a check for zero passes it.
+
+The disproportion is the signal. A metric whose labels promise per-asset, per-type resolution
+and whose emission happens at a single site is being fed by one path out of many — and here the
+one path was `except` around a *message handler*, which cannot fire for a poll that failed,
+because a failed poll produces no message to hand to a handler.
+
+Run the zero-call-site sweep as well. It found one: `COLLECTOR_MESSAGES`, reachable only
+through a helper nobody calls, a leftover of the merge that brought a second metric family for
+a quantity the first already counted. `prometheus_client` publishes the whole default registry,
+so it was not merely unwired — it was *exported*, at `/metrics`, reading zero, with a
+description explaining what it would have meant. A flat line an operator would read as "no
+telemetry" rather than "nobody connected this".
+
+## Rule 195 — a shared seam covers one direction only
+
+`metrics.py` opened by explaining why individual collectors needed no instrumentation:
+
+> Instrumentation lives at the coordinator/adapter seam, which every collector — mature and
+> BaseCollector-style — funnels through, so a single set of metrics covers all collector types
+> without editing individual collectors.
+
+Every word of that is true about deliveries. Every reading does funnel through that seam.
+
+A failed poll delivers nothing. It never reaches the seam at all.
+
+The property that made the design attractive — *one point that everything passes through* — is
+the property that made it blind, because "everything" meant every success. This is worth
+holding as a general suspicion rather than a fact about this file: when a design routes all
+instrumentation, validation or logging through a single choke point, the question is not
+whether the choke point is well built. It is whether the failing case arrives there, or dies
+upstream of it.
+
+The repair mirrors what was already there. `emit()` was the shared seam for a reading that
+worked; `record_failure()` is now the shared seam for one that did not, logging exactly the
+line it used to log and counting it as well. Ten collection-failure paths across ten
+collectors now go through it. Startup refusals (`*_driver_missing`, `*_no_host`) and teardown
+noise (`*_disconnect_error`) deliberately do not — a collector that never started has no
+collection to attribute a failure to, and counting it would put a flat line on a collector
+that is not running rather than one that is failing.
+
+## Rule 196 — liveness derived from the worker is not liveness of the work
+
+The last part of the finding is the one that makes it operational rather than tidy.
+
+`connection_state` — the gauge an operator would consult to ask whether a collector is alive —
+was set from:
+
+```python
+up=task is not None and not task.done()
+```
+
+A collector polling a device that answers 500 forever has a perfectly healthy task. It is
+scheduled, it is not done, it will still be there next month. So the gauge reads **up**, for an
+asset that has produced nothing since the device broke.
+
+Then the alerts, which is where it stops being subtle. Nothing in `alerts.yml` keys on a
+collector that is up and silent. `EdgeAgentOffline` watches `edge_agent_up`, which is 1 — the
+agent is heartbeating fine, it is one of its collectors that is dead. `EdgeAgentBufferHigh`
+watches buffer depth, which is 0 **because nothing was collected**. The alert that should have
+caught the silence is silenced by it.
+
+A machine that stopped reporting a month ago and a machine that is idle produced identical
+monitoring, and the only difference between them was an ERROR line in a log.
+
+Health derived from the mechanism will faithfully report the mechanism. If the question is
+whether work is happening, the answer has to be computed from output — a counter that moves, a
+timestamp that advances — and not from whether the thing that was supposed to do the work still
+exists.
+
+**A note on how the guard for this was nearly weaker than the fix.** The first version asserted
+that the adapter still exposes `_collector`, the attribute the coordinator unwraps to find the
+collector it must label. That pins the adapter. It does not pin that the coordinator *uses* it —
+and replacing the unwrap with `inner = collector` leaves the adapter failing an `isinstance`
+check, so labelling is skipped in silence and every wrapped collector reverts to its class name,
+which no longer joins the gauge. That mutation passed the entire package. The test now drives
+the real `_start_collector` and reads the label off the collector that will do the counting;
+rule 191 applies to guards as readily as to fixes.

@@ -1290,6 +1290,32 @@ one of its findings. The habit that catches it:
      what the code handles correctly. The live run answers a question the double never asks:
      *what does the environment actually send?*
 
+194. **Count a metric's call sites against what it claims to cover — one is not zero, and
+     one is the tell.** The obvious version of this check is "find metrics nobody emits",
+     and it would *not* have found FS-691: `errors_total` had a caller, in the coordinator.
+     Exactly one, for an error counter labelled per collector across fifteen collector
+     types. That disproportion is the signal — a metric whose label set promises per-asset,
+     per-type resolution and whose emission happens at a single site is being fed by one
+     path out of many. Run the zero-call-site sweep too (it found `COLLECTOR_MESSAGES`,
+     reachable only through a helper nothing calls), but do not mistake it for this one.
+
+195. **A shared seam covers one direction only; ask what the failing case looks like there.**
+     `metrics.py` claimed the coordinator/adapter seam covered every collector "without
+     editing individual collectors", and for deliveries that was true — every reading funnels
+     through it. A *failed* poll produces no reading, so it never arrives at the seam at all.
+     The property that made the seam attractive is exactly the property that made it blind:
+     it is on the success path. When a design routes everything through one point, check
+     whether the error path reaches that point, or merely the happy one.
+
+196. **Liveness derived from the worker is not liveness of the work.**
+     `connection_state` was set from `task is not None and not task.done()`. A collector
+     polling a device that answers 500 forever has a perfectly healthy task — it is the
+     device that is dead — so the gauge read *up* while the asset produced nothing for as
+     long as you cared to wait. And the alert that should have caught the silence was
+     silenced by it: `EdgeAgentBufferHigh` watches buffer depth, which stays at zero
+     *because* nothing was collected. Health derived from the mechanism will report the
+     mechanism; measure the output.
+
 ---
 
 ## Open observations, not yet tickets

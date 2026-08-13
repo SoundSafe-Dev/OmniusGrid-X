@@ -21,6 +21,7 @@ from opsgrid_agent.buffer.store_forward import StoreForwardBuffer
 # adapter. Relative imports keep these independent of the package name so they
 # are unaffected by the omniusgrid_agent -> opsgrid_agent rename.
 from .adapter import coordinator_adapter
+from .base import BaseCollector
 from .ethernet_ip import EthernetIPCollector
 from .profinet import ProfinetCollector
 from .bacnet import BACnetCollector
@@ -228,7 +229,16 @@ class UnifiedCollectorCoordinator:
             )
             
             self.collectors[config.asset_id] = collector
-            
+
+            # Give the collector the label the GAUGE already uses (FS-691), so a
+            # `record_failure` counter and `connection_state` for the same collector
+            # join on (asset_id, collector_type). BaseCollector-style collectors sit
+            # inside the adapter, hence the unwrap; `_collector` is the adapter's own
+            # attribute name for the instance it wraps.
+            inner = getattr(collector, "_collector", collector)
+            if isinstance(inner, BaseCollector):
+                inner.collector_type = config.collector_type
+
             # Start collector in background task
             task = asyncio.create_task(
                 self._run_collector(config.asset_id, collector)
@@ -356,6 +366,12 @@ class UnifiedCollectorCoordinator:
                     (datetime.now(timezone.utc) - ts_aware).total_seconds(),
                 ),
             )
+            # The same reading, into the agent-level counter that arrived with the
+            # hridyansh/integration merge (FS-692). Two metric families describe this
+            # quantity and only one was fed, so `opsgrid_edge_collector_messages_total`
+            # was exported on the same /metrics endpoint reading zero forever — which an
+            # operator can query and is worse than absent. Same two arguments, same site.
+            metrics.record_collector_message(asset_id, collector_type)
 
             # Local analytics (OEE from PackML states, anomaly detection, alerting).
             # Quarantined (invalid) readings are excluded so bad data does not

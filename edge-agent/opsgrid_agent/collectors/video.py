@@ -178,5 +178,5 @@ class VideoFrameCollector(BaseCollector):
                 else:
                     logger.warning("video_frame_unavailable", asset_id=self.asset_id)
             except Exception as exc:
-                logger.error("video_capture_failed", asset_id=self.asset_id, error=str(exc))
+                self.record_failure("video_capture_failed", error=str(exc))
             await asyncio.sleep(self.poll_interval)

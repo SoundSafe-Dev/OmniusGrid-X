@@ -168,9 +168,8 @@ class CANBusCollector(BaseCollector):
                 self._backoff.reset()
                 self._breaker.record_success()
             except Exception as exc:
-                logger.error(
+                self.record_failure(
                     "can_bus_poll_error",
-                    asset_id=self.asset_id,
                     channel=self.channel,
                     error=str(exc),
                 )

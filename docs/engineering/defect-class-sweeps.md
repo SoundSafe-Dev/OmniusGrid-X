@@ -133,6 +133,8 @@ to ask where else it could live.
 | A number in prose no guard reads | every count in the README | **2: the run-command block, one of which contradicted a guarded figure in the same document** | `test_readme_test_count_is_not_stale.py`, extended |
 | A fix proven only against a test double | FS-675, re-run against a live mosquitto broker | **confirmed: 0 readings delivered before the fix, 3 after, same broker and publisher** | `test_a_collectors_reading_reaches_the_callback.py` + the live drive |
 | A check-then-act split across an `await` | the file watcher's dedupe, driven by a real Observer | **1 live: every sliced file processed and emitted twice, invisible to any single-event double** | `test_a_collectors_reading_reaches_the_callback.py` |
+| A failure reported to the log and to no instrument | 15 collectors, 59 `logger.error` sites, driven against a real 500 server | **`errors_total` incremented by nothing anywhere; a permanently-failing collector reads *up* and fires no alert** | `test_a_silent_collector_is_visible.py`, `test_every_collection_failure_is_counted.py` |
+| A metric exported and fed by nothing | all 25 metrics vs. every call site in the package | **1: `opsgrid_edge_collector_messages_total`, published at zero since the merge that duplicated it** | `test_no_metric_is_exported_and_never_fed.py` |
 
 Twenty-nine of these carry a numbered section below. **Response-shape mismatch is the
 exception**: it was swept in the same pass as the `get_db` work and came back clean, so

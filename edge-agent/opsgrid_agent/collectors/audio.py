@@ -177,5 +177,5 @@ class AudioFeatureCollector(BaseCollector):
                     "payload": features,
                 })
             except Exception as exc:
-                logger.error("audio_capture_failed", asset_id=self.asset_id, error=str(exc))
+                self.record_failure("audio_capture_failed", error=str(exc))
             await asyncio.sleep(self.poll_interval)
