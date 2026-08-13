@@ -9811,3 +9811,28 @@ create schema for that shape advertises that a caller may declare how long a tru
 what to bill for it. `TruckAssetCorrelationCreate` is deleted; the Response schema stays,
 because `api/logistics_correlation.py` returns it and reading a computed correlation was never
 the problem. The register is now empty.
+
+### A call to a method that does not exist
+
+`broadcast_to_org` was found by accident. The class is checkable: module-level singletons are
+real objects at import time, so every attribute access on one can be resolved against the
+object itself. **211 accesses across `app/`, all resolving** — clean, so the guard was written
+while it was cheapest, with the literal line that shipped as its positive control.
+
+Two corrections on the way, and the second is the more useful one.
+
+**A global name map reported `main.py: twin_optimizer.router` as missing.** There `twin_optimizer`
+is the API *module*, which has a `router`; the singleton sharing that name is a service, which
+does not. Each file is now resolved through its own imports.
+
+**And the detector nearly shipped having examined nothing.** During its own mutation test it was
+run as a script file rather than through stdin. Python puts a script's directory on `sys.path`,
+not the working directory, so every `importlib.import_module("app...")` raised, every exception
+was swallowed by the `except` that exists for genuinely unimportable modules, and the sweep
+checked zero accesses — **printing exactly what a clean tree prints**. The mutation test is what
+exposed it: restoring the bug produced no failure, which is the one result a working detector
+cannot give.
+
+`test_the_sweep_examined_something` now asserts the denominator. Every failure mode of this
+guard — a broken path, a renamed package, an import that starts raising — empties the result and
+produces a report identical to health, and only a count can tell those apart.

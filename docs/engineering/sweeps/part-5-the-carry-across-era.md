@@ -2058,3 +2058,38 @@ precisely FS-676, the defect fixed two commits earlier, recreated by the fix for
 The mechanical change is only mechanical where the handler is generic. Read the handler before
 widening its schema, and if it enumerates fields by hand, the schema edit is the smaller half
 of the work.
+
+## Rule 165 — assert the denominator, not just the absence of findings
+
+A sweep that finds nothing wrong and a sweep that examined nothing print the same thing.
+
+The singleton-attribute guard nearly shipped in the second state. Its detector resolves
+`app.services.*` modules with `importlib` to get the real objects, and during its own mutation
+test it was run as a **script file** rather than through stdin. Python puts a script's own
+directory on `sys.path`, not the working directory, so every import raised
+`ModuleNotFoundError`; the `except Exception` that exists for genuinely unimportable modules
+swallowed all of them; the local name map stayed empty; zero of 211 accesses were checked; and
+the output read `MISSING []`.
+
+Nothing about that output looks wrong. It is the same string a healthy tree produces, from a
+detector that has been blindfolded.
+
+Every guard that resolves something at runtime — imports, reflection, a database lookup, a
+parsed file — needs an assertion about **how much it examined**, separate from what it found.
+`test_the_sweep_examined_something` fails if fewer than a hundred accesses resolve, and it is
+the most important test in that file.
+
+## Rule 166 — a mutation that produces no failure is the detector confessing
+
+The vacuity above was undetectable in the passing run. What exposed it was putting the real bug
+back — `broadcast_to_org` for `broadcast_to_organization` — and watching the detector report a
+clean tree anyway.
+
+That is the most informative thing a mutation test does, and it is not the thing it is usually
+run for. The expected use is confirmation: the guard catches the defect, so the guard works.
+The valuable use is the opposite result — silence, which says the guard was never looking at
+all, and which no amount of reading the code would have revealed.
+
+Mutate the **original line**, not a synthetic example. A constructed case can be crafted, often
+unconsciously, to suit the detector you just wrote; the line that actually shipped cannot. And
+when the mutation is silent, the finding is about your detector, not about the tree.

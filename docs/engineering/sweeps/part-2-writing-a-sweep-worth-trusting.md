@@ -1071,6 +1071,21 @@ one of its findings. The habit that catches it:
      read the handler; the safe mechanical change is only mechanical where the handler is
      generic.
 
+165. **Assert the denominator, not just the absence of findings.**
+     A sweep that reports "nothing wrong" and a sweep that examined nothing produce identical
+     output. This one nearly shipped in the second state: run as a script file rather than
+     through stdin, its `import_module` calls all raised, its `except Exception` swallowed
+     them, and it checked zero of 211 accesses while printing a clean result. Every guard
+     that resolves anything at runtime needs a test that the resolution happened — the count,
+     not the verdict.
+
+166. **A mutation that produces no failure is the detector confessing.**
+     The vacuity above was invisible in the passing run and obvious the moment the real bug
+     was put back and nothing fired. That is the single most informative thing a mutation test
+     does: not confirming the guard catches the defect, but revealing that the guard was never
+     looking. Run it against the original line, not a synthetic one, and treat silence as a
+     result about the detector rather than the tree.
+
 ---
 
 ## Open observations, not yet tickets
