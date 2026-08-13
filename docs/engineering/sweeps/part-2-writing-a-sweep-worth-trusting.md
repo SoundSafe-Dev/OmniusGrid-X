@@ -1086,6 +1086,15 @@ one of its findings. The habit that catches it:
      looking. Run it against the original line, not a synthetic one, and treat silence as a
      result about the detector rather than the tree.
 
+167. **Ask the compiler before writing the detector.**
+     Three passes went into deciding whether a nullable value could be formatted as a date: a
+     name-based one that reported eighteen false positives, a TypeScript compiler-API one that
+     examined 236 sites and reported zero without a working positive control, and finally the
+     one that settled it — plant the defect in a scratch file and run `tsc --noEmit`. It
+     errored in one command. When the language already has an analyser for the property you
+     are about to detect, borrow its answer; a hand-written detector for something the type
+     system enforces is a re-implementation with worse calibration.
+
 ---
 
 ## Open observations, not yet tickets

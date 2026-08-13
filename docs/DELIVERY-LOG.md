@@ -9836,3 +9836,33 @@ cannot give.
 `test_the_sweep_examined_something` now asserts the denominator. Every failure mode of this
 guard — a broken path, a renamed package, an import that starts raising — empties the result and
 produces a report identical to health, and only a count can tell those apart.
+
+### A class that is closed by the compiler, not by anyone's work
+
+A standing plan item says ~90 inline `toLocale*` sites bypass an untested `formatters.ts`,
+so `new Date(null)` renders "Invalid Date" to a user. The failure modes are real and the
+null one is worse than advertised — `new Date(null)` renders **12/31/1969**, a plausible
+date rather than an obvious error, which is the "absence rendered as a fact" shape this
+codebase keeps finding.
+
+**But it cannot happen here.** `tsconfig.json` sets `strict: true`, and `new Date(x)` where
+`x` is `string | undefined` or `string | null` is a compile error — verified by planting both
+forms and watching `tsc --noEmit` reject them. The typecheck is a blocking CI gate (added
+earlier in this session), and `test_branch_pushes_reach_the_gates.py` asserts branch pushes
+reach it. So the class is closed by construction, transitively guarded, and needs no sweep.
+
+Recorded because **"proven impossible" and "never checked" look identical afterwards**, and
+this one cost three detectors to establish:
+
+* a name-based pass reported **18 unguarded sites**, using a single set of optional field
+  names gathered from every type in `types/` — so `timestamp` being optional on one model
+  marked every `.timestamp` in the tree, including `TelemetryPoint.timestamp`, which is
+  required. The same global-name-map error as rules 160 and 162.
+* a TypeScript compiler-API pass examined 236 `new Date(x)` sites and reported zero — the
+  right answer, but its positive control never fired, so the zero was not yet trustworthy.
+* the decisive check was the simplest available and should have been first: plant the defect
+  and ask the compiler. One command, unambiguous.
+
+The residual risk is not this class: it is a field the wire declares non-null and sends null
+anyway, which is `test_frontend_fields_exist_on_the_wire.py` and the optional-versus-required
+guard from FS-672, both already in place.

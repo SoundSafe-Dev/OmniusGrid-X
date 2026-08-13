@@ -105,6 +105,27 @@ def _accesses():
                     node.attr,
                     hasattr(local[node.value.id], node.attr),
                 )
+            # `getattr(singleton, "literal", default)` — the SAME defect, and worse, because
+            # a default means it never raises. A misspelled name there returns the fallback
+            # for the life of the process and the feature reads as switched off rather than
+            # broken. Three of these decide what `/engines/*/status` reports.
+            elif (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Name)
+                and node.func.id == "getattr"
+                and len(node.args) >= 2
+                and isinstance(node.args[0], ast.Name)
+                and node.args[0].id in local
+                and isinstance(node.args[1], ast.Constant)
+                and isinstance(node.args[1].value, str)
+            ):
+                yield (
+                    str(path.relative_to(APP.parent)),
+                    node.lineno,
+                    node.args[0].id,
+                    node.args[1].value,
+                    hasattr(local[node.args[0].id], node.args[1].value),
+                )
 
 
 class TestTheSweepIsReal:

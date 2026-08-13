@@ -2093,3 +2093,31 @@ all, and which no amount of reading the code would have revealed.
 Mutate the **original line**, not a synthetic example. A constructed case can be crafted, often
 unconsciously, to suit the detector you just wrote; the line that actually shipped cannot. And
 when the mutation is silent, the finding is about your detector, not about the tree.
+
+## Rule 167 — ask the compiler before writing the detector
+
+The question: can a nullable value reach `new Date(x)` and render `12/31/1969` to a user?
+
+Three attempts. A name-based pass gathered every optional field name from `types/` into one
+set and reported **eighteen** unguarded sites — all artefacts, because `timestamp` is optional
+on one model and required on `TelemetryPoint`, and a single global set cannot tell them apart
+(rules 160 and 162, for the third time). A TypeScript compiler-API pass walked every
+`new Date(x)` in the program, resolved each argument's type through the checker, and reported
+**zero of 236** — the correct answer, arrived at properly, except that its positive control
+never fired, so the zero was not yet worth anything.
+
+The check that settled it took one command:
+
+    // src/__probe.ts
+    export const probeA = (d?: string) => new Date(d).toLocaleDateString();
+
+    $ npx tsc --noEmit
+    error TS2769: Argument of type 'string | undefined' is not assignable ...
+
+`strict: true` makes the whole class a compile error, and the typecheck is a blocking gate.
+There was nothing to sweep, and the two detectors were re-implementations — with worse
+calibration — of an analyser already in the repository and already wired into CI.
+
+When the property you are about to detect is one the type system, the linter, or the database
+already enforces, borrow its answer first. Plant the defect and see who complains. If nobody
+does, then write the detector.
