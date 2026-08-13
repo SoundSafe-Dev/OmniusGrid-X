@@ -1014,6 +1014,22 @@ one of its findings. The habit that catches it:
      sideways through a codebase; it moves just as well through a runtime boundary, and the
      far side is where nobody has looked because it is somebody else's language.
 
+158. **After finding the shape, ask per site: which thread calls this?**
+     The sweep for discarded `create_task` calls found six in the edge agent and classified
+     them all as "may be garbage collected" — a hazard. Asking who invokes each handler turned
+     three of them into a total failure: paho's `loop_start()` and watchdog's `Observer` both
+     dispatch from their own threads, where `create_task` **raises** rather than schedules.
+     Every MQTT reading was being dropped. The structural sweep finds the candidates; only the
+     call path tells you which are theoretical and which are costing data today, and reporting
+     six equal hazards would have buried the three that mattered.
+
+159. **A test for threaded code that does not use a thread proves nothing.**
+     The first version of the new test called `_on_message` directly, from the test's own
+     coroutine — which is on the loop, where the broken code works perfectly. It passed
+     against the defect. The reproduction has to reproduce the *conditions*, not just the
+     call, and for anything a third-party library dispatches that means a real
+     `threading.Thread`.
+
 ---
 
 ## Open observations, not yet tickets

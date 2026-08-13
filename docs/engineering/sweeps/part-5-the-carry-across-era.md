@@ -1930,3 +1930,42 @@ with a different symptom, and no shared code between them for a grep to find.
 The carry-across method usually moves sideways: same shape, next module. It moves just as well
 across a runtime boundary, and that side is where nobody has looked, because it is somebody
 else's language and the previous fix left no trace there to grep for.
+
+## Rule 158 — after finding the shape, ask per site: which thread calls this?
+
+The discarded-`create_task` sweep (rule 157) crossed into the edge agent and found six sites.
+Reported as a set, they all look the same: *a task nobody holds, which may be collected
+mid-execution.* A hazard. Worth fixing, not urgent.
+
+Then, per site, *who calls this method?*
+
+* `paho.mqtt` with `loop_start()` runs the client on its own network thread and calls
+  `on_message` from there.
+* `watchdog`'s `Observer` dispatches `on_created` and `on_modified` from its own thread.
+
+`asyncio.create_task` on a thread that is not running the loop does not schedule anything — it
+**raises** `RuntimeError: no running event loop`. In `MQTTCollector._on_message` that raise
+lands in the method's own `except Exception` and is logged as `mqtt_message_handler_error`. So
+every reading from the agent's flagship collector was being dropped, and `orca_file`, a
+registered collector type, could not process one file.
+
+The other three sites really were only hazards: asyncua invokes its handler on the agent's own
+loop, and the adapter already handled the missing-loop case by hand.
+
+The structural sweep finds candidates. Only the call path separates the theoretical from the
+live, and a report of six equal hazards would have buried the three that were costing data.
+
+## Rule 159 — a test for threaded code that does not use a thread proves nothing
+
+The first version of the guard called `_on_message` directly from the test's own coroutine. It
+passed — against the broken code — because a test coroutine runs *on the loop*, which is the
+one place `asyncio.create_task` works.
+
+The defect is not in the function. It is in the relationship between the function and the
+thread that calls it, and a test that supplies the wrong thread has quietly replaced the
+condition under test with a friendlier one. It reads like a real reproduction, produces a green
+tick, and certifies the bug.
+
+Reproduce the *conditions*, not just the call. For anything a third-party library dispatches —
+paho, watchdog, a driver's callback, a signal handler — that means a real `threading.Thread`,
+and the test above keeps a two-line `_call_off_loop` helper so there is no way to forget.

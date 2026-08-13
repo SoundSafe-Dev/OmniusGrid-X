@@ -15,6 +15,7 @@ from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler, FileCreatedEvent, FileModifiedEvent
 
 from opsgrid_agent.packml import PackMLStateMapper, create_mapper_for_asset_type
+from opsgrid_agent.tasks import spawn
 
 logger = structlog.get_logger()
 
@@ -27,25 +28,39 @@ class OrcaSlicerHandler(FileSystemEventHandler):
         asset_id: str,
         watch_path: Path,
         on_file_callback: Callable,
-        packml_mapper: PackMLStateMapper
+        packml_mapper: PackMLStateMapper,
+        loop: Optional[asyncio.AbstractEventLoop] = None,
     ):
         self.asset_id = asset_id
         self.watch_path = watch_path
         self.on_file_callback = on_file_callback
         self.packml_mapper = packml_mapper
         self._processed_files: Set[str] = set()
+        # THE LOOP THE OBSERVER THREAD PUBLISHES BACK TO (FS-675). `Observer` dispatches
+        # the two methods below from a thread of its own, where `asyncio.create_task`
+        # raises `RuntimeError: no running event loop` — so `orca_file`, a registered
+        # collector type, could not process a single file it was watching for.
+        self._loop = loop
         
     def on_created(self, event):
         """Handle new file creation"""
         if not event.is_directory and event.src_path.endswith('.gcode'):
-            asyncio.create_task(self._process_gcode(event.src_path))
+            spawn(
+                self._process_gcode(event.src_path),
+                name="orca.on_created",
+                loop=self._loop,
+            )
     
     def on_modified(self, event):
         """Handle file modification (ORCA updates files during slicing)"""
         if not event.is_directory and event.src_path.endswith('.gcode'):
             # Only process if not already processed
             if event.src_path not in self._processed_files:
-                asyncio.create_task(self._process_gcode(event.src_path))
+                spawn(
+                    self._process_gcode(event.src_path),
+                    name="orca.on_modified",
+                    loop=self._loop,
+                )
     
     async def _process_gcode(self, file_path: str):
         """Parse G-code file and extract metadata"""
@@ -247,7 +262,10 @@ class OrcaSlicerCollector:
             asset_id=self.asset_id,
             watch_path=self.watch_path,
             on_file_callback=self.on_message_callback or self._default_callback,
-            packml_mapper=self.packml_mapper
+            packml_mapper=self.packml_mapper,
+            # `start` is async, so this is the agent's loop — and the observer thread
+            # created below has no other way to reach it (FS-675).
+            loop=asyncio.get_running_loop(),
         )
         
         # Create observer

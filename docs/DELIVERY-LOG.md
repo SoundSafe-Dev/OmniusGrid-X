@@ -9656,3 +9656,42 @@ Three things went wrong on the way, and all three are the same lesson from diffe
   answer and was already in the repository (rule 141 again).
 * Both were caught within a minute of writing the guard. Writing the sweep *before* declaring
   the migration done is what turned two silent breakages into two visible ones.
+
+### Every MQTT message, lost on a thread boundary
+
+Carrying the discarded-task sweep from `backend/app/` into the edge agent found six more
+sites — and then asking, per site, *who calls this* turned a hazard into a live, total failure.
+
+**`asyncio.create_task` only works on a thread that is running the loop.** Three of the six are
+called from threads that are not:
+
+* **`paho.mqtt` with `loop_start()`** dispatches `on_message` from its own network thread.
+  `MQTTCollector._on_message` called `create_task` there, which raises
+  `RuntimeError: no running event loop` **before the coroutine is ever scheduled**. The raise
+  lands in the method's broad `except Exception` and is logged as `mqtt_message_handler_error`.
+  **Every reading from the collector this agent is built around was dropped**, for as long as
+  the code has existed. `BambuCollector` inherits it.
+* **`watchdog`'s `Observer`** dispatches `on_created`/`on_modified` from its own thread. The
+  same raise. `orca_file` is a **registered collector type** that could not process a single
+  file it was watching for.
+
+Proven before it was fixed, and proven the same way after: call `_on_message` from a real
+thread with a stub callback and count deliveries. **Zero from paho's thread, one from the event
+loop.** The fix reverses it.
+
+`opsgrid_agent/tasks.py: spawn(coro, name=..., loop=...)` handles all three cases — a task on
+the loop, `run_coroutine_threadsafe` against the loop captured at `start()` off it, and a
+logged refusal with the coroutine closed when there is no loop at all. The collectors capture
+their loop in `start()`, which is the only place they are guaranteed to be on it.
+
+**The distinction between the six is the interesting part.** OPC-UA's handler runs on asyncua's
+own loop and the adapter already handled the missing-loop case by hand: those two were *only*
+unretained, and the code now says so rather than implying all six were broken.
+
+**Why nothing caught it.** Neither handler had a test, and the shape is invisible to reading —
+`asyncio.create_task(...)` inside a method is unremarkable, and nothing at that line says which
+thread will run it. The first version of the new test called `_on_message` directly and passed
+against the broken code; it proves nothing unless it calls from a real thread.
+
+Edge agent: **380 passed, 1 skipped**. Both mutations — either collector back to a bare
+`create_task` — fail exactly the tests that describe them.

@@ -13,6 +13,7 @@ from asyncua.common.subscription import DataChangeNotif
 from opsgrid_agent.packml import PackMLStateMapper, create_mapper_for_asset_type
 
 from ..resilience import CircuitBreaker, ExponentialBackoff, ReconnectPolicy
+from opsgrid_agent.tasks import spawn
 
 logger = structlog.get_logger()
 
@@ -287,8 +288,12 @@ class OPCUACollector:
                 'collector_type': 'opcua'
             }
             
+            # RETENTION ONLY, and the distinction is the point (FS-675). asyncua invokes
+            # this handler on the agent's own loop, so unlike the MQTT and file-watcher
+            # cases it was never raising — the task was simply unreferenced, and the loop
+            # holds only a weak reference to it. `spawn` takes its running-loop path here.
             if self.on_message_callback:
-                asyncio.create_task(self.on_message_callback(message))
+                spawn(self.on_message_callback(message), name="opcua.data_change")
             
             logger.debug(
                 "opcua_data_change",

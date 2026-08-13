@@ -10,6 +10,7 @@ import structlog
 from opsgrid_agent.packml import PackMLStateMapper, create_mapper_for_asset_type
 
 from ..resilience import CircuitBreaker, ExponentialBackoff, ReconnectPolicy
+from opsgrid_agent.tasks import spawn
 
 logger = structlog.get_logger()
 
@@ -64,6 +65,12 @@ class MQTTCollector:
         self.client = mqtt.Client(client_id=f"opsgrid_{asset_id or 'agent'}")
         self._connected = False
         self._stop_event = asyncio.Event()
+        # THE LOOP paho's NETWORK THREAD HAS TO PUBLISH BACK TO (FS-675). `loop_start()`
+        # runs the client on a thread of its own and calls `_on_message` from there, where
+        # `asyncio.create_task` raises `RuntimeError: no running event loop` — so every
+        # message was lost before it reached the callback. Captured in `start()`, which is
+        # the only place we are guaranteed to be on the loop.
+        self._loop: Optional[asyncio.AbstractEventLoop] = None
 
         # Reconnect resilience. Defaults preserve the previous MQTT behaviour
         # (1s initial, 60s cap, x2) and add a circuit breaker that opens after
@@ -177,9 +184,19 @@ class MQTTCollector:
                 'collector_type': 'mqtt'
             }
             
-            # Call callback if provided
+            # Call callback if provided.
+            #
+            # `spawn` WITH THE CAPTURED LOOP (FS-675). paho calls this method from its own
+            # network thread, where `asyncio.create_task` raised `RuntimeError: no running
+            # event loop` — caught by the `except Exception` below, logged as
+            # `mqtt_message_handler_error`, and the reading lost. Every reading, on the
+            # collector this agent is built around.
             if self.on_message_callback:
-                asyncio.create_task(self.on_message_callback(message))
+                spawn(
+                    self.on_message_callback(message),
+                    name="mqtt.on_message",
+                    loop=self._loop,
+                )
             
             logger.debug(
                 "mqtt_message_received",
@@ -215,6 +232,9 @@ class MQTTCollector:
     
     async def start(self):
         """Start the MQTT collector"""
+        # Captured here and nowhere else: `start` is async, so this is the loop the agent
+        # actually runs on, and paho's network thread needs a handle to it (FS-675).
+        self._loop = asyncio.get_running_loop()
         logger.info(
             "mqtt_collector_starting",
             broker=self.broker_host,
@@ -379,8 +399,14 @@ class BambuCollector(MQTTCollector):
                     'collector_type': 'bambu_mqtt'
                 }
                 
+                # Same thread, same fix as `MQTTCollector._on_message` above: this class
+                # inherits paho's `loop_start()` behaviour and its network thread.
                 if self.on_message_callback:
-                    asyncio.create_task(self.on_message_callback(message))
+                    spawn(
+                        self.on_message_callback(message),
+                        name="bambu.on_message",
+                        loop=self._loop,
+                    )
                 
                 logger.debug(
                     "bambu_message_parsed",

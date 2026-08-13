@@ -26,6 +26,7 @@ from .base import BaseCollector
 # Relative import keeps the adapter independent of the omniusgrid_agent ->
 # opsgrid_agent package rename (Hridyansh's package-renaming-fix).
 from ..packml import create_mapper_for_asset_type
+from opsgrid_agent.tasks import spawn
 
 logger = structlog.get_logger()
 
@@ -84,12 +85,11 @@ class CoordinatorCollectorAdapter:
         self._apply_packml(message)
         if self._on_message_callback is None:
             return
-        try:
-            loop = asyncio.get_running_loop()
-        except RuntimeError:  # pragma: no cover - emit always runs on the loop
-            logger.error("adapter_no_running_loop", asset_id=self.asset_id)
-            return
-        loop.create_task(self._on_message_callback(message))
+        # The no-loop branch this used to hand-roll now lives in `spawn`, which logs
+        # `background_task_unscheduled` and closes the coroutine rather than leaving a
+        # 'coroutine was never awaited' warning behind. It also retains the task, which
+        # this did not (FS-675).
+        spawn(self._on_message_callback(message), name="adapter.emit")
 
     async def start(self) -> None:
         """Start the wrapped collector and block until stopped.
