@@ -200,6 +200,14 @@ class ErrorTracker:
         self._task: Optional[asyncio.Task] = None
         self._stopping = False
         self._last_retention = datetime.now(timezone.utc)
+        #: Consecutive failed flush cycles (FS-693). The flush loop must survive anything —
+        #: its own words — which means its task cannot signal that every flush is failing.
+        #: If the error tracker dies, errors stop being reported, and a system that has
+        #: stopped reporting errors looks exactly like one that has stopped having them;
+        #: this counter is what lets health say otherwise. The cumulative Prometheus
+        #: counter beside it answers a different question (how often, ever) and cannot
+        #: distinguish "failing right now" from "failed twice last month".
+        self._consecutive_flush_failures = 0
 
     # -- request-path entry point --------------------------------------------
     async def record(self, exc: BaseException, *, method: str, route: str,
@@ -310,9 +318,11 @@ class ErrorTracker:
             try:
                 await asyncio.sleep(FLUSH_INTERVAL_SECONDS)
                 await self._flush_once()
+                self._consecutive_flush_failures = 0
             except asyncio.CancelledError:
                 break
             except Exception as exc:  # noqa: BLE001 — loop must survive anything
+                self._consecutive_flush_failures += 1
                 ERROR_TRACKER_FLUSH_FAILURES_TOTAL.inc()
                 logger.error("error_tracker_flush_loop_error", error=str(exc))
 

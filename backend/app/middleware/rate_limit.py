@@ -85,9 +85,12 @@ def get_remote_operation_key(request: Request) -> str:
             try:
                 claims = jwt.decode(token, options={"verify_signature": False})
                 subject = str(UUID(str(claims.get("sub"))))
-            except Exception:
-                # Authentication still validates the bearer token. This
-                # fallback avoids putting the credential itself in a key.
+            except (jwt.PyJWTError, ValueError, TypeError):
+                # NARROWED to what the two calls raise (FS-693's ratchet payment):
+                # jwt.decode raises PyJWTError subclasses on a malformed token, and
+                # UUID() raises ValueError/TypeError on a sub claim that is not one.
+                # Authentication still validates the bearer token. This fallback
+                # avoids putting the credential itself in a key.
                 subject = hashlib.sha256(token.encode("utf-8")).hexdigest()[:24]
         return f"remote-user:{subject}:asset:{asset_id}"
     return f"remote-ip:{get_remote_address(request)}:asset:{asset_id}"

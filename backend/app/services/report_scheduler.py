@@ -87,6 +87,13 @@ class ComplianceReportScheduler:
     def __init__(self) -> None:
         self._scheduler = AsyncIOScheduler(timezone=timezone.utc)
         self._started = False
+        #: Consecutive failed scans (FS-693). APScheduler catches a job's exception, logs
+        #: it through its own logger and keeps the schedule — so a `dispatch_due` that
+        #: throws on every scan (a bad migration, a DB grant) runs forever, enqueues no
+        #: report, and the scheduler still reports itself started. `_scan` below exists to
+        #: maintain this counter, since APScheduler offers the job no other way to say
+        #: "I ran and achieved nothing".
+        self._consecutive_scan_failures = 0
 
     async def start(self) -> None:
         if not settings.COMPLIANCE_REPORT_SCHEDULER_ENABLED:
@@ -95,7 +102,7 @@ class ComplianceReportScheduler:
         if self._started:
             return
         self._scheduler.add_job(
-            self.dispatch_due,
+            self._scan,
             "interval",
             seconds=settings.COMPLIANCE_REPORT_SCHEDULER_INTERVAL_SECONDS,
             id=self._SCAN_JOB_ID,
@@ -117,6 +124,17 @@ class ComplianceReportScheduler:
             self._scheduler.shutdown(wait=False)
             await asyncio.sleep(0)
         logger.info("compliance_report_scheduler_stopped")
+
+    async def _scan(self) -> None:
+        """The scheduled job: `dispatch_due` plus the accounting APScheduler denies it."""
+        try:
+            await self.dispatch_due()
+            self._consecutive_scan_failures = 0
+        except Exception:
+            self._consecutive_scan_failures += 1
+            # Re-raise so APScheduler still logs the traceback exactly as before; the
+            # counter is an addition, not a replacement for the existing signal.
+            raise
 
     async def dispatch_due(self, now: datetime | None = None) -> None:
         if now is None:

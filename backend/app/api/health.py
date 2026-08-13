@@ -321,6 +321,67 @@ def _check_export_scheduler() -> tuple[str, dict[str, Any]]:
         return f"error: {exc}", {}
 
 
+def _check_report_scheduler() -> tuple[str, dict[str, Any]]:
+    """The compliance report scan, reported on what it achieves (FS-693).
+
+    APScheduler catches a job's exception and keeps the schedule, so a `dispatch_due`
+    failing every scan runs forever and enqueues nothing — a missed compliance report is
+    otherwise discovered by an auditor. The scheduler counts consecutive failed scans in
+    a wrapper job precisely because APScheduler gives the job no other way to report.
+    """
+    try:
+        from app.core.config import settings
+        from app.services.report_scheduler import report_scheduler
+
+        if not settings.COMPLIANCE_REPORT_SCHEDULER_ENABLED:
+            return "disabled", {"enabled": False}
+
+        failures = getattr(report_scheduler, "_consecutive_scan_failures", 0)
+        details: dict[str, Any] = {
+            "enabled": True,
+            "started": bool(report_scheduler._started),
+            "consecutive_failures": failures,
+        }
+        if not report_scheduler._started:
+            return "not_running", details
+        if failures >= _MAX_CONSECUTIVE_LOOP_FAILURES:
+            return "error: report scan failing every cycle", details
+        return "ok", details
+    except Exception as exc:
+        return f"error: {exc}", {}
+
+
+def _check_error_tracker() -> tuple[str, dict[str, Any]]:
+    """The error tracker, which fails in the most deceptive direction available (FS-693).
+
+    If the flush loop breaks, errors stop being persisted — and a system that has stopped
+    reporting errors looks exactly like a system that has stopped having them. Every other
+    subsystem failing loudly depends on this one working quietly, which is why it gets a
+    check despite `_run`'s own comment that the loop must survive anything: surviving is
+    not the same as working, and the consecutive-failure counter is the difference.
+    """
+    try:
+        from app.services.error_tracker import error_tracker
+
+        if not error_tracker.enabled:
+            return "disabled", {"enabled": False}
+
+        failures = getattr(error_tracker, "_consecutive_flush_failures", 0)
+        running = error_tracker._task is not None
+        details: dict[str, Any] = {
+            "enabled": True,
+            "running": running,
+            "consecutive_failures": failures,
+        }
+        if not running:
+            return "not_running", details
+        if failures >= _MAX_CONSECUTIVE_LOOP_FAILURES:
+            return "error: error flushes failing — new errors are not being recorded", details
+        return "ok", details
+    except Exception as exc:
+        return f"error: {exc}", {}
+
+
 async def _run_extended_checks(
     db: AsyncSession,
 ) -> tuple[dict[str, str], dict[str, dict[str, Any]]]:
@@ -331,6 +392,8 @@ async def _run_extended_checks(
     registry_status, registry_details = _check_model_registry_storage()
     command_status, command_details = _check_command_dispatch()
     export_status, export_details = _check_export_scheduler()
+    report_status, report_details = _check_report_scheduler()
+    tracker_status, tracker_details = _check_error_tracker()
 
     checks = {
         "notifications": notifications_status,
@@ -338,6 +401,8 @@ async def _run_extended_checks(
         "model_registry_storage": registry_status,
         "command_dispatch": command_status,
         "export_scheduler": export_status,
+        "report_scheduler": report_status,
+        "error_tracker": tracker_status,
     }
     details = {
         "notifications": notifications_details,
@@ -345,6 +410,8 @@ async def _run_extended_checks(
         "model_registry_storage": registry_details,
         "command_dispatch": command_details,
         "export_scheduler": export_details,
+        "report_scheduler": report_details,
+        "error_tracker": tracker_details,
     }
     return checks, details
 

@@ -41,7 +41,10 @@ def _coerce_domain(value: Any) -> Optional[DomainType]:
         return value
     try:
         return DomainType(value)
-    except Exception:
+    except ValueError:
+        # The only thing an Enum constructor raises for an unknown value. The broad
+        # catch this replaces would also have hidden a broken DomainType definition
+        # behind "unknown domain" (FS-693's ratchet payment).
         return None
 
 

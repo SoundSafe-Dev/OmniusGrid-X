@@ -193,6 +193,132 @@ class _Boom:
         raise RuntimeError("connection refused")
 
 
+class TestTheReportSchedulerToo:
+    """APScheduler catches a job's exception and keeps the schedule, so `dispatch_due`
+    failing every scan enqueues no compliance report forever — and a missed compliance
+    report is discovered by an auditor. The `_scan` wrapper exists because APScheduler
+    gives the job no other way to say it ran and achieved nothing."""
+
+    async def test_a_scan_failing_every_cycle_is_an_error(self, monkeypatch):
+        from app.services import report_scheduler as rs
+
+        monkeypatch.setattr(rs.report_scheduler, "_started", True)
+        monkeypatch.setattr(rs.report_scheduler, "_consecutive_scan_failures", 4)
+        status, _ = health_module._check_report_scheduler()
+        assert status.startswith("error")
+
+    async def test_a_working_scan_is_ok(self, monkeypatch):
+        from app.services import report_scheduler as rs
+
+        monkeypatch.setattr(rs.report_scheduler, "_started", True)
+        monkeypatch.setattr(rs.report_scheduler, "_consecutive_scan_failures", 0)
+        assert health_module._check_report_scheduler()[0] == "ok"
+
+    async def test_disabled_is_its_own_state(self, monkeypatch):
+        from app.core.config import settings
+
+        monkeypatch.setattr(settings, "COMPLIANCE_REPORT_SCHEDULER_ENABLED", False)
+        assert health_module._check_report_scheduler()[0] == "disabled"
+
+    async def test_the_wrapper_counts_and_still_raises(self):
+        """The counter must not change what APScheduler sees — its own logging of the
+        traceback is the existing signal, and `_scan` swallowing would erase it."""
+        from app.services.report_scheduler import ComplianceReportScheduler
+
+        scheduler = ComplianceReportScheduler()
+
+        async def _boom(now=None):
+            raise RuntimeError("relation does not exist")
+
+        scheduler.dispatch_due = _boom
+        with pytest.raises(RuntimeError):
+            await scheduler._scan()
+        assert scheduler._consecutive_scan_failures == 1
+
+    async def test_the_wrapper_resets_on_success(self):
+        from app.services.report_scheduler import ComplianceReportScheduler
+
+        scheduler = ComplianceReportScheduler()
+        scheduler._consecutive_scan_failures = 5
+
+        async def _fine(now=None):
+            return None
+
+        scheduler.dispatch_due = _fine
+        await scheduler._scan()
+        assert scheduler._consecutive_scan_failures == 0
+
+    async def test_the_scheduled_job_is_the_wrapper_not_the_bare_method(self):
+        """The counter lives in `_scan`; if `start()` registers `dispatch_due` directly the
+        counting silently stops while every other test here still passes. Source-level
+        because starting APScheduler in a unit test is the kind of double rule 191 warns
+        about."""
+        import inspect
+
+        from app.services import report_scheduler as rs
+
+        source = inspect.getsource(rs.ComplianceReportScheduler.start)
+        assert "self._scan" in source, (
+            "start() no longer schedules the counting wrapper — a dispatch_due that "
+            "throws every scan is invisible to health again"
+        )
+
+
+class TestTheErrorTrackerToo:
+    """If the flush loop breaks, errors stop being persisted — and a system that has
+    stopped reporting errors looks exactly like a system that has stopped having them.
+    Every subsystem that fails loudly depends on this one working quietly."""
+
+    async def test_flushes_failing_every_cycle_is_an_error(self, monkeypatch):
+        from app.services import error_tracker as et
+
+        monkeypatch.setattr(et.error_tracker, "enabled", True)
+        monkeypatch.setattr(et.error_tracker, "_task", object())
+        monkeypatch.setattr(et.error_tracker, "_consecutive_flush_failures", 3)
+        status, _ = health_module._check_error_tracker()
+        assert status.startswith("error")
+        assert "not being recorded" in status
+
+    async def test_a_working_tracker_is_ok(self, monkeypatch):
+        from app.services import error_tracker as et
+
+        monkeypatch.setattr(et.error_tracker, "enabled", True)
+        monkeypatch.setattr(et.error_tracker, "_task", object())
+        monkeypatch.setattr(et.error_tracker, "_consecutive_flush_failures", 0)
+        assert health_module._check_error_tracker()[0] == "ok"
+
+    async def test_disabled_is_its_own_state(self, monkeypatch):
+        from app.services import error_tracker as et
+
+        monkeypatch.setattr(et.error_tracker, "enabled", False)
+        assert health_module._check_error_tracker()[0] == "disabled"
+
+    async def test_the_flush_loop_maintains_its_counter(self, monkeypatch):
+        """Drives the real `_run` with a flush that always raises."""
+        from app.services.error_tracker import ErrorTracker
+        from app.services import error_tracker as et
+
+        monkeypatch.setattr(et, "FLUSH_INTERVAL_SECONDS", 0.01)
+        tracker = ErrorTracker()
+        calls = {"n": 0}
+
+        async def _boom():
+            calls["n"] += 1
+            if calls["n"] >= 2:
+                tracker._stopping = True
+            raise RuntimeError("db gone")
+
+        tracker._flush_once = _boom
+        await tracker._run()
+        assert tracker._consecutive_flush_failures >= 2
+
+    async def test_both_new_checks_reach_the_detailed_report(self, monkeypatch):
+        checks, details = await health_module._run_extended_checks(_Boom())
+        for key in ("report_scheduler", "error_tracker"):
+            assert key in checks, f"{key} check exists and nothing calls it"
+            assert key in details
+
+
 class TestTheCounterIsActuallyMaintained:
     """The health check is only as good as the state it reads, and that state is written in
     a different file. These drive the real loop bodies.

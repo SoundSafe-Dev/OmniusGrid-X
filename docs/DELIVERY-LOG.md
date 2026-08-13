@@ -10588,3 +10588,35 @@ so the dead-letter envelope would have recorded the length of `"<class 'dict'>"`
 Back to 201. Rule 187 asks what a ratchet's cheapest reduction would do; this is the same
 question from the other side — what its cheapest *payment* buys — and here it bought a
 correction.
+
+### Two more off the register: the report scheduler and the error tracker
+
+Same pattern, two new wrinkles.
+
+**APScheduler swallows harder than a `while` loop.** `ComplianceReportScheduler` has no loop
+of its own — `dispatch_due` runs as an APScheduler interval job, and APScheduler catches the
+job's exception, logs it through its own logger and keeps the schedule. A scan failing every
+cycle (a bad migration, a missing grant) enqueues no compliance report forever, and a missed
+compliance report is discovered by an auditor. The fix is a `_scan` wrapper that counts and
+**re-raises** — the counter must not replace APScheduler's traceback, and the re-raise also
+keeps it off the swallow ratchet. One guard pins that `start()` schedules the wrapper rather
+than the bare method, because that regression would disable the counting while every other
+test still passed.
+
+**The error tracker fails in the most deceptive direction available.** If its flush loop
+breaks, errors stop being persisted — and a system that has stopped reporting errors looks
+exactly like a system that has stopped having them. It already carried a *cumulative*
+Prometheus failure counter, which answers "how often, ever" and cannot distinguish "failing
+right now" from "failed twice last month"; the consecutive counter is the health-shaped
+question. Its check reports `error: … new errors are not being recorded`, which is the
+sentence an operator needs.
+
+The swallow ratchet charged two again and was paid with two more genuine narrowings:
+`_coerce_domain`'s enum construction catches `ValueError` (the only thing an Enum constructor
+raises) instead of hiding a broken `DomainType` definition behind "unknown domain", and the
+rate-limit key derivation catches `(jwt.PyJWTError, ValueError, TypeError)` — what
+`jwt.decode` and `UUID()` actually raise — instead of everything. 201 holds.
+
+Four remain on the register: `oee_calculator`, `compliance_report_dispatcher`,
+`rollout_orchestrator`, `posting_drain_scheduler` — each needing a definition of "working"
+from its lane.

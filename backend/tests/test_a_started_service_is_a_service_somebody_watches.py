@@ -46,9 +46,6 @@ UNWATCHED = {
     "posting_drain_scheduler": "needs queue depth plus drain rate — depth alone repeats the "
                                "EdgeAgentBufferHigh mistake, where an empty queue looks "
                                "healthy whether it is drained or never filled",
-    "report_scheduler": "needs a last-run timestamp per schedule",
-    "error_tracker": "the irony is the point: if the error tracker dies, errors stop being "
-                     "reported and the silence reads as a clean system",
 }
 
 
