@@ -2121,3 +2121,105 @@ calibration — of an analyser already in the repository and already wired into 
 When the property you are about to detect is one the type system, the linter, or the database
 already enforces, borrow its answer first. Plant the defect and see who complains. If nobody
 does, then write the detector.
+
+## Rule 168 — mutate both ends of a contract, not just the side you were looking at
+
+`background_tasks.add_task(broadcast_task_update, org, event, payload)` is a contract with two
+ends. It breaks if the **call site** gains an argument, and it breaks identically if the
+**target** gains a required parameter. Same failure, opposite edits.
+
+The natural mutation is the one you were thinking about while writing the guard — here, the
+call site, because that is the line the guard reads. Testing only that direction leaves the
+other unverified, and the other is the likelier one in practice: adding a parameter to a
+function feels like changing *the function*, and the fifteen places that schedule it are not
+on screen at the time.
+
+Both were run. Both fail the same assertion, which is the answer you want — a guard that
+watches the relationship rather than one of its participants.
+
+The general form: when a check asserts that two things agree, mutate each of them separately.
+If only one direction fails, the guard is pinned to one side and will be looking the wrong way
+when the other moves.
+
+## Rule 169 — "untested" and "untestable here" look identical in a coverage report
+
+Thirteen of 251 mutating routes are named by no test. Four are in this lane, and they are not
+the same kind of gap.
+
+`POST /commands/cancel/{command_id}` and `POST /shop-floor/postings/drain` were simply never
+driven. Nothing stopped anyone; the success path just had no test, which is where
+`broadcast_to_org` lived until something happened to execute it.
+
+`POST /bulk/alarms/acknowledge` and `POST /bulk/kanban/tasks/{operation}` create a
+Redis-tracked job as their first act, and this harness has no Redis. Every attempt to drive
+them ends in a 503 before the interesting code runs. That is a property of the harness, not a
+lapse.
+
+A coverage report shows four uncovered routes and cannot tell you which two are which. So the
+next person spends an afternoon rediscovering the difference — and, worse, may read all four as
+equally neglected and lower their opinion of the suite accordingly.
+
+Write it down where the tests are, name the reason, and pin whatever *is* reachable. Here the
+synchronous validation runs ahead of the job store, so the argument checks are testable even
+though the job is not; and the 503 itself is worth an assertion, because the handler catches
+`Exception` broadly and a real bug inside the job store would reach the caller wearing the same
+message as an outage.
+
+## Rule 170 — a test that asserts on a random draw is flaky by construction
+
+`geotab_service.get_exceptions` fabricates `range(random.randint(0, 10))` rows. Zero is a legal
+draw, about one time in eleven. The provenance test asserts `rows` is non-empty before checking
+that each row is stamped `simulated: true`, so once every eleven runs it failed for a reason
+with nothing to do with provenance.
+
+The tempting repair is to drop the emptiness assertion — the test is about stamping, after all,
+and an empty list has no unstamped rows in it. That is exactly why it is wrong: *every one of
+zero rows carries provenance* is vacuously true, so the test would go green permanently and
+stay green through any regression. A flaky test converted into a vacuous one is a downgrade
+disguised as a fix.
+
+Seed the generator, say which seed and what it draws (`seed 0` draws six), and the test keeps
+both its determinism and its teeth.
+
+## Rule 171 — when an unrelated test fails, read its source before reaching for `git stash`
+
+The full suite failed on a geotab provenance test. Nothing in this work touched geotab, so the
+natural move was to stash the working tree and re-run. It passed.
+
+That looks like proof the working tree caused it. It is nothing of the kind: a test that fails
+one run in eleven passes the other ten, and stashing had merely bought a fresh draw. Following
+that evidence would have meant hunting a regression that did not exist, through changes that
+were not responsible, with a "reproduction" that confirmed the wrong hypothesis nine times out
+of ten.
+
+Bisecting is the right instinct for a deterministic failure and an actively misleading one for
+a flaky test — and the two are indistinguishable from the outside. What separates them is
+reading the assertion and the code under it, which took about ten seconds here and pointed
+straight at `random.randint(0, 10)`.
+
+## Rule 172 — some classes are not statically sweepable, and saying so is a result
+
+A standing plan item lists twelve non-null assertions on nullable network fields as a defect
+class worth closing. Driven through the TypeScript checker: 27 assertions, 24 whose operand
+type genuinely includes `null` or `undefined`, **zero defects**.
+
+Each of the 24 is guarded somewhere the narrowing cannot reach:
+
+    carriers.filter(c => c.insuranceExpiry && …).map(c => … c.insuranceExpiry! …)
+    doc.s3Key && <Button onClick={() => link.mutate(doc.s3Key!)} />
+    rec.approvedAt || rec.rejectedAt ? fmt(rec.approvedAt || rec.rejectedAt!) : '—'
+
+A `filter` does not narrow the `map` that follows it without a type predicate. A closure
+discards narrowing because it may run later. A short-circuit chain never evaluates the branch
+that would be undefined. In all three the `!` is the author correctly telling the compiler
+something the compiler cannot see.
+
+A detector keyed on "operand type is nullable" therefore reports 100% false positives here.
+Making it useful means modelling narrowing across `filter`/`map`, closure capture and
+short-circuit evaluation — reimplementing TypeScript's control-flow analysis, and then
+exceeding it, to find a class that currently has no members.
+
+The right output is not a guard. It is a written record that the class was examined, what the
+answer was, and why nothing was built — otherwise the item stays open forever, and the next
+person to reach for it builds the noisy version and spends a day dismissing its output one site
+at a time.

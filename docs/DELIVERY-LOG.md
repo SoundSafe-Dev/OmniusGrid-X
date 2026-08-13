@@ -9866,3 +9866,91 @@ this one cost three detectors to establish:
 The residual risk is not this class: it is a field the wire declares non-null and sends null
 anyway, which is `test_frontend_fields_exist_on_the_wire.py` and the optional-versus-required
 guard from FS-672, both already in place.
+
+### A background task whose arguments do not fit its function
+
+`broadcast_to_org` was the wrong *name*. The same blind spot swallows the wrong *call*:
+`background_tasks.add_task(fn, a, b, c)` binds its arguments when the task runs, and it runs
+after the response has been sent. A mismatch is a 200 to the caller, a traceback in Starlette's
+background runner, and a feature that quietly never happens. `route_walk` cannot see it — the
+status code was decided before the task failed.
+
+Fifteen `add_task` sites in `app/`; all fifteen resolve and all bind cleanly. Mutation-verified
+in both directions, which matters here more than usual: adding an argument at the **call site**
+and adding a required parameter to the **target** are different edits with the same
+consequence, and a guard that only watches one of them will be looking the wrong way when it
+happens.
+
+**The first draft examined a third of its subject.** It resolved only names imported from other
+`app` modules and reported ten of fifteen targets as unresolvable — including all seven kanban
+broadcasts, which are defined in the very file that schedules them. Ten unresolved out of
+fifteen reads like a warning and behaves like a blind spot, so `test_every_target_resolves`
+now fails on that state rather than letting it pass quietly. Same shape as rule 165: the
+number that matters is how much was examined, not what was found.
+
+### Thirteen mutating routes no test had ever named
+
+Of **251 mutating routes, thirteen appear in no test file at all**. `route_walk` drives them —
+it drives everything — but with generated input, which rejects at validation before the
+handler body runs. Their success paths have never executed, and that is precisely where
+`broadcast_to_org` was sitting when the first real-database exercise of `POST /kanban/tasks`
+found it: an `AttributeError` raised after a 200 had already gone out.
+
+Four are in this lane. Two are drivable without new infrastructure and are now driven:
+`POST /commands/cancel/{command_id}`, which takes a row lock and walks candidate organisation
+ids — so it gets a cross-tenant assertion as well as a double-cancel one — and
+`POST /shop-floor/postings/drain`.
+
+**The other two are unreachable here, not merely untested, and the difference is written
+down.** `POST /bulk/alarms/acknowledge` and `POST /bulk/kanban/tasks/{operation}` create a
+Redis-tracked job before doing anything and this harness has no Redis. In a coverage report
+those two look identical to the routes nobody bothered with; in reality one is a decision and
+the other is an oversight. Their synchronous validation runs ahead of the job store, so that
+much is pinned regardless — and their 503 is worth pinning too, because
+`_create_job_or_503` catches `Exception` broadly, so a genuine bug inside `create_job` reaches
+the caller as *"Bulk job store unavailable"* indistinguishably from a real outage.
+
+**A flaky test found by running the suite, and nearly mis-diagnosed as my own regression.**
+The full run failed on `test_the_geotab_gate_actually_holds.py::test_every_row_carries_provenance[get_exceptions]`,
+in a file this work had not touched. Stashing the working tree made it pass — which looked
+like evidence that my changes had broken it, and was luck.
+
+The cause is in the service: `get_exceptions` builds `range(random.randint(0, 10))` rows, so it
+returns an **empty list about one run in eleven**, and the test's `assert rows` then fails for a
+reason that has nothing to do with provenance. Seeded rather than relaxed: "zero rows all carry
+provenance" is vacuously true, so accepting an empty draw would leave the test green while
+checking nothing — the exact failure this file was written to prevent. Verified deterministic
+over eight consecutive runs.
+
+Both FS-680 routes pass on their first real exercise, so no live defect this time — but
+`POST /commands/cancel/{command_id}` now has the assertion that mattered most: another tenant
+cannot cancel your command, and `cancel_command`'s candidate-organisation walk is what makes
+that worth pinning rather than assuming.
+
+### Non-null assertions: 24 flagged by type, 0 defects, and why the sweep is not worth building
+
+A standing plan item lists twelve non-null assertions on nullable network fields, "including
+two in `GeofencingPanel.tsx`, the file whose comment documents a prior production crash from
+exactly that pattern". Driven through the TypeScript checker: **27 assertions examined, 24
+whose operand type genuinely includes `null` or `undefined`, and not one defect.**
+
+Every one has a guard that TypeScript cannot carry to the assertion:
+
+* **`filter` → `map`.** `carriers.filter(c => c.insuranceExpiry && …).map(carrier => … carrier.insuranceExpiry! …)`
+  is safe, and narrowing does not survive the boundary without a type predicate.
+* **A closure.** `doc.s3Key && <Button onClick={() => link.mutate(doc.s3Key!)} />` — the guard
+  is in scope, but the arrow function runs later, so TypeScript discards the narrowing.
+* **An `||` chain.** `rec.approvedAt || rec.rejectedAt ? formatDateTime(rec.approvedAt || rec.rejectedAt!) : '—'`
+  never dereferences the undefined branch.
+
+**And the crash the plan cites is already fixed.** `GeofencingPanel` defines
+`CircleZone = GeofenceZoneExtended & { center: GeoLocation; radius: number }` and filters to
+it, precisely so the map skips centerless zones rather than throwing — the comment at the top
+of that file describes the incident in the past tense.
+
+**So this class is not statically sweepable, and that is the finding.** A detector keyed on
+"operand type is nullable" reports 24 of 24 correct sites as defects. To be useful it would
+have to model narrowing across `filter`/`map`, closure capture and short-circuit chains — that
+is, reimplement TypeScript's control-flow analysis and then exceed it. Recorded so the noisy
+version does not get built, and so the twelve-item plan entry can be closed as examined rather
+than sitting open forever.

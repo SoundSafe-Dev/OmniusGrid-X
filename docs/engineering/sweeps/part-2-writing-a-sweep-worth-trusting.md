@@ -1095,6 +1095,44 @@ one of its findings. The habit that catches it:
      are about to detect, borrow its answer; a hand-written detector for something the type
      system enforces is a re-implementation with worse calibration.
 
+168. **Mutate both ends of a contract, not just the side you were looking at.**
+     A background task breaks if the call site gains an argument *or* if the target gains a
+     required parameter. Same consequence, opposite edits, and a guard tested against only one
+     of them is half a guard — the untested direction is exactly the one a future refactor
+     will take, because changing a function's signature feels like changing the function, not
+     its callers. Both mutations were run; both fail.
+
+169. **"Untested" and "untestable here" look identical in a coverage report.**
+     Four mutating routes in this lane had no test naming them. Two were simply never driven.
+     Two create a Redis-tracked job before doing anything, and this harness has no Redis — so
+     their success path is unreachable rather than neglected. Left unstated, the next person
+     to look sees four gaps and spends their time discovering the distinction again. Write
+     which is which, in the test file, and pin whatever IS reachable — the validation ahead of
+     the unreachable part usually is.
+
+170. **A test that asserts on a random draw is flaky by construction — seed it, do not relax it.**
+     `get_exceptions` fabricates `range(random.randint(0, 10))` rows, so a provenance test
+     asserting `rows` is non-empty failed roughly one run in eleven. The tempting repair is to
+     drop the emptiness assertion, and it is wrong: "every one of zero rows carries provenance"
+     is vacuously true, so the test would go green permanently while checking nothing. Seed the
+     generator instead, state the seed and what it draws, and the test keeps its teeth.
+
+171. **When an unrelated test fails, read its source before reaching for `git stash`.**
+     A full-suite failure in a file this work had not touched looked like a regression. Stashing
+     made it pass — which is exactly what a 9%-flaky test does about ninety percent of the time,
+     and it would have "confirmed" a phantom regression in my own changes. The bisect instinct is
+     right for a deterministic failure and actively misleading for a flaky one; ten seconds of
+     reading the assertion distinguishes them, and no amount of stashing does.
+
+172. **Some classes are not statically sweepable, and saying so is a result.**
+     Every non-null assertion in the frontend whose operand type includes `null` — 24 of 27 —
+     is correct, because the guard sits upstream of a boundary TypeScript's narrowing cannot
+     cross: a `filter` before a `map`, a closure that captures after an `&&`, a short-circuit
+     chain. A detector keyed on the type alone reports all 24 as defects. To be useful it would
+     have to reimplement control-flow analysis and then beat it. Write down that the class was
+     examined and why no guard exists, or the next person builds the noisy version and spends
+     a day dismissing it.
+
 ---
 
 ## Open observations, not yet tickets

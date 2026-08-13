@@ -115,6 +115,9 @@ to ask where else it could live.
 | A widened schema whose handler enumerates fields by hand | `update_task`, the one non-generic update handler | **19 kanban fields declared and dropped, caught before shipping** | `test_a_task_and_its_rule_can_be_corrected_realdb.py` |
 | A call to a method that does not exist | 211 attribute accesses on module-level singletons | **clean — written after `broadcast_to_org`, which raised in a background task after the 200 had gone** | `test_singleton_calls_resolve.py` |
 | A nullable value formatted as a date | 236 `new Date(x)` sites, via the TS type checker | **impossible by construction: `strict: true` makes it a compile error, and the typecheck is a blocking gate** | none needed — `test_branch_pushes_reach_the_gates.py` keeps the gate |
+| A background task whose arguments do not fit | all 15 `add_task` sites, bound via `inspect.signature` | **clean, and mutation-verified from both ends — the call site and the target signature** | `test_background_tasks_are_callable.py` |
+| A mutating route no test ever names | all 251 mutating routes vs every test file | **13 of 251; the 4 in this lane now driven or their unreachability recorded** | `test_the_unexercised_mutating_routes_realdb.py` |
+| A non-null assertion on a nullable field | all 27 `!` assertions, via the TS checker | **24 flagged by type, 0 defects — every guard is upstream of a boundary narrowing cannot cross; not statically sweepable** | none, deliberately |
 
 Twenty-nine of these carry a numbered section below. **Response-shape mismatch is the
 exception**: it was swept in the same pass as the `get_db` work and came back clean, so

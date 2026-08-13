@@ -28,6 +28,7 @@ fabricated data come out?* — has one answer regardless of how the gate is writ
 from __future__ import annotations
 
 import inspect
+import random
 import uuid
 
 import pytest
@@ -223,6 +224,18 @@ class TestEverythingSaysWhatItIsWhenTheGateIsOn:
         and `get_driver_hos` reports duty hours — a consumer that cannot tell these from a
         real ELD read is one audit away from a serious problem."""
         monkeypatch.setattr(settings, "GEOTAB_SIMULATED", True)
+
+        # SEEDED, BECAUSE THIS TEST WAS FLAKY ABOUT ONE RUN IN ELEVEN (FS-680).
+        # `get_exceptions` builds `range(random.randint(0, 10))` rows, so it legitimately
+        # returns an EMPTY list roughly 9% of the time, and the `assert rows` below then
+        # failed for a reason that has nothing to do with provenance. Caught in a full-suite
+        # run and initially mistaken for a regression from unrelated work, because the
+        # previous run had happened to draw a non-zero count.
+        #
+        # Seeded rather than the assertion relaxed: "zero rows all carry provenance" is
+        # vacuously true, so accepting an empty draw would leave the test passing while
+        # checking nothing — the failure mode this file exists to prevent. Seed 0 draws six.
+        random.seed(0)
 
         arguments = dict(CALLS[method])
         if method == "get_driver_hos":
