@@ -10,6 +10,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 import structlog
 from pydantic import BaseModel, ConfigDict, ValidationError
+from app.core.tasks import spawn
 
 logger = structlog.get_logger()
 
@@ -242,7 +243,7 @@ class SchemaRegistry:
         self._quarantine_queue.append(quarantine_record)
         
         # Persist to dead letter queue (SQLite or file)
-        asyncio.create_task(self._persist_to_dlq(quarantine_record))
+        spawn(self._persist_to_dlq(quarantine_record), name="schema_registry.persist_to_dlq")
     
     async def _persist_to_dlq(self, record: Dict):
         """Persist quarantined record to dead letter queue"""
@@ -292,5 +293,4 @@ class SchemaRegistry:
 
 
 # Global registry instance
-import asyncio
 schema_registry = SchemaRegistry()

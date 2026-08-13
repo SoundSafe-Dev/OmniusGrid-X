@@ -998,6 +998,22 @@ one of its findings. The habit that catches it:
      never looks. When a handler is async, find who awaits it before believing any claim
      about where its failure goes.
 
+156. **A scripted bulk edit needs a per-file compile check, not a satisfying diff.**
+     Inserting an import after "the last import line" put it inside a multi-line
+     `from x import (`, and the file stopped parsing. Nothing said so — the migration script
+     printed `patched` eight times — and it surfaced only when the new guard's AST walk
+     crashed with a `SyntaxError` naming a line I had not looked at. Seven of eight files were
+     fine, which is exactly the ratio that makes a bulk edit feel finished. Parse every file
+     you touched before you believe the edit.
+
+157. **Carry a class across runtimes, not just across files.**
+     An unowned promise rejection in the browser and a discarded `asyncio` task on the server
+     are the same defect — a failure whose owner is nobody — and the second was found by
+     asking what the first looks like in Python, twenty minutes after fixing it. Ten sites,
+     including one fired per request on the ingest path. The carry-across usually moves
+     sideways through a codebase; it moves just as well through a runtime boundary, and the
+     far side is where nobody has looked because it is somebody else's language.
+
 ---
 
 ## Open observations, not yet tickets

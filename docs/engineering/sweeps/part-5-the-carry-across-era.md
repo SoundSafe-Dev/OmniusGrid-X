@@ -1899,3 +1899,34 @@ kind that is never tested, because testing it means asserting on something invis
 
 When a handler is async, find who awaits it before believing anything about where its failure
 goes. If the answer is "a JSX prop", the answer is nobody.
+
+## Rule 156 — a scripted bulk edit needs a per-file compile check, not a satisfying diff
+
+Migrating ten `create_task` sites meant inserting `from app.core.tasks import spawn` into eight
+files. The script placed it after "the last import line in the first eighty", which in
+`workers/ingestion.py` was a line **inside** a multi-line `from app.services.alarm_rules import (`.
+The file stopped parsing.
+
+Nothing said so. The script printed `patched` eight times and exited zero. The tests I would
+normally have run next import that module, so they would have caught it — but what actually
+caught it, first, was the **new guard's own AST walk crashing** with a `SyntaxError` naming a
+line I had never looked at.
+
+Seven of eight files were correct, which is precisely the ratio that makes a bulk edit feel
+finished. `ast.parse` on each touched file costs a second and answers the only question that
+matters before any test runs: is this still Python.
+
+## Rule 157 — carry a class across runtimes, not just across files
+
+Twenty minutes after fixing an unowned promise rejection in the browser, the useful question
+was not *"where else in the frontend?"* — it was *"what does this look like in Python?"*
+
+The answer is `asyncio.create_task(coro)` with the result discarded: the event loop keeps only
+a weak reference, so the work may be collected mid-flight, and an exception inside it is never
+retrieved. Ten of the twenty call sites in `app/`, including one fired **per request** on the
+edge ingest path. The same defect — a failure whose owner is nobody — in a different language,
+with a different symptom, and no shared code between them for a grep to find.
+
+The carry-across method usually moves sideways: same shape, next module. It moves just as well
+across a runtime boundary, and that side is where nobody has looked, because it is somebody
+else's language and the previous fix left no trace there to grep for.

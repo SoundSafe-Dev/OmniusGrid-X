@@ -13,6 +13,7 @@ import structlog
 import aiomqtt
 
 from app.core.config import settings
+from app.core.tasks import spawn
 
 logger = structlog.get_logger()
 
@@ -111,8 +112,8 @@ class CloudGateway:
                    host=self.endpoint.host,
                    port=self.endpoint.port)
         
-        asyncio.create_task(self._connection_manager())
-        asyncio.create_task(self._flush_loop())
+        spawn(self._connection_manager(), name="cloud_gateway.connection_manager")
+        spawn(self._flush_loop(), name="cloud_gateway.flush_loop")
     
     async def _connection_manager(self):
         """Manage persistent outbound connection"""

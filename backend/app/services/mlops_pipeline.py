@@ -14,6 +14,7 @@ import aiohttp
 
 from app.core.config import settings
 from app.services.tactical_engine import tactical_engine
+from app.core.tasks import spawn
 
 logger = structlog.get_logger()
 
@@ -177,7 +178,7 @@ class MLOpsPipeline:
         await self._sync_model()
         
         # Start polling loop
-        asyncio.create_task(self._poll_loop())
+        spawn(self._poll_loop(), name="mlops_pipeline.poll_loop")
     
     async def _poll_loop(self):
         """Continuously poll for model updates"""

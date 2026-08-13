@@ -8,7 +8,6 @@ another's telemetry. Accepted readings are handed downstream; over-rate agents
 get 429 so their store-and-forward buffer retries with backoff.
 """
 
-import asyncio
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -22,6 +21,7 @@ from app.db.database import get_db
 from app.db.models import Asset
 from app.services.edge_ca import AgentPrincipal
 from app.services.edge_ingest import EdgeIngestGateway, RateLimited, RedpandaForwarder
+from app.core.tasks import spawn
 
 logger = structlog.get_logger()
 
@@ -87,6 +87,12 @@ async def ingest_batch(
     # org and fired as a background task so the agent's request never blocks on
     # the broker; on broker outage the forwarder's circuit opens and the edge's
     # store-and-forward re-delivers later.
+    #
+    # `spawn`, NOT a bare `create_task` (FS-674). The event loop holds only a WEAK
+    # reference to a task, so a discarded one may be collected mid-execution — here that
+    # is a batch of accepted readings that is never forwarded, on a path whose response
+    # has already told the agent how many were. `spawn` retains the reference and logs a
+    # failure instead of leaving it as an unretrieved exception on the asyncio logger.
     by_org: Dict[str, List[Dict[str, Any]]] = {}
     unresolved = 0
     for reading in result.accepted:
@@ -96,7 +102,7 @@ async def ingest_batch(
         else:
             unresolved += 1
     for org, readings in by_org.items():
-        asyncio.get_event_loop().create_task(_forwarder.forward(org, readings))
+        spawn(_forwarder.forward(org, readings), name="edge_ingest.forward")
 
     if unresolved:
         # Loud, because the alternative is a success response describing delivery that
@@ -123,8 +129,9 @@ async def ingest_batch(
     # certificate-verified agent_id because a reading that failed validation
     # cannot be trusted to say which asset it came from.
     if result.quarantined:
-        asyncio.get_event_loop().create_task(
-            _forwarder.forward_quarantined(agent.agent_id, result.quarantined)
+        spawn(
+            _forwarder.forward_quarantined(agent.agent_id, result.quarantined),
+            name="edge_ingest.forward_quarantined",
         )
 
     return IngestSummary(**result.summary, forwarded=sum(len(v) for v in by_org.values()))

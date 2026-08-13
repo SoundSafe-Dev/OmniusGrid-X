@@ -108,6 +108,7 @@ to ask where else it could live.
 | A handler branching on a key its schema cannot carry | every key read off a dumped model, AST-followed | **1 live: a tenant-scoped workcell check that has never executed, so no asset could be moved between workcells** | `test_handlers_branch_on_keys_their_schema_carries.py` |
 | A write field TS calls optional that the server requires | every TS interface named like a backend model | **1 live: `AssetCreate.workcellId?` against a NOT NULL column** | `test_optional_in_typescript_is_optional_on_the_server.py` |
 | An async handler whose rejection has no owner | every awaiting async handler passed to a JSX prop | **1 live, found by an unhandled-rejection line under a green run rather than by any assertion** | `asyncHandlersOwnTheirRejections.test.ts` |
+| A background task nobody holds and nobody watches | every `create_task` call in `app/` | **10 of 20 discarded, incl. one fired per request on the ingest path** | `test_background_tasks_have_an_owner.py` |
 
 Twenty-nine of these carry a numbered section below. **Response-shape mismatch is the
 exception**: it was swept in the same pass as the `get_db` work and came back clean, so

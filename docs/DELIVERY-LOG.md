@@ -9615,3 +9615,44 @@ seven confident false positives in one file.
 The guard was written **because** the sweep was clean, with the try/finally that shipped as its
 positive control. A green run with an unread error line underneath is how the next real one
 gets missed.
+
+### Ten background tasks nobody held and nobody watched
+
+The frontend rejection above (FS-673) is a class, not an incident: **a failure whose owner is
+nobody**. Carried to the backend's runtime, it lands on `asyncio.create_task`, and ten of the
+twenty calls in `app/` threw the task away.
+
+Two holes, both documented, neither visible:
+
+* **The event loop keeps only a weak reference.** CPython's own docs: *"Save a reference to the
+  result of this function, to avoid a task disappearing mid-execution ... may get garbage
+  collected at any time, even before it's done."* A discarded task is work that may simply not
+  happen. `edge_ingest` fired one **per request** to forward accepted readings to the broker —
+  on a path whose response has already told the agent how many were forwarded.
+* **An exception is never retrieved.** It surfaces as asyncio's own *"Task exception was never
+  retrieved"* at garbage-collection time, on the `asyncio` logger rather than the structured
+  one, with no request and no trace id. Every loop in `cloud_gateway`, `tactical_engine`,
+  `strategic_engine`, `mlops_pipeline` and `websocket_manager` could die that quietly.
+
+`app/core/tasks.py: spawn(coro, name=...)` closes both — the task is held until it finishes and
+its result is inspected on completion, so a failure is logged where every other error is. It is
+**not supervision**: nothing is retried, a dead loop stays dead, and the only difference is that
+you find out. The name is required rather than optional, because `Task-17` identifies nothing
+and the log line is the only evidence the work existed.
+
+**The split was ten and ten**, which is what makes the sweep trustworthy: the other ten already
+assign to `self._task`, so the guard requires the *property* (the reference is retained) rather
+than banning `create_task`, and those ten are its negative control.
+
+Three things went wrong on the way, and all three are the same lesson from different angles:
+
+* The scripted import insertion put `from app.core.tasks import spawn` **inside a multi-line
+  `from ... import (`** in `workers/ingestion.py`. The file stopped parsing, and what surfaced
+  it was the guard's own AST walk crashing — not a test failure, a traceback. A bulk edit needs
+  a compile check per file, not a diff that looks right.
+* `caplog` captured nothing, because structlog renders through its own processor chain.
+  `test_unknown_reference_is_a_client_error.py` had already hit this and written down that
+  `capfd` passes alone and fails in the full suite; `structlog.testing.capture_logs` is the
+  answer and was already in the repository (rule 141 again).
+* Both were caught within a minute of writing the guard. Writing the sweep *before* declaring
+  the migration done is what turned two silent breakages into two visible ones.

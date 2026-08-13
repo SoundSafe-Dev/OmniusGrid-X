@@ -11,6 +11,7 @@ import structlog
 
 from app.core.config import settings
 from app.services.cloud_gateway import cloud_gateway
+from app.core.tasks import spawn
 
 logger = structlog.get_logger()
 
@@ -86,7 +87,7 @@ class CloudStrategicEngine:
         self._running = True
         
         # Start listening for cloud recommendations
-        asyncio.create_task(self._recommendation_listener())
+        spawn(self._recommendation_listener(), name="strategic_engine.recommendation_listener")
 
     def load_demo_recommendations(self) -> int:
         """Seed a few strategic recommendations for the offline demo.

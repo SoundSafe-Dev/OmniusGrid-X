@@ -13,6 +13,7 @@ import numpy as np
 
 from app.core.config import settings
 from app.services.cloud_gateway import cloud_gateway
+from app.core.tasks import spawn
 
 logger = structlog.get_logger()
 
@@ -476,7 +477,7 @@ class LocalTacticalEngine:
         await self.load_model()
         
         # Start inference worker
-        asyncio.create_task(self._inference_loop())
+        spawn(self._inference_loop(), name="tactical_engine.inference_loop")
     
     async def _inference_loop(self):
         """Continuous inference on incoming feature vectors"""

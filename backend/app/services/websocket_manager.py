@@ -9,6 +9,7 @@ from aiokafka import AIOKafkaConsumer
 from datetime import datetime, timezone
 
 from app.core.config import settings
+from app.core.tasks import spawn
 
 logger = structlog.get_logger()
 
@@ -70,7 +71,7 @@ class WebSocketManager:
         self._queue_task = asyncio.create_task(self._process_message_queue())
 
         # Broadcast loop owns the consumer lifecycle + reconnection
-        asyncio.create_task(self._broadcast_loop())
+        spawn(self._broadcast_loop(), name="websocket_manager.broadcast_loop")
 
         logger.info("websocket_manager_started")
 

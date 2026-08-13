@@ -40,6 +40,7 @@ from app.services.alarm_rules import (
     load_rules_for_metrics,
     make_breach_store,
 )
+from app.core.tasks import spawn
 
 structlog.configure(
     processors=[
@@ -814,7 +815,7 @@ async def main():
     loop = asyncio.get_event_loop()
     
     def shutdown_handler():
-        asyncio.create_task(worker.stop())
+        spawn(worker.stop(), name="ingestion_worker.stop")
     
     import signal
     for sig in (signal.SIGINT, signal.SIGTERM):
