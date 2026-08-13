@@ -2223,3 +2223,42 @@ The right output is not a guard. It is a written record that the class was exami
 answer was, and why nothing was built — otherwise the item stays open forever, and the next
 person to reach for it builds the noisy version and spends a day dismissing its output one site
 at a time.
+
+## Rule 173 — key the guard on the property, not on the API the defect happened to use
+
+FS-675 found that MQTT and the file watcher lost every reading, because they called
+`asyncio.create_task` from a thread that was not running the loop. The guard it produced sweeps
+for discarded `create_task` calls.
+
+`sparkplug_b.py` registers a paho callback and calls `loop_start()`, exactly like `mqtt.py`. It
+is the same shape, the same hazard, the same seam — and the guard cannot see it, because that
+file delivers through `run_coroutine_threadsafe`. It happens to be correct. Nothing in the
+sweep would have said so if it were not.
+
+The defect was never *"a `create_task` in the wrong place"*. It was *"a driver thread calls back
+into us"*, and `create_task` was merely the API two of the three files reached for. A guard
+keyed on the accident finds the instances you already know about and is blind to the class.
+
+The check now looks for the thread markers — `loop_start(`, `Observer(` — and requires that any
+file containing one captures the loop in `start()` and delivers across the boundary by some
+means. A fourth such collector cannot arrive silently, whichever API its author prefers.
+
+## Rule 174 — before building the fix, grep for someone who already built it
+
+`sparkplug_b.py` opens with:
+
+    paho delivers messages on its own network thread, so decoded readings are handed to the
+    asyncio loop via ``run_coroutine_threadsafe``.
+
+and its handler is documented *"paho callback (network thread) -> decode -> deliver on the
+event loop"*. That is FS-675's fix, written out, with the reasoning, in a sibling file — while
+`mqtt.py` two entries earlier in the same directory was dropping every message.
+
+FS-675 instead reasoned from first principles, built a helper, and migrated six sites. The
+result is better — `spawn` retains the future and logs the no-loop case, which the hand-rolled
+version did not — but the shortest path to it was `grep -rn run_coroutine_threadsafe`.
+
+This is rule 141 wearing different clothes, and it recurs because the reflex on understanding a
+defect is to write the cure. The moment you can describe the fix is the moment to search for
+it: a codebase that made the mistake in two places has often got it right in a third, and that
+third file usually explains why.

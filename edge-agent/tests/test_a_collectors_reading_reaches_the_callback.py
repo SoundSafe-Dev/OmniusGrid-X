@@ -288,3 +288,61 @@ class TestTheClassIsClosed:
             f"`opsgrid_agent.tasks.spawn(coro, name=..., loop=...)`, passing the loop "
             f"captured at start whenever a third-party library owns the calling thread."
         )
+
+
+class TestEveryDriverThreadDeliversThroughTheLoop:
+    """The structural check FS-675 should have made, and did not (FS-681).
+
+    That sweep looked for discarded `asyncio.create_task` calls. It found MQTT and the file
+    watcher because they happened to use that API — and it was blind to `sparkplug_b.py`,
+    which registers a paho callback and calls `loop_start()` exactly like `mqtt.py` does. It
+    was correct all along, delivering through `run_coroutine_threadsafe` against a loop
+    captured in `start()`, so nothing was broken. But nothing in the earlier guard would have
+    noticed if it were.
+
+    Keying on the API was the mistake. The property is the THREAD: a collector that hands a
+    callback to a library running its own thread must capture the loop and deliver across it.
+    That is what this asserts, so a fourth such collector cannot be added silently.
+    """
+
+    #: Markers that a third-party library will run its own thread and call back into us.
+    THREAD_MARKERS = ("loop_start(", "Observer(")
+
+    #: Ways of getting work from that thread onto the loop. `spawn` wraps the second.
+    DELIVERY = ("spawn(", "run_coroutine_threadsafe(", "call_soon_threadsafe(")
+
+    @staticmethod
+    def _collector_sources():
+        import pathlib
+
+        root = pathlib.Path(__file__).resolve().parents[1] / "opsgrid_agent" / "collectors"
+        return {path.name: path.read_text() for path in sorted(root.glob("*.py"))}
+
+    def _threaded(self):
+        return {
+            name: src
+            for name, src in self._collector_sources().items()
+            if any(marker in src for marker in self.THREAD_MARKERS)
+        }
+
+    def test_the_threaded_collectors_are_found(self):
+        """Vacuity: if this stops finding them the two assertions below pass for nothing."""
+        found = set(self._threaded())
+        assert {"mqtt.py", "file_watcher.py", "sparkplug_b.py"} <= found, (
+            f"expected the three known driver-threaded collectors, found {sorted(found)}"
+        )
+
+    def test_each_captures_the_loop_at_start(self):
+        for name, src in self._threaded().items():
+            assert "get_running_loop()" in src, (
+                f"{name} hands a callback to a library that runs its own thread and never "
+                f"captures the event loop. From that thread there is no way to find it, so "
+                f"every reading it decodes is lost."
+            )
+
+    def test_each_delivers_across_the_boundary(self):
+        for name, src in self._threaded().items():
+            assert any(marker in src for marker in self.DELIVERY), (
+                f"{name} runs on a driver's thread and uses none of {self.DELIVERY}. "
+                f"`asyncio.create_task` there raises rather than schedules."
+            )

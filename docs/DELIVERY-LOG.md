@@ -9954,3 +9954,31 @@ have to model narrowing across `filter`/`map`, closure capture and short-circuit
 is, reimplement TypeScript's control-flow analysis and then exceed it. Recorded so the noisy
 version does not get built, and so the twelve-item plan entry can be closed as examined rather
 than sitting open forever.
+
+### The right answer was already in the tree, one file away
+
+Applying FS-675's *question* — which thread calls this? — rather than its *detector* found a
+third collector with the same shape: `sparkplug_b.py` registers a paho callback and calls
+`loop_start()`, exactly as `mqtt.py` does.
+
+**It was correct all along.** It captures the loop in `start()` and delivers through
+`run_coroutine_threadsafe`, with a docstring that names the boundary out loud:
+*"paho callback (network thread) -> decode -> deliver on the event loop."* Somebody understood
+this seam and wrote it down, one directory entry away from the two collectors that were
+dropping every reading.
+
+**The earlier sweep could not have seen it either way.** FS-675 keyed on discarded
+`asyncio.create_task` calls, so it found MQTT and the file watcher because of the API they
+happened to use, and would have been equally blind to a sparkplug that did nothing at all.
+Keying on the API was the mistake; the property is the thread. The guard now asserts that every
+collector handing a callback to a library with its own thread — `loop_start(`, `Observer(` —
+captures the loop and delivers across it. Mutation-verified in both directions.
+
+**One real gap closed.** The hand-rolled version returned silently when `self._loop` was None,
+so a reading decoded on paho's thread before `start()` had run vanished without trace. Moved to
+`spawn()`, which retains the future and logs `background_task_unscheduled` instead.
+
+The reusable part is uncomfortable: FS-675 spent its effort building a detector when the
+correct implementation was already in the repository, in a sibling file, with an explanatory
+comment. Grepping for `run_coroutine_threadsafe` before writing anything would have produced
+the fix and the pattern in one step.

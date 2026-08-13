@@ -1133,6 +1133,22 @@ one of its findings. The habit that catches it:
      examined and why no guard exists, or the next person builds the noisy version and spends
      a day dismissing it.
 
+173. **Key the guard on the property, not on the API the defect happened to use.**
+     FS-675 swept for discarded `asyncio.create_task` calls and found two broken collectors.
+     It was structurally blind to a third with the identical shape — `sparkplug_b.py`, which
+     registers a paho callback and calls `loop_start()` — because that file uses
+     `run_coroutine_threadsafe` instead. It was correct; the guard would not have known if it
+     were not. The property is *a driver thread calls back into us*, and the guard now keys on
+     the thread markers rather than on any one delivery API.
+
+174. **Before building the fix, grep for someone who already built it.**
+     `sparkplug_b.py` captured its loop in `start()` and delivered through
+     `run_coroutine_threadsafe`, with a docstring naming the thread boundary — the exact
+     pattern FS-675 needed, sitting one directory entry away from the two files that lacked it.
+     A grep for `run_coroutine_threadsafe` would have produced both the fix and the precedent
+     in a single step. This is rule 141 again, and it keeps recurring because the reflex when
+     you understand a defect is to write the cure rather than to look for it.
+
 ---
 
 ## Open observations, not yet tickets

@@ -118,6 +118,7 @@ to ask where else it could live.
 | A background task whose arguments do not fit | all 15 `add_task` sites, bound via `inspect.signature` | **clean, and mutation-verified from both ends — the call site and the target signature** | `test_background_tasks_are_callable.py` |
 | A mutating route no test ever names | all 251 mutating routes vs every test file | **13 of 251; the 4 in this lane now driven or their unreachability recorded** | `test_the_unexercised_mutating_routes_realdb.py` |
 | A non-null assertion on a nullable field | all 27 `!` assertions, via the TS checker | **24 flagged by type, 0 defects — every guard is upstream of a boundary narrowing cannot cross; not statically sweepable** | none, deliberately |
+| A driver thread calling back into us | every collector with `loop_start(` or `Observer(` | **3 found; the third was already correct and the earlier API-keyed sweep was blind to it either way** | `test_a_collectors_reading_reaches_the_callback.py` |
 
 Twenty-nine of these carry a numbered section below. **Response-shape mismatch is the
 exception**: it was swept in the same pass as the `get_db` work and came back clean, so

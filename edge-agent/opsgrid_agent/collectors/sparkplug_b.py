@@ -32,6 +32,7 @@ import asyncio
 import structlog
 
 from .base import BaseCollector
+from opsgrid_agent.tasks import spawn
 
 logger = structlog.get_logger()
 
@@ -283,9 +284,16 @@ class SparkplugBCollector(BaseCollector):
         except Exception as exc:
             logger.error("sparkplug_decode_error", asset_id=self.asset_id, error=str(exc))
             return
-        if envelope is None or self._loop is None:
+        if envelope is None:
             return
-        asyncio.run_coroutine_threadsafe(self.emit(envelope), self._loop)
+        # `spawn`, WHICH THIS FILE ALREADY HAD THE RIGHT IDEA ABOUT (FS-681). The hand-rolled
+        # `run_coroutine_threadsafe` here was correct — and was the pattern MQTT and the file
+        # watcher needed and did not have (FS-675). Two things it did not do: retain the
+        # returned future, so the loop held only a weak reference to the work, and say
+        # anything when `self._loop` was None. That second case returned silently, so a
+        # reading decoded on paho's thread before `start()` had run vanished without trace;
+        # `spawn` logs `background_task_unscheduled` and closes the coroutine instead.
+        spawn(self.emit(envelope), name="sparkplug.emit", loop=self._loop)
 
     def _process(self, topic: str, payload_bytes: bytes) -> Optional[Dict[str, Any]]:
         """Decode a message, applying alias/sequence/message-type semantics.
