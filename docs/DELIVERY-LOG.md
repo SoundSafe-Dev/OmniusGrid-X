@@ -10212,3 +10212,27 @@ that register is for.
 not: its pattern captures `geofencing.realmode.test.ts` whole. It flagged the fragment because
 **I wrote that fragment in backticks** while explaining my own bug. The fault was in my prose,
 not in its regex.
+
+### Does every test the repository contains actually run?
+
+The last configuration worth interrogating is the test runners themselves. "Which tests does
+the runner collect?" is the same question as "which files does the compiler read", and it has
+the same failure mode: a file that exists, looks wired, and is never executed.
+
+Clean on all three, and two of the three questions already had guards:
+
+* **pytest** — 358 `test_*.py` on disk, **357 collected.** The exception is
+  `test_api_contract.py`, which skips at module level unless `RUN_CONTRACT_TESTS=1`. Verified
+  rather than believed: `quality-gates.yml` has a dedicated `api-contract:` job that sets the
+  variable and runs the file by name. Deliberate, documented, and wired.
+* **vitest** — 133 on disk, 133 executed.
+* **playwright** — already covered by `test_every_e2e_spec_is_run.py`, which exists precisely
+  because the live-backend job invokes specs *by name*, so a new one looks wired and is not.
+
+**My detector was the only thing wrong here, twice.** It reported "0 collected, 358 never
+collected" — an absurd denominator, and only absurd enough to notice because the suite plainly
+runs 4,472 tests. The cause: `addopts = -v` in `pytest.ini` makes `--collect-only` print a
+TREE (`<Module x.py>`) rather than node ids, and I guessed the format twice before reading three
+lines of it. The lesson is the one already recorded as rule 165 — assert the denominator — and
+the corollary it earns here: when the denominator is impossible, stop and look at the raw
+output rather than adjusting the pattern again.

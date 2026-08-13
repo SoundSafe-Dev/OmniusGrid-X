@@ -127,6 +127,7 @@ to ask where else it could live.
 | Source outside every static checker | every directory of TS/Python vs the tsconfig include and the flake8 scopes | **528 Python and 7 TypeScript files read by nothing; all clean, all now gated** | `everyTestDirectoryIsTypechecked.test.ts` + the widened CI scopes |
 | An env var read outside the settings object | every `os.environ`/`getenv` read in `app/` | **5 found, all deliberate and correct — recorded as examined rather than left open** | none needed |
 | A source comment citing a guard that does not exist | 256 test filenames named in prose | **2 live: both guards real, both trails broken** | `test_cited_guards_exist.py` |
+| A test the runner never collects | every test file on disk vs what pytest/vitest execute | **clean: 357/358 pytest (1 deliberate opt-in, job verified), 133/133 vitest; playwright already guarded** | `test_every_e2e_spec_is_run.py` (pre-existing) |
 
 Twenty-nine of these carry a numbered section below. **Response-shape mismatch is the
 exception**: it was swept in the same pass as the `get_db` work and came back clean, so
