@@ -10764,3 +10764,28 @@ still needs a human asking rule 194's question, and promtool for the arithmetic.
 
 Mutation: deleting the worker's `INGESTION_LAG` definition fails both the denominator
 control and the main sweep.
+
+---
+
+## FS-697 — the worker's age gauge was as fresh as the last liveness probe
+
+The follow-on question from FS-695: an *age* gauge — who advances it? For
+`opsgrid_worker_heartbeat_age_seconds`, the answer was `snapshot()`, which ran only on
+`/healthz`. Prometheus scrapes `/metrics`, which called `generate_latest()` without a
+refresh — so the age the `IngestionWorkerStalled` alert read was as fresh as the **last
+liveness probe**, an unstated coupling between an alert and an unrelated component. Both
+deployments happen to probe `/healthz` over HTTP today; switch either to a TCP check and the
+gauge freezes — or, in a process never probed, never materializes its label child at all —
+while the alert's hand-fed promtool test keeps passing.
+
+One line: `/metrics` now calls `snapshot()` before `generate_latest()`, so every scrape
+carries a current age no matter what the probe does.
+
+**The guard's first mutation run failed, instructively.** Deleting the refresh passed all
+eight tests, because the gauge is process-global and the staleness test earlier in the same
+file had already materialized `test-worker`'s child with a large age via `/healthz` — the
+new test was reading a neighbour's leftovers and calling them fresh. The test now uses a
+label nothing else touches (`never-probed-worker`), which has no sample at all unless the
+scrape under test produces one. Same lesson as the OEE counter: a guard is only proven by
+the mutation actually failing, and "passed on the first try" is a reason for suspicion,
+not celebration.

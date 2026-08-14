@@ -210,6 +210,16 @@ def _make_handler(health: WorkerHealth):
 
         def do_GET(self):  # noqa: N802 (stdlib API)
             if self.path.startswith("/metrics"):
+                # Refresh the heartbeat-age gauge on the scrape itself (FS-697).
+                # `snapshot()` is what sets WORKER_HEARTBEAT_AGE, and it used to run
+                # only on /healthz — so the age Prometheus read was as fresh as the
+                # LAST LIVENESS PROBE, an unstated coupling between the
+                # IngestionWorkerStalled alert and an unrelated component. Both
+                # deployments happen to probe /healthz today; change the probe to a
+                # TCP check and the gauge would freeze (or never exist) while the
+                # alert kept passing its hand-fed promtool test. Every scrape now
+                # carries a current age regardless of what the probe does.
+                health.snapshot()
                 self._write(200, CONTENT_TYPE_LATEST, generate_latest())
             elif self.path.startswith("/healthz"):
                 snap = health.snapshot()

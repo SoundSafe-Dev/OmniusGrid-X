@@ -97,6 +97,53 @@ def test_metrics_exposes_the_heartbeat_gauge(served):
     assert "opsgrid_worker_units_total" in text
 
 
+def test_the_scrape_itself_refreshes_the_age(served):
+    """FS-697. `snapshot()` is what sets WORKER_HEARTBEAT_AGE, and it used to run only on
+    /healthz — so the age Prometheus read was as fresh as the LAST LIVENESS PROBE. Both
+    deployments happen to probe /healthz today; switch the probe to a TCP check and the
+    gauge freezes (or, in a process never probed, never materializes its label child at
+    all) while `IngestionWorkerStalled` keeps passing its hand-fed promtool test. This
+    drives /metrics WITHOUT ever touching /healthz and requires the age to be current.
+    """
+    import re
+    import time as _time
+
+    # A UNIQUE label, not the shared fixture's "test-worker": the gauge is
+    # process-global, and the staleness test earlier in this file materializes
+    # test-worker's child via /healthz with a large age — against which the first
+    # version of this test could not detect the refresh being removed (its own
+    # mutation run proved it: 8 passed with the fix deleted). A label nothing else
+    # touches has no sample at all unless THIS scrape produces one.
+    health = WorkerHealth("never-probed-worker", stale_after_seconds=100.0)
+    server: ThreadingHTTPServer = create_server(0, health)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    base = f"http://127.0.0.1:{server.server_address[1]}"
+    try:
+        health.ready()
+        health.beat()
+
+        # Last beat 500 monotonic seconds ago, and /healthz never called.
+        health._last_beat = _time.monotonic() - 500.0
+
+        _status, body = _get(f"{base}/metrics")
+    finally:
+        server.shutdown()
+        server.server_close()
+    match = re.search(
+        r'opsgrid_worker_heartbeat_age_seconds\{worker="never-probed-worker"\}\s+([0-9.e+]+)',
+        body.decode(),
+    )
+    assert match, (
+        "the age gauge has no sample for this worker — /metrics no longer refreshes it, "
+        "so its freshness depends on something else polling /healthz"
+    )
+    assert float(match.group(1)) >= 499.0, (
+        f"the scraped age is {match.group(1)}s for a worker 500s past its last beat — "
+        f"Prometheus is reading a stale snapshot, and IngestionWorkerStalled fires late "
+        f"or never"
+    )
+
+
 def test_unknown_path_is_404_not_a_crash(served):
     base, _ = served
     assert _get(f"{base}/nope")[0] == 404
