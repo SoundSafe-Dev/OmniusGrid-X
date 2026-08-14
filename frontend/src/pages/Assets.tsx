@@ -1,14 +1,62 @@
-import { FC, useState } from 'react'
+import { FC, useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { Box, ChevronRight } from 'lucide-react'
+import { Box, ChevronRight, X } from 'lucide-react'
+import { useQuery } from '@tanstack/react-query'
 import { useAssets } from '../hooks'
+import { assetsApi, workcellsApi } from '../api'
 import { Tooltip, TooltipTrigger, TooltipContent } from '../components/ui'
 
 const Assets: FC = () => {
   // FS-127: page through the FS-82 envelope. Page size comes from the limit the
   // backend echoes back; skip is part of the queryKey via the hook's params.
   const [skip, setSkip] = useState(0)
-  const { data: assetsData, isLoading, isError } = useAssets({ skip })
+
+  // Filter bar (P6, page-enhancement review). workcell/type/active existed as query
+  // params on the backend for as long as the route has; the page sent none of them,
+  // so finding one machine meant paging the whole estate. `search` is the one new
+  // param (name ILIKE, added with this bar); it is debounced so the request follows
+  // the operator, not every keystroke.
+  const [searchInput, setSearchInput] = useState('')
+  const [search, setSearch] = useState('')
+  const [workcellId, setWorkcellId] = useState('')
+  const [assetTypeId, setAssetTypeId] = useState('')
+  const [activeOnly, setActiveOnly] = useState('') // '' | 'active' | 'inactive'
+
+  useEffect(() => {
+    const handle = setTimeout(() => {
+      setSearch(searchInput)
+      setSkip(0)
+    }, 300)
+    return () => clearTimeout(handle)
+  }, [searchInput])
+
+  const params = useMemo(
+    () => ({
+      skip,
+      search: search || undefined,
+      workcellId: workcellId || undefined,
+      assetTypeId: assetTypeId || undefined,
+      isActive: activeOnly === '' ? undefined : activeOnly === 'active',
+    }),
+    [skip, search, workcellId, assetTypeId, activeOnly],
+  )
+  const { data: assetsData, isLoading, isError } = useAssets(params)
+
+  const { data: workcells } = useQuery({
+    queryKey: ['workcells-for-filter'],
+    queryFn: () => workcellsApi.list(),
+  })
+  const { data: assetTypes } = useQuery({
+    queryKey: ['asset-types-for-filter'],
+    queryFn: () => assetsApi.getTypes(),
+  })
+
+  const anyFilterActive =
+    search !== '' || workcellId !== '' || assetTypeId !== '' || activeOnly !== ''
+  const applyFilter = (setter: (v: string) => void) => (value: string) => {
+    setter(value)
+    setSkip(0)
+  }
   const assets = assetsData?.items || []
   const total = assetsData?.total ?? 0
   const limit = assetsData?.limit || assets.length || 1
@@ -87,12 +135,73 @@ const Assets: FC = () => {
         </Tooltip>
       </div>
 
+      <div className="flex flex-wrap items-center gap-2">
+        <input
+          aria-label="Search assets by name"
+          value={searchInput}
+          onChange={(e) => setSearchInput(e.target.value)}
+          placeholder="Search by name…"
+          className="bg-opsgrid-bg border border-opsgrid-border rounded px-3 py-1.5 text-sm w-56 focus:border-opsgrid-primary focus:outline-none"
+        />
+        <select
+          aria-label="Workcell"
+          value={workcellId}
+          onChange={(e) => applyFilter(setWorkcellId)(e.target.value)}
+          className="bg-opsgrid-bg border border-opsgrid-border rounded px-2 py-1.5 text-sm focus:border-opsgrid-primary focus:outline-none"
+        >
+          <option value="">All workcells</option>
+          {(workcells ?? []).map((workcell: any) => (
+            <option key={workcell.id} value={workcell.id}>{workcell.name}</option>
+          ))}
+        </select>
+        <select
+          aria-label="Asset type"
+          value={assetTypeId}
+          onChange={(e) => applyFilter(setAssetTypeId)(e.target.value)}
+          className="bg-opsgrid-bg border border-opsgrid-border rounded px-2 py-1.5 text-sm focus:border-opsgrid-primary focus:outline-none"
+        >
+          <option value="">All types</option>
+          {(assetTypes ?? []).map((assetType: any) => (
+            <option key={assetType.id} value={assetType.id}>{assetType.name}</option>
+          ))}
+        </select>
+        <select
+          aria-label="Active"
+          value={activeOnly}
+          onChange={(e) => applyFilter(setActiveOnly)(e.target.value)}
+          className="bg-opsgrid-bg border border-opsgrid-border rounded px-2 py-1.5 text-sm focus:border-opsgrid-primary focus:outline-none"
+        >
+          <option value="">Active + inactive</option>
+          <option value="active">Active only</option>
+          <option value="inactive">Inactive only</option>
+        </select>
+        {anyFilterActive && (
+          <button
+            onClick={() => {
+              setSearchInput('')
+              setSearch('')
+              setWorkcellId('')
+              setAssetTypeId('')
+              setActiveOnly('')
+              setSkip(0)
+            }}
+            className="flex items-center gap-1 text-sm text-opsgrid-text-secondary hover:text-opsgrid-primary"
+          >
+            <X size={14} /> Reset
+          </button>
+        )}
+      </div>
+
       {assets.length === 0 && (
         <div className="flex items-center justify-center h-48 border border-dashed border-opsgrid-border rounded-lg">
           <div className="text-center">
-            <p className="text-opsgrid-text-secondary">No assets registered yet.</p>
+            <p className="text-opsgrid-text-secondary">
+              {anyFilterActive ? 'No assets match the current filters.' : 'No assets registered yet.'}
+            </p>
             <p className="text-sm text-opsgrid-text-secondary mt-1">
-              Assets appear here once an edge agent enrolls and reports.
+              {anyFilterActive
+                ? 'Loosen a filter, or reset them all.'
+                : 'Assets appear here once an edge agent enrolls and reports.'}
             </p>
           </div>
         </div>

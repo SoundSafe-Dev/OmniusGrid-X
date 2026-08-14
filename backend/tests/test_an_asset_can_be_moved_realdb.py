@@ -239,3 +239,31 @@ async def test_an_update_that_sends_neither_leaves_both_alone(
         assert body["asset_type_id"] == str(asset_type)
     finally:
         _cleanup(admin_sync_url, workcell_two, asset_type, asset_id)
+
+
+async def test_the_asset_list_searches_by_name(client_a, seeded_orgs, admin_sync_url):
+    """P6 (page-enhancement review): the fleet list gained `?search=` — a name substring,
+    case-insensitive — because finding one machine used to mean paging the whole estate.
+    Both directions: the match is found, and a non-match is genuinely excluded (a search
+    that returns everything is a search box that lies)."""
+    workcell_two, asset_type = _seed(admin_sync_url, seeded_orgs["org_a_id"])
+    needle_id = None
+    try:
+        needle_id = await _create_asset(
+            client_a, seeded_orgs["workcell_a_id"], asset_type
+        )
+        needle_name = (await client_a.get(f"{ASSETS}/{needle_id}")).json()["name"]
+        fragment = needle_name[6:14].upper()  # mid-string, case-flipped: ILIKE substring
+
+        hit = await client_a.get(f"{ASSETS}/", params={"search": fragment})
+        assert hit.status_code == 200, hit.text
+        names = [row["name"] for row in hit.json()["items"]]
+        assert needle_name in names
+
+        miss = await client_a.get(
+            f"{ASSETS}/", params={"search": "no-asset-is-named-this"}
+        )
+        assert miss.status_code == 200
+        assert miss.json()["items"] == []
+    finally:
+        _cleanup(admin_sync_url, workcell_two, asset_type, needle_id)

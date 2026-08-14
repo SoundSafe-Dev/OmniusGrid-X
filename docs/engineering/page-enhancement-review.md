@@ -336,7 +336,7 @@ E2 Mobile-first floor view. E3 Shift handover notes.
 | P3 | ✅ SHIPPED — IntakeInbox reactive filter + View Results wired to GET /intake/{id} | Intake | S |
 | P4 | ✅ SHIPPED — EngineStoppedBanner on all four pages; history client + tiles + real reject reason/operator | engines/* | S–M |
 | P5 | ✅ SHIPPED — ShopFloor asset picker; open downtime is server truth (new GET /downtime/open) | ShopFloor | M |
-| P6 | Assets filter bar (3 existing params + search) | Assets | S |
+| P6 | ✅ SHIPPED — Assets filter bar: debounced name search (new backend param) + workcell/type/active | Assets | S |
 | P7 | AssetDetail: scoped alarms panel + OEE card | AssetDetail | M |
 | P8 | OEE: losses Pareto + time-range/aggregation + sort | OEE | M |
 | P9 | `/admin/export-schedules` CRUD (9 unreferenced endpoints) | new page | L |

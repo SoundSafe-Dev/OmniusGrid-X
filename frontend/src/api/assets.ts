@@ -37,6 +37,8 @@ interface AssetListParams {
   workcellId?: string;
   assetTypeId?: string;
   isActive?: boolean;
+  /** Case-insensitive name substring (P6). */
+  search?: string;
   skip?: number;
   limit?: number;
 }
@@ -55,6 +57,7 @@ export const assetsApi = {
       workcell_id: params?.workcellId,
       asset_type_id: params?.assetTypeId,
       is_active: params?.isActive,
+      search: params?.search,
       skip: params?.skip,
       limit: params?.limit,
     };

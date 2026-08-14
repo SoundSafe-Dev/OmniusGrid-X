@@ -77,6 +77,10 @@ async def list_assets(
     workcell_id: Optional[UUID] = None,
     asset_type_id: Optional[UUID] = None,
     is_active: Optional[bool] = None,
+    #: P6 (page-enhancement review): a fleet list without a name search forces paging
+    #: through the whole estate to find one machine. Bounded to keep a hostile pattern
+    #: from becoming a regex engine — ILIKE substring only.
+    search: Optional[str] = Query(None, max_length=100),
     skip: int = Query(0, ge=0, le=MAX_OFFSET),
     limit: int = Query(100, ge=1, le=1000),
     org_id: UUID = Depends(get_tenant_org_id),
@@ -94,6 +98,8 @@ async def list_assets(
         query = query.where(Asset.asset_type_id == asset_type_id)
     if is_active is not None:
         query = query.where(Asset.is_active == is_active)
+    if search:
+        query = query.where(Asset.name.ilike(f"%{search}%"))
 
     total = (
         await db.execute(select(func.count()).select_from(query.subquery()))
