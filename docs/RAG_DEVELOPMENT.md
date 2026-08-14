@@ -6,13 +6,15 @@ The application code is deployment-agnostic on purpose: every dependency is a UR
 services, how they connect, and how they compose into each deployment shape.
 
 > Status: application layer is code-complete (document store, embeddings/reranker
-> service + clients, vector store), the local Docker Compose stack is wired
-> (`qdrant`, `seaweedfs`, `rag-inference` under the `rag` profile), **and** an
-> isolated Kubernetes deployment (`infrastructure/k8s/base/rag/`) has passed
-> end-to-end verification on a local kind cluster. To bring up Compose locally,
-> jump to [§7 Running & testing the RAG backend locally](#7-running--testing-the-rag-backend-locally).
-> For the k8s state, known issues, and what's left before it's production-ready,
-> see [§8 Kubernetes deployment — status, known issues & next steps](#8-kubernetes-deployment--status-known-issues--next-steps).
+> service + clients, vector store) and ingestion is **asynchronous** — the API
+> queues, a dedicated `rag-indexing-worker` indexes. Read
+> [§1.1](#11-ingestion-is-asynchronous--where-the-seam-actually-is) before
+> deploying anything: a stack without that worker accepts uploads and silently
+> never indexes them. Compose is wired for the full set (`qdrant`, `seaweedfs`,
+> `rag-inference`, `rag-indexing-worker` under the `rag` profile). To bring it up
+> locally, jump to [§7](#7-running--testing-the-rag-backend-locally).
+> Kubernetes manifests exist for everything but have **only been verified
+> pre-async** — see [§8](#8-kubernetes-deployment--status-known-issues--next-steps).
 
 ---
 
@@ -25,13 +27,18 @@ can live on a different host (RunPod) entirely.
 ### Stateful / CPU tier
 | Service | Image / build | Port(s) | Persistence | Notes |
 |---|---|---|---|---|
-| backend (FastAPI) | `./backend` | 8000 | none | thin orchestrator; **no ML deps, no GPU** |
-| ingestion/index worker | `./backend` (WORKER_MODE) | — | none | parse→chunk→embed→upsert |
+| backend (FastAPI) | `./backend` | 8000 | none | thin orchestrator; **no ML deps, no GPU**. Stores the blob and queues a row; does not index |
+| `rag-indexing-worker` | `./backend`, `python -m app.workers.rag_indexing` | — | none | claims queued `rag_documents` rows → parse→chunk→embed→upsert |
 | SeaweedFS | `chrislusf/seaweedfs` | 9333, 8888, 8333, 8080 | **yes** (`/data`) | doc blob store (S3 API on 8333) |
 | Qdrant | `qdrant/qdrant` | 6333 (http), 6334 (grpc) | **yes** (`/qdrant/storage`) | vector store |
-| Postgres/TimescaleDB | `timescale/timescaledb` | 5432 | **yes** | app + RAG metadata |
+| Postgres/TimescaleDB | `timescale/timescaledb` | 5432 | **yes** | app + RAG metadata; **also the ingest queue** (`rag_documents`) |
 | Redis | `redis:7-alpine` | 6379 | optional | cache |
-| Redpanda | `redpandadata/redpanda` | 9092, 29092 | yes | ingestion triggering |
+
+> The RAG index worker is **not** the `ingestion-worker` service, and does not
+> use `WORKER_MODE`. `ingestion-worker` (`WORKER_MODE=ingestion`) is the Kafka
+> telemetry consumer and has nothing to do with documents. RAG indexing is a
+> separate service running its own module, switched by
+> `RAG_INDEX_WORKER_ENABLED`, with **no Redpanda dependency at all** — see §1.1.
 
 ### GPU / stateless tier
 | Service | Image / build | Port | GPU | Notes |
@@ -42,6 +49,45 @@ can live on a different host (RunPod) entirely.
 > Port note: `backend`, `rag-inference`, and a vLLM `gemma` all default to
 > container port 8000. That's fine — they're separate containers. Only remap if
 > you publish more than one to the host.
+
+### 1.1 Ingestion is asynchronous — where the seam actually is
+
+Upload and indexing are two separate processes joined by a Postgres row, not one
+request. This is the single most important thing to know before deploying:
+**`POST /rag/ingest` returns `202` and indexes nothing.**
+
+```
+POST /rag/ingest ──► backend ──► SeaweedFS (blob)          ] inside the request:
+                        └─────► rag_documents (status=queued)]  two writes, no ML
+
+                                      │  (row IS the queue)
+                                      ▼
+                        rag-indexing-worker  ── claims with FOR UPDATE SKIP LOCKED
+                              │
+                              ├──► SeaweedFS   read blob back
+                              ├──► rag-inference  embed chunks
+                              └──► Qdrant      upsert new generation, drop old
+
+GET /rag/documents/{doc_id}/status ──► queued | indexing | indexed | skipped | failed
+```
+
+Consequences for deployment:
+
+- **The worker is required.** Without `rag-indexing-worker` running, uploads
+  succeed and are never indexed — they sit at `queued` forever and nothing
+  errors. A backend-only deployment is silently non-functional for RAG.
+- **No Redpanda in this path.** The queue is the `rag_documents` row claimed
+  with `FOR UPDATE SKIP LOCKED`, so there is no outbox dispatcher to run and the
+  worker is safe at **any replica count**. Do not add a Kafka dependency to it.
+- **Callers must poll.** Any client that treated the old synchronous 200 as
+  "indexed and queryable" is wrong now. `scripts/verify_rag_e2e.py` and
+  `backend/tests/rag_eval/client.py` both poll the status endpoint.
+- **Postgres is on the RAG critical path**, not just a metadata sidecar. The
+  worker needs it, and `rag_documents` carries FORCE ROW LEVEL SECURITY — every
+  query sets `app.current_org_id` first, including the worker's.
+
+Design rationale, including why the row is the queue rather than a Redpanda
+topic, is in `docs/superpowers/specs/2026-07-30-rag-async-ingestion-design.md`.
 
 ---
 
@@ -66,7 +112,16 @@ co-location, so any dependency can move to another host by changing one env var.
 | `S3_ENDPOINT_URL` | doc store | `http://seaweedfs:8333` | `https://s3.amazonaws.com` |
 | `QDRANT_URL` (+`QDRANT_API_KEY`) | vector store | `http://qdrant:6333` | `https://xyz.qdrant.cloud` |
 | `RAG_INFERENCE_URL` (+`RAG_INFERENCE_API_KEY`) | embed/rerank | `http://rag-inference:8000` | `https://xxx.runpod.net` |
+| `RAG_INFERENCE_INGEST_URL` | batch ingest embed | *empty* (shares the above) | `http://rag-inference-ingest:8000` |
 | `LLM_BASE_URL` (+`LLM_MODEL`,`LLM_API_KEY`) | LLM | `http://gemma:8000/v1` | `https://yyy.runpod.net/v1` |
+| `DATABASE_URL` | metadata **+ ingest queue** | `postgresql://…@timescaledb:5432/…` | managed Postgres |
+
+**`RAG_INFERENCE_INGEST_URL` is the ingest/query isolation lever.** Left empty,
+bulk indexing and live query embeddings share one rag-inference, so a large
+upload pegs the CPU that queries need and shows up as latency for every tenant.
+Pointing it at a second replica gives batch embedding its own lane with no code
+change. Worth setting as soon as ingest volume is nontrivial; the cost is
+another ~5 GB of weights resident in that replica.
 
 ---
 
@@ -167,7 +222,7 @@ Local Compose wiring is **done** (see `docker-compose.yml`, `rag` profile):
 - [x] `qdrant` service + `qdrant-data` volume
 - [x] `rag-inference` service (build `./rag-inference`) + `rag-models` model volume; CPU-first, GPU optional
 - [x] backend: RAG env vars wired (`QDRANT_URL`, `S3_ENDPOINT_URL`, `RAG_INFERENCE_URL`, `LLM_BASE_URL`)
-- [x] index worker: reuse backend image with `WORKER_MODE`
+- [x] `rag-indexing-worker` service: backend image, `command: python -m app.workers.rag_indexing`, in the `rag` profile. Waits on `rag-inference` being **healthy** (not merely started) — its healthcheck allows a 600 s `start_period` for the first-boot weight download, and a worker that starts sooner would burn `RAG_INDEX_MAX_ATTEMPTS` against a service that isn't up yet and mark documents permanently `failed`.
 - [x] `GET /api/v1/rag/health` capability matrix (`backend/app/api/rag.py`)
 
 Still open (deployment, separate tasks):
@@ -175,6 +230,25 @@ Still open (deployment, separate tasks):
 - [ ] `gemma` service (vLLM/Ollama) as a **container** + GPU reservation — locally the LLM runs *natively* on the host (Ollama) and the backend reaches it via `host.docker.internal`
 - [ ] `compose.no-gpu.yml` override for topology C (omits GPU services)
 - [ ] Fold the four `health_check()`s into the backend `/health` aggregate too
+- [ ] A second `rag-inference` replica wired to `RAG_INFERENCE_INGEST_URL` (the code path exists and is one env var; no compose service defines the replica yet)
+
+### 6.1 RAG worker / ingest settings
+
+| Setting | Default | What it does |
+|---|---|---|
+| `RAG_INDEX_WORKER_ENABLED` | `true` | `false` makes the worker idle instead of indexing. It stays running: exiting would read as a completed run to compose's `restart: unless-stopped` and to a k8s Deployment, turning the off switch into a restart loop. To actually reclaim resources, scale to zero. |
+| `RAG_INDEX_POLL_INTERVAL_SECONDS` | `5` | How often the worker looks for queued rows. |
+| `RAG_INDEX_MAX_ATTEMPTS` | `3` | Retries before a document is marked `failed`. |
+| `RAG_INDEX_STALE_INDEXING_SECONDS` | `900` | When a row abandoned in `indexing` (killed worker) is re-queued. Must exceed worst-case indexing time — compose allows `RAG_INFERENCE_TIMEOUT` 180 s *per embed batch*. |
+| `RAG_MAX_UPLOAD_BYTES` | 50 MiB | Rejected at the edge from `Content-Length` before the body is buffered, and again against the real size. Mirror this in the ingress `proxy-body-size`. |
+| `RAG_MAX_CHUNKS_PER_DOC` | `2000` | Oversized documents are truncated and flagged rather than exploding the embed path. |
+| `RAG_MAX_DOCUMENTS_PER_ORG` | `10000` | Per-tenant document quota; `409` when full. `0` = unlimited. |
+| `RAG_MAX_TOTAL_BYTES_PER_ORG` | 50 GiB | Per-tenant storage quota; `409` when full. `0` = unlimited. |
+| `RAG_INGEST_RATE_LIMIT_PER_MINUTE` | `60` | Per-tenant upload rate; `429` when exceeded. `0` = unlimited. Counted from `rag_documents`, so it is exact per org and survives restarts. |
+
+Quotas are enforced **before** the blob is stored, so a rejected upload costs no
+object storage. Current usage against each limit is reported in the `quota`
+block of `GET /rag/documents`.
 
 ---
 
@@ -210,9 +284,14 @@ never start with a plain `docker compose up`.
 
 ```bash
 ./scripts/rag.sh up        # LEAN: qdrant + seaweedfs + rag-inference + backend
+                           #       + rag-indexing-worker
 # or
-./scripts/rag.sh up-full   # everything (observability, redpanda, worker) + rag profile
+./scripts/rag.sh up-full   # everything (observability, redpanda, all workers) + rag profile
 ```
+
+`rag-indexing-worker` is part of the lean set on purpose — it is what turns a
+`queued` upload into a queryable document, so a stack without it looks healthy
+and indexes nothing.
 
 `up` blocks while `rag-inference` downloads BGE weights on **first boot** (~5 GB;
 can take several minutes — cached in the `rag-models` volume afterward). Watch it:
@@ -244,11 +323,15 @@ maps to a seeded dev org/user. The endpoints (prefix `/api/v1/rag`):
 
 | Method | Path | Purpose |
 |---|---|---|
-| POST | `/ingest` | multipart upload → parse → chunk → embed → store + index |
+| POST | `/ingest` | multipart upload → store blob + queue row. Returns **202 `{status: "queued"}`**; does not index. `413` too large, `429` rate limited, `409` over quota |
+| GET | `/documents/{doc_id}/status` | poll until terminal: `indexed` / `skipped` (see `reason`) / `failed` (see `error`) |
 | POST | `/query` | retrieve (`generate=false`) or retrieve+answer (`generate=true`) |
-| GET | `/documents` | list this org's stored docs |
+| GET | `/documents` | list this org's stored docs, plus a `quota` usage block |
 | DELETE | `/documents/{doc_id}` | remove from **both** SeaweedFS and Qdrant |
 | GET | `/health` | RAG capability matrix (each dependency's `health_check()`) |
+
+A document is only queryable once its status reaches `indexed`. Ingesting and
+immediately querying will find nothing — that is the async contract, not a bug.
 
 ### 7.4 Automated end-to-end verification
 
@@ -264,7 +347,10 @@ It runs 8 stages and exits non-zero on any failure:
 
 1. **Preflight** — backend, rag-inference (models loaded), Qdrant, SeaweedFS all up
 2. **BGE** — `POST /embed` direct; asserts a non-zero 1024-d dense vector + aligned sparse
-3. **Ingest** — uploads a sentinel document through the backend API
+3. **Ingest** — uploads a sentinel document through the backend API, then **polls
+   `/documents/{doc_id}/status` until terminal** (up to 300 s). This stage now
+   also proves the worker is alive: a stack with no `rag-indexing-worker` hangs
+   here at `queued` rather than passing
 4. **SeaweedFS** — HEAD+GET the blob at `{org}/{doc}/{filename}`; bytes match exactly
 5. **Qdrant** — scroll by `doc_id`; point count == chunks, real named dense+sparse vectors, full payload
 6. **Retrieval** — `generate=false`; asserts our doc is the **top citation**
@@ -310,6 +396,18 @@ Add `docker compose down -v` only if you want to wipe the `qdrant-data`,
     ingest live in the dedicated workers. Fix: the backend's Redpanda condition
     is `service_started`; the ingestion/OTA workers, which genuinely talk to
     Kafka at boot, keep `service_healthy`.
+- **A document is stuck at `queued` and never indexes** — the
+  `rag-indexing-worker` is not running, or cannot reach a dependency. This is
+  the characteristic failure of the async design: the upload succeeded, so the
+  API reports nothing wrong. Check `docker compose ps rag-indexing-worker` and
+  its logs. If `RAG_INDEX_WORKER_ENABLED=false` the container runs but
+  deliberately idles (logging `rag_indexing_worker_disabled` once at startup).
+- **A document reaches `failed`** — infrastructure fault after
+  `RAG_INDEX_MAX_ATTEMPTS` passes; the row's `error` says which. Most often
+  rag-inference was not ready yet. Re-uploading the same `doc_id` resets the row
+  to `queued` and starts over.
+- **A document reaches `skipped`** — not an error: nothing indexable was found
+  (unsupported type, empty extraction). The row's `reason` explains it.
 - **`generate=true` returns no answer** — Ollama isn't reachable on the host.
   `ollama serve` + `ollama pull gemma2:2b`; the backend reaches it at
   `host.docker.internal:11434`. Retrieval (`generate=false`) is unaffected.
@@ -321,17 +419,37 @@ in place and verified end-to-end by the flow above.
 
 ## 8. Kubernetes deployment — status, known issues & next steps
 
-`infrastructure/k8s/base/rag/` is a standalone kustomize base (Qdrant StatefulSet,
-SeaweedFS Deployment, rag-inference Deployment — its own `omniusgrid-rag`
-namespace) applied **separately** from `infrastructure/k8s/base` +
-`overlays/{staging,production}`, not folded into them. The backend's
-`base/backend-deployment.yaml` already carries `QDRANT_URL` / `S3_ENDPOINT_URL` /
-`RAG_INFERENCE_URL` pointed at `*.omniusgrid-rag.svc.cluster.local`.
+RAG on Kubernetes is split across **two** kustomize trees, which is easy to miss:
 
-**Verified:** a full ingest → embed → store → index → retrieve → cleanup pass via
-`scripts/verify_rag_e2e.py` against a local `kind` cluster, port-forwarded from the
-host. Every stage passed except LLM generation, which needs Ollama on the host and
-is unrelated to the RAG stack itself.
+| What | Where | Namespace |
+|---|---|---|
+| Qdrant StatefulSet, SeaweedFS Deployment, rag-inference Deployment | `infrastructure/k8s/base/rag/` — standalone, applied **separately** | `omniusgrid-rag` |
+| `rag-indexing-worker` Deployment | `infrastructure/k8s/base/rag-indexing-worker-deployment.yaml` — part of the **main** base | `omniusgrid` |
+
+The stores live in their own namespace so `gemma-correlation-ai` can reuse them
+later without coupling; the worker runs the backend image and needs the app's
+Postgres and Secrets, so it belongs with the app. The backend's
+`base/backend-deployment.yaml` carries `QDRANT_URL` / `S3_ENDPOINT_URL` /
+`RAG_INFERENCE_URL` pointed at `*.omniusgrid-rag.svc.cluster.local`, and the
+worker crosses the same namespace boundary.
+
+**Applying `base/rag/` alone does not give you a working RAG deployment** —
+uploads will queue and never index. The worker Deployment comes from the main
+base, and its NetworkPolicy egress must reach Postgres (in-namespace) plus
+Qdrant, SeaweedFS and rag-inference (cross-namespace) **and DNS**; the namespace
+is default-deny, so a missing egress rule blackholes the worker silently.
+
+**Verified — but against the pre-async code.** A full ingest → embed → store →
+index → retrieve → cleanup pass via `scripts/verify_rag_e2e.py` passed on a local
+`kind` cluster (port-forwarded from the host); every stage except LLM generation,
+which needs Ollama on the host and is unrelated to the RAG stack.
+
+That run predates async ingestion. It exercised a backend that indexed inline,
+so it proves nothing about the `rag-indexing-worker` Deployment, its
+NetworkPolicy egress, or the claim/finalize path — none of which existed then.
+**Treat the k8s RAG deployment as unverified until `verify_rag_e2e.py` is re-run
+against a cluster that includes the worker.** The compose path is the gate for
+that: prove it there first (§7.4), then k8s.
 
 ### 8.1 Known issues (unfixed)
 
@@ -397,6 +515,9 @@ throwaway local cluster and were applied live with `kubectl patch` / piped `sed`
 
 ### 8.4 Next steps
 
+0. **Re-verify end to end with the worker in the loop** — compose first
+   (`./scripts/rag.sh verify`), then kind. Everything below is downstream of
+   knowing the async path actually works against live infrastructure.
 1. Fix the mTLS env var mismatch (§8.1) and decide `backend-tls`'s fate.
 2. Decide the namespace-topology question (§8.1) before any staging/production wiring.
 3. Pin a real `storageClassName` for `base/rag/`'s Qdrant PVC per environment

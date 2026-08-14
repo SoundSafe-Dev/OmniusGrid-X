@@ -29,10 +29,18 @@ session doesn't have to re-derive it.
   `test_route_auth_walk.py`.
 - The API tests run against a **real Postgres** (testcontainers), including RLS
   — cross-org status reads 404, malformed `doc_id` 422s.
-- `kubectl kustomize infrastructure/k8s/base` renders.
+- `kubectl kustomize infrastructure/k8s/base` and `.../base/rag` both render;
+  `docker compose config` validates.
 - Full backend suite shows **no new failures**: 23 failures + 3 collection
   errors (`test_*_scenario_builder.py`, stale `image_scenario_builder` import)
   reproduce identically at `4b5d8e8c`, verified in a throwaway worktree.
+
+**Partly proven — the followup fixes (streaming, quotas, ingest lane):**
+- `test_rag_upload_limit.py` (8 tests) is green: the `Content-Length` guard,
+  prefix scoping, and `stream_size` against a real `SpooledTemporaryFile`.
+- `test_rag_ingest_quota.py` (11 tests) is **written but has never run** — it
+  needs testcontainers/Postgres and Docker was unavailable in the session that
+  wrote it. Run it before trusting any quota behaviour.
 
 **Not proven — the whole async path has never run against live infrastructure:**
 - No `docker compose --profile rag up` boot. Qdrant, SeaweedFS and
@@ -41,6 +49,8 @@ session doesn't have to re-derive it.
 - `backend/tests/rag_eval/` has not been run since `client.ingest()` became
   upload-then-poll.
 - Nothing has been applied to a kind cluster.
+- The streaming upload path (`upload_fileobj` into SeaweedFS) has never sent a
+  byte to a real object store — the unit tests stub the document store.
 
 Everything below item 1 is gated on item 1.
 
@@ -70,31 +80,40 @@ lands too early should see `queued`, not the previous run's `indexed`) and
 `test_isolation.py` (two orgs ingesting concurrently — the first real test of
 `FOR UPDATE SKIP LOCKED` under contention).
 
-### 3. Fix the disabled-worker restart loop
-`app/workers/rag_indexing.py:129-134` — when `RAG_INDEX_WORKER_ENABLED=false`
-the module logs `rag_indexing_worker_disabled` and the process exits 0.
-Under compose's `restart: unless-stopped` and under a k8s Deployment that is a
-restart loop of no-ops, not a clean off switch. Either block forever after
-logging, or drop the flag and turn the worker off by scaling to zero.
-
-### 4. Kubernetes
+### 3. Kubernetes
 - Apply `infrastructure/k8s/base/rag/` on kind and complete the isolated
   component verification from
-  `docs/superpowers/specs/2026-07-27-rag-k8s-isolated-design.md` — **still
-  untracked**; commit or delete it.
-- Then apply the worker Deployment and confirm the NetworkPolicies from
+  `docs/superpowers/specs/2026-07-27-rag-k8s-isolated-design.md`.
+- Then apply the worker Deployment (it lives in the **main** base,
+  `infrastructure/k8s/base/rag-indexing-worker-deployment.yaml`, namespace
+  `omniusgrid` — not in `base/rag/`) and confirm the NetworkPolicies from
   `8c7efab1` actually let it reach Postgres, Qdrant, SeaweedFS and
   rag-inference. Default-deny-all is in effect, so a missing egress rule
   blackholes it silently, including DNS.
 - Folding `base/rag/` into `overlays/{staging,production}` is still deferred.
 
-### 5. Remaining ingestion followups
-`docs/rag_ingestion_followups.md` items 1–4 are untouched by this pass: whole
-file read into memory, shared rag-inference between ingest and query, the
-non-atomic `delete_by_doc` → re-upsert window (the status/retry half landed,
-the generation swap did not), and per-tenant ingest quotas.
+### 4. Remaining ingestion followups
+None. `docs/rag_ingestion_followups.md` items 1–4 are all resolved:
 
-### 6. Housekeeping
-- 18 commits unpushed; branch not merged to `main`.
+| Item | Resolution |
+|---|---|
+| Inline ingestion in the request | 202 + worker (the async pass) |
+| Non-atomic `delete_by_doc` → re-upsert | Generation swap, ported from `92dea25a` |
+| Whole file read into memory | `stream_size` + `upload_fileobj`; `UploadLimitMiddleware` rejects on `Content-Length` pre-buffer |
+| Shared rag-inference for ingest + query | `RAG_INFERENCE_INGEST_URL` (empty = shared, unchanged default) |
+| No per-tenant quota | Doc/byte quotas + rate limit from `rag_documents`; `size_bytes` added in migration 044 |
+
+Every one of these is covered by unit/API tests only — **none has run against
+live infrastructure.** Item 1 above remains the gate.
+
+### 5. Housekeeping
+- 19 local commits unpushed, plus this working tree; branch not merged to `main`.
+- `origin/feature/RAG-Compliance-Doc-Pipeline` has diverged: it holds `92dea25a`
+  (the generation swap, built without the async work), which is not an ancestor
+  of local. The fix is ported, but the branches still need reconciling — a plain
+  merge will conflict in `rag_ingestion.py` and `rag_ingestion_followups.md`.
+- `database/migrations/044_rag_document_size_bytes.sql` must run before the
+  quota code can read `size_bytes`. The compose `migrate` service handles this;
+  a manual/partial deploy will 500 on ingest until it does.
 - The 3 scenario-builder collection errors are unrelated to RAG but will break
   any `pytest tests/` run that doesn't ignore them.
