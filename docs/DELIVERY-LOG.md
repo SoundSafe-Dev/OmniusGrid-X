@@ -10789,3 +10789,36 @@ label nothing else touches (`never-probed-worker`), which has no sample at all u
 scrape under test produces one. Same lesson as the OEE counter: a guard is only proven by
 the mutation actually failing, and "passed on the first try" is a reason for suspicion,
 not celebration.
+
+---
+
+## FS-698 — one cancelled task ended all collector supervision, permanently
+
+Reading `_health_monitor` for FS-694's frozen-gauge question found a sharper way for the
+gauge to freeze: the loop that writes it can die. The monitor inspects every done collector
+task with `task.exception()` — and for a task that was **cancelled**, that call does not
+return an exception, it *raises* `asyncio.CancelledError`. CancelledError has been a
+`BaseException` since Python 3.8, so it sails past the loop's `except Exception` and
+terminates the monitor coroutine.
+
+The window is real: `restart_collector` cancels the old task and then **awaits** it (2s
+timeout) *before* popping it from `collector_tasks` — a suspension point at which the
+monitor can wake and meet the cancelled entry. `stop_collector` (config hot-reload) pops
+first, but the monitor iterates a `list(...)` snapshot, so an entry captured before the pop
+is still inspected after the cancel.
+
+What dying costs: the monitor is the **only** writer of `edge_collector_connection_state`
+(frozen at last values — FS-694's class, inflicted by a single hot-reload), the only caller
+of `refresh_collector_stats`, and the only automatic restart path for crashed collectors.
+After one CancelledError the agent runs unsupervised, and the only trace is one unexplained
+traceback. Driven live before the fix: the real monitor handed a cancelled task terminated
+on its first iteration.
+
+Fixed by treating cancelled as administrative, not crashed: logged, **not restarted**
+(restarting would race the very restart/hot-reload that cancelled it), and the monitor
+continues. Guarded in three directions: survives a cancelled task, does not restart it, and
+— the negative control that mattered — still restarts a task that died of a real exception,
+which caught the widened-guard mutation (`if True:`) that the first two tests let through.
+The live-drive harness itself hung for 30 seconds the moment the fix worked, because its
+sleep patch was timing-dependent; the committed test shrinks the pacing sleep through the
+module's own reference and runs exactly one iteration deterministically.

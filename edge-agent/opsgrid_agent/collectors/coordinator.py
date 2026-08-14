@@ -488,19 +488,41 @@ class UnifiedCollectorCoordinator:
                 
                 # Check each collector
                 for asset_id, task in list(self.collector_tasks.items()):
-                    if task.done():
-                        logger.warning(
-                            "collector_task_done",
-                            asset_id=asset_id,
-                            result=str(task.result()) if not task.exception() else None,
-                            exception=str(task.exception()) if task.exception() else None
-                        )
-                        
-                        # Attempt restart if configured
-                        config = self.configs.get(asset_id)
-                        if config and config.enabled:
-                            logger.info("restarting_collector", asset_id=asset_id)
-                            await self._start_collector(config)
+                    if not task.done():
+                        continue
+
+                    # CANCELLED IS NOT CRASHED (FS-698). `task.exception()` on a
+                    # cancelled task RAISES CancelledError — a BaseException since
+                    # 3.8, which sails past the `except Exception` below and killed
+                    # this loop permanently. `restart_collector` cancels the old
+                    # task and then AWAITS it before popping it from the dict, so
+                    # there is a real window in which this loop meets a cancelled
+                    # task; one hot-reload could silently end all supervision:
+                    # connection_state frozen at its last values, crashed
+                    # collectors never restarted again, and the only trace one
+                    # unexplained CancelledError in the log. Driven live before
+                    # the fix: the monitor task terminated on the first cancelled
+                    # entry. Cancellation is an administrative action (restart or
+                    # hot-reload, which are about to replace or remove the entry),
+                    # so it is logged and NOT restarted — restarting here would
+                    # race the very restart that cancelled it.
+                    if task.cancelled():
+                        logger.info("collector_task_cancelled", asset_id=asset_id)
+                        continue
+
+                    exc = task.exception()
+                    logger.warning(
+                        "collector_task_done",
+                        asset_id=asset_id,
+                        result=str(task.result()) if exc is None else None,
+                        exception=str(exc) if exc else None,
+                    )
+
+                    # Attempt restart if configured
+                    config = self.configs.get(asset_id)
+                    if config and config.enabled:
+                        logger.info("restarting_collector", asset_id=asset_id)
+                        await self._start_collector(config)
                 
                 # Log status
                 active_count = sum(

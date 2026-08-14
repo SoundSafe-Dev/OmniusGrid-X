@@ -137,6 +137,7 @@ to ask where else it could live.
 | A metric exported and fed by nothing | all 25 edge + 48 backend metrics vs. every call site | **9: one merge orphan on the edge; eight in the API process, two of which held up alerts that could never fire** | `test_no_metric_is_exported_and_never_fed.py` (both codebases) |
 | Health answered from the worker, not the work | every `.done()` / `is_alive()` in `app/`, then all 8 services `main.py` starts | **command dispatch reported `ok` while failing every iteration; 7 of 8 started services are in no health check at all** | `test_a_loop_that_achieves_nothing_is_not_healthy.py`, `test_a_started_service_is_a_service_somebody_watches.py` |
 | A gauge whose writer died, still being read | every exported gauge vs what writes it, edge and backend | **2: `edge_buffer_messages` freezes if its loop fails, disarming both buffer alerts; `edge_agent_up` is never written 0, so EdgeAgentOffline could never fire** | `test_the_buffer_gauges_carry_a_freshness_stamp.py`, `test_edge_fleet.py` + staleness alerts |
+| A supervision loop killable by what it supervises | the writers of every liveness gauge | **1: `task.exception()` on a cancelled task raises CancelledError past `except Exception` — one hot-reload ends all collector supervision** | `test_the_health_monitor_survives_a_cancelled_task.py` |
 
 Twenty-nine of these carry a numbered section below. **Response-shape mismatch is the
 exception**: it was swept in the same pass as the `get_db` work and came back clean, so
