@@ -310,6 +310,35 @@ class TestMachineDowntime:
         }
         assert body["duration_minutes"] is not None
 
+    async def test_open_downtime_is_listed_for_the_whole_org(self, stack):
+        """P5 (page-enhancement review). The Machine Down card held its open event id in
+        COMPONENT STATE, so a page reload stranded an in-progress downtime — the machine
+        stayed recorded as down and nobody could end it. Open downtime is org-visible
+        state: the machine is down for everyone, so any operator must be able to see and
+        close it. This route is what the card now reloads from."""
+        started = (await stack.post("/api/v1/shop-floor/downtime/start", json={
+            "asset_id": stack.asset_id, "downtime_type": "unplanned", "reason_code": "JAM",
+        })).json()
+
+        listed = await stack.get("/api/v1/shop-floor/downtime/open")
+        assert listed.status_code == 200, listed.text
+        rows = listed.json()
+        assert [row["id"] for row in rows] == [started["id"]]
+        assert rows[0]["asset_id"] == stack.asset_id
+        assert rows[0]["ended_at"] is None
+
+    async def test_a_closed_downtime_leaves_the_open_list(self, stack):
+        """NEGATIVE CONTROL: a list that kept ended events would tell the floor a
+        running machine is down forever — the same lie in the other direction."""
+        started = (await stack.post("/api/v1/shop-floor/downtime/start", json={
+            "asset_id": stack.asset_id,
+        })).json()
+        await stack.post(f"/api/v1/shop-floor/downtime/{started['id']}/end", json={})
+
+        listed = await stack.get("/api/v1/shop-floor/downtime/open")
+        assert listed.status_code == 200
+        assert listed.json() == []
+
     async def test_ending_it_twice_is_refused(self, stack):
         started = (await stack.post("/api/v1/shop-floor/downtime/start", json={
             "asset_id": stack.asset_id,

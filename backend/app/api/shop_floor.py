@@ -532,6 +532,42 @@ async def report_problem(
 
 
 # ------------------------------------------------------------------------ downtime events
+@router.get("/downtime/open", response_model=List[DowntimeEventOut])
+async def open_downtime_events(
+    org_id=Depends(get_tenant_org_id),
+    db: AsyncSession = Depends(get_tenant_db),
+):
+    """Every downtime event still running for this organization (P5, page-enhancement
+    review).
+
+    The Machine Down card held its open event id in COMPONENT STATE, so a page reload
+    stranded an in-progress downtime: the machine stayed recorded as down, the operator
+    who started it could not end it, and no other operator could see it existed. Open
+    downtime is org-visible state, not a browser tab's — the machine is down for
+    everyone, so anyone on the floor must be able to close it. A list rather than the
+    labour clock's `Optional` single: labour is per-user by construction, but several
+    machines can be down at once.
+    """
+    events = (
+        await db.execute(
+            select(DowntimeEvent).where(
+                DowntimeEvent.organization_id == str(org_id),
+                DowntimeEvent.ended_at.is_(None),
+            ).order_by(DowntimeEvent.started_at.desc())
+        )
+    ).scalars().all()
+    return [
+        DowntimeEventOut(
+            id=str(event.id), asset_id=str(event.asset_id),
+            downtime_type=event.downtime_type, reason_code=event.reason_code,
+            description=event.description, started_at=event.started_at,
+            ended_at=None, duration_minutes=None,
+            maintenance_ref=event.maintenance_ref, fanout=None,
+        )
+        for event in events
+    ]
+
+
 @router.post("/downtime/start", dependencies=[Depends(require_operator_or_admin)], response_model=DowntimeEventOut, status_code=status.HTTP_201_CREATED)
 async def start_downtime(
     payload: DowntimeStartRequest,

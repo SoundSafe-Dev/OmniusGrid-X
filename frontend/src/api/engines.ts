@@ -1,4 +1,5 @@
 import { api } from './client';
+import { toListResult } from './listResult';
 import { mockApi } from './mockApi';
 import {
   TacticalEngineStatus,
@@ -85,10 +86,15 @@ export const enginesApi = {
         '/api/v1/engines/strategic/recommendations/history',
         { params: { limit } },
       );
+      // toListResult is the house idiom for the truncation seam — and the one the
+      // cross-boundary guard (test_truncation_signals_reach_the_frontend.py)
+      // recognises; a hand-rolled header read passed the unit tests here and failed
+      // that sweep, which is the sweep working.
+      const { items, truncated } = toListResult(response);
       return {
-        items: response.data,
+        items,
+        truncated,
         engineStopped: Boolean(response.headers['x-engine-not-running']),
-        truncated: response.headers['x-result-truncated'] === 'true',
       };
     } catch (error: any) {
       if (error?.response?.status === 404) return null;

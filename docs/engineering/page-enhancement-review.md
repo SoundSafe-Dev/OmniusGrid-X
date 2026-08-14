@@ -335,7 +335,7 @@ E2 Mobile-first floor view. E3 Shift handover notes.
 | P2 | ✅ SHIPPED — SystemHealth details + overall banner + neutral 'disabled' badges | SystemHealth | S |
 | P3 | ✅ SHIPPED — IntakeInbox reactive filter + View Results wired to GET /intake/{id} | Intake | S |
 | P4 | ✅ SHIPPED — EngineStoppedBanner on all four pages; history client + tiles + real reject reason/operator | engines/* | S–M |
-| P5 | ShopFloor asset picker + server-fetched open downtime | ShopFloor | M |
+| P5 | ✅ SHIPPED — ShopFloor asset picker; open downtime is server truth (new GET /downtime/open) | ShopFloor | M |
 | P6 | Assets filter bar (3 existing params + search) | Assets | S |
 | P7 | AssetDetail: scoped alarms panel + OEE card | AssetDetail | M |
 | P8 | OEE: losses Pareto + time-range/aggregation + sort | OEE | M |

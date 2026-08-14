@@ -177,6 +177,14 @@ export const shopFloorApi = {
     return response.data;
   },
 
+  // Every downtime still running for the org (P5). Open downtime is org-visible
+  // state, not a browser tab's: the machine is down for everyone, so anyone on the
+  // floor can see and close it — and a reload no longer strands an in-progress event.
+  openDowntime: async (): Promise<DowntimeEvent[]> => {
+    const response = await api.get<DowntimeEvent[]>('/api/v1/shop-floor/downtime/open');
+    return response.data;
+  },
+
   startDowntime: async (body: {
     assetId: string;
     downtimeType?: string;

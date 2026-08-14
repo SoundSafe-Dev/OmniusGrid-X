@@ -28,6 +28,9 @@ const openLaborEntry = vi.fn()
 const clockIn = vi.fn()
 const clockOut = vi.fn()
 const listPostings = vi.fn()
+const openDowntime = vi.fn()
+const startDowntime = vi.fn()
+const endDowntime = vi.fn()
 
 vi.mock('../api/shopFloor', () => ({
   shopFloorApi: {
@@ -35,11 +38,26 @@ vi.mock('../api/shopFloor', () => ({
     clockIn: (...a: unknown[]) => clockIn(...a),
     clockOut: (...a: unknown[]) => clockOut(...a),
     listPostings: (...a: unknown[]) => listPostings(...a),
+    openDowntime: (...a: unknown[]) => openDowntime(...a),
+    startDowntime: (...a: unknown[]) => startDowntime(...a),
+    endDowntime: (...a: unknown[]) => endDowntime(...a),
     recordProduction: vi.fn(),
     recordQualityEvent: vi.fn(),
-    startDowntime: vi.fn(),
-    endDowntime: vi.fn(),
+    issuePart: vi.fn(),
     acknowledgePosting: vi.fn(),
+  },
+}))
+
+vi.mock('../api', () => ({
+  assetsApi: {
+    list: vi.fn().mockResolvedValue({
+      items: [
+        { id: 'a1', name: 'Press 1' },
+        { id: 'a2', name: 'CNC Mill' },
+      ],
+      total: 2,
+      hasMore: false,
+    }),
   },
 }))
 
@@ -69,8 +87,12 @@ beforeEach(() => {
   clockIn.mockReset()
   clockOut.mockReset()
   listPostings.mockReset()
+  openDowntime.mockReset()
+  startDowntime.mockReset()
+  endDowntime.mockReset()
   openLaborEntry.mockResolvedValue(null)
   listPostings.mockResolvedValue({ items: [], total: 0, truncated: false })
+  openDowntime.mockResolvedValue([])
 })
 
 describe('a clock lookup that failed is not "no clock running" (FS-482)', () => {
@@ -198,5 +220,66 @@ describe('the ledger distinguishes a failed load from an empty backlog', () => {
     show()
 
     await waitFor(() => expect(screen.getByText(/showing the first 1/i)).toBeInTheDocument())
+  })
+})
+
+
+/**
+ * Open downtime lives on the SERVER, not in component state (P5, page-enhancement
+ * review). The open event id used to live in useState, so a page reload stranded an
+ * in-progress downtime: the machine stayed recorded as down, the operator who started
+ * it could not end it, and no other operator could see it existed.
+ */
+describe('open downtime survives the browser', () => {
+  const downEvent = {
+    id: 'dt-1',
+    assetId: 'a1',
+    downtimeType: 'unplanned',
+    reasonCode: 'jam',
+    description: null,
+    startedAt: '2026-08-13T07:00:00Z',
+    endedAt: null,
+    durationMinutes: null,
+  }
+
+  it('shows a downtime this browser never started, named by machine', async () => {
+    openDowntime.mockResolvedValue([downEvent])
+    show()
+    // findAllBy: "Press 1" appears both in the down-machine row and as a picker option.
+    expect((await screen.findAllByText(/press 1/i)).length).toBeGreaterThan(0)
+    expect(screen.getByRole('button', { name: /machine is back up/i })).toBeInTheDocument()
+  })
+
+  it('any operator can end it, and the list refreshes from the server', async () => {
+    openDowntime.mockResolvedValue([downEvent])
+    endDowntime.mockResolvedValue({ id: 'dt-1', fanout: null })
+    show()
+    fireEvent.click(await screen.findByRole('button', { name: /machine is back up/i }))
+    await waitFor(() => expect(endDowntime).toHaveBeenCalledWith('dt-1'))
+  })
+
+  it('a failed open-downtime load is said, not rendered as an empty floor', async () => {
+    // "No machines are down" and "we could not ask" are different statements, and only
+    // one of them means the floor is fine.
+    openDowntime.mockRejectedValue(new Error('500'))
+    show()
+    expect(
+      await screen.findByText(/could not load open downtime/i),
+    ).toBeInTheDocument()
+  })
+
+  it('the asset is picked from a list, not typed as a UUID', async () => {
+    show()
+    // Wait for the option list to load before selecting — changing a <select> to a
+    // value with no matching option leaves it at '' and the button disabled.
+    await screen.findAllByRole('option', { name: 'CNC Mill' })
+    const picker = (await screen.findAllByRole('combobox', { name: /asset/i }))[0]
+    fireEvent.change(picker, { target: { value: 'a2' } })
+    fireEvent.click(screen.getByRole('button', { name: /start downtime/i }))
+    await waitFor(() =>
+      expect(startDowntime).toHaveBeenCalledWith(
+        expect.objectContaining({ assetId: 'a2' }),
+      ),
+    )
   })
 })

@@ -4,6 +4,8 @@ import {
   AlertTriangle, CheckCircle2, Clock, Loader2, Package, Phone, Play, Square, Wrench,
 } from 'lucide-react'
 import { shopFloorApi, Fanout, Posting } from '../api/shopFloor'
+import { assetsApi } from '../api'
+import { formatDateTime } from '../utils/formatters'
 import { Button } from '../components/ui'
 
 /**
@@ -315,18 +317,44 @@ const MachineDown: FC = () => {
   const [assetId, setAssetId] = useState('')
   const [reasonCode, setReasonCode] = useState('')
   const [downtimeType, setDowntimeType] = useState('unplanned')
-  const [openEventId, setOpenEventId] = useState<string | null>(null)
   const queryClient = useQueryClient()
+
+  // The machines to pick from (P5). This card used to ask for a UUID in a free-text
+  // box — unusable on a real floor, where nobody types 36 hex characters at a down
+  // machine. The same list also names the assets in the open-downtime rows below.
+  const { data: assetsPage } = useQuery({
+    queryKey: ['shop-floor-assets'],
+    queryFn: () => assetsApi.list({ limit: 200 }),
+  })
+  const assets = assetsPage?.items ?? []
+  const assetName = (id: string) =>
+    assets.find((asset: any) => asset.id === id)?.name ?? id
+
+  // Open downtime from the SERVER, not component state (P5). The open event id used to
+  // live in useState, so a reload stranded an in-progress downtime: the machine stayed
+  // recorded as down, the operator who started it could not end it, and no other
+  // operator could see it existed. The server is the truth about which machines are
+  // down; any operator can close any of them.
+  const openQuery = useQuery({
+    queryKey: ['shop-floor-open-downtime'],
+    queryFn: () => shopFloorApi.openDowntime(),
+    refetchInterval: 30000,
+  })
+  const openEvents = openQuery.data ?? []
 
   const start = useMutation({
     mutationFn: () =>
       shopFloorApi.startDowntime({ assetId, downtimeType, reasonCode: reasonCode || undefined }),
-    onSuccess: (event) => setOpenEventId(event.id),
+    onSuccess: () => {
+      setAssetId('')
+      setReasonCode('')
+      queryClient.invalidateQueries({ queryKey: ['shop-floor-open-downtime'] })
+    },
   })
   const end = useMutation({
     mutationFn: (eventId: string) => shopFloorApi.endDowntime(eventId),
     onSuccess: () => {
-      setOpenEventId(null)
+      queryClient.invalidateQueries({ queryKey: ['shop-floor-open-downtime'] })
       queryClient.invalidateQueries({ queryKey: ['shop-floor-postings'] })
     },
   })
@@ -337,54 +365,84 @@ const MachineDown: FC = () => {
       icon={<Wrench className="h-4 w-4 text-opsgrid-text-secondary" />}
       routes="scheduling, production, quality, accounting"
     >
-      {openEventId ? (
-        <div>
-          <p className="text-sm text-opsgrid-text">
-            Downtime is running. Nothing has been posted yet —{' '}
-            {/* Said explicitly: scheduling and accounting need a DURATION, which does not
-                exist until the machine is back up. Claiming a posting now would put an
-                open-ended stop into a cost system. */}
-            the duration scheduling and accounting need does not exist until it ends.
-          </p>
-          <Button className="mt-2" size="sm" onClick={() => end.mutate(openEventId)} disabled={end.isPending}>
-            {end.isPending ? <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" /> : null}
-            Machine is back up
-          </Button>
+      {openQuery.isError && (
+        <p className="mb-2 text-xs text-status-alarm" role="alert">
+          Could not load open downtime — a machine may be recorded as down that is not
+          shown here.
+        </p>
+      )}
+      {openEvents.length > 0 && (
+        <div className="mb-3 space-y-2">
+          {openEvents.map((event) => (
+            <div
+              key={event.id}
+              className="rounded border border-status-alarm/40 bg-status-alarm/10 px-3 py-2"
+            >
+              <p className="text-sm text-opsgrid-text">
+                <span className="font-medium">{assetName(event.assetId)}</span> is down
+                ({event.downtimeType}
+                {event.reasonCode ? `, ${event.reasonCode}` : ''}) since{' '}
+                {formatDateTime(event.startedAt)}.{' '}
+                {/* Said explicitly: scheduling and accounting need a DURATION, which does
+                    not exist until the machine is back up. Claiming a posting now would
+                    put an open-ended stop into a cost system. */}
+                Nothing posts until it ends.
+              </p>
+              <Button
+                className="mt-2"
+                size="sm"
+                onClick={() => end.mutate(event.id)}
+                disabled={end.isPending}
+              >
+                {end.isPending ? <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" /> : null}
+                Machine is back up
+              </Button>
+            </div>
+          ))}
           {end.isError && (
-            <p className="mt-2 text-xs text-status-alarm" role="alert">
+            <p className="text-xs text-status-alarm" role="alert">
               Could not close this downtime — the machine is still recorded as down and
               scheduling has not been told it is back.
             </p>
           )}
         </div>
-      ) : (
-        <div>
-          <div className="grid grid-cols-3 gap-2">
-            <Field label="Asset id">
-              <input className={inputClass} value={assetId} onChange={(e) => setAssetId(e.target.value)} />
-            </Field>
-            <Field label="Type">
-              <select className={inputClass} value={downtimeType} onChange={(e) => setDowntimeType(e.target.value)}>
-                <option value="unplanned">unplanned</option>
-                <option value="planned">planned</option>
-                <option value="changeover">changeover</option>
-              </select>
-            </Field>
-            <Field label="Reason (optional)">
-              <input className={inputClass} value={reasonCode} onChange={(e) => setReasonCode(e.target.value)} />
-            </Field>
-          </div>
-          <Button className="mt-3" size="sm" onClick={() => start.mutate()} disabled={!assetId || start.isPending}>
-            {start.isPending ? <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" /> : null}
-            Start downtime
-          </Button>
-          {start.isError && (
-            <p className="mt-2 text-xs text-status-alarm" role="alert">
-              Downtime was NOT recorded — nothing is logged against this asset.
-            </p>
-          )}
-        </div>
       )}
+      <div>
+        <div className="grid grid-cols-3 gap-2">
+          <Field label="Asset">
+            <select
+              className={inputClass}
+              value={assetId}
+              onChange={(e) => setAssetId(e.target.value)}
+              aria-label="Asset"
+            >
+              <option value="">Select a machine…</option>
+              {assets.map((asset: any) => (
+                <option key={asset.id} value={asset.id}>{asset.name}</option>
+              ))}
+            </select>
+          </Field>
+          <Field label="Type">
+            <select className={inputClass} value={downtimeType} onChange={(e) => setDowntimeType(e.target.value)}>
+              <option value="unplanned">unplanned</option>
+              <option value="planned">planned</option>
+              <option value="changeover">changeover</option>
+            </select>
+          </Field>
+          <Field label="Reason (optional)">
+            <input className={inputClass} value={reasonCode} onChange={(e) => setReasonCode(e.target.value)} />
+          </Field>
+        </div>
+        <Button className="mt-3" size="sm" onClick={() => start.mutate()} disabled={!assetId || start.isPending}>
+          {start.isPending ? <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" /> : null}
+          Start downtime
+        </Button>
+        {start.isError && (
+          <p className="mt-2 text-xs text-status-alarm" role="alert">
+            Downtime was NOT recorded — nothing is logged against this asset.
+          </p>
+        )}
+      </div>
       <FanoutPanel fanout={end.data?.fanout ?? null} title="Downtime closed" />
     </Card>
   )

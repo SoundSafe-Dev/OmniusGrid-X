@@ -131,7 +131,13 @@ def _frontend_get_calls() -> list[tuple[str, str, bool]]:
             url = match.group(1)
             for name, value in constants.items():
                 url = url.replace("${" + name + "}", value)
-            window = source[max(0, match.start() - 200) : match.start()]
+            # BEFORE and AFTER the call. The original window looked only backwards,
+            # which recognises `return toListResult(await api.get(...))` and not the
+            # equally-correct `const response = await api.get(...); ...
+            # toListResult(response)` — a shape engines.ts needed because it reads a
+            # second header (X-Engine-Not-Running) off the same response. Flagging that
+            # as body-alone was the detector wrong, not the client.
+            window = source[max(0, match.start() - 200) : match.end() + 200]
             calls.append((path.name, url, "toListResult" in window))
     return calls
 
