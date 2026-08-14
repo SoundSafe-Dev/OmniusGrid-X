@@ -19,6 +19,7 @@ from app.core.config import settings
 from app.workers.health_server import (
     INGESTION_DEAD_LETTERED,
     INGESTION_DEAD_LETTER_FAILED,
+    INGESTION_LAG,
     INGESTION_SIDE_EFFECT_FAILED,
     start_health_server,
 )
@@ -267,9 +268,16 @@ class IngestionWorker:
         timestamp_str = data.get('timestamp_edge') or data.get('timestamp')
         if timestamp_str:
             timestamp = datetime.fromisoformat(timestamp_str.replace('Z', '+00:00'))
+            # Event-to-write lag (FS-696), only when the event CARRIES a timestamp — the
+            # fallback branch below stamps "now", whose lag is zero by construction and
+            # would drag the max down. `aware_utc` because an edge timestamp without a
+            # zone made this exact subtraction raise once before (FS-96), swallowed.
+            INGESTION_LAG.labels(topic="telemetry").set(
+                max(0.0, (datetime.now(timezone.utc) - aware_utc(timestamp)).total_seconds())
+            )
         else:
             timestamp = datetime.now(timezone.utc)
-        
+
         packml_state = data.get('packml_state')
         payload = data.get('payload', {})
         

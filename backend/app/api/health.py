@@ -10,13 +10,7 @@ import structlog
 from aiokafka import AIOKafkaConsumer
 from fastapi import APIRouter, Depends, HTTPException, Response, status
 from pydantic import BaseModel, ConfigDict
-from prometheus_client import (
-    CONTENT_TYPE_LATEST,
-    Counter,
-    Gauge,
-    Histogram,
-    generate_latest,
-)
+from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -857,54 +851,22 @@ async def health_kafka():
     return {"status": _public_status(status), **details}
 
 
-# Prometheus metrics endpoint
-TELEMETRY_INGESTED = Counter(
-    "opsgrid_telemetry_ingested_total",
-    "Total telemetry messages ingested",
-    ["asset_id", "metric_name"],
-)
-
-TELEMETRY_INGEST_DURATION = Histogram(
-    "opsgrid_telemetry_ingest_duration_seconds",
-    "Time spent ingesting telemetry",
-    buckets=[0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0],
-)
-
-ACTIVE_ASSETS = Gauge(
-    "opsgrid_active_assets",
-    "Number of active assets",
-    ["organization_id"],
-)
-
-PACKML_STATE_CHANGES = Counter(
-    "opsgrid_packml_state_changes_total",
-    "Total PackML state transitions",
-    ["asset_id", "from_state", "to_state"],
-)
-
-INGESTION_LAG = Gauge(
-    "opsgrid_ingestion_lag_seconds",
-    "Lag between message timestamp and ingestion",
-    ["topic"],
-)
-
-EDGE_BUFFER_MESSAGES = Gauge(
-    "opsgrid_edge_buffer_messages",
-    "Number of messages buffered at edge",
-    ["agent_id", "asset_id"],
-)
-
-OCR_ACCURACY = Gauge(
-    "opsgrid_ocr_accuracy",
-    "OCR accuracy percentage",
-    ["asset_id"],
-)
-
-ALERTS_ACTIVE = Gauge(
-    "opsgrid_alerts_active",
-    "Number of active alerts by severity",
-    ["severity"],
-)
+# EIGHT METRIC DEFINITIONS DELETED HERE, not moved (FS-696). They sat beside this
+# endpoint for the life of the file and NOTHING incremented any of them — this is the
+# API process, and the quantities they describe (telemetry ingested, PackML transitions,
+# ingestion lag, edge buffer depth, OCR accuracy, active alerts) all happen in the
+# ingestion worker or on the edge agent. Two of them were load-bearing anyway:
+# `IngestionLagHighApp` and `OcrAccuracyLow` alerted on series only these dead
+# definitions named, so neither alert could ever fire; their promtool tests passed by
+# writing the series by hand (rule 188, again).
+#
+# The two with alerts now live where their quantity is produced:
+#   opsgrid_ingestion_lag_seconds -> app/workers/health_server.py, fed by the worker
+#   opsgrid_ocr_accuracy          -> edge-agent metrics, fed by the screen scraper
+# The other six described things either already measured under other names
+# (opsgrid_edge_buffer_messages is exported by the agent itself) or never measured at
+# all; if one is wanted, define it in the process that can feed it.
+# `test_no_metric_is_exported_and_never_fed.py` keeps this file from growing new ones.
 
 
 # CONTENT_TYPE_LATEST is Prometheus's exposition format

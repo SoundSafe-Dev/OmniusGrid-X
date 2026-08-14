@@ -14,6 +14,7 @@ import pytesseract
 from PIL import Image
 import httpx
 
+from opsgrid_agent import metrics
 from opsgrid_agent.packml import PackMLStateMapper, create_mapper_for_asset_type
 
 logger = structlog.get_logger()
@@ -298,9 +299,13 @@ class ScreenScraperCollector:
                     telemetry['time_remaining_min'] = hours * 60 + minutes
                 break
         
-        # OCR confidence estimate
-        telemetry['_ocr_confidence'] = self._estimate_ocr_confidence(raw_text)
-        
+        # OCR confidence estimate — into the payload for the quality pipeline, AND into
+        # the gauge OcrAccuracyLow watches (FS-696): the payload copy is invisible to
+        # Prometheus, and the alert spent its whole life watching a series nothing wrote.
+        confidence = self._estimate_ocr_confidence(raw_text)
+        telemetry['_ocr_confidence'] = confidence
+        metrics.set_ocr_accuracy(self.asset_id, confidence)
+
         return telemetry
     
     def _estimate_ocr_confidence(self, raw_text: str) -> float:

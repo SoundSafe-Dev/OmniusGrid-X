@@ -10707,3 +10707,40 @@ inside this one. Noted in the alert's own comment.
 Mutations: the ingest stamp deleted (caught by `test_edge_fleet.py`), the alert reverted to
 the frozen gauge (caught by promtool — the updated test's dead-agent series now has no
 `edge_agent_up` at all, so the reverted rule finds nothing and fails the expectation).
+
+---
+
+## FS-696 — eight dead metrics in the API process, two of them holding up alerts
+
+The FS-692 sweep (exported-and-never-fed) carried into the backend found **eight** metrics
+defined beside the `/metrics` endpoint in `app/api/health.py` and incremented by nothing —
+because they describe quantities (telemetry ingested, PackML transitions, ingestion lag,
+edge buffer depth, OCR accuracy, active alerts) that happen in the ingestion worker or on
+the edge agent, and this is the API process. A labelled dead metric is subtler than a zero:
+`generate_latest` emits only its HELP/TYPE header until a label is touched, so an operator
+greps `/metrics`, finds the name documented, builds the dashboard, and gets *no data* —
+indistinguishable from a label-filter typo, which is where the debugging time goes.
+
+**Two were load-bearing.** `IngestionLagHighApp` (team backend, with a runbook link) and
+`OcrAccuracyLow` (team edge) alerted on series only these dead definitions named. Neither
+alert could ever fire. Both promtool tests passed by writing the series by hand — rule 188's
+third appearance this arc.
+
+Both quantities already existed and were being thrown away:
+- the ingestion worker parses every event's edge timestamp and now sets
+  `opsgrid_ingestion_lag_seconds` in **its own** registry (`app/workers/health_server.py`,
+  scraped on 9109 per FS-213) at the write site — labelled by message family, not by Kafka
+  topic, because live topics are `telemetry.{asset}` and a per-asset label grows a series
+  per machine;
+- the screen scraper computes `_ocr_confidence` on every read and shipped it only inside
+  the telemetry payload, where no alert can see it; it now also sets `opsgrid_ocr_accuracy`
+  at the edge.
+
+The other six were deleted with a tombstone explaining where each would have to live.
+
+**The guard's own mutation run improved the guard.** Unwiring `INGESTION_LAG` while leaving
+its import intact passed the text-based draft — an import matched the regex. The detector
+now counts AST `Name` loads, under which an import alias is a reference, not a feeding.
+Backend guard: `test_no_metric_is_exported_and_never_fed.py` (twin of the edge file by the
+same name), with the deletion of the eight pinned so a revert-happy merge cannot bring
+them back.

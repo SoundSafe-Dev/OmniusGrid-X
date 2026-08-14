@@ -94,6 +94,23 @@ buffer_expired_total = Counter(
     "Undelivered messages deleted for passing the retention window",
 )
 
+#: OCR confidence from the screen scraper (FS-696). The `OcrAccuracyLow` alert
+#: (`opsgrid_ocr_accuracy < 0.80`) existed for as long as this codebase has had alerts,
+#: watching a gauge defined in the BACKEND's health module — a process that performs no
+#: OCR and never set it. The scraper computes a confidence estimate on every read and
+#: shipped it only inside the telemetry payload, where no alert can see it. This is that
+#: number, at the process that produces it.
+ocr_accuracy = Gauge(
+    "opsgrid_ocr_accuracy",
+    "OCR confidence estimate from the screen scraper's latest read",
+    ["asset_id"],
+)
+
+
+def set_ocr_accuracy(asset_id: str, value: float) -> None:
+    ocr_accuracy.labels(asset_id=asset_id).set(value)
+
+
 buffer_stats_last_success = Gauge(
     "edge_buffer_stats_last_success_timestamp_seconds",
     "Unix time the buffer gauges above were last refreshed from a real read (FS-694). "

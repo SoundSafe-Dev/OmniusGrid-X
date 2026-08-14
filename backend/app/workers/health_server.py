@@ -76,6 +76,26 @@ OTA_ROLLOUT_FAILURES = Counter(
 #: **The platform was monitoring the edge's data loss and not its own.**
 #:
 #: Labelled by SOURCE TOPIC, which is bounded (a handful of topics), never by error text.
+#: Event-to-write lag, measured where it actually happens (FS-696). This gauge existed for
+#: as long as the `IngestionLagHighApp` alert has — defined in `app/api/health.py`, in the
+#: API process, where no ingestion occurs and nothing ever set it. The alert watched a
+#: series that could not exist, its promtool test passed by writing the series by hand
+#: (rule 188), and "telemetry is landing late" was a condition the platform could not
+#: report. The worker is the process that knows both timestamps, and this is the worker's
+#: registry, scraped on 9109 (FS-213).
+#:
+#: Labelled by message FAMILY, not by Kafka topic: live topics are `telemetry.{asset}`,
+#: one per asset, and a per-asset label here would grow a series per machine. The alert
+#: aggregates with `max by (topic)`, which is indifferent to the label's grain.
+#:
+#: Event-driven, so it freezes when traffic stops (the FS-694 caveat); a stopped worker
+#: is caught by WORKER_HEARTBEAT_AGE and the consumer-lag alert, not by this.
+INGESTION_LAG = Gauge(
+    "opsgrid_ingestion_lag_seconds",
+    "Lag between the event's edge timestamp and its ingestion write",
+    ["topic"],
+)
+
 INGESTION_DEAD_LETTERED = Counter(
     "opsgrid_ingestion_dead_lettered_total",
     "Messages the ingestion worker could not process and published to the DLQ",
