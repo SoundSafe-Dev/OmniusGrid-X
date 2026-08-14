@@ -360,6 +360,60 @@ It runs 8 stages and exits non-zero on any failure:
 Override endpoints via env if you remapped ports:
 `BACKEND_URL`, `QDRANT_URL`, `S3_ENDPOINT`, `INFER_URL`, `OLLAMA_URL`.
 
+### 7.4a Performance measurement
+
+`verify_rag_e2e.py` proves correctness; `scripts/rag_perf.py` measures speed.
+It drives the async ingestion contract the same way — POST, get 202, poll
+`/documents/{doc_id}/status` — but times it instead of asserting on it, and
+reports percentiles rather than a single "it worked" pass/fail:
+
+```bash
+python3 scripts/rag_perf.py                        # defaults: 20 docs / 64 KiB, 30 queries, concurrency 4
+python3 scripts/rag_perf.py --num-docs 50 --doc-size-kb 256 --concurrency 8
+python3 scripts/rag_perf.py --json --output run1.json    # machine-readable, for comparing across runs
+python3 scripts/rag_perf.py --skip-drain --skip-query    # ingest-only pass
+```
+
+It measures, in order:
+
+1. **Ingest throughput** — docs/min and MB/min for a configurable batch of
+   synthetic documents, submitted at `--concurrency`
+2. **Queued → indexed latency** — wall time from each document's `202` to its
+   status row reaching a terminal state, reported as p50/p95 (nearest-rank,
+   not a mean)
+3. **Query latency** — p50/p95 over repeated `POST /query` calls against the
+   `backend/tests/rag_eval` corpus (falls back to a synthetic doc + query if
+   that harness isn't importable). Retrieval-only (`generate=false`) by
+   default — pass `--query-generate` to fold LLM generation into the timing.
+   The API exposes no per-stage (embed / Qdrant search / rerank) timings, so
+   this driver does not fake a breakdown; it separately times direct
+   `rag-inference /embed` calls as an auxiliary probe and labels that clearly
+   as *not* a decomposition of the query latency above
+4. **Worker drain rate** — submits a backlog of `--drain-docs` documents up
+   front, then times how fast `rag-indexing-worker` clears it once the whole
+   backlog is queued (isolated from client-side submission time)
+5. **Quota-check overhead** — `check_ingest_quota()` runs one aggregate query
+   before every upload, but nothing over HTTP separates that query's cost
+   from the blob PUT and row upsert in the same request. The driver says so
+   explicitly and reports the closest available proxies instead of inventing
+   an isolated number
+
+Every document the run creates (perf docs + the corpus doc used for query
+timing) is deleted at the end; deletion failures are printed, not swallowed —
+run with `--no-cleanup` only when you intend to inspect leftovers by hand.
+
+Output is a human-readable table by default; `--json` emits a record
+(timestamp, host, git SHA, `RAG_EMBED_BATCH`, embedding/reranker model +
+device from `/rag/health`) meant to be diffed against a previous run's
+`--json` output when comparing before/after a change. Same endpoint env vars
+as `verify_rag_e2e.py` (`BACKEND_URL`, `INFER_URL`); see `--help` for the
+full flag list (per-phase `--skip-*` flags, timeouts, poll interval).
+
+**Do not run a perf pass against a shared/remote box while anything else is
+using it** — concurrent ingestion contends for the same embedding GPU and
+Postgres connections as whatever else is running, and will produce numbers
+that reflect the contention, not the pipeline.
+
 ### 7.5 Tear down
 
 ```bash
