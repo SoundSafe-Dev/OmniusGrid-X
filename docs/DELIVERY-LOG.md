@@ -10885,3 +10885,65 @@ sharing the alert guard's exported-series universe plus `slo_rules.yml`'s record
 It parses the dashboards as JSON because the regex draft reported `horizontalpodautoscaler`
 and `cronjob` as unbacked series — escaped quotes inside raw JSON defeated its label
 parser. `keda_` joined the infra-exporter register with its provider.
+
+---
+
+## FS-702 — the drivers list finally declares what it sends
+
+FS-688's named to-do, closed the way its own failure message demanded. `GET
+/transportation/drivers` now answers `List[DriverListItem]`: `DriverResponse` plus the
+seven derived keys, spelled exactly as the handler spells them — camelCase derived keys
+over snake_case base keys, because the mixed casing IS the wire contract the frontend's
+`registerTransform` seam expects.
+
+The danger that kept this a finding rather than a chore: FastAPI **filters** any response
+key the declared model omits, silently. So the guard asserts every one of the seven BY
+NAME against a real response from a real Postgres — deleting `hosDriveHoursRemaining` from
+the model fails on that field's name (proven by mutation), not on a count — and a
+source-level agreement test pins handler keys == model extras == asserted keys, so a new
+derived key cannot be added to the handler and silently filtered. The OpenAPI document now
+carries real properties; the permissive-model ratchet dropped 23 → 22 and its provoke-test
+was deleted per its own instruction.
+
+## FS-703 — the monitor now defers to an operator restart
+
+The open observation from FS-698, closed: the health monitor's auto-restart takes notice of
+`_restart_locks` (skip-and-log while held) so a collector that crashes moments before an
+API restart cannot draw `_start_collector` from both paths — two collectors polling one
+device, one orphaned. The failed-operator-restart case still recovers: a failed restart
+leaves a done task for the monitor's next pass. Mutation: removing the lock check fails the
+new guard while the crashed-task-still-restarted negative control keeps the fix from
+widening.
+
+## FS-704 — a dead agent now alerts even across a backend restart
+
+The gap FS-695 recorded in the alert's own comment. Gauges live in process memory, so a
+backend restart erased the series of an already-dead agent — precisely the agent that will
+never heartbeat it back. `edge_fleet_sweep` (a new service, watched from birth per FS-693's
+rule) re-derives `edge_agent_up` and `edge_agent_last_heartbeat` from
+`edge_agent_status.last_seen` — which survives restarts — every 60s, and finally makes
+`edge_agent_up = 0` a value production writes.
+
+THE TRAP WAS TENANCY: `edge_agent_status` is FORCE RLS, so an untenanted session reads
+zero rows and *no error* — the sweep would refresh nothing and look healthy forever. It
+iterates orgs and sets the GUC per org (the posting-drain shape), and the guard's first
+assertion is the DENOMINATOR: `sweep_once` returns how many agents it refreshed, and the
+GUC-removal mutation fails exactly there, with real rows behind a NOSUPERUSER NOBYPASSRLS
+role.
+
+## FS-705 — the unwatched-services register is EMPTY
+
+`compliance_report_dispatcher` and `rollout_orchestrator` joined health with the
+consecutive-failure pattern (the rollout entry keeps its cumulative OTA_ROLLOUT_FAILURES
+counter — "how often, ever" — beside the new "failing right now" question). **Every
+service `main.py` starts is now watched**; the register file remains so a ninth service
+cannot arrive unwatched, and its comment-stripping positive control — which correctly
+expired when `rollout_orchestrator` stopped being prose-only — was replaced with a
+synthetic one that cannot expire.
+
+The swallow ratchet charged four across the batch (two checkers here, the sweep's loop and
+checker in FS-704) and was paid with SIX narrowings of one honest shape: every redis-backed
+degrade path in `idempotency.py` and `alarm_rules.py` now catches
+`(redis.RedisError, OSError, asyncio.TimeoutError)` — what the client actually raises when
+the store is unreachable — instead of hiding programming errors as "store unavailable".
+The ceiling ratcheted down 201 → 199.

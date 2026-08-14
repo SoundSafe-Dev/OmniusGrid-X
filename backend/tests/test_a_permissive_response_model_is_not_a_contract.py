@@ -15,14 +15,15 @@ That is rule 187 exactly: **ask what the cheapest reduction of a ratchet would d
 buys the number without buying the contract, and the route then *looks* documented, which is
 worse than being visibly undocumented.
 
-**23 routes are in that state today.** This file is not an accusation — several are legitimately
+**22 routes are in that state today** (23 until FS-702 declared the drivers list). This file is not an accusation — several are legitimately
 dynamic and are registered below with reasons. It exists so the count is visible, can only
 shrink, and cannot be added to silently. The existing ratchet keeps counting what it counts;
 this keeps a different list, which is why `test_no_two_guards_keep_the_same_list.py` is content.
 
-WHERE IT BITES HARDEST. `GET /transportation/drivers` answers `List[Dict[str, Any]]` while
-`DriverResponse` exists and is used by the single-driver route beside it. A client reading the
-schema learns that the list endpoint returns objects, and nothing more.
+WHERE IT BIT HARDEST — past tense since FS-702. `GET /transportation/drivers` answered
+`List[Dict[str, Any]]` for its whole life while `DriverResponse` sat on the single-driver
+route beside it; it now declares `DriverListItem`, and the reason it took a finding of its
+own is recorded there.
 """
 
 from __future__ import annotations
@@ -58,7 +59,7 @@ DELIBERATELY_DYNAMIC = {
 }
 
 #: The measured figure. ONLY EVER SHRINKS — and the way down is a schema, not an entry here.
-MAX_PERMISSIVE = 23
+MAX_PERMISSIVE = 22
 
 
 def _permissive_routes() -> list[str]:
@@ -119,29 +120,12 @@ def test_the_permissive_surface_only_shrinks():
     )
 
 
-def test_a_route_with_a_real_model_available_is_named():
-    """The clearest instance, asserted by itself so it does not disappear into a count.
-
-    `GET /transportation/drivers` returns `List[Dict[str, Any]]` while `DriverResponse`
-    exists and describes most of those rows. This test fails the day somebody fixes it,
-    which is the point — a to-do with an expiry rather than a permanent exemption.
-
-    AND IT IS NOT A ONE-LINER, which is worth knowing before starting. The handler dumps
-    `DriverResponse` and then adds seven derived keys — `carrierName`, `currentVehicleId`,
-    `currentShipmentId`, `endorsements`, `licenseExpiry`, `hosDriveHoursRemaining`,
-    `hosDutyHoursRemaining` — in **camelCase**, while the model's own keys come out
-    snake_case (there is no alias generator on `DriverResponse`). The client reconciles the
-    two through `registerTransform('/api/v1/transportation')`.
-
-    So the model needed here is `DriverResponse` plus those seven, spelled exactly as the
-    handler spells them. Declare it with any of them missing and FastAPI **filters the
-    missing one out of the response** — the "declared field that is dropped" defect this
-    codebase has fixed more than once, and it would land on `hosDriveHoursRemaining`, which
-    the compliance tab reads to count DOT violations."""
-    assert "GET /api/v1/transportation/drivers" in _permissive_routes(), (
-        "the drivers list now declares a real model — delete this test and lower "
-        "MAX_PERMISSIVE, which is the outcome it was written to provoke"
-    )
+# The named to-do this file used to carry was CLOSED by FS-702: `GET /transportation/
+# drivers` now declares `DriverListItem` — `DriverResponse` plus the seven derived keys,
+# spelled exactly as the handler spells them — and the provoke-test that asserted the
+# route was still permissive was deleted exactly as its failure message instructed.
+# `test_the_drivers_list_declares_what_it_sends_realdb.py` holds the contract now,
+# per field, by name, against a real response.
 
 
 @pytest.mark.parametrize("route", sorted(DELIBERATELY_DYNAMIC))

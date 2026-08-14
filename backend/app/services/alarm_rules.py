@@ -40,7 +40,10 @@ import time
 from dataclasses import dataclass
 from typing import Any, Dict, Iterable, List, Optional, Sequence
 
+import asyncio
+
 import structlog
+from redis import exceptions as redis_exceptions
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -156,7 +159,10 @@ class RedisBreachStore:
         # here: expiry is enforced by Redis EXPIRE, not by comparing timestamps.
         try:
             raw = await self._redis().hgetall(key)
-        except Exception as exc:  # noqa: BLE001 — degrade, never fail ingestion
+        except (redis_exceptions.RedisError, OSError, asyncio.TimeoutError) as exc:
+            # What the redis client actually raises when the store is unreachable —
+            # degrade, never fail ingestion. The broad catch also hid programming
+            # errors in these methods as "store unavailable" (FS-704's ratchet payment).
             logger.warning("alarm_rule_state_get_failed", error=str(exc))
             return None
         if not raw:
@@ -174,7 +180,7 @@ class RedisBreachStore:
             if created:
                 await r.hsetnx(key, "fired_at", 0.0)
             await r.expire(key, _STATE_TTL_SECONDS)
-        except Exception as exc:  # noqa: BLE001
+        except (redis_exceptions.RedisError, OSError, asyncio.TimeoutError) as exc:
             logger.warning("alarm_rule_state_start_failed", error=str(exc))
 
     async def mark_fired(self, key: str, fired_at: float) -> None:
@@ -182,13 +188,13 @@ class RedisBreachStore:
             r = self._redis()
             await r.hset(key, "fired_at", fired_at)
             await r.expire(key, _STATE_TTL_SECONDS)
-        except Exception as exc:  # noqa: BLE001
+        except (redis_exceptions.RedisError, OSError, asyncio.TimeoutError) as exc:
             logger.warning("alarm_rule_state_fired_failed", error=str(exc))
 
     async def clear(self, key: str) -> None:
         try:
             await self._redis().delete(key)
-        except Exception as exc:  # noqa: BLE001
+        except (redis_exceptions.RedisError, OSError, asyncio.TimeoutError) as exc:
             logger.warning("alarm_rule_state_clear_failed", error=str(exc))
 
 

@@ -102,6 +102,11 @@ async def lifespan(app: FastAPI):
         await posting_drain_scheduler.start()
     await report_scheduler.start()
     await error_tracker.start()
+    # FS-704: DB-backed refresh of the fleet liveness gauges, so an agent that died
+    # before a backend restart still alerts (gauges live in process memory; the
+    # database's last_seen survives).
+    from app.services.edge_fleet_sweep import edge_fleet_sweep
+    await edge_fleet_sweep.start()
     # Offline demo: the cloud strategic listener never connects, so seed a few
     # recommendations into the in-memory engine (same process as the API) to make
     # the Strategic Engine approve/reject workflow demo-able. Gated on the same
@@ -122,6 +127,8 @@ async def lifespan(app: FastAPI):
         structlog.get_logger().warning("rag.collection_bootstrap_failed", error=str(exc))
     yield
     # Shutdown
+    from app.services.edge_fleet_sweep import edge_fleet_sweep
+    await edge_fleet_sweep.stop()
     await error_tracker.stop()
     await report_scheduler.stop()
     if settings.SCHEDULERS_IN_API:

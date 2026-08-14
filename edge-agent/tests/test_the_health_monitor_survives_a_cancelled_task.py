@@ -109,6 +109,53 @@ class TestACancelledTaskDoesNotEndSupervision:
         assert starts == []
 
     @pytest.mark.asyncio
+    async def test_a_crash_mid_operator_restart_is_not_double_started(self, monkeypatch):
+        """FS-703, the race FS-698's fix left recorded as an open observation. The
+        monitor's auto-restart never took `_restart_locks`, so a collector that crashed
+        moments before an operator's `restart_collector` could draw `_start_collector`
+        from both paths — the loser's task runs orphaned, two collectors polling one
+        device. While the lock is held, the monitor must defer; the failed-restart case
+        is covered because a failed API restart leaves a done task for the next pass."""
+        import asyncio as aio
+
+        from opsgrid_agent.collectors.coordinator import CollectorConfig
+
+        coordinator = _coordinator()
+
+        async def _boom():
+            raise RuntimeError("collector crashed")
+
+        crashed = aio.get_running_loop().create_task(_boom())
+        await aio.sleep(0)
+        coordinator.collector_tasks["press-15"] = crashed
+        coordinator.configs["press-15"] = CollectorConfig(
+            collector_type="http_rest", asset_id="press-15", config={}, enabled=True
+        )
+
+        # An operator restart in flight: the per-asset lock is held.
+        lock = coordinator._restart_locks.setdefault("press-15", aio.Lock())
+        await lock.acquire()
+
+        starts: list = []
+
+        async def _record_start(config):
+            starts.append(config.asset_id)
+            return True
+
+        coordinator._start_collector = _record_start
+        try:
+            monitor = await _one_iteration(coordinator, monkeypatch)
+        finally:
+            lock.release()
+
+        assert monitor.done() and monitor.exception() is None
+        assert starts == [], (
+            "the monitor restarted a collector an operator restart already owns — "
+            "two _start_collector calls for one asset, and the loser's task runs "
+            "orphaned, polling the device twice"
+        )
+
+    @pytest.mark.asyncio
     async def test_a_crashed_task_is_still_restarted(self, monkeypatch):
         """NEGATIVE CONTROL. The fix must not widen: a task that died of a real
         exception is exactly what the restart path exists for, and a `continue` that

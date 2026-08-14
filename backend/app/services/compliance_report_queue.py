@@ -61,6 +61,11 @@ class ComplianceReportDispatcher:
         self._producer_bootstrap: Optional[str] = None
         self._task: Optional[asyncio.Task] = None
         self._running = False
+        #: Consecutive failed dispatch cycles (FS-693's pattern, closing the register's
+        #: last-but-one entry). The loop swallows to survive, so its task cannot say that
+        #: every cycle is failing — and a due compliance report that never dispatches is
+        #: discovered by an auditor, not an operator.
+        self._consecutive_failures = 0
 
     async def start(self) -> None:
         if not settings.COMPLIANCE_REPORT_DISPATCH_ENABLED:
@@ -121,7 +126,9 @@ class ComplianceReportDispatcher:
         while self._running:
             try:
                 await self.dispatch_queued()
+                self._consecutive_failures = 0
             except Exception as exc:  # noqa: BLE001
+                self._consecutive_failures += 1
                 logger.error("compliance_report_dispatch_iteration_failed", error=str(exc))
             await asyncio.sleep(settings.COMPLIANCE_REPORT_DISPATCH_INTERVAL_SECONDS)
 

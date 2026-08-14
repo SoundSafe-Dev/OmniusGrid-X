@@ -669,6 +669,38 @@ class DriverResponse(DriverBase):
     model_config = ConfigDict(from_attributes=True)
 
 
+class DriverListItem(DriverResponse):
+    """One row of `GET /transportation/drivers`: `DriverResponse` plus the seven keys the
+    handler derives, SPELLED EXACTLY AS THE HANDLER SPELLS THEM (FS-702, closing FS-688's
+    named to-do).
+
+    The route answered `List[Dict[str, Any]]` for its whole life — an OpenAPI `object`
+    with no properties — while `DriverResponse` sat beside it on the single-driver route.
+    The reason it was never "just declared" is this model's whole content: the seven
+    derived keys are **camelCase** while the base's own keys come out snake_case (no
+    alias generator; the client reconciles through `registerTransform`), and FastAPI
+    FILTERS any response key the declared model omits. Declare this with one field
+    missing and that field silently vanishes from the wire — the first casualty would be
+    `hosDriveHoursRemaining`, which the compliance tab reads to count DOT violations.
+    Every field here is therefore asserted BY NAME against a real response in
+    `test_the_drivers_list_declares_what_it_sends_realdb.py`; the mixed casing is the
+    contract, not a mistake to tidy.
+
+    `None` defaults are load-bearing on the three Optionals derived from lookups: a
+    driver with no carrier, no assignment, or no HOS report carries `null`, and the
+    consumers already distinguish `null` ("unknown") from values — see `_hours_remaining`,
+    which refuses to invent a full tank for a driver who never reported.
+    """
+
+    carrierName: Optional[str] = None
+    currentVehicleId: Optional[str] = None
+    currentShipmentId: Optional[str] = None
+    endorsements: List[str] = Field(default_factory=list)
+    licenseExpiry: Optional[str] = None
+    hosDriveHoursRemaining: Optional[float] = None
+    hosDutyHoursRemaining: Optional[float] = None
+
+
 class ShipmentBase(BaseModel):
     shipment_number: str
     pro_number: Optional[str] = None

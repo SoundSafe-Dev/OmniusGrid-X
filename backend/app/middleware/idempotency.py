@@ -19,7 +19,10 @@ import json
 import time
 from typing import Awaitable, Callable, Dict, Iterable, Optional, Tuple
 
+import asyncio
+
 import structlog
+from redis import exceptions as redis_exceptions
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
@@ -85,7 +88,11 @@ class RedisIdempotencyStore:
     async def get(self, key: str) -> Optional[Tuple[int, bytes]]:
         try:
             raw = await self._redis().get(key)
-        except Exception as exc:  # noqa: BLE001 — degrade, don't fail the request
+        except (redis_exceptions.RedisError, OSError, asyncio.TimeoutError) as exc:
+            # What the redis client actually raises when the store is unreachable —
+            # degrade, don't fail the request. The broad catch this narrows also hid
+            # programming errors in this method as "store unavailable" (FS-704's
+            # ratchet payment).
             logger.warning("idempotency_store_get_failed", error=str(exc))
             return None
         if not raw:
@@ -101,7 +108,7 @@ class RedisIdempotencyStore:
         value = str(status_code).encode() + b"\n" + body
         try:
             await self._redis().set(key, value, ex=self.ttl)
-        except Exception as exc:  # noqa: BLE001
+        except (redis_exceptions.RedisError, OSError, asyncio.TimeoutError) as exc:
             logger.warning("idempotency_store_put_failed", error=str(exc))
 
 

@@ -43,6 +43,11 @@ class Settings(BaseSettings):
     # hear about this" and well outside a third party's rate limit.
     POSTING_DRAIN_ENABLED: bool = True
     POSTING_DRAIN_INTERVAL_SECONDS: int = 300
+    #: FS-704: periodic DB-backed refresh of the fleet liveness gauges, so an agent that
+    #: died before a backend restart still alerts. 60s is well under EdgeAgentOffline's
+    #: 300s threshold + 5m hold, so the sweep's cadence never delays the alert.
+    EDGE_FLEET_SWEEP_ENABLED: bool = True
+    EDGE_FLEET_SWEEP_INTERVAL_SECONDS: int = 60
     #: Per organisation, per pass. Bounded so one tenant with a large backlog cannot hold
     #: the loop while every other tenant waits.
     POSTING_DRAIN_BATCH_SIZE: int = 50

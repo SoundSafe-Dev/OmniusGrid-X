@@ -44,7 +44,7 @@ from tests.test_every_swallowed_side_effect_is_counted import (
 APP = pathlib.Path(__file__).resolve().parents[1] / "app"
 
 #: Broad handlers that never re-raise. **Only ever goes down.** Measured 2026-08-08.
-MAX_SWALLOWING = 201
+MAX_SWALLOWING = 199
 
 #: Swallowing handlers that increment a counter. **Only ever goes up.** Measured 2026-08-08.
 #: Eleven, not the ten a body-only scan reports: `ingestion.py`'s top-level handler counts

@@ -283,11 +283,10 @@ groups:
       # produce. Same class as EdgeBufferStatsStale: alert on the timestamp's age,
       # which grows the moment the agent goes quiet.
       #
-      # Known gap, recorded rather than hidden: gauges live in backend memory, so after
-      # a backend restart an already-dead agent has no series at all and cannot alert
-      # until something heartbeats. Closing that needs a DB-backed sweep of
-      # edge_agent_status.last_seen — a background loop, which per FS-693 must arrive
-      # with its own failure counter and health check, not as a quick fix here.
+      # The restart gap is CLOSED (FS-704): edge_fleet_sweep re-derives both gauges
+      # from edge_agent_status.last_seen — which survives restarts — every 60s, arriving
+      # with its own failure counter and health check per FS-693. An agent that died
+      # before a backend restart alerts within one sweep interval of startup.
       - alert: EdgeAgentOffline
         expr: time() - edge_agent_last_heartbeat_timestamp_seconds > 300
         for: 5m

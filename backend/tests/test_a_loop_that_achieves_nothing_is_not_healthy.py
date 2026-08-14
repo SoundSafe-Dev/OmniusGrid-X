@@ -480,6 +480,98 @@ class TestThePostingDrainToo:
             assert key in details
 
 
+class TestTheLastTwoRegisterEntries:
+    """FS-705: compliance_report_dispatcher and rollout_orchestrator join health, and the
+    unwatched register is EMPTY — every service main.py starts is watched. The register
+    file keeps existing so a ninth service cannot arrive unwatched."""
+
+    async def test_compliance_dispatch_failing_every_cycle_is_an_error(self, monkeypatch):
+        from app.services import compliance_report_queue as crq
+
+        monkeypatch.setattr(crq.compliance_report_dispatcher, "_running", True)
+        monkeypatch.setattr(crq.compliance_report_dispatcher, "_consecutive_failures", 4)
+        status, _ = health_module._check_compliance_dispatcher()
+        assert status.startswith("error")
+
+    async def test_rollout_dispatch_failing_every_cycle_is_an_error(self, monkeypatch):
+        from app.services import rollout_orchestrator as ro
+
+        monkeypatch.setattr(ro.rollout_orchestrator, "_running", True)
+        monkeypatch.setattr(ro.rollout_orchestrator, "_consecutive_failures", 4)
+        status, _ = health_module._check_rollout_orchestrator()
+        assert status.startswith("error")
+
+    async def test_both_working_loops_are_ok(self, monkeypatch):
+        from app.services import compliance_report_queue as crq
+        from app.services import rollout_orchestrator as ro
+
+        for svc in (crq.compliance_report_dispatcher, ro.rollout_orchestrator):
+            monkeypatch.setattr(svc, "_running", True)
+            monkeypatch.setattr(svc, "_consecutive_failures", 0)
+        assert health_module._check_compliance_dispatcher()[0] == "ok"
+        assert health_module._check_rollout_orchestrator()[0] == "ok"
+
+    async def test_the_compliance_loop_maintains_its_counter(self, monkeypatch):
+        from app.core.config import settings
+        from app.services.compliance_report_queue import ComplianceReportDispatcher
+
+        dispatcher = ComplianceReportDispatcher()
+        dispatcher._running = True
+        calls = {"n": 0}
+
+        async def _boom():
+            calls["n"] += 1
+            if calls["n"] >= 2:
+                dispatcher._running = False
+            raise RuntimeError("redpanda unreachable")
+
+        dispatcher.dispatch_queued = _boom
+        monkeypatch.setattr(settings, "COMPLIANCE_REPORT_DISPATCH_INTERVAL_SECONDS", 0)
+        await dispatcher._run()
+        assert dispatcher._consecutive_failures >= 2
+
+    async def test_the_rollout_loop_maintains_its_counter(self, monkeypatch):
+        from app.services.rollout_orchestrator import RolloutOrchestrator
+
+        orchestrator = RolloutOrchestrator()
+        orchestrator._running = True
+        calls = {"n": 0}
+
+        async def _boom():
+            calls["n"] += 1
+            if calls["n"] >= 2:
+                orchestrator._running = False
+            raise RuntimeError("db unreachable")
+
+        orchestrator.dispatch_due_rollouts = _boom
+        # The orchestrator sleeps via its module settings; patch the interval name it uses.
+        import app.services.rollout_orchestrator as ro_module
+        from app.core.config import settings as _settings
+
+        for name in ("OTA_ROLLOUT_DISPATCH_INTERVAL_SECONDS",):
+            if hasattr(_settings, name):
+                monkeypatch.setattr(_settings, name, 0)
+        await orchestrator._run()
+        assert orchestrator._consecutive_failures >= 2
+
+    async def test_both_checks_reach_the_detailed_report(self):
+        checks, details = await health_module._run_extended_checks(_Boom())
+        for key in ("compliance_dispatcher", "rollout_orchestrator"):
+            assert key in checks, f"{key} check exists and nothing calls it"
+            assert key in details
+
+    def test_the_register_is_empty_and_stays_honest(self):
+        """The point of the whole arc: every service main.py starts is watched. The
+        register guard still runs, so a ninth service cannot arrive unwatched."""
+        from tests.test_a_started_service_is_a_service_somebody_watches import (
+            UNWATCHED,
+            _unchecked,
+        )
+
+        assert UNWATCHED == {}
+        assert _unchecked() == []
+
+
 class TestTheCounterIsActuallyMaintained:
     """The health check is only as good as the state it reads, and that state is written in
     a different file. These drive the real loop bodies.

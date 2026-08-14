@@ -518,9 +518,24 @@ class UnifiedCollectorCoordinator:
                         exception=str(exc) if exc else None,
                     )
 
-                    # Attempt restart if configured
+                    # Attempt restart if configured — UNLESS an operator-triggered
+                    # restart already owns this collector (FS-703). `restart_collector`
+                    # serialises itself through `_restart_locks` and this loop never
+                    # took them, so a collector that crashed moments before an API
+                    # restart could draw `_start_collector` from both paths: the second
+                    # overwrites the first's dict entries and the first's task runs
+                    # orphaned — two collectors polling one device, one of them
+                    # invisible to every stop path. Skipping while the lock is held is
+                    # enough; if the API restart fails, the task it leaves behind is
+                    # done and this loop picks it up on the next pass.
                     config = self.configs.get(asset_id)
                     if config and config.enabled:
+                        lock = self._restart_locks.get(asset_id)
+                        if lock is not None and lock.locked():
+                            logger.info(
+                                "restart_deferred_to_operator", asset_id=asset_id
+                            )
+                            continue
                         logger.info("restarting_collector", asset_id=asset_id)
                         await self._start_collector(config)
                 

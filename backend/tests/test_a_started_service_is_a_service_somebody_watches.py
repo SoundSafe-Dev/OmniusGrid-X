@@ -36,10 +36,6 @@ HEALTH = APP / "api" / "health.py"
 #: Services started at boot with no health check, and what would close the entry.
 #: ONLY EVER SHRINKS. Removing a name means writing a check, not deleting a line.
 UNWATCHED = {
-    "compliance_report_dispatcher": "needs a definition of a due report that went out; a "
-                                    "missed compliance report is discovered by an auditor",
-    "rollout_orchestrator": "health.py mentions it only in a comment at :791. Needs a view "
-                            "of in-flight rollouts that have stopped advancing",
 }
 
 
@@ -71,11 +67,15 @@ class TestTheMeasurementIsReal:
         assert "command_executor" not in _unchecked()
 
     def test_a_mention_in_a_comment_is_not_a_check(self):
-        """POSITIVE CONTROL for the comment-stripping, which changes the answer by one:
-        `rollout_orchestrator` appears in health.py only inside prose."""
-        health = HEALTH.read_text()
-        assert "rollout_orchestrator" in health
-        assert "rollout_orchestrator" in _unchecked(), (
+        """POSITIVE CONTROL for the comment-stripping. The original control asserted that
+        `rollout_orchestrator` appeared in health.py only as prose — true for the months
+        this register carried it, false since FS-705 gave it a real check (the control
+        expiring is the register succeeding). Synthetic now, so it cannot expire again."""
+        code = "\n".join(
+            line.split("#")[0]
+            for line in ["x = 1  # imaginary_service is mentioned here only", "y = 2"]
+        )
+        assert "imaginary_service" not in code, (
             "a name that appears only in a comment is being counted as coverage"
         )
 

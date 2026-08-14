@@ -42,6 +42,10 @@ EXPECTED_STARTED: Set[str] = {
     "posting_drain_scheduler",
     "report_scheduler",
     "rollout_orchestrator",
+    #: FS-704. DB-backed refresh of the fleet liveness gauges: process-memory gauges die
+    #: with the process, edge_agent_status.last_seen does not, so this is what lets an
+    #: agent that died BEFORE a backend restart still fire EdgeAgentOffline after it.
+    "edge_fleet_sweep",
 }
 
 #: Deliberately NOT started, with the reason. These are the edge-AI stack: they were

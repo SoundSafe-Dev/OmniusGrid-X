@@ -19,7 +19,7 @@ from app.middleware.tenant_isolation import get_tenant_db, get_tenant_org_id
 from app.db.models import Carrier, Driver, Shipment, Route, LoadPlan, FreightCharge
 from app.models.schemas import (
     CarrierCreate, CarrierUpdate, CarrierResponse,
-    DriverCreate, DriverUpdate, DriverResponse,
+    DriverCreate, DriverUpdate, DriverResponse, DriverListItem,
     ShipmentCreate, ShipmentUpdate, ShipmentResponse,
     RouteCreate, RouteUpdate, RouteResponse,
     LoadPlanCreate, LoadPlanUpdate, LoadPlanResponse,
@@ -531,7 +531,7 @@ def _hours_remaining(stored, consumed, limit):
     return round(max(0.0, limit - float(consumed)), 2)
 
 
-@router.get("/drivers", response_model=List[Dict[str, Any]])
+@router.get("/drivers", response_model=List[DriverListItem])
 async def get_drivers(
     # organization_id comes from the TOKEN. As a required client-supplied query
     # parameter it was the IDOR shape app/core/tenant.py forbids — and it did not

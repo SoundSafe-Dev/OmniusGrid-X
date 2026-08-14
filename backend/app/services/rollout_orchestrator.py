@@ -61,6 +61,10 @@ class RolloutOrchestrator:
         self._clock = clock or _utcnow
         self._task: Optional[asyncio.Task] = None
         self._running = False
+        #: Consecutive failed dispatch cycles (FS-693's pattern; mechanical addition —
+        #: the cumulative OTA_ROLLOUT_FAILURES counter beside it answers "how often,
+        #: ever", this answers "failing right now", which is the health-shaped question).
+        self._consecutive_failures = 0
 
     def _now(self) -> datetime:
         return utc_datetime(self._clock())
@@ -87,7 +91,9 @@ class RolloutOrchestrator:
         while self._running:
             try:
                 await self.dispatch_due_rollouts()
+                self._consecutive_failures = 0
             except Exception as exc:  # noqa: BLE001
+                self._consecutive_failures += 1
                 # Counted, not just logged. The loop must survive a bad iteration, but a
                 # dispatcher failing every cycle and a dispatcher with nothing to do look
                 # identical in the logs and different on a graph.

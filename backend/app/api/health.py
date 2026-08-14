@@ -432,6 +432,84 @@ def _check_posting_drain() -> tuple[str, dict[str, Any]]:
         return f"error: {exc}", {}
 
 
+def _check_fleet_sweep() -> tuple[str, dict[str, Any]]:
+    """The fleet-liveness sweep (FS-704), watched from birth per FS-693's rule that a new
+    background loop arrives with its failure accounting. If this loop fails every pass,
+    the liveness gauges quietly revert to ingest-only writes — exactly the pre-FS-704
+    world where a backend restart makes an already-dead agent unalertable."""
+    try:
+        from app.core.config import settings
+        from app.services.edge_fleet_sweep import edge_fleet_sweep
+
+        if not settings.EDGE_FLEET_SWEEP_ENABLED:
+            return "disabled", {"enabled": False}
+
+        failures = getattr(edge_fleet_sweep, "_consecutive_failures", 0)
+        details: dict[str, Any] = {
+            "enabled": True,
+            "running": bool(edge_fleet_sweep._running),
+            "consecutive_failures": failures,
+        }
+        if not edge_fleet_sweep._running:
+            return "not_running", details
+        if failures >= _MAX_CONSECUTIVE_LOOP_FAILURES:
+            return "error: fleet sweep failing every pass", details
+        return "ok", details
+    except Exception as exc:
+        return f"error: {exc}", {}
+
+
+def _check_compliance_dispatcher() -> tuple[str, dict[str, Any]]:
+    """The compliance report dispatcher (FS-705) — the register's last-but-one entry.
+    A due report that never dispatches is discovered by an auditor, not an operator."""
+    try:
+        from app.core.config import settings
+        from app.services.compliance_report_queue import compliance_report_dispatcher
+
+        if not settings.COMPLIANCE_REPORT_DISPATCH_ENABLED:
+            return "disabled", {"enabled": False}
+
+        failures = getattr(compliance_report_dispatcher, "_consecutive_failures", 0)
+        details: dict[str, Any] = {
+            "enabled": True,
+            "running": bool(compliance_report_dispatcher._running),
+            "consecutive_failures": failures,
+        }
+        if not compliance_report_dispatcher._running:
+            return "not_running", details
+        if failures >= _MAX_CONSECUTIVE_LOOP_FAILURES:
+            return "error: compliance dispatch failing every cycle", details
+        return "ok", details
+    except Exception as exc:
+        return f"error: {exc}", {}
+
+
+def _check_rollout_orchestrator() -> tuple[str, dict[str, Any]]:
+    """The OTA rollout dispatcher (FS-705) — the register's last entry. Its cumulative
+    OTA_ROLLOUT_FAILURES counter answers "how often, ever"; this answers "failing right
+    now". A rollout stuck dispatching leaves a fleet half-upgraded indefinitely."""
+    try:
+        from app.core.config import settings
+        from app.services.rollout_orchestrator import rollout_orchestrator
+
+        if not settings.OTA_ROLLOUT_DISPATCH_ENABLED:
+            return "disabled", {"enabled": False}
+
+        failures = getattr(rollout_orchestrator, "_consecutive_failures", 0)
+        details: dict[str, Any] = {
+            "enabled": True,
+            "running": bool(rollout_orchestrator._running),
+            "consecutive_failures": failures,
+        }
+        if not rollout_orchestrator._running:
+            return "not_running", details
+        if failures >= _MAX_CONSECUTIVE_LOOP_FAILURES:
+            return "error: rollout dispatch failing every cycle", details
+        return "ok", details
+    except Exception as exc:
+        return f"error: {exc}", {}
+
+
 async def _run_extended_checks(
     db: AsyncSession,
 ) -> tuple[dict[str, str], dict[str, dict[str, Any]]]:
@@ -446,6 +524,9 @@ async def _run_extended_checks(
     tracker_status, tracker_details = _check_error_tracker()
     oee_status, oee_details = _check_oee_calculator()
     drain_status, drain_details = _check_posting_drain()
+    sweep_status, sweep_details = _check_fleet_sweep()
+    compliance_status, compliance_details = _check_compliance_dispatcher()
+    rollout_status, rollout_details = _check_rollout_orchestrator()
 
     checks = {
         "notifications": notifications_status,
@@ -457,6 +538,9 @@ async def _run_extended_checks(
         "error_tracker": tracker_status,
         "oee_calculator": oee_status,
         "posting_drain": drain_status,
+        "edge_fleet_sweep": sweep_status,
+        "compliance_dispatcher": compliance_status,
+        "rollout_orchestrator": rollout_status,
     }
     details = {
         "notifications": notifications_details,
@@ -468,6 +552,9 @@ async def _run_extended_checks(
         "error_tracker": tracker_details,
         "oee_calculator": oee_details,
         "posting_drain": drain_details,
+        "edge_fleet_sweep": sweep_details,
+        "compliance_dispatcher": compliance_details,
+        "rollout_orchestrator": rollout_details,
     }
     return checks, details
 

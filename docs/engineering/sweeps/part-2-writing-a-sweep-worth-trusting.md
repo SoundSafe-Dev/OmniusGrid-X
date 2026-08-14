@@ -1330,6 +1330,11 @@ one of its findings. The habit that catches it:
 
 ## Open observations, not yet tickets
 
+**CLOSED (FS-703).** The observation below was fixed the session after it was recorded: the
+monitor now defers to a held `_restart_locks` entry (`restart_deferred_to_operator`), and a
+failed operator restart is still recovered because it leaves a done task for the next pass.
+Kept for the record of how it was found:
+
 **The health monitor's auto-restart and `restart_collector` can race on a crashed task.**
 The monitor restarts any done-and-not-cancelled task whose config is enabled
 (`coordinator.py`, the FS-698 block), calling `_start_collector` directly; `restart_collector`
