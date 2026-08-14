@@ -48,6 +48,14 @@ def _psql_scalar(container, database: str, sql: str) -> str:
 
 def test_dump_restores_into_an_empty_database(pg_container):
     container, _sync_url = pg_container
+    if container is None:
+        # This drill docker-execs pg_dump/pg_restore inside the container and
+        # creates a second database to restore into, so unlike the other
+        # consumers it needs the container object itself, not just a URL.
+        pytest.skip(
+            "backup/restore drill needs a managed container; "
+            "TEST_DATABASE_URL mode has no container to exec into"
+        )
 
     # Snapshot the source before dumping.
     source_counts = {

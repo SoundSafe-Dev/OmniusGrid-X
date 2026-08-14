@@ -197,7 +197,36 @@ def _make_jwt(user_id: UUID, secret: str, algorithm: str = "HS256") -> str:
 
 @pytest.fixture(scope="session")
 def pg_container():
-    """Start an ephemeral TimescaleDB container for the whole test session."""
+    """Start an ephemeral TimescaleDB container for the whole test session.
+
+    Escape hatch: if ``TEST_DATABASE_URL`` is set, connect to that server
+    instead of starting a container. Testcontainers publishes ports, which
+    needs Docker bridge networking — absent in CI without docker-in-docker, and
+    absent on sandboxed hosts such as our Thunder Compute box, where only the
+    ``host`` and ``none`` networks exist and every testcontainers test dies with
+    ``Port mapping ... is not available``.
+
+    ``TEST_DATABASE_URL`` MUST name a scratch database. ``_setup_schema`` runs
+    the full migration chain against whatever it is given, creating and
+    altering tables; pointing it at a real database would rewrite that
+    database's schema.
+
+    Yields ``(container, sync_url)``. In external mode there is no container to
+    yield, so consumers that drive the container itself must skip — see
+    ``test_backup_restore_drill.py``.
+    """
+    if external_url := os.environ.get("TEST_DATABASE_URL", "").strip():
+        # Same normalization as the container path below: accept either
+        # driver-qualified scheme and reduce to plain ``postgresql://``, which
+        # is what psycopg2 and the migration runner accept.
+        sync_url = external_url.replace(
+            "postgresql+psycopg2://", "postgresql://"
+        ).replace("postgresql+asyncpg://", "postgresql://")
+        _setup_schema(sync_url)
+        _provision_tenant_role(sync_url, "tenant_user", "tenant_pass")
+        yield None, sync_url
+        return
+
     from testcontainers.postgres import PostgresContainer
 
     # testcontainers 4.x renamed the `user` kwarg to `username` (it raises
