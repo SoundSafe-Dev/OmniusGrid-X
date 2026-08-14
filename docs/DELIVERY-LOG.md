@@ -11320,3 +11320,39 @@ fallback, and every one of the 25 call sites passes a session, so the unscoped b
 latent rather than live. Not touched.
 
 Rules 212-213. Backend 4,795 passing, frontend 1,192, edge 427.
+
+## FS-721 — the fifteen tables RLS cannot see, swept
+
+FS-720 turned on a fact worth generalising: `operations` has no `organization_id`, so no
+policy of the usual shape exists and `get_tenant_db` does nothing for it. Its tenant is
+whoever owns the asset. Fourteen other tables are in the same position — task columns,
+comments and timers behind their board; session data sources and messages behind their
+session; user sessions, revoked tokens and consent records behind their user; registry items
+behind their registry; telemetry and PackML states behind their asset.
+
+**Every `select()` of those fifteen models in `app/api` was read — 40 sites across six
+routers — and `operations` was the only offender.** The convention holds everywhere else,
+and it is a good one: verify the PARENT with an explicit organisation predicate, then query
+children by the parent's id. `telemetry.get_telemetry_history` calls `_verify_asset_in_org`
+before any read; `registries` selects its `ActionableRegistry` with
+`organization_id == current_user.organization_id` before touching items; `gdpr` scopes by
+`current_user.id`, which is narrower than the org; kanban fetches the board for the caller
+and works from it, including the two sites in `update_task` that read a column by id — the
+old one belongs to a task already verified, the new one is filtered by the effective board
+(FS-677's comment is on that line).
+
+A negative sweep is still a result, and the honest version of this one is: **the codebase
+knows this pattern; one file forgot it.**
+
+WHY THE ARTEFACT IS A REGISTER AND NOT A DETECTOR. Deciding statically whether a parent was
+verified means following an id through a handler, and a detector that guesses either misses
+the real thing or cries wolf until somebody writes an exemption — which is rule 211, learned
+two commits ago. So `test_parent_tenanted_tables_are_declared.py` asserts the half that is
+decidable and that actually failed: WHICH tables are in this category. Fifteen, each with
+the parent its tenancy comes from. A sixteenth arriving unnoticed is how the next
+`operations` happens, because the author will reasonably assume the session is doing the
+work — for every other table in sight, it is.
+
+Mutation-verified by removing `organization_id` from `Alarm`: the register names it.
+
+Backend 4,814 passing.
