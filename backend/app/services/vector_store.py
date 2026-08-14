@@ -180,41 +180,56 @@ class VectorStore:
             for p in response.points
         ]
 
-    async def delete_by_doc(self, doc_id: str) -> None:
-        """Delete all chunks belonging to a document (by ``doc_id`` payload)."""
+    @staticmethod
+    def _doc_scope(doc_id: str, org_id: str) -> List["models.FieldCondition"]:
+        """The conditions identifying one org's copy of one document.
+
+        Both are mandatory, and ``org_id`` is not optional here the way it is on
+        the search path. ``doc_id`` is caller-suppliable at ingest, so two
+        tenants can legitimately hold the same one; a delete filtered on
+        ``doc_id`` alone matches both copies and destroys the other tenant's
+        vectors while leaving their ``rag_documents`` row reading ``indexed``.
+        """
+        return [
+            models.FieldCondition(
+                key="doc_id", match=models.MatchValue(value=doc_id)
+            ),
+            models.FieldCondition(
+                key="org_id", match=models.MatchValue(value=org_id)
+            ),
+        ]
+
+    async def delete_by_doc(self, doc_id: str, org_id: str) -> None:
+        """Delete all chunks belonging to one org's copy of a document."""
         client = self._get_client()
         await client.delete(
             collection_name=self.collection,
             points_selector=models.FilterSelector(
-                filter=models.Filter(
-                    must=[
-                        models.FieldCondition(
-                            key="doc_id", match=models.MatchValue(value=doc_id)
-                        )
-                    ]
-                )
+                filter=models.Filter(must=self._doc_scope(doc_id, org_id))
             ),
         )
-        logger.info("vector_store.deleted_doc", doc_id=doc_id)
+        logger.info("vector_store.deleted_doc", doc_id=doc_id, org_id=org_id)
 
-    async def delete_by_doc_excluding_generation(self, doc_id: str, generation: str) -> None:
+    async def delete_by_doc_excluding_generation(
+        self, doc_id: str, org_id: str, generation: str
+    ) -> None:
         """Delete a document's chunks from every generation except ``generation``.
 
         Used for the ingest swap: the new generation is upserted in full first,
         then this drops the old one (plus any orphan left by a prior failed
         ingest) in a single call. Keeps re-ingest from ever leaving the doc
         with zero or partial vectors mid-write.
+
+        Org-scoped for the same reason as ``delete_by_doc``, and it matters more
+        here: this runs on every re-ingest, not only on an explicit delete, so
+        an unscoped filter would let routine indexing wipe another tenant.
         """
         client = self._get_client()
         await client.delete(
             collection_name=self.collection,
             points_selector=models.FilterSelector(
                 filter=models.Filter(
-                    must=[
-                        models.FieldCondition(
-                            key="doc_id", match=models.MatchValue(value=doc_id)
-                        )
-                    ],
+                    must=self._doc_scope(doc_id, org_id),
                     must_not=[
                         models.FieldCondition(
                             key="generation", match=models.MatchValue(value=generation)
@@ -224,7 +239,10 @@ class VectorStore:
             ),
         )
         logger.info(
-            "vector_store.deleted_doc_old_generation", doc_id=doc_id, generation=generation
+            "vector_store.deleted_doc_old_generation",
+            doc_id=doc_id,
+            org_id=org_id,
+            generation=generation,
         )
 
     async def health_check(self) -> Dict[str, Any]:

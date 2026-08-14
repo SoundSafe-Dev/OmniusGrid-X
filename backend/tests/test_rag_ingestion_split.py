@@ -47,7 +47,10 @@ class _ExplodingVectors:
     async def ensure_collection(self):
         raise AssertionError("store_document must not touch the vector store")
 
-    async def delete_by_doc(self, doc_id):
+    async def delete_by_doc(self, *args, **kwargs):
+        raise AssertionError("store_document must not touch the vector store")
+
+    async def delete_by_doc_excluding_generation(self, *args, **kwargs):
         raise AssertionError("store_document must not touch the vector store")
 
     async def upsert_chunks(self, points):

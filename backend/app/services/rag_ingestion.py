@@ -559,7 +559,9 @@ class IngestionPipeline:
 
         # All batches landed - now safe to drop the old generation (and any
         # orphaned partial generation left by a prior failed run).
-        await self.vectors.delete_by_doc_excluding_generation(doc_id, generation)
+        await self.vectors.delete_by_doc_excluding_generation(
+            doc_id, org_id, generation
+        )
 
         result.indexed = True
         result.status = "indexed"
@@ -608,7 +610,7 @@ class IngestionPipeline:
     async def delete_document(self, *, doc_id: str, org_id: str) -> Dict[str, Any]:
         """Remove a document's vectors and its stored blobs."""
         if self.vectors.available:
-            await self.vectors.delete_by_doc(doc_id)
+            await self.vectors.delete_by_doc(doc_id, org_id)
         blobs_deleted = 0
         if self.docs.available:
             prefix = f"{org_id}/{doc_id}/"
