@@ -2886,3 +2886,22 @@ an alert on its age — and the interesting parts are the two corners:
 
 When a health signal is itself produced by a loop, the loop needs a watchdog, or every
 alert downstream of the signal inherits the loop's failure mode silently.
+
+## Rule 197 — `task.exception()` on a cancelled task raises
+
+FS-698's mechanism, stated as the API contract it violates. `Task.exception()` returns the
+exception for a task that *failed* — and **raises CancelledError** for a task that was
+cancelled. Code that inspects done tasks inside `except Exception` is therefore correct for
+every outcome except cancellation, and cancellation is precisely the outcome an
+administrative operation (restart, hot-reload, shutdown) produces on purpose.
+
+The sweep across both codebases: three sites inspect task outcomes. The two `spawn`
+helpers (`backend/app/core/tasks.py`, `edge-agent/opsgrid_agent/tasks.py`) both ask
+`cancelled()` before `exception()` — that idiom was already load-bearing there. The
+coordinator's health monitor was the one raw site, and it was also the one whose death
+costs the most: sole writer of the liveness gauge, sole automatic restart path.
+
+Worth keeping in the pattern library because the failure needs two ingredients that are
+individually innocent: `except Exception` (correct — the loop must survive anything) and
+`task.exception()` (correct — that is how you read a failure). Neither line looks wrong.
+The bug lives in the pair.

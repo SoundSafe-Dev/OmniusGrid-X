@@ -1316,6 +1316,16 @@ one of its findings. The habit that catches it:
      *because* nothing was collected. Health derived from the mechanism will report the
      mechanism; measure the output.
 
+197. **`task.exception()` on a cancelled task raises; ask `cancelled()` first.**
+     The health monitor inspected done collector tasks with `task.exception()` inside
+     `except Exception` — and for a cancelled task that call *raises* CancelledError, a
+     BaseException since 3.8, which no `except Exception` can catch. One config hot-reload
+     could therefore kill all collector supervision permanently: the liveness gauge frozen,
+     auto-restart gone, one unexplained traceback as the only trace. The sweep across both
+     codebases found the two `spawn` helpers already asking `cancelled()` first and exactly
+     one raw site — the monitor. The general form: any code that inspects a task it did not
+     just create must treat cancellation as a state, not an error to catch.
+
 ---
 
 ## Open observations, not yet tickets
