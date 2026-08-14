@@ -4,7 +4,7 @@ import { Activity, HardDrive } from 'lucide-react';
 import { Badge, Button, Card, Input, Select, SkeletonCard } from '../../components';
 import { Tooltip, TooltipContent, TooltipTrigger } from '../../components/ui';
 import { api } from '../../api';
-import { formatDateTime } from '../../utils/formatters';
+import { formatDateTime, formatNumber } from '../../utils/formatters';
 
 interface EdgeAgent {
   agent_id: string;
@@ -12,10 +12,28 @@ interface EdgeAgent {
   last_seen: string | null;
   buffer_pending: number;
   dead_lettered: number;
+  /** TELEMETRY THE AGENT DISCARDED — and this interface omitted it (P12).
+   *
+   *  FS-591 traced this figure the whole way: the agent counts dropped readings, sends
+   *  them every heartbeat, the handler writes `edge_agent_status.dropped`, and
+   *  `AgentStatusOut` was given the field precisely so a fleet view could show it. The
+   *  fleet view then declared an interface without it, so the number arrived and was
+   *  discarded one layer later — the same omission, one boundary further on.
+   *
+   *  Of the three buffer figures it is the only unrecoverable one: `buffer_pending` is
+   *  waiting to send, `dead_lettered` is replayable, this is gone. */
+  dropped: number;
   active_collectors: number;
   total_collectors: number;
   cert_expires_in_seconds: number | null;
 }
+
+/** Certificate expiry thresholds, matching the alert rules so the page and the pager
+ *  agree: EdgeAgentCertExpiringSoon fires under 2 days (high),
+ *  EdgeAgentCertExpiryApproaching under 14 (warning). A cert that expires stops an
+ *  agent dead, and this was previously visible only on hover. */
+const CERT_CRITICAL_DAYS = 2;
+const CERT_WARNING_DAYS = 14;
 
 export const CollectorsPage: FC = () => {
   const { data: agents, isLoading, isError } = useQuery({
@@ -29,6 +47,26 @@ export const CollectorsPage: FC = () => {
 
   const livenessVariant = (l: string): 'success' | 'warning' | 'error' =>
     l === 'live' || l === 'online' ? 'success' : l === 'stale' ? 'warning' : 'error';
+
+  // WORST FIRST (P12). A fleet list in arbitrary order makes the offline agent the
+  // reader's job to find; the one an admin opened this page for should be at the top.
+  // Offline before stale before online, then by cert urgency, then by name so the
+  // order is stable between refreshes rather than reshuffling every 30 seconds.
+  const rank = (agent: EdgeAgent): number => {
+    if (agent.liveness === 'offline') return 0;
+    if (agent.liveness === 'stale') return 1;
+    return 2;
+  };
+  const certDays = (agent: EdgeAgent): number =>
+    agent.cert_expires_in_seconds == null
+      ? Number.POSITIVE_INFINITY
+      : agent.cert_expires_in_seconds / 86400;
+  const ordered = [...(agents ?? [])].sort(
+    (a, b) =>
+      rank(a) - rank(b) ||
+      certDays(a) - certDays(b) ||
+      a.agent_id.localeCompare(b.agent_id),
+  );
 
   return (
     <div className="space-y-6">
@@ -49,7 +87,7 @@ export const CollectorsPage: FC = () => {
           </p>
         ) : (
           <div className="space-y-2">
-            {agents.map((a) => (
+            {ordered.map((a) => (
               <Tooltip key={a.agent_id}>
                 <TooltipTrigger asChild>
                   <div className="flex items-center justify-between p-3 bg-opsgrid-bg rounded-lg">
@@ -62,9 +100,31 @@ export const CollectorsPage: FC = () => {
                           {a.buffer_pending > 0 && ` • ${a.buffer_pending} buffered`}
                           {a.dead_lettered > 0 && ` • ${a.dead_lettered} dead-lettered`}
                         </p>
+                        {/* DATA THAT NO LONGER EXISTS ANYWHERE, said in its own colour
+                            rather than as one clause in a grey run-on. Buffered is
+                            waiting, dead-lettered is replayable; dropped is gone. */}
+                        {a.dropped > 0 && (
+                          <p className="text-sm text-status-alarm">
+                            {formatNumber(a.dropped, 0)} readings dropped — not recoverable
+                          </p>
+                        )}
                       </div>
                     </div>
-                    <Badge variant={livenessVariant(a.liveness)} size="sm">{a.liveness}</Badge>
+                    <div className="flex items-center gap-2">
+                      {/* Cert expiry OUT OF THE TOOLTIP (P12): an expiring certificate
+                          stops an agent dead, and it was visible only to someone who
+                          happened to hover the right row. */}
+                      {a.cert_expires_in_seconds != null &&
+                        certDays(a) < CERT_WARNING_DAYS && (
+                          <Badge
+                            variant={certDays(a) < CERT_CRITICAL_DAYS ? 'error' : 'warning'}
+                            size="sm"
+                          >
+                            cert {Math.max(0, Math.round(certDays(a)))}d
+                          </Badge>
+                        )}
+                      <Badge variant={livenessVariant(a.liveness)} size="sm">{a.liveness}</Badge>
+                    </div>
                   </div>
                 </TooltipTrigger>
                 <TooltipContent>

@@ -19,6 +19,21 @@ const getAlarmTrend = vi.fn()
 const getHealthDistribution = vi.fn()
 const getAssetsAtRisk = vi.fn()
 
+const useQuerySpy = vi.fn()
+vi.mock('@tanstack/react-query', async (orig) => {
+  const actual = await orig<any>()
+  return {
+    ...actual,
+    // Records the OPTIONS each query was created with, then delegates. Asserting on
+    // options is the honest level here: waiting on a real interval would test
+    // react-query's scheduler, not this page's configuration.
+    useQuery: (options: any) => {
+      useQuerySpy(options)
+      return actual.useQuery(options)
+    },
+  }
+})
+
 vi.mock('../api', () => ({
   dashboardApi: { getOverview: () => getOverview() },
   alarmsApi: { getActive: () => getActive() },
@@ -269,5 +284,48 @@ describe('Dashboard', () => {
     const { container } = renderDashboard()
     await screen.findByText('24')
     expect(await axe(container)).toHaveNoViolations()
+  })
+})
+
+/**
+ * The trend charts poll (P14, page-enhancement review).
+ *
+ * The two KPI queries had `refetchInterval: 30000` and the five trend queries had none,
+ * so on a wall display the tiles refreshed all day over charts frozen at mount — live
+ * counts above hours-old trends, with nothing on the page to say the halves disagreed.
+ *
+ * Asserted at the query options rather than by waiting on a timer: a test that advanced
+ * fake timers 60 seconds would be testing react-query's scheduler, and would pass just
+ * as well against an interval of one second — which would be a different defect.
+ */
+describe('the trend charts do not freeze at mount', () => {
+  beforeEach(() => {
+    useQuerySpy.mockClear()
+    happyPath()
+    renderDashboard()
+  })
+
+  it('polls every trend query', () => {
+    const intervals = useQuerySpy.mock.calls
+      .map((call) => call[0])
+      .filter((options: any) =>
+        ['dash-availability', 'dash-throughput', 'dash-alarm-trend', 'dash-health', 'dash-at-risk']
+          .includes(options?.queryKey?.[0]),
+      )
+    expect(intervals.length).toBe(5)
+    for (const options of intervals) {
+      expect(options.refetchInterval).toBeGreaterThan(0)
+    }
+  })
+
+  it('polls the trends more slowly than the live counts', () => {
+    // A trend bucket does not move in 30 seconds and each of these is an aggregate
+    // query; matching the KPI cadence would be five extra aggregations a minute for a
+    // chart that cannot have changed.
+    const byKey = (key: string) =>
+      useQuerySpy.mock.calls.map((c) => c[0]).find((o: any) => o?.queryKey?.[0] === key)
+    expect(byKey('dash-availability').refetchInterval).toBeGreaterThan(
+      byKey('active-alarms').refetchInterval,
+    )
   })
 })

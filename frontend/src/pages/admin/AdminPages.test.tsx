@@ -50,6 +50,83 @@ describe('CollectorsPage', () => {
     expect(await screen.findByText(/agent-7/)).toBeInTheDocument()
   })
 
+  /**
+   * P12 (page-enhancement review). Three things this list did not do: it hid an
+   * expiring certificate in a tooltip (an expired cert stops an agent dead), it never
+   * showed `dropped` at all — the one unrecoverable figure of the three, which FS-591
+   * traced onto the wire specifically so a fleet view could show it and which this
+   * page's own interface then omitted — and it rendered agents in arbitrary order, so
+   * the offline one was the reader's job to find.
+   */
+  it('shows dropped readings as loss, not as another grey clause', async () => {
+    get.mockResolvedValue({
+      data: [{
+        agent_id: 'agent-loss', liveness: 'online',
+        active_collectors: 2, total_collectors: 2,
+        buffer_pending: 0, dead_lettered: 0, dropped: 1234,
+      }],
+    })
+    show(<CollectorsPage />)
+    expect(await screen.findByText(/1,234 readings dropped/i)).toBeInTheDocument()
+    expect(screen.getByText(/not recoverable/i)).toBeInTheDocument()
+  })
+
+  it('says nothing about drops when there are none', async () => {
+    // NEGATIVE CONTROL: a permanent "0 readings dropped" line would train the eye to
+    // skip the row that matters.
+    get.mockResolvedValue({
+      data: [{
+        agent_id: 'agent-clean', liveness: 'online',
+        active_collectors: 2, total_collectors: 2,
+        buffer_pending: 0, dead_lettered: 0, dropped: 0,
+      }],
+    })
+    show(<CollectorsPage />)
+    await screen.findByText(/agent-clean/)
+    expect(screen.queryByText(/dropped/i)).not.toBeInTheDocument()
+  })
+
+  it('badges a certificate that is about to expire', async () => {
+    get.mockResolvedValue({
+      data: [{
+        agent_id: 'agent-cert', liveness: 'online',
+        active_collectors: 1, total_collectors: 1,
+        buffer_pending: 0, dead_lettered: 0, dropped: 0,
+        cert_expires_in_seconds: 86400, // one day
+      }],
+    })
+    show(<CollectorsPage />)
+    expect(await screen.findByText(/cert 1d/i)).toBeInTheDocument()
+  })
+
+  it('does not badge a certificate with months left', async () => {
+    get.mockResolvedValue({
+      data: [{
+        agent_id: 'agent-fine', liveness: 'online',
+        active_collectors: 1, total_collectors: 1,
+        buffer_pending: 0, dead_lettered: 0, dropped: 0,
+        cert_expires_in_seconds: 86400 * 90,
+      }],
+    })
+    show(<CollectorsPage />)
+    await screen.findByText(/agent-fine/)
+    expect(screen.queryByText(/^cert /i)).not.toBeInTheDocument()
+  })
+
+  it('puts the offline agent first, not wherever the server listed it', async () => {
+    get.mockResolvedValue({
+      data: [
+        { agent_id: 'agent-ok', liveness: 'online', active_collectors: 1, total_collectors: 1, buffer_pending: 0, dead_lettered: 0, dropped: 0 },
+        { agent_id: 'agent-down', liveness: 'offline', active_collectors: 0, total_collectors: 1, buffer_pending: 0, dead_lettered: 0, dropped: 0 },
+        { agent_id: 'agent-stale', liveness: 'stale', active_collectors: 1, total_collectors: 1, buffer_pending: 0, dead_lettered: 0, dropped: 0 },
+      ],
+    })
+    show(<CollectorsPage />)
+    await screen.findByText(/agent-down/)
+    const order = screen.getAllByText(/^agent-/).map((el) => el.textContent)
+    expect(order).toEqual(['agent-down', 'agent-stale', 'agent-ok'])
+  })
+
   it('does not render a failed read as an empty fleet', async () => {
     // The distinction this repository keeps buying: "no collectors are enrolled" is a fact
     // about the estate; "we could not ask" is a fact about the request, and only one of

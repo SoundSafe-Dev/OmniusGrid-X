@@ -162,25 +162,37 @@ const Dashboard: FC = () => {
     queryFn: () => alarmsApi.getActive(),
     refetchInterval: 30000,
   })
+  // POLLED, like the KPI queries above (P14, page-enhancement review). These five had no
+  // refetchInterval, so the two tiles at the top refreshed every 30s while the charts
+  // under them stayed at whatever they were when the page mounted — a dashboard left open
+  // on a wall display showed live counts over hours-old trends, with nothing to say the
+  // halves disagreed. Slower than the KPIs (60s): a trend bucket does not move in 30
+  // seconds, and each of these is an aggregate query.
+  const TREND_REFETCH_MS = 60000
   const availabilityQ = useQuery({
     queryKey: ['dash-availability', HOURS, BUCKET],
     queryFn: () => dashboardAnalyticsApi.getAvailabilityTrend(HOURS, BUCKET),
+    refetchInterval: TREND_REFETCH_MS,
   })
   const throughputQ = useQuery({
     queryKey: ['dash-throughput', HOURS, BUCKET],
     queryFn: () => dashboardAnalyticsApi.getThroughput(HOURS, BUCKET),
+    refetchInterval: TREND_REFETCH_MS,
   })
   const alarmTrendQ = useQuery({
     queryKey: ['dash-alarm-trend', HOURS, BUCKET],
     queryFn: () => dashboardAnalyticsApi.getAlarmTrend(HOURS, BUCKET),
+    refetchInterval: TREND_REFETCH_MS,
   })
   const healthQ = useQuery({
     queryKey: ['dash-health', HOURS],
     queryFn: () => dashboardAnalyticsApi.getHealthDistribution(HOURS),
+    refetchInterval: TREND_REFETCH_MS,
   })
   const atRiskQ = useQuery({
     queryKey: ['dash-at-risk', HOURS],
     queryFn: () => dashboardAnalyticsApi.getAssetsAtRisk(HOURS, 5),
+    refetchInterval: TREND_REFETCH_MS,
   })
 
   const overview = overviewQ.data

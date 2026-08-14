@@ -342,8 +342,8 @@ E2 Mobile-first floor view. E3 Shift handover notes.
 | P9 | ✅ SHIPPED — /admin/export-schedules: list, create-paused, pause/resume, delete + both export pages added to the nav | new page | L |
 | P10 | ✅ SHIPPED — AlarmRules: asset/type/workcell scope selectors + a Scope column | AlarmRules | M |
 | P11 | ✅ SHIPPED — Notifications: new PATCH route, inline edit, enable/disable toggle, test-severity selector | Notifications | M |
-| P12 | Collectors per-agent detail + badged cert/DLQ columns | Collectors | M |
+| P12 | ✅ SHIPPED — Collectors: `dropped` finally rendered, cert-expiry badges, worst-first order. (Per-agent detail NOT built: `GET /edge/fleet/{id}` returns the same shape as a list row, so a drill-in would show identical data.) | Collectors | M |
 | P13 | TelemetryCharts asset/metric pickers; Historian metric dropdown | analytics | M |
-| P14 | Dashboard: OEE tile + inline ack + trend refetch | Dashboard | S |
+| P14 | ◐ PARTIAL — trend queries now poll (were frozen at mount under polling KPIs). OEE tile + inline ack still open. | Dashboard | S |
 | — | Cross-lane (recorded, need authorisation): kanban comments/timers/rules, engine test-fire, NLP session mgmt, OTA table actions, RAG library, ERP mapping UI, operator workspace | — | — |
 
