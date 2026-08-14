@@ -11093,3 +11093,29 @@ about the order of those two conclusions.
 presence check that matched a badge rather than the cell (rule 200), and a losses-failure
 path no page test drove. Every fix in this arc is mutation-verified; three of the guards
 had to be strengthened before that sentence was true.
+
+### The exemption that expired exactly as its comment predicted
+
+Rendering the Fleet OEE tile failed `test_qualifiers_reach_the_frontend.py`, and the
+failure was written into the register years-of-commits earlier:
+
+> `/oee/dashboard/summary` has NO frontend consumer at all … `avg_oee` is the verdict
+> here and no screen shows it, so `assets_unavailable` has no claim to caveat. **The
+> moment anything renders the aggregate, `test_the_qualified_field_is_still_unread` fails
+> and this has to be wired with it.**
+
+It did, and it was. This is the third exemption in that file to expire on the commit its
+own comment named — `assessable` (FS-395), `detention_assessed` (FS-426), now this — and
+the pattern is worth stating plainly: **an exemption is only honest if it says what would
+end it**, because the thing that ends it arrives years later, in someone else's commit,
+with no memory of the deferral.
+
+The caveat travels with the verdict now: the tile's tooltip reads "8 of 10 assets
+measured" and names the unread ones, so a fleet OEE computed over four fifths of the
+floor is visibly that rather than a clean number.
+
+**And the mutation testing here needed two removals, not one.** Deleting the tooltip
+clause alone did not fail the guard, and neither did deleting the field from the client
+type — because each left the other, and the guard asks whether the frontend carries the
+field *anywhere*. Removing both fails it. Reporting either single mutation as "the guard
+does not bite" would have been the wrong conclusion from a true observation.

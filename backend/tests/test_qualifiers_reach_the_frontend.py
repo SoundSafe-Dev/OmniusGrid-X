@@ -172,12 +172,17 @@ QUALIFIES_AN_UNREAD_FIELD: Dict[str, str] = {
     "appointments_assessed": "sync_status_breakdown",
     # Intake lane's scenario builder; its output is not rendered by any page today.
     "degraded": "scenario_confidence",
-    # /oee/dashboard/summary has NO frontend consumer at all — the dashboard reads
-    # /dashboard/fleet/oee instead. `avg_oee` is the verdict here and no screen shows
-    # it, so `assets_unavailable` has no claim to caveat. The moment anything renders
-    # the aggregate, `test_the_qualified_field_is_still_unread` fails and this has to
-    # be wired with it.
-    "assets_unavailable": "avg_oee",
+    # "assets_unavailable": "avg_oee" — REMOVED 2026-08-14 (page-enhancement arc). The
+    # exemption read: "/oee/dashboard/summary has NO frontend consumer at all … the
+    # moment anything renders the aggregate, this fails and has to be wired with it."
+    # The Dashboard's new Fleet OEE tile renders `avgOee`, and this guard failed on the
+    # commit that made it so — third time an exemption here has expired exactly as its
+    # own comment predicted (`assessable`, `detention_assessed`, now this).
+    #
+    # The caveat travels with the verdict: the tile's tooltip reads "N of M assets
+    # measured" and names `assetsUnavailable` when any asset could not be read, so an
+    # operator sees a fleet OEE computed over eight of ten machines as exactly that.
+    # The main sweep below now checks it stays that way.
 }
 
 
