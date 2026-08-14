@@ -5,6 +5,19 @@ import { Button } from '../ui/Button';
 import { Badge } from '../ui/Badge';
 import { PlatformDataSourcePicker } from './PlatformDataSourcePicker';
 
+const STRUCTURED_DATA_EXTENSIONS = new Set([
+  'zip', 'csv', 'tsv', 'tab', 'xlsx', 'xls', 'xlsm', 'xlsb', 'ods', 'numbers',
+  'parquet', 'pq', 'arrow', 'feather', 'json', 'jsonl', 'ndjson', 'xml',
+]);
+
+const UPLOAD_FILE_ACCEPT = [
+  '.zip', 'application/zip', '.csv', '.tsv', '.tab', '.xlsx', '.xls', '.xlsm',
+  '.xlsb', '.ods', '.numbers', '.parquet', '.pq', '.arrow', '.feather', '.json',
+  '.jsonl', '.ndjson', '.xml', '.pdf', '.docx', '.doc', '.rtf', '.odt', '.html',
+  '.htm', '.eml', '.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp', '.tiff',
+  '.tif', '.txt', '.md', '.yaml', '.yml',
+].join(',');
+
 interface DataSourcesPanelProps {
   sessionId: string;
   onDataSourceAdded?: () => void;
@@ -77,13 +90,13 @@ export const DataSourcesPanel = React.forwardRef<DataSourcesPanelHandle, DataSou
 
   const inferDataType = (fileName: string) => {
     const ext = fileName.split('.').pop()?.toLowerCase();
-    if (ext === 'csv' || ext === 'xlsx' || ext === 'xls') {
+    if (ext && STRUCTURED_DATA_EXTENSIONS.has(ext)) {
       return 'spreadsheet';
     }
-    if (ext === 'pdf' || ext === 'docx' || ext === 'doc') {
+    if (['pdf', 'docx', 'doc', 'rtf', 'odt', 'html', 'htm', 'eml'].includes(ext || '')) {
       return 'report';
     }
-    if (ext === 'png' || ext === 'jpg' || ext === 'jpeg') {
+    if (['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'tiff', 'tif'].includes(ext || '')) {
       return 'image';
     }
     return 'document';
@@ -212,7 +225,7 @@ export const DataSourcesPanel = React.forwardRef<DataSourcesPanelHandle, DataSou
       <div className="p-4 border-b border-opsgrid-border shrink-0">
         <h3 className="text-sm font-semibold text-opsgrid-text mb-1">Upload data for AI</h3>
         <p className="text-xs text-opsgrid-text-secondary mb-3">
-          Drop Excel/CSV here or use <strong>Upload Excel</strong> in the chat header.
+          Drop spreadsheets, supporting files, or a <strong>ZIP batch</strong> here, or use <strong>Upload files</strong> in the chat header.
         </p>
         
         <div className="space-y-3">
@@ -232,16 +245,16 @@ export const DataSourcesPanel = React.forwardRef<DataSourcesPanelHandle, DataSou
               onChange={handleFileSelect}
               className="hidden"
               id={`file-upload-${sessionId}`}
-              accept=".csv,.xlsx,.xls,.pdf,.docx,.doc,.png,.jpg,.jpeg,.txt,.md"
+              accept={UPLOAD_FILE_ACCEPT}
               multiple
               disabled={isUploading}
             />
             <Upload className="w-6 h-6 mx-auto mb-2 text-opsgrid-text-secondary" />
             <p className="text-sm font-medium text-opsgrid-text">
-              Drop Excel sheets here
+              Drop files or a ZIP batch here
             </p>
             <p className="text-xs text-opsgrid-text-secondary mt-1">
-              Supports .xlsx, .xls, .csv plus notes and OCR text files.
+              ZIP, Excel, CSV, JSON, Parquet, reports, images, and notes are supported.
             </p>
             <Button
               variant="outline"
@@ -258,7 +271,7 @@ export const DataSourcesPanel = React.forwardRef<DataSourcesPanelHandle, DataSou
               ) : (
                 <>
                   <Upload className="w-4 h-4 mr-2" />
-                  Browse Files
+                  Select files or ZIP
                 </>
               )}
             </Button>

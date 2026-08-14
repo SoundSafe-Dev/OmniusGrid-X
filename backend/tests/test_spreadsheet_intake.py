@@ -76,8 +76,8 @@ def test_window_mode_cross_tab_links():
         assert isinstance(sc, CorrelationScenario)
         # all three domains present per window -> cross-tab
         assert len(sc.active_domains) == 3
-        # links connect domains pairwise (n-1)
-        assert len(sc.domain_links) == 2
+        # every domain pair receives an evidence link
+        assert len(sc.domain_links) == 3
         # interaction key is the shared asset
         assert all(link.interaction_key == "A-001" for link in sc.domain_links)
         # every metric validates and carries a payload
@@ -109,6 +109,26 @@ def test_row_mode_counts():
     assert all(len(sc.active_domains) == 1 for sc in scenarios)
 
 
+def test_window_mode_never_cross_links_different_assets_on_same_shift():
+    """Asset identity is part of the temporal correlation grain.
+
+    This prevents a maintenance event for B-999 from being attributed to
+    production rows for A-001 just because both happened on the day shift.
+    """
+    tabs = {
+        "Production": pd.DataFrame([
+            {"date": "2025-01-01", "shift": "Day", "asset_id": "A-001", "status": "critical"},
+        ]),
+        "Maintenance": pd.DataFrame([
+            {"date": "2025-01-01", "shift": "Day", "asset_id": "B-999", "maintenance_status": "critical"},
+        ]),
+    }
+    scenarios = list(build_scenarios(tabs, mode="window", source_id="t"))
+    assert len(scenarios) == 2
+    assert all(len(scenario.active_domains) == 1 for scenario in scenarios)
+    assert all(not scenario.domain_links for scenario in scenarios)
+
+
 def test_xlsx_roundtrip_multisheet():
     """Confirm an .xlsx with multiple sheets parses all tabs (not just first)."""
     import io
@@ -130,5 +150,6 @@ if __name__ == "__main__":
     test_window_mode_cross_tab_links()
     test_tab_mode_single_scenario()
     test_row_mode_counts()
+    test_window_mode_never_cross_links_different_assets_on_same_shift()
     test_xlsx_roundtrip_multisheet()
     print("All spreadsheet intake tests passed.")

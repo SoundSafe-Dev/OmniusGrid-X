@@ -9,6 +9,7 @@ import asyncio
 import io
 import sys
 from pathlib import Path
+from zipfile import ZIP_DEFLATED, ZipFile
 
 import pandas as pd
 
@@ -61,3 +62,23 @@ def test_multisheet_workbook_profiles_all_tabs():
     merged = result.get("full_sheet_profile") or {}
     assert merged.get("workbook_tab_count") == 2
     assert len(merged.get("per_tab_summaries") or []) == 2
+
+
+def test_zip_intake_uses_the_configured_archive_table_capacity():
+    """A normal 101-file batch must not fall back to the 100-table default."""
+
+    payload = io.BytesIO()
+    with ZipFile(payload, "w", ZIP_DEFLATED) as archive:
+        for index in range(101):
+            archive.writestr(
+                "exports/operations_%03d.csv" % index,
+                "asset_id,downtime_minutes\nMX-%03d,1\n" % index,
+            )
+
+    result = asyncio.run(
+        _process_uploaded_file(payload.getvalue(), "spreadsheet", "operations_batch.zip")
+    )
+
+    assert result.get("tab_count") == 101
+    assert result.get("truncated") is False
+    assert len(result.get("tabs") or []) == 101
