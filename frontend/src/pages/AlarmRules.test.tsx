@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router-dom'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
@@ -25,6 +25,17 @@ const create = vi.fn()
 const update = vi.fn()
 const remove = vi.fn()
 
+vi.mock('../api', () => ({
+  assetsApi: {
+    list: vi.fn().mockResolvedValue({
+      items: [{ id: 'asset-1', name: 'Press 1' }],
+      total: 1,
+      hasMore: false,
+    }),
+    getTypes: vi.fn().mockResolvedValue([{ id: 'type-1', name: 'Presses' }]),
+  },
+  workcellsApi: { list: vi.fn().mockResolvedValue([{ id: 'wc-1', name: 'Cell A' }]) },
+}))
 vi.mock('../api/alarmRules', () => ({
   alarmRulesApi: {
     list: (f: unknown) => list(f),
@@ -233,5 +244,88 @@ describe('AlarmRules', () => {
     await screen.findByText('Spindle temperature critical')
     const results = await axe(container)
     expect(results).toHaveNoViolations()
+  })
+})
+
+/**
+ * Rule SCOPE (P10, page-enhancement review).
+ *
+ * `assetId`, `assetTypeId` and `workcellId` sat in EMPTY_FORM and were copied on edit
+ * since this page was written, and NO INPUT EVER SET THEM — so every rule was org-wide
+ * and the backend's `_validate_targets` (which exists to reject another tenant's asset
+ * id) was unreachable from the UI. The practical effect: a threshold that suits a press
+ * is rarely the one that suits an oven, so rules were written for the loosest machine on
+ * the floor.
+ */
+describe('rule scope', () => {
+  beforeEach(() => {
+    list.mockReset()
+    create.mockReset()
+    create.mockResolvedValue({})
+  })
+
+  const fillRequired = async () => {
+    fireEvent.change(screen.getByLabelText('Name'), { target: { value: 'Press temp' } })
+    fireEvent.change(screen.getByLabelText('Metric'), { target: { value: 'temperature' } })
+    fireEvent.change(screen.getByLabelText('Threshold'), { target: { value: '90' } })
+    fireEvent.change(screen.getByLabelText(/alarm code/i), { target: { value: 'TEMP-HI' } })
+  }
+
+  it('sends the chosen asset as the rule target', async () => {
+    page([])
+    fireEvent.click(await screen.findByRole('button', { name: /new rule/i }))
+    await fillRequired()
+
+    fireEvent.change(screen.getByLabelText('Applies to'), { target: { value: 'asset' } })
+    fireEvent.change(await screen.findByLabelText('Asset'), { target: { value: 'asset-1' } })
+    fireEvent.click(screen.getByRole('button', { name: /create rule|save changes/i }))
+
+    await waitFor(() => expect(create).toHaveBeenCalled())
+    expect(create.mock.lastCall?.[0].assetId).toBe('asset-1')
+  })
+
+  it('sends a workcell scope with the other targets cleared', async () => {
+    // One scope at a time: a rule naming both an asset and a workcell reads as an
+    // intersection nobody defines, so choosing one clears the others.
+    page([])
+    fireEvent.click(await screen.findByRole('button', { name: /new rule/i }))
+    await fillRequired()
+
+    fireEvent.change(screen.getByLabelText('Applies to'), { target: { value: 'asset' } })
+    fireEvent.change(await screen.findByLabelText('Asset'), { target: { value: 'asset-1' } })
+    fireEvent.change(screen.getByLabelText('Applies to'), { target: { value: 'workcell' } })
+    fireEvent.change(await screen.findByLabelText('Workcell'), { target: { value: 'wc-1' } })
+    fireEvent.click(screen.getByRole('button', { name: /create rule|save changes/i }))
+
+    await waitFor(() => expect(create).toHaveBeenCalled())
+    expect(create.mock.lastCall?.[0].workcellId).toBe('wc-1')
+    expect(create.mock.lastCall?.[0].assetId).toBeNull()
+  })
+
+  it('leaves an org-wide rule with no target at all', async () => {
+    // The default must stay reachable: most rules genuinely are fleet-wide, and a form
+    // that forced a scope would be worse than one that never offered it.
+    page([])
+    fireEvent.click(await screen.findByRole('button', { name: /new rule/i }))
+    await fillRequired()
+    fireEvent.click(screen.getByRole('button', { name: /create rule|save changes/i }))
+
+    await waitFor(() => expect(create).toHaveBeenCalled())
+    expect(create.mock.lastCall?.[0].assetId).toBeNull()
+    expect(create.mock.lastCall?.[0].workcellId).toBeNull()
+    expect(create.mock.lastCall?.[0].assetTypeId).toBeNull()
+  })
+
+  it('names the scope in the table instead of leaving it to be opened', async () => {
+    // Through `page(...)`, which sets the list mock itself — a per-test
+    // `list.mockResolvedValue` before it is simply overwritten.
+    page([{ ...RULE, id: 'r1', name: 'Press temp', assetId: 'asset-1' }])
+    expect(await screen.findByText('Press 1')).toBeInTheDocument()
+  })
+
+  it('reads an unscoped rule as every asset, never as a blank', async () => {
+    // A blank cell would read as "applies everywhere" by accident; this says it on purpose.
+    page([{ ...RULE, id: 'r2', name: 'Fleet temp', assetId: null }])
+    expect(await screen.findByText('Every asset')).toBeInTheDocument()
   })
 })

@@ -2,6 +2,7 @@ import { FC, useMemo, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Plus, Pencil, Trash2, SlidersHorizontal } from 'lucide-react'
 import { alarmRulesApi } from '../api/alarmRules'
+import { assetsApi, workcellsApi } from '../api'
 import { Button, Input, Modal, Select, useDialog } from '../components/ui'
 import {
   AlarmComparator,
@@ -69,6 +70,32 @@ function formatDuration(seconds: number): string {
   return `for ${seconds}s`
 }
 
+type ScopeKind = 'org' | 'asset' | 'assetType' | 'workcell'
+
+/** Which scope a stored rule carries. A rule can only have one in practice — the form
+ *  enforces that — but the read is defensive: a rule written before this UI existed, or
+ *  by the API directly, could name more than one. */
+const scopeOf = (rule: { assetId?: string | null; assetTypeId?: string | null; workcellId?: string | null }): ScopeKind =>
+  rule.assetId ? 'asset' : rule.assetTypeId ? 'assetType' : rule.workcellId ? 'workcell' : 'org'
+
+/** What a rule's scope should READ as in the table. Falls back to the raw id when the
+ *  name lists have not loaded or the target has since been deleted — an id is ugly and
+ *  true, where a blank cell would read as "applies everywhere", which is the one thing
+ *  it definitely does not mean. */
+const scopeLabel = (
+  rule: { assetId?: string | null; assetTypeId?: string | null; workcellId?: string | null },
+  assets?: Array<{ id: string; name: string }>,
+  assetTypes?: Array<{ id: string; name: string }>,
+  workcells?: Array<{ id: string; name: string }>,
+): string => {
+  const named = (id: string, list?: Array<{ id: string; name: string }>) =>
+    list?.find((entry) => entry.id === id)?.name ?? id
+  if (rule.assetId) return named(rule.assetId, assets)
+  if (rule.assetTypeId) return `All ${named(rule.assetTypeId, assetTypes)}`
+  if (rule.workcellId) return `Workcell: ${named(rule.workcellId, workcells)}`
+  return 'Every asset'
+}
+
 const EMPTY_FORM: AlarmRuleCreate = {
   name: '',
   description: null,
@@ -95,7 +122,23 @@ const AlarmRules: FC = () => {
   const [editing, setEditing] = useState<AlarmRule | null>(null)
   const [isFormOpen, setFormOpen] = useState(false)
   const [form, setForm] = useState<AlarmRuleCreate>(EMPTY_FORM)
+  const [scopeKind, setScopeKind] = useState<ScopeKind>('org')
   const [formError, setFormError] = useState<string | null>(null)
+
+  // Scope options. Loaded once for the modal; a rule's scope is chosen from what the
+  // organization actually has, not typed as a UUID.
+  const { data: assets } = useQuery({
+    queryKey: ['alarm-rule-assets'],
+    queryFn: () => assetsApi.list({ limit: 200 }),
+  })
+  const { data: assetTypes } = useQuery({
+    queryKey: ['alarm-rule-asset-types'],
+    queryFn: () => assetsApi.getTypes(),
+  })
+  const { data: workcells } = useQuery({
+    queryKey: ['alarm-rule-workcells'],
+    queryFn: () => workcellsApi.list(),
+  })
 
   const filters = useMemo(
     () => ({
@@ -141,12 +184,14 @@ const AlarmRules: FC = () => {
   const openCreate = () => {
     setEditing(null)
     setForm(EMPTY_FORM)
+    setScopeKind('org')
     setFormError(null)
     setFormOpen(true)
   }
 
   const openEdit = (rule: AlarmRule) => {
     setEditing(rule)
+    setScopeKind(scopeOf(rule))
     setForm({
       name: rule.name,
       description: rule.description ?? null,
@@ -282,6 +327,7 @@ const AlarmRules: FC = () => {
               <tr className="text-left text-opsgrid-text-secondary border-b border-opsgrid-border">
                 <th scope="col" className="px-4 py-3">Name</th>
                 <th scope="col" className="px-4 py-3">Condition</th>
+                <th scope="col" className="px-4 py-3">Scope</th>
                 <th scope="col" className="px-4 py-3">Severity</th>
                 <th scope="col" className="px-4 py-3">Code</th>
                 <th scope="col" className="px-4 py-3">State</th>
@@ -307,6 +353,14 @@ const AlarmRules: FC = () => {
                       {' '}
                       {formatDuration(rule.durationSeconds)}
                     </span>
+                  </td>
+                  {/* SCOPE, VISIBLE WITHOUT OPENING THE RULE (P10). Every rule was
+                      org-wide before the form could set a scope, so a column would have
+                      read "Everything" all the way down; now that rules can be targeted,
+                      a list that hides the target is a list of rules you have to open one
+                      by one to understand. */}
+                  <td className="px-4 py-3 text-opsgrid-text-secondary">
+                    {scopeLabel(rule, assets?.items, assetTypes, workcells)}
                   </td>
                   <td className="px-4 py-3">
                     <span
@@ -393,6 +447,77 @@ const AlarmRules: FC = () => {
               value={String(form.threshold)}
               onChange={(e) => setForm({ ...form, threshold: Number(e.target.value) })}
             />
+          </div>
+
+          {/* SCOPE (P10, page-enhancement review). `assetId`, `assetTypeId` and
+              `workcellId` have been in EMPTY_FORM and copied on edit since this page was
+              written, and NO INPUT EVER SET THEM — so every rule was org-wide and the
+              backend's `_validate_targets` (which exists to reject another tenant's
+              asset id) was unreachable from the UI. A threshold that suits a press is
+              rarely the one that suits an oven, so the practical effect was rules
+              written for the loosest machine on the floor.
+
+              One scope at a time, and the backend agrees: `_validate_targets` checks
+              each independently, but a rule naming both an asset and a workcell reads
+              as an intersection nobody defines. Choosing one clears the others. */}
+          <div className="grid grid-cols-2 gap-3">
+            <Select
+              label="Applies to"
+              value={scopeKind}
+              onChange={(e) => {
+                const kind = e.target.value as ScopeKind
+                setScopeKind(kind)
+                setForm({ ...form, assetId: null, assetTypeId: null, workcellId: null })
+              }}
+              options={[
+                { value: 'org', label: 'Every asset in the organization' },
+                { value: 'asset', label: 'One asset' },
+                { value: 'assetType', label: 'An asset type' },
+                { value: 'workcell', label: 'A workcell' },
+              ]}
+            />
+            {scopeKind === 'asset' && (
+              <Select
+                label="Asset"
+                value={form.assetId ?? ''}
+                onChange={(e) => setForm({ ...form, assetId: e.target.value || null })}
+                options={[
+                  { value: '', label: 'Select an asset…' },
+                  ...(assets?.items ?? []).map((asset: any) => ({
+                    value: asset.id,
+                    label: asset.name,
+                  })),
+                ]}
+              />
+            )}
+            {scopeKind === 'assetType' && (
+              <Select
+                label="Asset type"
+                value={form.assetTypeId ?? ''}
+                onChange={(e) => setForm({ ...form, assetTypeId: e.target.value || null })}
+                options={[
+                  { value: '', label: 'Select a type…' },
+                  ...(assetTypes ?? []).map((assetType: any) => ({
+                    value: assetType.id,
+                    label: assetType.name,
+                  })),
+                ]}
+              />
+            )}
+            {scopeKind === 'workcell' && (
+              <Select
+                label="Workcell"
+                value={form.workcellId ?? ''}
+                onChange={(e) => setForm({ ...form, workcellId: e.target.value || null })}
+                options={[
+                  { value: '', label: 'Select a workcell…' },
+                  ...(workcells ?? []).map((workcell: any) => ({
+                    value: workcell.id,
+                    label: workcell.name,
+                  })),
+                ]}
+              />
+            )}
           </div>
 
           <div className="grid grid-cols-2 gap-3">
