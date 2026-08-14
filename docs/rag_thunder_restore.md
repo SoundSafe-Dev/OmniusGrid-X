@@ -14,9 +14,30 @@ re-running 47 migrations. The snapshot skips all of it.
 
 | | |
 |---|---|
-| Name | `omniusgrid-rag-testready` |
+| Name | **`omniusgrid-rag-dev-20260814`** (newest — use this one) |
 | Minimum disk | 100 GB |
 | Source instance | A6000, 6 vCPU, 48 GB RAM |
+
+Older snapshots `omniusgrid-rag-testready` and `omniusgrid-rag-verified` are
+earlier points on the same box; prefer the newest unless you specifically want
+to go back before the FS-669 fix.
+
+**State frozen in `omniusgrid-rag-dev-20260814`** — taken 2026-08-14 after a
+clean `verify_rag_e2e.py` pass on the restarted, FS-669-fixed stack:
+
+- Tree matches branch `rag-async-ingest` at `d044034c` (verified file-by-file
+  against hashes, not assumed).
+- Full suite had been run: e2e **pass**; RAG unit + queue + quota **32 pass**
+  via `TEST_DATABASE_URL`; `rag_eval` **122 passed, 3 failed, 2 skipped**.
+- The 3 `rag_eval` failures are real content-quality misses, not
+  infrastructure — `test_synthesis[*_twice_fail_flow]` on `sop-qa-014` (txt) and
+  `sop-wh-021` (pdf, md), all missing concepts
+  `hold_disposition` / `deviation` / `escalate_dql`. Same query failing across
+  three formats points at retrieval or synthesis, not document parsing. **This
+  is the open bug to pick up.**
+- Performance: `scripts/rag_perf.py` exists but **has never been run against
+  live services**. No performance numbers exist yet.
+- A scratch database `omniusgrid_hatch` exists for `TEST_DATABASE_URL` runs.
 
 - `~/OmniusGrid-X` — the tree at branch `rag-async-ingest`, as an **rsync copy,
   not a git repo**. See "Updating the code" below.
@@ -51,7 +72,7 @@ Wait for `READY`. A snapshot still `CREATING` cannot be used as a template.
 ## 2. Create an instance from it
 
 ```bash
-tnr create --snapshot omniusgrid-rag-testready --gpu a6000 --vcpus 6 --disk 100
+tnr create --snapshot omniusgrid-rag-dev-20260814 --gpu a6000 --vcpus 6 --disk 100
 ```
 
 `--disk` must be at least the snapshot's 100 GB minimum. The GPU matters: the
@@ -110,10 +131,21 @@ cd ~/OmniusGrid-X
 
 Watch for these:
 
-- `test_rag_ingest_quota.py` — 11 tests that have **never been run**. It uses
-  testcontainers/Postgres, which will hit the `/dev/fd` entrypoint failure this
-  sandbox has (see `thunder_bootstrap.sh`). Either patch the fixture's command
-  to symlink `/dev/fd`, or point it at the already-running Postgres.
+Testcontainers cannot run on a Thunder box at all — it publishes ports, which
+needs bridge networking, and only `host`/`none` exist. Use the escape hatch
+instead; this is how the 32 queue/quota/migration tests are run here:
+
+```bash
+export TEST_DATABASE_URL="postgresql://omniusgrid:omniusgrid_dev_password@localhost:5432/omniusgrid_hatch"
+./.venv/bin/python -m pytest -q \
+  backend/tests/test_rag_index_queue.py \
+  backend/tests/test_rag_ingest_async_api.py \
+  backend/tests/test_rag_documents_migration.py \
+  backend/tests/test_rag_ingest_quota.py
+```
+
+`TEST_DATABASE_URL` is destructive — it runs the whole migration chain against
+whatever it names, so keep it pointed at a scratch database.
 - `rag_eval/test_lifecycle.py` — re-ingest must reset status to `queued`.
 - `rag_eval/test_isolation.py` — the first real `FOR UPDATE SKIP LOCKED`
   contention test.
