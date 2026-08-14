@@ -46,7 +46,9 @@ INFRA_EXPORTERS = {
     "go_": "Go runtime metrics from Go-based exporters",
     "prometheus_": "Prometheus self-monitoring",
     "http_requests_": "prometheus-fastapi-instrumentator / middleware family",
+    "http_request_duration_": "request-context middleware latency histogram family",
     "scrape_": "Prometheus per-scrape synthetics",
+    "keda_": "KEDA operator metrics (infrastructure/k8s/autoscaling)",
 }
 
 #: PromQL syntax that the identifier regex also matches. Functions and keywords, not
@@ -162,6 +164,69 @@ class TestTheMeasurementIsReal:
     @pytest.mark.parametrize("prefix", sorted(INFRA_EXPORTERS))
     def test_every_infra_register_entry_names_its_provider(self, prefix):
         assert INFRA_EXPORTERS[prefix].strip(), f"{prefix} is registered with no provider"
+
+
+def _recorded_series() -> set[str]:
+    """Recording-rule outputs from slo_rules.yml — legitimate series Prometheus itself
+    materializes, which dashboards may query."""
+    slo = REPO / "infra" / "prometheus" / "slo_rules.yml"
+    if not slo.exists():
+        return set()
+    return set(re.findall(r"record:\s*(\S+)", slo.read_text()))
+
+
+def _dashboard_exprs() -> list[tuple[str, str, str]]:
+    """(dashboard file, panel title, expr) for every panel target, via json — the regex
+    draft of this sweep reported `horizontalpodautoscaler` and `cronjob` as unbacked
+    series because escaped quotes inside the raw JSON defeated its label parser. Parsed
+    JSON has no escaping problem."""
+    import json
+
+    found = []
+    dash_dir = REPO / "infra" / "grafana" / "provisioning" / "dashboards"
+    for path in sorted(dash_dir.glob("*.json")):
+        data = json.loads(path.read_text())
+        for panel in data.get("panels", []):
+            for target in panel.get("targets", []):
+                expr = target.get("expr")
+                if expr:
+                    found.append((path.name, panel.get("title", "?"), expr))
+    return found
+
+
+def test_every_dashboard_panel_queries_a_series_something_exports():
+    """The dashboard half of the same question (FS-701). backend-system.json shipped with
+    FIVE panels querying metrics that were never fed — 'Telemetry ingested / sec',
+    'Ingest latency p95', 'PackML state changes / sec', 'Active assets', 'Active alerts'
+    all read the dead health.py definitions FS-696 deleted, and had therefore displayed
+    "No data" since the dashboard was created. A dashboard of empty panels reads as "the
+    system is idle", not as "these queries are wrong"."""
+    exported = _exported_series()
+    recorded = _recorded_series()
+    unbacked: dict[str, list[str]] = {}
+    for dashboard, title, expr in _dashboard_exprs():
+        labels = _label_names(expr)
+        stripped = re.sub(r'"[^"]*"', "", expr)
+        for ident in set(re.findall(r"[a-zA-Z_][a-zA-Z0-9_:]{3,}", stripped)):
+            if ident in PROMQL_NOISE or ident in labels or ident in recorded:
+                continue
+            if ident in exported:
+                continue
+            if any(ident.startswith(p) or ident == p.rstrip("_") for p in INFRA_EXPORTERS):
+                continue
+            unbacked.setdefault(ident, []).append(f"{dashboard}: {title}")
+    assert not unbacked, (
+        f"Dashboard panels query series nothing exports:\n{unbacked}\n\n"
+        f"A panel over a series that never exists renders 'No data' forever and reads "
+        f"as an idle system. Point it at a real series or delete the panel."
+    )
+
+
+def test_the_dashboard_sweep_reads_the_dashboards():
+    """Rule 165 for the sweep above — five dashboards, at least twenty panel targets."""
+    exprs = _dashboard_exprs()
+    assert len(exprs) >= 20, f"only {len(exprs)} panel expressions found"
+    assert any("opsgrid_ingestion_lag_seconds" in e for _f, _t, e in exprs)
 
 
 def test_every_alert_watches_a_series_something_exports():

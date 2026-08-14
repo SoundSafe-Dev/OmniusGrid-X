@@ -10846,3 +10846,42 @@ cannot see what the registry still exports afterwards, which is the whole findin
 (rule 191). Mutations: the clear removed (caught), and the subtler one — `clear()` of the
 entire gauge instead of one child, which would blind `EdgeCollectorDown` for every *other*
 collector until the monitor's next pass — caught by the negative control.
+
+---
+
+## FS-700 — every runbook link now provably resolves
+
+Alert annotations carry `runbook_url` — absolute GitHub URLs into this repo — and nothing
+checked them; the docs tree was reorganised this very branch (FS-584 split a 7,000-line
+file into five), and `test_documented_files_exist.py` parses backticked paths in prose, not
+URLs in YAML. A broken runbook link is discovered at 3am, mid-incident, by the person with
+the least slack.
+
+The sweep found all 31 links valid — including one a naive checker flags as broken:
+`#failover--recovery` is GitHub's *correct* slug for the heading "Failover & recovery"
+(`&` is dropped, both spaces become hyphens). The guard reproduces GitHub's slug rule and
+keeps that link as its positive control; it also rejects URLs pointing outside the repo,
+which no check here could keep true. Mutation: renaming one runbook path fails exactly
+that link's test.
+
+## FS-701 — five dashboard panels had displayed "No data" since the day they shipped
+
+The dashboard half of FS-696. `backend-system.json` queried five of the dead health.py
+metrics — *Telemetry ingested/sec*, *Ingest latency p95*, *PackML state changes/sec*,
+*Active assets*, *Active alerts* — which were never fed even before FS-696 deleted their
+definitions. Every one of those panels has rendered "No data" forever, and a dashboard of
+empty panels reads as "the system is idle", not "these queries are wrong".
+
+Two had real replacements and got them: ingestion throughput now reads
+`opsgrid_worker_units_total{worker="ingestion"}` (fed per processed message), and the
+latency panel became the worker heartbeat age. *Ingestion lag* — dead when the dashboard
+shipped — is now real because FS-696 fed it, and stays. The three with no backing metric
+(PackML rate, active assets, active alerts) are deleted rather than left lying. The edge
+buffer panel was retitled: "backend view" described the deleted duplicate; the series that
+answers it is agent-reported.
+
+The sweep is now a guard: `test_every_dashboard_panel_queries_a_series_something_exports`,
+sharing the alert guard's exported-series universe plus `slo_rules.yml`'s recording rules.
+It parses the dashboards as JSON because the regex draft reported `horizontalpodautoscaler`
+and `cronjob` as unbacked series — escaped quotes inside raw JSON defeated its label
+parser. `keda_` joined the infra-exporter register with its provider.

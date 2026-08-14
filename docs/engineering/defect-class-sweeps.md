@@ -139,6 +139,7 @@ to ask where else it could live.
 | A gauge whose writer died, still being read | every exported gauge vs what writes it, edge and backend | **2: `edge_buffer_messages` freezes if its loop fails, disarming both buffer alerts; `edge_agent_up` is never written 0, so EdgeAgentOffline could never fire** | `test_the_buffer_gauges_carry_a_freshness_stamp.py`, `test_edge_fleet.py` + staleness alerts |
 | A supervision loop killable by what it supervises | the writers of every liveness gauge | **1: `task.exception()` on a cancelled task raises CancelledError past `except Exception` — one hot-reload ends all collector supervision** | `test_the_health_monitor_survives_a_cancelled_task.py` |
 | A label child outliving what it described | every teardown path vs the series it published | **1: hot-reload removal left `connection_state` frozen — EdgeCollectorDown firing forever for a decommissioned device** | `test_a_removed_collector_withdraws_its_liveness_claim.py` |
+| A panel or link that can never work | all 30 dashboard panel exprs + all 31 runbook URLs | **5 panels rendering "No data" since they shipped; links all valid** | `test_every_alert_watches_a_series_something_exports.py`, `test_runbook_links_resolve.py` |
 
 Twenty-nine of these carry a numbered section below. **Response-shape mismatch is the
 exception**: it was swept in the same pass as the `get_db` work and came back clean, so
