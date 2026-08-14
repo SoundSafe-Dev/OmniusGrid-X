@@ -19,3 +19,4 @@ export { historianApi } from './historian';
 export { twinOptimizerApi, defaultOptimizeRequest } from './twinOptimizer';
 export { notificationsApi } from './notifications';
 export { ragApi } from './rag';
+export { oeeApi } from './oee';

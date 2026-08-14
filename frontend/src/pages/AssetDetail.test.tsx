@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react'
+import { fireEvent, render, screen } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 import { describe, expect, it, vi, beforeEach } from 'vitest'
 
@@ -7,9 +7,18 @@ import { describe, expect, it, vi, beforeEach } from 'vitest'
 // distinct error state vs. not-found.
 
 const assetResult: { current: any } = { current: {} }
+const alarmsResult: { current: any } = { current: { data: { items: [] } } }
+const alarmsQueryArgs: { current: any } = { current: undefined }
 vi.mock('@tanstack/react-query', () => ({
-  useQuery: ({ queryKey }: any) =>
-    queryKey[0] === 'asset' ? assetResult.current : { data: undefined },
+  useQuery: (args: any) => {
+    const { queryKey } = args
+    if (queryKey[0] === 'asset') return assetResult.current
+    if (queryKey[0] === 'asset-alarms') {
+      alarmsQueryArgs.current = args
+      return alarmsResult.current
+    }
+    return { data: undefined }
+  },
 }))
 vi.mock('react-router-dom', async (orig) => ({
   ...(await orig<any>()),
@@ -33,7 +42,12 @@ vi.mock('../components/charts', () => ({
 vi.mock('../components/assets/SensorPanels', () => ({ SensorPanels: () => null }))
 vi.mock('../components/commands', () => ({ CommandPanel: () => null }))
 vi.mock('../components/common', () => ({ ExportButton: () => null }))
-vi.mock('../api', () => ({ assetsApi: {}, telemetryApi: {} }))
+vi.mock('../components/oee', () => ({ OEEDetailPanel: () => null }))
+const acknowledgeMock = { mutate: vi.fn(), isPending: false }
+vi.mock('../hooks', () => ({
+  useAcknowledgeAlarm: () => acknowledgeMock,
+}))
+vi.mock('../api', () => ({ assetsApi: {}, telemetryApi: {}, alarmsApi: { list: vi.fn() } }))
 
 import AssetDetail from './AssetDetail'
 
@@ -117,5 +131,71 @@ describe('AssetDetail — maintenance mode', () => {
     renderPage()
     expect(screen.getByText('Maintenance')).toBeInTheDocument()
     expect(screen.getByText('Execute')).toBeInTheDocument()
+  })
+})
+
+/**
+ * The asset-scoped alarms panel (P7, page-enhancement review).
+ *
+ * The page an operator opens to ask "what is wrong with this machine" had no alarms on
+ * it at all — they had to leave for /alarms and filter there, which until P1 they could
+ * not do either. `alarmsApi.list({assetId, isActive})` has supported this since the
+ * route existed.
+ *
+ * The property that matters most is the same one this repository keeps buying: a failed
+ * alarm query must not render as a quiet machine. "No active alarms" and "we could not
+ * ask" are different facts, and only one means walk away.
+ */
+describe('AssetDetail — alarms for this asset', () => {
+  const alarm = {
+    id: 'al-9',
+    assetId: 'a1',
+    severity: 'critical',
+    alarmCode: 'VIB-01',
+    message: 'Vibration above threshold',
+    isActive: true,
+    isAcknowledged: false,
+    occurredAt: '2026-08-13T09:00:00Z',
+  }
+
+  beforeEach(() => {
+    assetResult.current = {
+      data: { id: 'a1', name: 'CNC Mill #1', currentPackmlState: 'Execute' },
+      isLoading: false,
+      isError: false,
+    }
+    alarmsResult.current = { data: { items: [] }, isLoading: false, isError: false }
+  })
+
+  it('scopes the query to this asset and to active alarms', () => {
+    renderPage()
+    expect(alarmsQueryArgs.current?.queryKey).toEqual(['asset-alarms', 'a1'])
+  })
+
+  it('lists an active alarm with its code and severity', () => {
+    alarmsResult.current = { data: { items: [alarm] }, isLoading: false, isError: false }
+    renderPage()
+    expect(screen.getByText(/vibration above threshold/i)).toBeInTheDocument()
+    expect(screen.getByText(/VIB-01/)).toBeInTheDocument()
+  })
+
+  it('does not render a failed alarm query as a quiet machine', () => {
+    alarmsResult.current = { data: undefined, isLoading: false, isError: true }
+    renderPage()
+    expect(screen.getByText(/could not load alarms/i)).toBeInTheDocument()
+    expect(screen.queryByText(/no active alarms/i)).not.toBeInTheDocument()
+  })
+
+  it('says plainly when the machine really has none', () => {
+    renderPage()
+    expect(screen.getByText(/no active alarms on this asset/i)).toBeInTheDocument()
+  })
+
+  it('offers acknowledge on an unacknowledged alarm and reports a failure', () => {
+    alarmsResult.current = { data: { items: [alarm] }, isLoading: false, isError: false }
+    acknowledgeMock.mutate = vi.fn((_vars: any, opts: any) => opts?.onError?.(new Error('502')))
+    renderPage()
+    fireEvent.click(screen.getByRole('button', { name: /acknowledge/i }))
+    expect(screen.getByRole('alert').textContent).toMatch(/could not acknowledge/i)
   })
 })

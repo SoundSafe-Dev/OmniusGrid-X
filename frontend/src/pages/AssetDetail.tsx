@@ -1,9 +1,9 @@
-import { FC, useMemo } from 'react'
+import { FC, useMemo, useState } from 'react'
 import { useParams } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { ArrowLeft, Activity, Clock, Box, Wrench } from 'lucide-react'
 import { Link } from 'react-router-dom'
-import { assetsApi, telemetryApi } from '../api'
+import { assetsApi, telemetryApi, alarmsApi } from '../api'
 // Badge from `components/ui`, NOT the top-level `components` barrel. That barrel
 // statically re-exports FleetTrackerMap, GeoTabIntegration, MaintenancePanel and a
 // recharts chart, so importing one Badge through it would pull the whole fleet surface
@@ -15,7 +15,11 @@ import { SensorPanels } from '../components/assets/SensorPanels'
 import { CommandPanel } from '../components/commands'
 import { TrendingUp } from 'lucide-react'
 import { ExportButton } from '../components/common'
+import { OEEDetailPanel } from '../components/oee'
+import { useAcknowledgeAlarm } from '../hooks'
 import { useAuth } from '../hooks/useAuth'
+import { AlertTriangle, BarChart3 } from 'lucide-react'
+import { formatDateTime } from '../utils/formatters'
 
 const AssetDetail: FC = () => {
   const { id } = useParams<{ id: string }>()
@@ -203,6 +207,25 @@ const AssetDetail: FC = () => {
         </div>
       )}
 
+      {/* Alarms for THIS asset (P7, page-enhancement review). The page an operator opens
+          to ask "what is wrong with this machine" had no alarms on it at all — they had to
+          leave for /alarms and filter there, which until P1 they could not do either.
+          `alarmsApi.list({assetId})` has supported this since the route existed. */}
+      {id && <AssetAlarmsPanel assetId={id} />}
+
+      {/* Three-factor OEE for this asset (P7). `getAssetOEE` and the honest detail panel
+          both already existed — the panel was local to pages/OEE.tsx, so the fleet table
+          had a good OEE breakdown and the asset page had none. */}
+      {id && asset && (
+        <div className="bg-opsgrid-panel border border-opsgrid-border rounded-lg p-6">
+          <h2 className="text-lg font-semibold mb-4 flex items-center gap-2">
+            <BarChart3 size={20} />
+            OEE (last 24 hours)
+          </h2>
+          <OEEDetailPanel assetId={id} assetName={asset.name} hours={24} />
+        </div>
+      )}
+
       {/* Telemetry */}
       {telemetry && (
         <div className="bg-opsgrid-panel border border-opsgrid-border rounded-lg p-6">
@@ -358,6 +381,93 @@ const AssetDetail: FC = () => {
             </Tooltip>
           </div>
         </div>
+      </div>
+    </div>
+  )
+}
+
+/**
+ * Active alarms on one asset, with inline acknowledgement (P7).
+ *
+ * Scoped by `assetId` and `isActive`, both long-supported query params. Failure is stated
+ * rather than rendered as calm: "no active alarms" and "we could not ask" are different
+ * facts about a machine, and only one of them means walk away.
+ */
+const AssetAlarmsPanel: FC<{ assetId: string }> = ({ assetId }) => {
+  const { data, isLoading, isError } = useQuery({
+    queryKey: ['asset-alarms', assetId],
+    queryFn: () => alarmsApi.list({ assetId, isActive: true, limit: 25 }),
+    refetchInterval: 15000,
+  })
+  const acknowledge = useAcknowledgeAlarm()
+  const [ackError, setAckError] = useState<string | null>(null)
+
+  const alarms = data?.items ?? []
+
+  return (
+    <div className="bg-opsgrid-panel border border-opsgrid-border rounded-lg p-6">
+      <h2 className="text-lg font-semibold mb-4 flex items-center gap-2">
+        <AlertTriangle size={20} />
+        Active alarms
+        {!isError && !isLoading && alarms.length > 0 && (
+          <span className="text-sm font-normal text-status-alarm">({alarms.length})</span>
+        )}
+      </h2>
+
+      {ackError && (
+        <div
+          role="alert"
+          className="mb-3 rounded border border-status-alarm/40 bg-status-alarm/10 px-3 py-2 text-sm text-status-alarm"
+        >
+          {ackError}
+        </div>
+      )}
+
+      {isLoading && <p className="text-sm text-opsgrid-text-secondary">Loading alarms…</p>}
+
+      {isError && (
+        <p className="text-sm text-status-alarm" role="alert">
+          Could not load alarms for this asset — this is a failed request, not a quiet
+          machine.
+        </p>
+      )}
+
+      {!isLoading && !isError && alarms.length === 0 && (
+        <p className="text-sm text-opsgrid-text-secondary">No active alarms on this asset.</p>
+      )}
+
+      <div className="divide-y divide-opsgrid-border">
+        {alarms.map((alarm: any) => (
+          <div key={alarm.id} className="py-3 flex items-center justify-between gap-4">
+            <div className="min-w-0">
+              <p className="font-medium truncate">{alarm.message}</p>
+              <p className="text-sm text-opsgrid-text-secondary">
+                {alarm.severity} • {alarm.alarmCode} • {formatDateTime(alarm.occurredAt)}
+              </p>
+            </div>
+            {alarm.isAcknowledged ? (
+              <span className="text-sm text-opsgrid-text-secondary shrink-0">Acknowledged</span>
+            ) : (
+              <button
+                onClick={() => {
+                  setAckError(null)
+                  acknowledge.mutate(
+                    { alarmId: alarm.id },
+                    {
+                      onError: () =>
+                        setAckError(
+                          `Could not acknowledge "${alarm.message ?? alarm.id}". It is still unacknowledged.`,
+                        ),
+                    },
+                  )
+                }}
+                className="shrink-0 px-3 py-1 bg-opsgrid-primary text-white rounded text-sm hover:bg-opsgrid-primary/80"
+              >
+                Acknowledge
+              </button>
+            )}
+          </div>
+        ))}
       </div>
     </div>
   )

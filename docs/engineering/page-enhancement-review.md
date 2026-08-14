@@ -337,8 +337,8 @@ E2 Mobile-first floor view. E3 Shift handover notes.
 | P4 | ✅ SHIPPED — EngineStoppedBanner on all four pages; history client + tiles + real reject reason/operator | engines/* | S–M |
 | P5 | ✅ SHIPPED — ShopFloor asset picker; open downtime is server truth (new GET /downtime/open) | ShopFloor | M |
 | P6 | ✅ SHIPPED — Assets filter bar: debounced name search (new backend param) + workcell/type/active | Assets | S |
-| P7 | AssetDetail: scoped alarms panel + OEE card | AssetDetail | M |
-| P8 | OEE: losses Pareto + time-range/aggregation + sort | OEE | M |
+| P7 | ✅ SHIPPED — AssetDetail: asset-scoped alarms with inline ack + OEE card (panel extracted from pages/OEE) | AssetDetail | M |
+| P8 | ✅ SHIPPED — loss Pareto from the uncalled /api/v1/oee router + one time range driving table, panels and export | OEE | M |
 | P9 | `/admin/export-schedules` CRUD (9 unreferenced endpoints) | new page | L |
 | P10 | AlarmRules scope selectors + scope column | AlarmRules | M |
 | P11 | Notifications edit/toggle (needs backend PATCH) + test severity | Notifications | M |

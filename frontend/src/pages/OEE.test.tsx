@@ -1,6 +1,6 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 // The row used to advertise "Click to view detailed OEE metrics" via a tooltip
 // but had no handler — a dead click. These lock in that a row expands an inline
@@ -29,11 +29,26 @@ const detail = {
 const getFleetOEE = vi.fn().mockResolvedValue(fleet)
 const getAssetOEE = vi.fn().mockResolvedValue(detail)
 
+const getLosses = vi.fn().mockResolvedValue({
+  assetId: 'a1',
+  periodHours: 24,
+  oee: 62.5,
+  losses: {
+    availability: { percentage: 12.5, minutes: 90, category: 'downtime' },
+    performance: { percentage: 20, impact: '18s vs 14s ideal', category: 'speed' },
+    quality: { percentage: 5, rejectedParts: 4, totalParts: 80, category: 'defects' },
+  },
+  totalLossPercentage: 37.5,
+  potentialOee: 62.5,
+})
 vi.mock('../api', () => ({
   dashboardApi: {
-    getFleetOEE: () => getFleetOEE(),
-    getAssetOEE: (id: string) => getAssetOEE(id),
+    // Arguments PASSED THROUGH, not swallowed. The old stubs dropped them, so the
+    // range selector's whole job — moving `hours` — was unobservable in this file.
+    getFleetOEE: (...a: unknown[]) => getFleetOEE(...a),
+    getAssetOEE: (...a: unknown[]) => getAssetOEE(...a),
   },
+  oeeApi: { getLosses: (...a: unknown[]) => getLosses(...a) },
 }))
 vi.mock('../hooks/useAuth', () => ({ useAuth: () => ({ isAdmin: true }) }))
 vi.mock('../components/common', () => ({ ExportButton: () => null }))
@@ -66,7 +81,7 @@ describe('OEE page — row expands detailed metrics', () => {
     fireEvent.click(screen.getByText('CNC Mill #1'))
 
     // Lazily fetches the per-asset detail and renders the breakdown.
-    await waitFor(() => expect(getAssetOEE).toHaveBeenCalledWith('a1'))
+    await waitFor(() => expect(getAssetOEE.mock.calls[0][0]).toBe('a1'))
     expect(await screen.findByText(/State breakdown/)).toBeInTheDocument()
     expect(screen.getByText('85.5%')).toBeInTheDocument() // oee 0.855
     expect(screen.getByText('Execute')).toBeInTheDocument() // a recorded state
@@ -191,5 +206,49 @@ describe('OEE page — an unmeasured fleet is not a fleet at zero', () => {
     })
     const { container } = wrap(<OEE />)
     await waitFor(() => expect(container.textContent).toContain('87.3%'))
+  })
+})
+
+/**
+ * The time-range selector (P8, page-enhancement review).
+ *
+ * The page was pinned to the endpoint's 24h default with no control, and the PDF export
+ * hardcoded `time_window_hours: 24` beside it — so an export could not disagree with the
+ * table because neither could move. One selector now drives the fleet query, the
+ * per-asset panels and the export together, which is the property worth pinning: three
+ * consumers of one number.
+ */
+describe('the OEE time range', () => {
+  beforeEach(() => {
+    getFleetOEE.mockReset()
+    getFleetOEE.mockResolvedValue(fleet)
+  })
+
+  it('asks for 24 hours by default', async () => {
+    wrap(<OEE />)
+    await waitFor(() => expect(getFleetOEE).toHaveBeenCalled())
+    expect(getFleetOEE.mock.calls[0][0]).toBe(24)
+  })
+
+  it('re-queries the fleet when the range changes', async () => {
+    wrap(<OEE />)
+    // The selector lives past the loading branch, so wait for the table rather than
+    // for the first request.
+    fireEvent.change(await screen.findByLabelText(/time range/i), { target: { value: '7d' } })
+    await waitFor(() => {
+      const last = getFleetOEE.mock.calls[getFleetOEE.mock.calls.length - 1]
+      expect(last[0]).toBe(168)
+    })
+  })
+
+  it('passes the same window down to an expanded asset panel', async () => {
+    // The three-consumer property: table, per-asset panel and export must not be able
+    // to disagree about which window they describe.
+    wrap(<OEE />)
+    fireEvent.change(await screen.findByLabelText(/time range/i), { target: { value: '8h' } })
+    fireEvent.click(await screen.findByText('CNC Mill #1'))
+    await waitFor(() => expect(getAssetOEE).toHaveBeenCalled())
+    const last = getAssetOEE.mock.calls[getAssetOEE.mock.calls.length - 1]
+    expect(last[1]).toBe(8)
   })
 })

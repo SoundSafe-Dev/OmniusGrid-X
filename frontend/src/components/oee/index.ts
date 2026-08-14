@@ -1,0 +1,1 @@
+export { OEEDetailPanel } from './OEEDetailPanel';

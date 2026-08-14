@@ -2,18 +2,31 @@ import { FC, Fragment, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { BarChart3, TrendingUp, Clock, ChevronDown, ChevronRight } from 'lucide-react'
 import { dashboardApi } from '../api'
+import { OEEDetailPanel } from '../components/oee'
 import { Button, Tooltip, TooltipTrigger, TooltipContent } from '../components/ui'
 import { ExportButton } from '../components/common'
 import { useAuth } from '../hooks/useAuth'
+
+// P8 (page-enhancement review): the page was pinned to the endpoint's 24h default with
+// no control, and the PDF export hardcoded `time_window_hours: 24` beside it — so an
+// export could not disagree with the table because neither could move. One selector now
+// drives the fleet query, the per-asset panels and the export together.
+const RANGES: { key: string; label: string; hours: number }[] = [
+  { key: '8h', label: 'Last 8 hours', hours: 8 },
+  { key: '24h', label: 'Last 24 hours', hours: 24 },
+  { key: '7d', label: 'Last 7 days', hours: 24 * 7 },
+]
 
 const OEE: FC = () => {
   const { isAdmin } = useAuth()
   // Clicking a row expands an inline OEE breakdown for that asset (the row
   // tooltip has always promised this; the handler was never wired).
   const [expandedId, setExpandedId] = useState<string | null>(null)
+  const [range, setRange] = useState('24h')
+  const hours = RANGES.find((r) => r.key === range)?.hours ?? 24
   const { data: fleetOEE, isLoading, isError, refetch } = useQuery({
-    queryKey: ['fleet-oee'],
-    queryFn: () => dashboardApi.getFleetOEE(),
+    queryKey: ['fleet-oee', hours],
+    queryFn: () => dashboardApi.getFleetOEE(hours),
   })
 
   // The FleetOEE type does not (yet) declare fleetAveragePerformance, but the
@@ -65,18 +78,20 @@ const OEE: FC = () => {
           <TooltipContent>Measure of manufacturing productivity</TooltipContent>
         </Tooltip>
         <div className="flex items-center gap-3">
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <div className="text-sm text-opsgrid-text-secondary">
-                {fleetOEE?.timeRange || 'Last 24 hours'}
-              </div>
-            </TooltipTrigger>
-            <TooltipContent>Time range for OEE calculation</TooltipContent>
-          </Tooltip>
+          <select
+            aria-label="Time range"
+            value={range}
+            onChange={(e) => setRange(e.target.value)}
+            className="bg-opsgrid-bg border border-opsgrid-border rounded px-2 py-1.5 text-sm text-opsgrid-text focus:border-opsgrid-primary focus:outline-none"
+          >
+            {RANGES.map((r) => (
+              <option key={r.key} value={r.key}>{r.label}</option>
+            ))}
+          </select>
           {isAdmin && (
             <ExportButton
               endpoint="/api/v1/exports/oee/summary"
-              params={{ time_window_hours: 24 }}
+              params={{ time_window_hours: hours }}
               format="pdf"
               label="Export PDF"
               filename="oee_summary.pdf"
@@ -291,7 +306,11 @@ const OEE: FC = () => {
                 {isExpanded && (
                   <tr className="bg-opsgrid-bg/30">
                     <td colSpan={4} className="p-4">
-                      <OEEDetailPanel assetId={asset.assetId} assetName={asset.assetName} />
+                      <OEEDetailPanel
+                        assetId={asset.assetId}
+                        assetName={asset.assetName}
+                        hours={hours}
+                      />
                     </td>
                   </tr>
                 )}
@@ -314,132 +333,4 @@ const OEE: FC = () => {
 
 // Inline per-asset OEE breakdown, fetched on expand via the existing
 // /dashboard/assets/:id/oee endpoint (dashboardApi.getAssetOEE).
-const OEEDetailPanel: FC<{ assetId: string; assetName: string }> = ({ assetId, assetName }) => {
-  const { data, isLoading, isError } = useQuery({
-    queryKey: ['asset-oee', assetId],
-    queryFn: () => dashboardApi.getAssetOEE(assetId),
-  })
-
-  if (isLoading) {
-    return <div className="text-sm text-opsgrid-text-secondary">Loading OEE detail for {assetName}…</div>
-  }
-  if (isError || !data) {
-    return <div className="text-sm text-status-alarm">Couldn’t load OEE detail for {assetName}.</div>
-  }
-
-  const pct = (v: number) => `${((v ?? 0) * 100).toFixed(1)}%`
-
-  // A factor the server could not measure comes back as 1.0 — the neutral multiplier
-  // for the OEE product, which is the correct arithmetic and the wrong thing to print.
-  // "100%" reads as a perfect score; this is the absence of a measurement. The server
-  // has flagged the difference since FS-234 and nothing read the flags, so an asset
-  // with no part counters displayed flawless quality.
-  //
-  // Absent flags are treated as measured: older responses predate them, and defaulting
-  // the other way would put "—" on every asset in a deployment that is fine.
-  const qualityMeasured = data.qualityMeasured !== false
-  const performanceMeasured = data.performanceMeasured !== false
-  // OEE is Availability × Performance × Quality, so it inherits any stand-in: with
-  // either factor unmeasured the product is an upper bound, not a result.
-  const oeeIsBounded = !qualityMeasured || !performanceMeasured
-
-  const factors: Array<{
-    label: string
-    value: number
-    hint: string
-    measured: boolean
-  }> = [
-    {
-      label: 'Availability',
-      value: data.availability,
-      hint: 'Uptime vs planned time',
-      measured: true,
-    },
-    {
-      label: 'Performance',
-      value: data.performance,
-      hint: performanceMeasured
-        ? 'Speed vs ideal cycle time'
-        : 'No ideal cycle time recorded for this asset',
-      measured: performanceMeasured,
-    },
-    {
-      label: 'Quality',
-      value: data.quality,
-      hint: qualityMeasured
-        ? `Good units vs total${
-            data.totalParts ? ` (${data.goodParts ?? 0}/${data.totalParts})` : ''
-          }`
-        : 'No part counters reporting for this asset',
-      measured: qualityMeasured,
-    },
-    {
-      label: oeeIsBounded ? 'OEE (upper bound)' : 'OEE',
-      value: data.oee,
-      hint: oeeIsBounded
-        ? 'Unmeasured factors count as 100%, so the real figure is lower'
-        : 'Availability × Performance × Quality',
-      measured: true,
-    },
-  ]
-
-  const states = Object.entries(data.stateDurations ?? {})
-    .filter(([, seconds]) => seconds > 0)
-    .sort((a, b) => b[1] - a[1])
-  const fmtDuration = (seconds: number) => {
-    const h = Math.floor(seconds / 3600)
-    const m = Math.round((seconds % 3600) / 60)
-    return h > 0 ? `${h}h ${m}m` : `${m}m`
-  }
-
-  return (
-    <div className="space-y-4">
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-        {factors.map((f) => (
-          <div key={f.label} className="rounded-lg border border-opsgrid-border p-3">
-            <p className="text-xs text-opsgrid-text-secondary">{f.label}</p>
-            <p
-              className={`text-2xl font-semibold ${
-                f.measured ? '' : 'text-opsgrid-text-secondary'
-              }`}
-              title={f.measured ? undefined : 'Not measured'}
-            >
-              {f.measured ? pct(f.value) : '—'}
-            </p>
-            <p className="text-xs text-opsgrid-text-secondary mt-1">{f.hint}</p>
-          </div>
-        ))}
-      </div>
-
-      <div>
-        <p className="text-sm font-medium mb-2">
-          State breakdown{data.timeRange ? ` · ${data.timeRange}` : ''}
-        </p>
-        {states.length === 0 ? (
-          <p className="text-sm text-opsgrid-text-secondary">
-            No recorded state time in this window (expected offline — PackML state comes from a live edge agent).
-          </p>
-        ) : (
-          <div className="space-y-1.5">
-            {states.map(([state, seconds]) => {
-              const share = data.totalPlannedTimeSeconds
-                ? (seconds / data.totalPlannedTimeSeconds) * 100
-                : 0
-              return (
-                <div key={state} className="flex items-center gap-3 text-sm">
-                  <span className="w-28 shrink-0 capitalize">{state?.replace(/_/g, ' ')}</span>
-                  <div className="flex-1 h-2 bg-opsgrid-bg rounded-full overflow-hidden">
-                    <div className="h-full bg-opsgrid-primary" style={{ width: `${Math.min(share, 100)}%` }} />
-                  </div>
-                  <span className="w-16 text-right text-opsgrid-text-secondary">{fmtDuration(seconds)}</span>
-                </div>
-              )
-            })}
-          </div>
-        )}
-      </div>
-    </div>
-  )
-}
-
 export default OEE
