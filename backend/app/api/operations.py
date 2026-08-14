@@ -66,6 +66,34 @@ class PackMLSummaryResponse(BaseModel):
     unmeasured_seconds: float = 0.0
 
 
+def _own_operation(operation_id: UUID, organization_id: UUID):
+    """One operation, by id, ONLY if the caller's organisation owns the asset it ran on.
+
+    `operations` carries no `organization_id` column, so it has no RLS policy and
+    `get_tenant_db` does nothing for it: a `select(Operation).where(Operation.id == …)`
+    reaches every tenant's rows. Three handlers were written that way — read one, read its
+    PackML summary, and COMPLETE it — so an authenticated operator could finish another
+    organisation's production run by id and the row would record their outcome.
+
+    `/active` already joined `assets` for this reason, under a comment saying the join "is
+    no longer optional" after the same defect was fixed there. It was fixed on one handler
+    of five. This helper exists so the next handler cannot forget: there is no shorter way
+    to select an operation here than the correct one.
+
+    BOTH the join and the explicit organisation predicate, and the second one is not noise.
+    `assets` is FORCE RLS, so on a `get_tenant_db` session the join alone already scopes
+    this — proven by mutation: deleting the predicate alone changes no test. It is kept
+    because that protection is a property of the SESSION, not of the query, and the whole
+    reason this defect existed is that someone reasonably assumed the session was doing the
+    work. A handler that ever moves to `get_db` still returns the right rows.
+    """
+    return (
+        select(Operation)
+        .join(Asset)
+        .where(Operation.id == operation_id, Asset.organization_id == organization_id)
+    )
+
+
 @router.get("/", response_model=PaginatedResponse[OperationResponse])
 async def list_operations(
     asset_id: Optional[UUID] = None,
@@ -74,6 +102,7 @@ async def list_operations(
     start_time: Optional[datetime] = None,
     end_time: Optional[datetime] = None,
     page: PageParams = Depends(),
+    organization_id: UUID = Depends(get_tenant_org_id),
     db: AsyncSession = Depends(get_tenant_db)
 ):
     """List operations with filtering (paginated).
@@ -82,8 +111,15 @@ async def list_operations(
     frontend client, so this is the reference rollout of app.core.pagination;
     consumer-facing unowned routers (yard, transportation) follow the same
     one-line pattern once the generated SDK replaces their hand-written clients.
+
+    THE TENANT JOIN IS THE FIRST FILTER, not an optional one. `operations` has NO
+    `organization_id` column and therefore no RLS policy — the tenant of an operation is
+    whoever owns its asset — so `get_tenant_db` protects this table not at all and a bare
+    `select(Operation)` returned EVERY organisation's operations to any authenticated
+    caller. `/active` had already been fixed for exactly this (see the note below it) and
+    the other four handlers in this file were left on the unscoped shape.
     """
-    filters = []
+    filters = [Asset.organization_id == organization_id]
     if asset_id:
         filters.append(Operation.asset_id == asset_id)
     if status:
@@ -95,13 +131,14 @@ async def list_operations(
     if end_time:
         filters.append(Operation.started_at <= end_time)
 
-    where = and_(*filters) if filters else None
+    where = and_(*filters)
 
-    total_q = select(func.count()).select_from(Operation)
-    list_q = select(Operation)
-    if where is not None:
-        total_q = total_q.where(where)
-        list_q = list_q.where(where)
+    # The count is joined too: a total taken across all tenants would report a page of 20
+    # out of every organisation's operations, which is the denominator lying (rule 165).
+    total_q = select(func.count()).select_from(Operation).join(Asset)
+    list_q = select(Operation).join(Asset)
+    total_q = total_q.where(where)
+    list_q = list_q.where(where)
 
     total = (await db.execute(total_q)).scalar_one()
     list_q = list_q.order_by(Operation.started_at.desc()).offset(page.skip).limit(page.limit)
@@ -156,12 +193,11 @@ async def get_active_operations(
 @router.get("/{operation_id}", response_model=OperationResponse)
 async def get_operation(
     operation_id: UUID,
+    organization_id: UUID = Depends(get_tenant_org_id),
     db: AsyncSession = Depends(get_tenant_db)
 ):
     """Get a single operation by ID"""
-    result = await db.execute(
-        select(Operation).where(Operation.id == operation_id)
-    )
+    result = await db.execute(_own_operation(operation_id, organization_id))
     operation = result.scalar_one_or_none()
     
     if not operation:
@@ -195,17 +231,44 @@ async def create_operation(
     return operation
 
 
+class OperationCompletion(BaseModel):
+    """The whole of what completing an operation takes, in ONE place.
+
+    It was two bare parameters — `success: bool = True` and `metadata: Optional[dict]` — and
+    FastAPI reads those from two different places: a non-Pydantic scalar with no `Body(...)`
+    marker is a QUERY parameter, while a `dict` is a body. So the route took `success` from
+    the query string and `metadata` from the JSON body.
+
+    A client cannot post one document to that. The natural call —
+    `api.post(url, {"success": False, "metadata": {...}})` — sends both in the body; the
+    body-side field arrives, `success` silently falls back to its default `True`, and the
+    route records a FAILED operation as **completed**, with a 200 and no warning.
+
+    That is the quiet form of a class this repository has been bitten by three times already
+    (FS-379, FS-420, FS-658). Those were loud: every query parameter was required, so the
+    natural client got 422 on every call and the feature visibly never worked. Here the
+    parameter has a default, so the same mistake produces a wrong terminal state instead of
+    an error — and the operation's duration and PackML state rollups are computed and stored
+    against it.
+
+    Nothing calls this route today — no frontend, no test, no e2e, no doc — so moving the
+    contract costs no caller. The three earlier instances were fixed on the CLIENT side
+    precisely because clients existed; that reasoning does not apply when there are none.
+    """
+
+    success: bool = True
+    metadata: Optional[Dict[str, Any]] = None
+
+
 @router.post("/{operation_id}/complete", response_model=OperationResponse, dependencies=[Depends(require_operator_or_admin)])
 async def complete_operation(
     operation_id: UUID,
-    success: bool = True,
-    metadata: Optional[dict] = None,
+    completion: OperationCompletion = OperationCompletion(),
+    organization_id: UUID = Depends(get_tenant_org_id),
     db: AsyncSession = Depends(get_tenant_db)
 ):
     """Mark an operation as completed"""
-    result = await db.execute(
-        select(Operation).where(Operation.id == operation_id)
-    )
+    result = await db.execute(_own_operation(operation_id, organization_id))
     operation = result.scalar_one_or_none()
     
     if not operation:
@@ -225,14 +288,14 @@ async def complete_operation(
             started_at = started_at.replace(tzinfo=timezone.utc)
         actual_duration = int((completed_at - started_at).total_seconds())
     
-    operation.status = 'completed' if success else 'failed'
+    operation.status = 'completed' if completion.success else 'failed'
     operation.completed_at = completed_at
     operation.actual_duration = actual_duration
     
-    if metadata:
+    if completion.metadata:
         # meta_data, not metadata — see note in get_active_operations.
         current_metadata = dict(operation.meta_data or {})
-        current_metadata.update(metadata)
+        current_metadata.update(completion.metadata)
         operation.meta_data = current_metadata
     
     # Calculate PackML state durations for this operation
@@ -275,12 +338,11 @@ async def _calculate_state_durations(operation: Operation, db: AsyncSession):
 @router.get("/{operation_id}/packml-summary", response_model=PackMLSummaryResponse)
 async def get_operation_packml_summary(
     operation_id: UUID,
+    organization_id: UUID = Depends(get_tenant_org_id),
     db: AsyncSession = Depends(get_tenant_db)
 ):
     """Get PackML state breakdown for an operation"""
-    result = await db.execute(
-        select(Operation).where(Operation.id == operation_id)
-    )
+    result = await db.execute(_own_operation(operation_id, organization_id))
     operation = result.scalar_one_or_none()
     
     if not operation:

@@ -11260,3 +11260,63 @@ One unrelated find on the same run: `rag-async-ingest` appeared on the backup
 remote and matched no push trigger, so htreinen's async-ingestion work was running
 ZERO gates. Covered by a `rag-**` pattern rather than a fourth branch name — the
 list has now gone stale by exactly one branch three times (`develop`, `alex`, this).
+
+## FS-720 — an operation anybody could finish, and the split that hid it
+
+Continuing the "which routes has nothing ever driven" question from FS-719, one mutating
+route in this lane had no test naming it: `POST /operations/{operation_id}/complete`. The
+earlier count of 34 was mostly proxy noise — the yard and kanban tests build their paths
+with f-strings, so the literal never appears in the source — and a segment-matching measure
+puts the real figure at 15, of which 14 belong to other lanes.
+
+Driving that one route found two defects, the second one worse than the first.
+
+**It read its two inputs from two different places.** `success: bool = True` is a bare
+scalar, which FastAPI serves from the QUERY string, beside `metadata: Optional[dict]`, which
+is a body parameter. No client can fill both from one document: the natural
+`api.post(url, {"success": false, "metadata": {…}})` applies the metadata, silently defaults
+`success` to `True`, and the route records a FAILED operation as **completed** — with
+`actual_duration` and the PackML state-duration rollup computed against that outcome, and a
+200 in reply.
+
+This is the quiet form of a class the repository has been bitten by three times (FS-379,
+FS-420, FS-658). Those were all-query routes with REQUIRED parameters, so the natural client
+got 422 on every call and the feature visibly never worked. A defaulted query parameter beside
+a body parameter fails silently instead. Nine mutating routes read from both places and
+**all nine are the silent kind** — measured, and now held by
+`test_no_route_splits_its_input.py`, which registers the eight in other lanes with what a
+body-only client actually gets from each. `/operations/{id}/complete` takes one
+`OperationCompletion` body and is off the list.
+
+**And the router leaked across tenants.** Writing the first test that ever drove the route,
+a cross-tenant case was added out of habit — org B completed org A's operation and got 200.
+`operations` has NO `organization_id` column, so it has no RLS policy and `get_tenant_db`
+protects it not at all; its tenant is whoever owns the asset. Four of the five handlers
+relied on the session anyway:
+
+    GET  /operations/                     bare select(Operation)      every tenant's rows
+    GET  /operations/{id}                 by id                       any tenant's
+    GET  /operations/{id}/packml-summary  by id                       any tenant's
+    POST /operations/{id}/complete        by id                       any tenant's, and WRITES
+
+The fifth, `/active`, joins `assets` under a comment reading "THE TENANT JOIN IS NO LONGER
+OPTIONAL" — added when this same defect was fixed there. One handler of five. All four now
+go through `_own_operation(id, org)`, so the shortest way to select an operation in this file
+is the scoped one, and the list's COUNT is joined too: an unjoined total reports a page out
+of every organisation's rows (rule 165).
+
+Eleven tests pin it, against the database rather than the response — the response echoes the
+ORM object either way, so a test reading only the JSON would have passed against the defect.
+Each of the four scoping fixes and the body fix was mutation-verified separately.
+
+One nuance recorded rather than tidied away: the scoped query keeps both the join and an
+explicit `Asset.organization_id` predicate, and deleting the predicate alone fails no test —
+`assets` is FORCE RLS and the join inherits that. It stays because that is a property of the
+SESSION, not the query, and the comment says the mutation was run and what it showed, so the
+next reader deletes it deliberately or not at all.
+
+Also checked and found sound: 25 service methods take `db` with an `AsyncSessionLocal()`
+fallback, and every one of the 25 call sites passes a session, so the unscoped branch is
+latent rather than live. Not touched.
+
+Rules 212-213. Backend 4,795 passing, frontend 1,192, edge 427.

@@ -1454,6 +1454,26 @@ one of its findings. The habit that catches it:
      that is how a guard quietly loses the ability to see the real thing; following the
      call one hop keeps both the check and the list honest.
 
+212. **A table with no `organization_id` column has no RLS, and the tenant session is
+     doing nothing for it.** `operations` is tenanted through its ASSET — there is no org
+     column, so no policy of the usual shape exists and `get_tenant_db` protects it not at
+     all. Four of the router's five handlers wrote `select(Operation).where(id == …)` or,
+     worse, a bare `select(Operation)`: any authenticated operator could read, summarise
+     and **complete another organisation's production run**, and `GET /operations/`
+     returned every tenant's rows. The fifth handler joined `assets` under a comment saying
+     the join "is no longer optional" after this same defect had been fixed *there* — one
+     handler of five. When a fix is a JOIN somebody must remember, put it behind a helper
+     so the shortest way to write the query is the correct one.
+
+213. **Belt-and-braces that a mutation cannot distinguish is still worth keeping, if you
+     say why.** The scoped query carries both a join to `assets` and an explicit
+     `Asset.organization_id == :org`. Deleting the predicate alone fails no test, because
+     `assets` is FORCE RLS and the join inherits that filtering — so by the usual standard
+     it is dead weight. It stays because that protection is a property of the SESSION, not
+     of the query, and the defect above existed precisely because someone assumed the
+     session was doing the work. The comment records the mutation result, so the next
+     reader deletes it deliberately or not at all.
+
 ---
 
 ## Open observations, not yet tickets

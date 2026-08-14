@@ -3142,3 +3142,49 @@ success a failure.
 The natural response to a false positive is an exemption entry, and an exemption is
 permanent in a way the false positive is not: the next real offender in that file is now
 invisible. Following the call one hop keeps both the check and the list honest.
+
+## Rule 212 — no org column means no RLS, whatever the session is
+
+`operations` has no `organization_id`. Its tenant is whoever owns the asset the operation
+ran on, which means no policy of the usual shape exists and `get_tenant_db` — the dependency
+every handler in the file takes — protects this table not at all.
+
+Four of the router's five handlers relied on it anyway:
+
+    GET  /operations/                    select(Operation)                  every tenant
+    GET  /operations/{id}                where(Operation.id == id)          any tenant's
+    GET  /operations/{id}/packml-summary where(Operation.id == id)          any tenant's
+    POST /operations/{id}/complete       where(Operation.id == id)          any tenant's
+
+The last one WRITES. An authenticated operator could finish another organisation's
+production run by id, and the row would record their outcome, their duration and their
+PackML rollup, with a 200 in reply.
+
+The fifth handler, `/active`, joins `assets` and filters on the caller's organisation —
+under a comment reading "THE TENANT JOIN IS NO LONGER OPTIONAL", added when exactly this
+defect was found there. It was fixed on one handler and the other four kept the shape.
+
+That is the lesson worth carrying: **when the fix is a join somebody has to remember, the
+next handler will not remember.** All four now go through `_own_operation(id, org)`, so the
+shortest way to select an operation in this file is the scoped way.
+
+How it was found is also worth recording. Not by a guard — the tenant guards look for
+`get_db` and for unbound sessions, and this router uses `get_tenant_db` correctly
+throughout. It surfaced from writing the first test that had ever driven
+`POST /operations/{id}/complete`, where a cross-tenant case was added out of habit and
+came back 200.
+
+## Rule 213 — keep the redundant predicate, and record that it is redundant
+
+The scoped query carries both a join to `assets` and an explicit
+`Asset.organization_id == :org`. Mutation says the predicate is dead weight: delete it and
+no test changes, because `assets` is FORCE RLS and the join inherits that filter.
+
+It stays. RLS filtering is a property of the SESSION, and the defect above existed because
+someone assumed the session was doing the work — an assumption that was true of every other
+table in the file's neighbourhood and false of this one. A handler that is ever moved to
+`get_db`, or a query that is ever run from a background task, still returns the right rows.
+
+The rule is not "keep redundant code". It is that when you keep something a mutation cannot
+justify, the comment has to say the mutation was run and what it showed. Otherwise the next
+reader deletes it as noise — correctly, by the evidence available to them.
