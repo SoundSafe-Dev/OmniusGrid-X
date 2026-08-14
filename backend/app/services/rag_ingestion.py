@@ -28,7 +28,7 @@ so a caller (the worker) can requeue instead of permanently marking the
 document skipped.
 """
 
-from typing import List, Dict, Any, Optional, Sequence
+from typing import BinaryIO, List, Dict, Any, Optional, Sequence, Union
 from functools import lru_cache
 import csv
 import io
@@ -42,9 +42,10 @@ from app.core.config import settings
 from app.services.document_store import (
     get_document_store,
     build_document_key,
+    stream_size,
     validate_doc_id,
 )
-from app.services.inference_client import get_rag_inference
+from app.services.inference_client import get_ingest_inference
 from app.services.vector_store import get_vector_store, ChunkPoint
 from app.services.rag_chunker import TextBlock, Chunk, chunk_blocks
 from app.services.pdf_parser import parse_pdf_structure
@@ -54,8 +55,12 @@ from app.services.rag_index_queue import ClaimedDocument, upsert_queued, delete_
 
 logger = structlog.get_logger()
 
-# Stable namespace so chunk point-ids are deterministic per (doc_id, ordinal):
-# re-ingesting a document overwrites its own chunks instead of duplicating them.
+# Stable namespace for chunk point-ids, keyed by (doc_id, generation, ordinal).
+# Each index_document call gets a fresh ``generation`` (see index_document) so
+# a re-ingest writes a whole new set of points rather than overwriting the
+# previous generation's in place - the old generation is only deleted after
+# the new one fully lands, so a mid-ingest failure never leaves the doc
+# partially indexed.
 _POINT_ID_NS = uuid.UUID("6f1e9a1c-3c2a-4f7d-9b1e-0a2b3c4d5e6f")
 
 _IMAGE_EXTS = {"png", "jpg", "jpeg", "gif", "webp", "bmp", "tiff"}
@@ -366,14 +371,18 @@ class IngestionPipeline:
 
     def __init__(self) -> None:
         self.docs = get_document_store()
-        self.inference = get_rag_inference()
+        # Ingest embedding goes through the ingest lane, which is the shared
+        # rag-inference unless RAG_INFERENCE_INGEST_URL names a dedicated one.
+        # Bulk indexing is the workload that starves live queries, so it is the
+        # side that gets moved when the two are separated.
+        self.inference = get_ingest_inference()
         self.vectors = get_vector_store()
         self.batch = settings.RAG_EMBED_BATCH
 
     async def store_document(
         self,
         *,
-        content: bytes,
+        content: Union[bytes, BinaryIO],
         filename: str,
         org_id: str,
         doc_id: Optional[str] = None,
@@ -386,6 +395,12 @@ class IngestionPipeline:
         the HTTP request: two S3 calls and one row UPSERT. Everything slow
         (parse/chunk/embed/upsert) is left to ``index_document`` on the worker,
         so the request cannot outlive the ingress read timeout.
+
+        ``content`` may be raw bytes or a seekable binary file object. A file
+        object is streamed to the object store in bounded parts and never
+        materialized whole, which is what keeps a large upload from sitting in
+        the API's heap - the HTTP path passes the multipart
+        ``SpooledTemporaryFile`` straight through.
 
         Blob first, row second, deliberately: a crash between them orphans a
         blob and the client's retry overwrites the same key, whereas row-first
@@ -400,12 +415,23 @@ class IngestionPipeline:
                 "Document store unavailable (aioboto3 not installed) - cannot ingest."
             )
         await self.docs.ensure_bucket(self.docs.raw_bucket)
-        await self.docs.put_document(
-            key=s3_key,
-            data=content,
-            content_type=content_type or "application/octet-stream",
-            metadata={"org_id": org_id, "doc_id": doc_id, "filename": filename},
-        )
+        metadata = {"org_id": org_id, "doc_id": doc_id, "filename": filename}
+        if isinstance(content, (bytes, bytearray)):
+            size_bytes = len(content)
+            await self.docs.put_document(
+                key=s3_key,
+                data=bytes(content),
+                content_type=content_type or "application/octet-stream",
+                metadata=metadata,
+            )
+        else:
+            size_bytes = stream_size(content)
+            await self.docs.put_document_stream(
+                key=s3_key,
+                fileobj=content,
+                content_type=content_type or "application/octet-stream",
+                metadata=metadata,
+            )
 
         await upsert_queued(
             org_id=org_id,
@@ -414,8 +440,11 @@ class IngestionPipeline:
             filename=filename,
             s3_key=s3_key,
             kind=kind,
+            size_bytes=size_bytes,
         )
-        logger.info("rag_ingestion.queued", doc_id=doc_id, kind=kind)
+        logger.info(
+            "rag_ingestion.queued", doc_id=doc_id, kind=kind, size_bytes=size_bytes
+        )
 
         return IngestionResult(
             doc_id=doc_id,
@@ -506,8 +535,12 @@ class IngestionPipeline:
             )
 
         await self.vectors.ensure_collection()
-        # Idempotent re-ingest: drop any prior chunks for this document first.
-        await self.vectors.delete_by_doc(doc_id)
+        # Swap, don't delete-then-write: tag this pass with a fresh generation
+        # and upsert it in full before touching the previous generation's
+        # points. A mid-loop failure (embed timeout, Qdrant blip) then leaves
+        # the doc's existing vectors fully intact and queryable rather than
+        # landing in a partially-indexed state.
+        generation = uuid.uuid4().hex
 
         written = 0
         for start in range(0, len(chunks), self.batch):
@@ -518,11 +551,15 @@ class IngestionPipeline:
             points = [
                 self._to_point(
                     doc_id, org_id, claimed.s3_key, claimed.filename,
-                    chunk, emb, extra_metadata,
+                    chunk, emb, extra_metadata, generation,
                 )
                 for chunk, emb in zip(batch, embeddings)
             ]
             written += await self.vectors.upsert_chunks(points)
+
+        # All batches landed - now safe to drop the old generation (and any
+        # orphaned partial generation left by a prior failed run).
+        await self.vectors.delete_by_doc_excluding_generation(doc_id, generation)
 
         result.indexed = True
         result.status = "indexed"
@@ -545,6 +582,7 @@ class IngestionPipeline:
         chunk: Chunk,
         embedding: Any,
         extra_metadata: Optional[Dict[str, Any]],
+        generation: str,
     ) -> ChunkPoint:
         payload: Dict[str, Any] = {
             "doc_id": doc_id,
@@ -553,11 +591,12 @@ class IngestionPipeline:
             "s3_key": s3_key,
             "filename": filename,
             "text": chunk.text,
+            "generation": generation,
             **chunk.meta,
         }
         if extra_metadata:
             payload.update(extra_metadata)
-        point_id = str(uuid.uuid5(_POINT_ID_NS, f"{doc_id}:{chunk.ordinal}"))
+        point_id = str(uuid.uuid5(_POINT_ID_NS, f"{doc_id}:{generation}:{chunk.ordinal}"))
         return ChunkPoint(
             id=point_id,
             dense=embedding.dense,

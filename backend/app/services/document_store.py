@@ -19,7 +19,7 @@ Design notes:
 """
 
 import re
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, BinaryIO
 from functools import lru_cache
 
 import structlog
@@ -59,6 +59,20 @@ def validate_doc_id(doc_id: str) -> str:
             "'.', '_' or '-'."
         )
     return doc_id
+
+
+def stream_size(fileobj: BinaryIO) -> int:
+    """Measure a seekable stream by seeking to its end, then rewind it.
+
+    Used to size an upload without reading it: a multipart body has already
+    been spooled to a temp file by the time a handler sees it, so its length is
+    a cheap ``seek``/``tell`` rather than a full read into memory. The stream is
+    always left rewound so the caller can hand it straight to an uploader.
+    """
+    fileobj.seek(0, 2)  # SEEK_END
+    size = fileobj.tell()
+    fileobj.seek(0)
+    return size
 
 
 def build_document_key(org_id: str, doc_id: str, filename: str) -> str:
@@ -146,6 +160,42 @@ class DocumentStore:
             bucket=bucket,
             key=key,
             bytes=len(data),
+            content_type=content_type,
+        )
+        return key
+
+    async def put_document_stream(
+        self,
+        key: str,
+        fileobj: BinaryIO,
+        content_type: str = "application/octet-stream",
+        bucket: Optional[str] = None,
+        metadata: Optional[Dict[str, str]] = None,
+    ) -> str:
+        """Store a document straight from a file object, never buffering it whole.
+
+        ``upload_fileobj`` reads the source in bounded parts and uploads them,
+        so peak memory is one part rather than the whole document. Prefer this
+        over ``put_document`` for anything client-supplied: a multipart upload
+        arrives as a ``SpooledTemporaryFile`` that is already on disk past
+        Starlette's spool threshold, and calling ``.read()`` on it would pull
+        the entire file back into RAM for no reason.
+        """
+        bucket = bucket or self.raw_bucket
+        async with self._require_client() as s3:
+            await s3.upload_fileobj(
+                fileobj,
+                bucket,
+                key,
+                ExtraArgs={
+                    "ContentType": content_type,
+                    "Metadata": metadata or {},
+                },
+            )
+        logger.info(
+            "document_store.put_stream",
+            bucket=bucket,
+            key=key,
             content_type=content_type,
         )
         return key

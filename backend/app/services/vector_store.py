@@ -197,6 +197,36 @@ class VectorStore:
         )
         logger.info("vector_store.deleted_doc", doc_id=doc_id)
 
+    async def delete_by_doc_excluding_generation(self, doc_id: str, generation: str) -> None:
+        """Delete a document's chunks from every generation except ``generation``.
+
+        Used for the ingest swap: the new generation is upserted in full first,
+        then this drops the old one (plus any orphan left by a prior failed
+        ingest) in a single call. Keeps re-ingest from ever leaving the doc
+        with zero or partial vectors mid-write.
+        """
+        client = self._get_client()
+        await client.delete(
+            collection_name=self.collection,
+            points_selector=models.FilterSelector(
+                filter=models.Filter(
+                    must=[
+                        models.FieldCondition(
+                            key="doc_id", match=models.MatchValue(value=doc_id)
+                        )
+                    ],
+                    must_not=[
+                        models.FieldCondition(
+                            key="generation", match=models.MatchValue(value=generation)
+                        )
+                    ],
+                )
+            ),
+        )
+        logger.info(
+            "vector_store.deleted_doc_old_generation", doc_id=doc_id, generation=generation
+        )
+
     async def health_check(self) -> Dict[str, Any]:
         """Connectivity + capability probe for the /health endpoint."""
         if not self.available:

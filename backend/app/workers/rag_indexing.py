@@ -126,9 +126,32 @@ async def run(
             loop.remove_signal_handler(sig)
 
 
+async def _idle_until_signalled() -> None:
+    """Stay alive doing nothing, until the container is stopped.
+
+    Exiting 0 here would look like a clean shutdown to the process, but both
+    supervisors read it as a completed run and start it again: compose's
+    ``restart: unless-stopped`` and a k8s Deployment (whose only valid
+    ``restartPolicy`` is Always) would turn the off switch into a crash-loop of
+    no-ops, complete with CrashLoopBackOff once the backoff kicks in. Idling
+    instead makes the disabled worker a quiet, healthy, zero-work pod. To
+    actually reclaim the resources, scale the Deployment to zero or drop the
+    compose service — that is the supervisor's job, not the process's.
+    """
+    stop_event = asyncio.Event()
+    loop = asyncio.get_running_loop()
+    for sig in (signal.SIGTERM, signal.SIGINT):
+        try:
+            loop.add_signal_handler(sig, stop_event.set)
+        except NotImplementedError:  # Windows / non-main thread
+            pass
+    await stop_event.wait()
+
+
 if __name__ == "__main__":
     if not settings.RAG_INDEX_WORKER_ENABLED:
         logger.info("rag_indexing_worker_disabled")
+        asyncio.run(_idle_until_signalled())
     else:
         logger.info("rag_indexing_worker_starting")
         asyncio.run(run())

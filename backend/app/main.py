@@ -41,6 +41,7 @@ from app.middleware.request_context import RequestContextMiddleware
 from app.middleware.idempotency import IdempotencyMiddleware
 from app.middleware.audit import AuditLoggingMiddleware
 from app.middleware.security_headers import SecurityHeadersMiddleware
+from app.middleware.upload_limit import UploadLimitMiddleware
 from app.middleware.csrf import CSRFMiddleware
 from app.middleware.rate_limit import (
     auth_limiter,
@@ -270,6 +271,16 @@ app.add_middleware(
         "/api/v1/maintenance",
         "/api/v1/notifications",
     ),
+)
+
+# Oversized-upload rejection from Content-Length, before the body is buffered.
+# Scoped to RAG document upload because RAG_MAX_UPLOAD_BYTES is a document-size
+# cap, not a general body cap. Ingress enforces the same number at the edge;
+# this covers the paths that do not go through ingress.
+app.add_middleware(
+    UploadLimitMiddleware,
+    max_bytes=settings.RAG_MAX_UPLOAD_BYTES,
+    prefixes=("/api/v1/rag/ingest",),
 )
 
 # CSRF protection — off by default (Bearer-JWT API, not cookie sessions).

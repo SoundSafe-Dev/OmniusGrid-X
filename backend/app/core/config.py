@@ -200,6 +200,11 @@ class Settings(BaseSettings):
     RAG_INFERENCE_URL: str = "http://rag-inference:8000"
     RAG_INFERENCE_API_KEY: str = ""  # bearer token; empty = trusted local network
     RAG_INFERENCE_TIMEOUT: float = 60.0
+    # Optional dedicated endpoint for batch ingest embedding. Empty (the
+    # default) shares RAG_INFERENCE_URL with the live query path, which means a
+    # heavy ingest competes with query embeddings and reranking for the same
+    # CPU. Point this at a second replica to give bulk indexing its own lane.
+    RAG_INFERENCE_INGEST_URL: str = ""
     EMBEDDING_MODEL: str = "BAAI/bge-m3"  # pinned; must match indexed vectors
     EMBEDDING_DIM: int = 1024  # BGE-M3 dense size (Qdrant collection dimension)
     RERANKER_MODEL: str = "BAAI/bge-reranker-v2-m3"
@@ -237,6 +242,13 @@ class Settings(BaseSettings):
     # cap stops a pathological document from exploding embeddings/Qdrant/memory.
     RAG_MAX_UPLOAD_BYTES: int = 50 * 1024 * 1024  # 50 MiB, mirrors ingress
     RAG_MAX_CHUNKS_PER_DOC: int = 2000  # hard cap; larger docs are truncated + flagged
+    # Per-tenant ingest quota + rate limit. Without these one org can push
+    # unbounded documents and saturate the shared embedding capacity, degrading
+    # every other tenant's query latency. Counted from rag_documents, so the
+    # budget is exact per org and survives a restart. 0 disables a given limit.
+    RAG_MAX_DOCUMENTS_PER_ORG: int = 10_000
+    RAG_MAX_TOTAL_BYTES_PER_ORG: int = 50 * 1024 * 1024 * 1024  # 50 GiB
+    RAG_INGEST_RATE_LIMIT_PER_MINUTE: int = 60  # uploads/min/org; 0 = unlimited
     # Async indexing worker (app/workers/rag_indexing.py). The worker claims
     # queued rag_documents rows with FOR UPDATE SKIP LOCKED, so it is safe at
     # any replica count — unlike the singleton OTA dispatcher.

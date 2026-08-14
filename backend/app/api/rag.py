@@ -36,9 +36,15 @@ from app.services.rag_retriever import get_retriever, RagAnswer
 from app.services.document_store import (
     get_document_store,
     InvalidDocumentId,
+    stream_size,
     validate_doc_id,
 )
-from app.services.rag_index_queue import get_status, list_for_org
+from app.services.rag_index_queue import (
+    check_ingest_quota,
+    get_status,
+    list_for_org,
+    quota_usage,
+)
 
 router = APIRouter()
 
@@ -55,6 +61,24 @@ def _validated_doc_id(doc_id: str) -> str:
         return validate_doc_id(doc_id)
     except InvalidDocumentId as exc:
         raise HTTPException(status_code=422, detail=str(exc))
+
+
+async def _enforce_ingest_quota(
+    *, org_id: str, doc_id: Optional[str], size_bytes: int
+) -> None:
+    """Refuse an upload that would exceed this org's ingest budget.
+
+    Checked before the blob is stored, so a rejected upload costs no object
+    storage. 429 for the rate limit (retrying later works), 409 for the
+    document/byte quotas (retrying does not help until something is deleted).
+    """
+    rejection = await check_ingest_quota(
+        org_id=org_id, doc_id=doc_id, size_bytes=size_bytes
+    )
+    if rejection is not None:
+        raise HTTPException(
+            status_code=rejection.status, detail=rejection.detail
+        )
 
 
 class QueryRequest(BaseModel):
@@ -81,25 +105,34 @@ async def ingest(
     ``GET /rag/documents/{doc_id}/status`` for the outcome. Previously this
     endpoint indexed inline and could outlive the ingress read timeout on large
     documents.
+
+    The upload is never read into memory here. Starlette has already spooled
+    the multipart body to a temp file, so its size is a ``seek``/``tell`` and
+    the file object itself is handed to the object store to stream. Calling
+    ``.read()`` would undo that and put the whole document back on the heap.
     """
-    content = await file.read()
-    if not content:
+    org_id = _org_id(current_user)
+    size_bytes = stream_size(file.file)
+    if size_bytes == 0:
         raise HTTPException(status_code=400, detail="Empty file.")
-    if len(content) > settings.RAG_MAX_UPLOAD_BYTES:
+    if size_bytes > settings.RAG_MAX_UPLOAD_BYTES:
         raise HTTPException(
             status_code=413,
             detail=(
-                f"File too large ({len(content)} bytes); the limit is "
+                f"File too large ({size_bytes} bytes); the limit is "
                 f"{settings.RAG_MAX_UPLOAD_BYTES} bytes."
             ),
         )
     if doc_id is not None:
         doc_id = _validated_doc_id(doc_id)
+
+    await _enforce_ingest_quota(org_id=org_id, doc_id=doc_id, size_bytes=size_bytes)
+
     try:
         return await get_ingestion_pipeline().store_document(
-            content=content,
+            content=file.file,
             filename=file.filename or "upload",
-            org_id=_org_id(current_user),
+            org_id=org_id,
             doc_id=doc_id,
             content_type=file.content_type,
             uploaded_by=str(current_user.id),
@@ -134,6 +167,10 @@ async def list_documents(
     ``count``/``keys`` keep their original meaning and S3 source for backward
     compatibility; ``documents`` adds the Postgres registry view. The two can
     differ: blobs ingested before the registry existed have no row.
+
+    ``quota`` reports this org's ingest budget and how much of it is used, so a
+    client can see a 409 coming instead of discovering the limit by hitting it.
+    A null limit means that dimension is unlimited.
     """
     org_id = _org_id(current_user)
     docs = get_document_store()
@@ -147,6 +184,7 @@ async def list_documents(
         "count": len(keys),
         "keys": keys,
         "documents": await list_for_org(org_id),
+        "quota": (await quota_usage(org_id)).as_dict(),
     }
 
 

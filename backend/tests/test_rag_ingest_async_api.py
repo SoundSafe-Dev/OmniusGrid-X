@@ -19,6 +19,13 @@ class _FakeDocs:
     async def put_document(self, *, key, data, content_type, metadata):
         return key
 
+    async def put_document_stream(self, *, key, fileobj, content_type, metadata):
+        # The API path streams the spooled upload rather than reading it, so
+        # this is the method the route actually exercises. Draining it here
+        # mirrors a real uploader consuming the stream.
+        fileobj.read()
+        return key
+
     async def list_documents(self, prefix="", bucket=None):
         return []
 

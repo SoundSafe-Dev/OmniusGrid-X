@@ -45,8 +45,8 @@ class Embedding(BaseModel):
 class RagInferenceClient:
     """Async client for the BGE embeddings + reranker service."""
 
-    def __init__(self) -> None:
-        self.base_url: str = settings.RAG_INFERENCE_URL.rstrip("/")
+    def __init__(self, base_url: Optional[str] = None) -> None:
+        self.base_url: str = (base_url or settings.RAG_INFERENCE_URL).rstrip("/")
         self.api_key: str = settings.RAG_INFERENCE_API_KEY
         self.timeout: float = settings.RAG_INFERENCE_TIMEOUT
 
@@ -135,3 +135,24 @@ class RagInferenceClient:
 def get_rag_inference() -> RagInferenceClient:
     """Cached singleton accessor, mirroring ``get_settings()``."""
     return RagInferenceClient()
+
+
+@lru_cache()
+def get_ingest_inference() -> RagInferenceClient:
+    """Client for the *ingest* embedding lane.
+
+    Ingest and live queries share one rag-inference by default, which couples
+    their availability: a heavy ingest pegs the CPU that query embeddings and
+    reranking need, so bulk uploads by one tenant show up as latency for
+    everyone. Setting ``RAG_INFERENCE_INGEST_URL`` points batch embedding at a
+    separate replica and breaks that coupling with one env var, no code change
+    — the same URL-only substitution the rest of the stack is designed around.
+
+    Unset (the default) returns the shared client, so single-box deployments
+    keep exactly the behaviour they had.
+    """
+    ingest_url = settings.RAG_INFERENCE_INGEST_URL.strip()
+    if not ingest_url:
+        return get_rag_inference()
+    logger.info("rag_inference.dedicated_ingest_lane", endpoint=ingest_url)
+    return RagInferenceClient(base_url=ingest_url)

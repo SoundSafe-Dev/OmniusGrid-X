@@ -20,7 +20,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
 import structlog
-from sqlalchemy import delete, select, text, update
+from sqlalchemy import delete, func, select, text, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from app.core.config import settings
@@ -67,6 +67,7 @@ def _to_dict(row: RagDocument) -> Dict[str, Any]:
         "kind": row.kind,
         "filename": row.filename,
         "s3_key": row.s3_key,
+        "size_bytes": row.size_bytes,
         "num_blocks": row.num_blocks,
         "num_chunks": row.num_chunks,
         "reason": row.reason,
@@ -78,6 +79,140 @@ def _to_dict(row: RagDocument) -> Dict[str, Any]:
     }
 
 
+@dataclass(frozen=True)
+class QuotaUsage:
+    """This org's current ingest footprint, measured from ``rag_documents``."""
+
+    documents: int
+    total_bytes: int
+    ingests_last_minute: int
+    max_documents: int
+    max_total_bytes: int
+    max_per_minute: int
+
+    def as_dict(self) -> Dict[str, Any]:
+        return {
+            "documents": self.documents,
+            "total_bytes": self.total_bytes,
+            "ingests_last_minute": self.ingests_last_minute,
+            "max_documents": self.max_documents or None,
+            "max_total_bytes": self.max_total_bytes or None,
+            "max_ingests_per_minute": self.max_per_minute or None,
+        }
+
+
+@dataclass(frozen=True)
+class QuotaRejection:
+    """Why an ingest was refused. ``status`` is the HTTP code to return."""
+
+    status: int
+    detail: str
+
+
+async def quota_usage(org_id: str) -> QuotaUsage:
+    """Measure an org's document count, stored bytes, and recent ingest rate.
+
+    One aggregate query rather than a Redis counter: the numbers are already in
+    ``rag_documents``, so they are exact per tenant, need no separate store to
+    stay consistent with reality, and cannot drift after a restart. Ingest is a
+    heavyweight operation, so one indexed aggregate per upload is cheap next to
+    the S3 put that follows it.
+    """
+    window_start = _now() - timedelta(seconds=60)
+    async with AsyncSessionLocal() as session:
+        await _set_org(session, org_id)
+        row = (
+            await session.execute(
+                select(
+                    func.count(RagDocument.id),
+                    func.coalesce(func.sum(RagDocument.size_bytes), 0),
+                    func.count(RagDocument.id).filter(
+                        RagDocument.created_at >= window_start
+                    ),
+                ).where(RagDocument.organization_id == str(org_id))
+            )
+        ).one()
+    return QuotaUsage(
+        documents=int(row[0] or 0),
+        total_bytes=int(row[1] or 0),
+        ingests_last_minute=int(row[2] or 0),
+        max_documents=settings.RAG_MAX_DOCUMENTS_PER_ORG,
+        max_total_bytes=settings.RAG_MAX_TOTAL_BYTES_PER_ORG,
+        max_per_minute=settings.RAG_INGEST_RATE_LIMIT_PER_MINUTE,
+    )
+
+
+async def check_ingest_quota(
+    *, org_id: str, doc_id: Optional[str], size_bytes: int
+) -> Optional[QuotaRejection]:
+    """Decide whether this org may ingest one more document of ``size_bytes``.
+
+    Returns ``None`` to allow, or a ``QuotaRejection`` naming the limit hit.
+    Any limit set to 0 is treated as unlimited.
+
+    Re-ingesting an existing ``doc_id`` replaces a row rather than adding one,
+    so it is charged as a *delta*: it does not count against the document cap
+    at all, and only the size difference counts against the byte cap. Charging
+    it as a new document would make re-ingest impossible for an org sitting at
+    its limit, which is exactly when a correction is most likely needed.
+    """
+    usage = await quota_usage(org_id)
+
+    if usage.max_per_minute and usage.ingests_last_minute >= usage.max_per_minute:
+        return QuotaRejection(
+            status=429,
+            detail=(
+                f"Ingest rate limit reached ({usage.max_per_minute} uploads per "
+                "minute for this organization). Retry shortly."
+            ),
+        )
+
+    existing = await _existing_size(org_id, doc_id) if doc_id else None
+    is_reingest = existing is not None
+
+    if (
+        usage.max_documents
+        and not is_reingest
+        and usage.documents >= usage.max_documents
+    ):
+        return QuotaRejection(
+            status=409,
+            detail=(
+                f"Document quota reached ({usage.documents}/"
+                f"{usage.max_documents} documents). Delete documents to free "
+                "quota before ingesting more."
+            ),
+        )
+
+    if usage.max_total_bytes:
+        projected = usage.total_bytes + size_bytes - (existing or 0)
+        if projected > usage.max_total_bytes:
+            return QuotaRejection(
+                status=409,
+                detail=(
+                    f"Storage quota reached ({usage.total_bytes} of "
+                    f"{usage.max_total_bytes} bytes used; this upload needs "
+                    f"{size_bytes}). Delete documents to free quota."
+                ),
+            )
+
+    return None
+
+
+async def _existing_size(org_id: str, doc_id: str) -> Optional[int]:
+    """Stored size of an existing row for this doc_id, or None if it is new."""
+    async with AsyncSessionLocal() as session:
+        await _set_org(session, org_id)
+        return (
+            await session.execute(
+                select(RagDocument.size_bytes).where(
+                    RagDocument.organization_id == str(org_id),
+                    RagDocument.doc_id == doc_id,
+                )
+            )
+        ).scalar_one_or_none()
+
+
 async def upsert_queued(
     *,
     org_id: str,
@@ -86,6 +221,7 @@ async def upsert_queued(
     filename: str,
     s3_key: str,
     kind: str,
+    size_bytes: int = 0,
 ) -> None:
     """Record a freshly stored blob as awaiting indexing.
 
@@ -99,6 +235,7 @@ async def upsert_queued(
         "filename": filename,
         "s3_key": s3_key,
         "kind": kind,
+        "size_bytes": size_bytes,
         "status": "queued",
         "attempts": 0,
         "num_blocks": 0,

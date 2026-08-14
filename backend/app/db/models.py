@@ -1607,6 +1607,9 @@ class RagDocument(Base):
     filename = Column(String(255), nullable=False)
     s3_key = Column(Text, nullable=False)
     kind = Column(String(20), nullable=False)
+    # Stored blob size, used for the per-org max-total-bytes ingest quota.
+    # Rows created before migration 044 read 0 (see that migration's note).
+    size_bytes = Column(BigInteger, nullable=False, default=0, server_default="0")
     status = Column(
         String(20), nullable=False, default="queued", server_default="queued"
     )

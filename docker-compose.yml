@@ -330,6 +330,10 @@ services:
       QDRANT_URL: http://qdrant:6333
       S3_ENDPOINT_URL: http://seaweedfs:8333
       RAG_INFERENCE_URL: http://rag-inference:8000
+      # Set to a second rag-inference replica's URL to stop bulk indexing from
+      # competing with live query embeddings for CPU. Empty = share one service
+      # (fine on a single box; the weights are ~5GB per replica).
+      RAG_INFERENCE_INGEST_URL: ${RAG_INFERENCE_INGEST_URL:-}
       RAG_EMBED_BATCH: ${RAG_EMBED_BATCH:-8}
       RAG_INFERENCE_TIMEOUT: ${RAG_INFERENCE_TIMEOUT:-180}
       RAG_INDEX_WORKER_ENABLED: ${RAG_INDEX_WORKER_ENABLED:-true}
