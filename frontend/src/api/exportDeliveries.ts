@@ -56,3 +56,105 @@ export const exportDeliveriesApi = {
     return response.data;
   },
 };
+
+
+/**
+ * The SCHEDULES behind those deliveries (P9, page-enhancement review).
+ *
+ * Nine endpoints — schedules list/create/get/update/delete and templates
+ * list/create/get/update/delete — with **zero frontend references**. A user could see
+ * that a scheduled report failed and could not see what the schedule was, who received
+ * it, when it next ran, or pause it. The delivery log answered "did it go out?" while
+ * nothing answered "what is it and can I stop it?".
+ *
+ * SNAKE_CASE ON PURPOSE, for the reason the deliveries client documents above: this
+ * prefix is not on the transform seam, so the wire spells `template_id`, `next_run_at`
+ * and `is_active` exactly as the response models do.
+ */
+
+/** One row of `GET /api/v1/exports/schedules`. */
+export interface ScheduledExport {
+  id: string;
+  organization_id: string;
+  template_id: string;
+  name: string;
+  /** `daily` | `weekly` | `monthly` — the server's closed set. */
+  frequency: string;
+  timezone: string;
+  next_run_at: string | null;
+  recipients: string[];
+  is_active: boolean;
+  last_run_at: string | null;
+  last_status: string | null;
+  created_at: string | null;
+  updated_at: string | null;
+}
+
+export interface ScheduledExportList {
+  items: ScheduledExport[];
+  total: number;
+  /** Whether SMTP is configured at all. A schedule with nowhere to deliver is worth
+   *  saying out loud rather than letting a user infer it from reports that never
+   *  arrive — the server sends this precisely so the UI can say it. */
+  delivery_configured: boolean;
+}
+
+export interface ExportTemplate {
+  id: string;
+  name: string;
+  description: string | null;
+  export_type: string;
+  export_format: string;
+  columns: string[];
+  filters: Record<string, unknown>;
+}
+
+export interface ExportTemplateList {
+  items: ExportTemplate[];
+  total: number;
+}
+
+export interface ScheduledExportCreate {
+  template_id: string;
+  name: string;
+  frequency: string;
+  timezone: string;
+  next_run_at: string;
+  recipients: string[];
+  is_active: boolean;
+}
+
+export const exportSchedulesApi = {
+  list: async (): Promise<ScheduledExportList> => {
+    const response = await api.get<ScheduledExportList>('/api/v1/exports/schedules');
+    return response.data;
+  },
+
+  listTemplates: async (): Promise<ExportTemplateList> => {
+    const response = await api.get<ExportTemplateList>('/api/v1/exports/templates');
+    return response.data;
+  },
+
+  create: async (payload: ScheduledExportCreate): Promise<ScheduledExport> => {
+    const response = await api.post<ScheduledExport>('/api/v1/exports/schedules', payload);
+    return response.data;
+  },
+
+  update: async (
+    scheduleId: string,
+    payload: Partial<ScheduledExportCreate>,
+  ): Promise<ScheduledExport> => {
+    const response = await api.put<ScheduledExport>(
+      `/api/v1/exports/schedules/${scheduleId}`,
+      payload,
+    );
+    return response.data;
+  },
+
+  remove: async (scheduleId: string): Promise<{ deleted: string }> => {
+    const response = await api.delete<{ deleted: string }>(
+      `/api/v1/exports/schedules/${scheduleId}`,
+    );
+    return response.data;
+  },
+};

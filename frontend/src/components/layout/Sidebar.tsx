@@ -30,6 +30,7 @@ import {
   SlidersHorizontal,
   ShieldCheck,
   CalendarClock,
+  Mail,
 } from 'lucide-react';
 import { useUIStore, useAuthStore } from '../../stores';
 import { cn } from '../../utils';
@@ -129,6 +130,11 @@ const navItems: NavItem[] = [
       { path: '/admin/errors', label: 'Error Triage', icon: Bug, description: 'Production error monitoring' },
       { path: '/admin/fleet', label: 'Fleet OTA', icon: UploadCloud, description: 'Edge-agent releases and staged rollouts' },
       { path: '/admin/notifications', label: 'Notifications', icon: Bell, description: 'Alert delivery subscriptions and log' },
+      // P9: neither export page was in the nav — `/admin/export-deliveries` was
+      // reachable only by typing the URL, which is most of why nobody noticed the
+      // schedules behind it had no UI at all.
+      { path: '/admin/export-schedules', label: 'Export Schedules', icon: CalendarClock, description: 'Scheduled report definitions, recipients and cadence' },
+      { path: '/admin/export-deliveries', label: 'Export Deliveries', icon: Mail, description: 'Whether scheduled reports actually went out' },
       { path: '/admin/fleet/targeting', label: 'Fleet Targeting', icon: ListFilter, description: 'Sites, tags, groups, and dynamic cohorts' },
       { path: '/admin/fleet/maintenance', label: 'Maintenance Windows', icon: CalendarClock, description: 'Recurring site windows and rollout scheduling' },
       { path: '/admin/settings', label: 'Settings', icon: Settings, description: 'System configuration' },

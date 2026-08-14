@@ -339,7 +339,7 @@ E2 Mobile-first floor view. E3 Shift handover notes.
 | P6 | ✅ SHIPPED — Assets filter bar: debounced name search (new backend param) + workcell/type/active | Assets | S |
 | P7 | ✅ SHIPPED — AssetDetail: asset-scoped alarms with inline ack + OEE card (panel extracted from pages/OEE) | AssetDetail | M |
 | P8 | ✅ SHIPPED — loss Pareto from the uncalled /api/v1/oee router + one time range driving table, panels and export | OEE | M |
-| P9 | `/admin/export-schedules` CRUD (9 unreferenced endpoints) | new page | L |
+| P9 | ✅ SHIPPED — /admin/export-schedules: list, create-paused, pause/resume, delete + both export pages added to the nav | new page | L |
 | P10 | AlarmRules scope selectors + scope column | AlarmRules | M |
 | P11 | Notifications edit/toggle (needs backend PATCH) + test severity | Notifications | M |
 | P12 | Collectors per-agent detail + badged cert/DLQ columns | Collectors | M |

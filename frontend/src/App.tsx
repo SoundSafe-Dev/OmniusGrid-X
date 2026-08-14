@@ -59,6 +59,7 @@ const Notifications = named(() => import('./pages/admin'), 'Notifications')
 // for it. Through the same barrel as the other admin pages, which is the import shape
 // `everyRoutedPageHasATest.test.ts` has to follow to see it at all.
 const ExportDeliveries = named(() => import('./pages/admin'), 'ExportDeliveries')
+const ExportSchedules = named(() => import('./pages/admin'), 'ExportSchedules')
 
 const Users = named(() => import('./pages/admin'), 'Users')
 const Collectors = named(() => import('./pages/admin'), 'Collectors')
@@ -163,6 +164,7 @@ const App: FC = () => {
                   <Route path="/admin/settings" element={<Settings />} />
                   <Route path="/admin/notifications" element={<Notifications />} />
                   <Route path="/admin/export-deliveries" element={<ExportDeliveries />} />
+                  <Route path="/admin/export-schedules" element={<ExportSchedules />} />
                   <Route path="/admin/errors" element={<ErrorTriage />} />
                   <Route path="/admin/errors/:fingerprint" element={<ErrorTriageDetail />} />
                   <Route path="/admin/fleet" element={<Fleet />} />
