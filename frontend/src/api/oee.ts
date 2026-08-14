@@ -49,7 +49,39 @@ export interface OEELossesOut {
   potentialOee: number;
 }
 
+export interface OEEDashboardSummary {
+  organizationId: string;
+  timestamp: string;
+  aggregate: {
+    /** `null` when nothing was measured. The average of an empty set is not zero, and a
+     *  fleet-wide 0% OEE is an emergency — the server returns null precisely so a
+     *  consumer cannot render one by accident. */
+    avgOee: number | null;
+    avgAvailability: number | null;
+    avgPerformance: number | null;
+    avgQuality: number | null;
+    assetCount: number;
+    /** The two figures that let a reader tell a healthy fleet from an unread one. */
+    assetsMeasured: number;
+    assetsUnavailable: number;
+  };
+}
+
 export const oeeApi = {
+  /** Fleet-wide THREE-FACTOR OEE. Not to be confused with
+   *  `dashboardApi.getFleetOEE`, which reports availability only and sets
+   *  `availabilityOnly: true` to say so (FS-399) — the distinction the dashboard's
+   *  "Availability" tile has been carefully named around since FS-192. */
+  /** NO WINDOW ARGUMENT, because the route takes none: it computes each asset over a
+   *  fixed 1-hour window (`calculate_oee(..., time_window_hours=1.0)`). Sending a
+   *  `hours` param would be silently dropped by FastAPI and the caller would believe a
+   *  range control was doing something — the query-parameter defect this codebase has
+   *  swept for twice. The tile is labelled "last hour" for the same reason. */
+  getDashboardSummary: async (): Promise<OEEDashboardSummary> => {
+    const response = await api.get<OEEDashboardSummary>('/api/v1/oee/dashboard/summary');
+    return response.data;
+  },
+
   getLosses: async (assetId: string, hours = 8): Promise<OEELossesOut> => {
     const response = await api.get<OEELossesOut>(`/api/v1/oee/losses/${assetId}`, {
       params: { hours },

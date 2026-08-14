@@ -20,7 +20,8 @@ import {
   Gauge,
   Package,
 } from 'lucide-react'
-import { dashboardApi, alarmsApi } from '../api'
+import { dashboardApi, alarmsApi, oeeApi } from '../api'
+import { useAcknowledgeAlarm } from '../hooks'
 import { dashboardAnalyticsApi } from '../api/dashboardAnalytics'
 import { Tooltip, TooltipTrigger, TooltipContent } from '../components/ui'
 import { chartPalette, orderSeverities, severityColor } from '../components/charts/chartPalette'
@@ -195,6 +196,25 @@ const Dashboard: FC = () => {
     refetchInterval: TREND_REFETCH_MS,
   })
 
+  // REAL three-factor OEE, from the endpoint that computes it. The page-enhancement
+  // survey suggested feeding a tile from `dashboardApi.getFleetOEE(hours)` — and that
+  // would have been the FS-399 lie a third time: that endpoint reports availability
+  // only and sets `availabilityOnly: true` to say so, which is exactly why the tile
+  // beside this one is carefully named "Availability" (FS-192). `/oee/dashboard/summary`
+  // is the one that multiplies the three factors, and it returns `null` rather than 0
+  // when nothing was measured, because a fleet-wide 0% OEE is an emergency and the
+  // average of an empty set is not zero.
+  // Acknowledging from the dashboard. Invalidates the shared ['alarms'] key, so the
+  // widget and the alarms page agree without either polling faster.
+  const acknowledgeAlarm = useAcknowledgeAlarm()
+  const [ackError, setAckError] = useState<string | null>(null)
+
+  const fleetOeeQ = useQuery({
+    queryKey: ['dash-fleet-oee'],
+    queryFn: () => oeeApi.getDashboardSummary(),
+    refetchInterval: TREND_REFETCH_MS,
+  })
+
   const overview = overviewQ.data
   const axisProps = {
     stroke: palette.axis,
@@ -239,6 +259,26 @@ const Dashboard: FC = () => {
       tip: `Run time ÷ elapsed time over the last ${range.label}. Availability only — not full OEE.`,
     },
     {
+      label: 'Fleet OEE',
+      value:
+        fleetOeeQ.isError || fleetOeeQ.data?.aggregate?.avgOee == null
+          ? '—'
+          : `${fmtNum(fleetOeeQ.data.aggregate.avgOee)}%`,
+      icon: Gauge,
+      tone: 'text-opsgrid-text',
+      // The window is the ROUTE'S, not the range selector's: /oee/dashboard/summary
+      // computes each asset over a fixed hour and takes no parameter. Labelling it with
+      // the selector's range would be a control that appears to move a figure it cannot.
+      tip:
+        fleetOeeQ.data == null
+          ? 'Availability × Performance × Quality across the fleet, last hour.'
+          : `Availability × Performance × Quality, last hour. ${fleetOeeQ.data.aggregate.assetsMeasured} of ` +
+            `${fleetOeeQ.data.aggregate.assetCount} assets measured` +
+            (fleetOeeQ.data.aggregate.assetsUnavailable > 0
+              ? `; ${fleetOeeQ.data.aggregate.assetsUnavailable} could not be read.`
+              : '.'),
+    },
+    {
       label: `Parts (${range.label})`,
       value: fmtNum(throughputQ.data?.totals.totalParts),
       icon: Package,
@@ -268,6 +308,16 @@ const Dashboard: FC = () => {
 
   return (
     <div className="space-y-4">
+      {/* A failed acknowledgement, said out loud (FS-480) — at the top, so it is visible
+          without scrolling to the widget the click came from. */}
+      {ackError && (
+        <div
+          role="alert"
+          className="rounded border border-status-alarm/40 bg-status-alarm/10 px-3 py-2 text-sm text-status-alarm"
+        >
+          {ackError}
+        </div>
+      )}
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
           <h1 className="text-2xl font-bold text-opsgrid-text">Operations Overview</h1>
@@ -611,6 +661,33 @@ const Dashboard: FC = () => {
                 <span className="px-2 py-0.5 rounded text-xs font-medium bg-opsgrid-bg text-opsgrid-text-secondary border border-opsgrid-border shrink-0">
                   {alarm.severity}
                 </span>
+                {/* ACKNOWLEDGE WITHOUT LEAVING (page-enhancement arc). The widget was
+                    read-only while `useAcknowledgeAlarm` existed, so the dashboard could
+                    tell you a critical alarm was live and offer nothing to do about it —
+                    the operator's next click was always "go somewhere else". Failure is
+                    reported in the banner above rather than silently, for the FS-480
+                    reason: a row that stays exactly as it was is what success looks like
+                    for the moment before the list refetches. */}
+                {!alarm.isAcknowledged && (
+                  <button
+                    onClick={() => {
+                      setAckError(null)
+                      acknowledgeAlarm.mutate(
+                        { alarmId: alarm.id },
+                        {
+                          onError: () =>
+                            setAckError(
+                              `Could not acknowledge "${alarm.message ?? alarm.id}". It is still unacknowledged.`,
+                            ),
+                        },
+                      )
+                    }}
+                    className="shrink-0 px-2 py-0.5 rounded text-xs bg-opsgrid-primary text-white hover:bg-opsgrid-primary/80"
+                    aria-label={`Acknowledge ${alarm.message}`}
+                  >
+                    Ack
+                  </button>
+                )}
               </li>
             ))}
           </ul>

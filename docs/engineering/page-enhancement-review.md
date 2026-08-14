@@ -343,8 +343,8 @@ E2 Mobile-first floor view. E3 Shift handover notes.
 | P10 | ✅ SHIPPED — AlarmRules: asset/type/workcell scope selectors + a Scope column | AlarmRules | M |
 | P11 | ✅ SHIPPED — Notifications: new PATCH route, inline edit, enable/disable toggle, test-severity selector | Notifications | M |
 | P12 | ✅ SHIPPED — Collectors: `dropped` finally rendered, cert-expiry badges, worst-first order. (Per-agent detail NOT built: `GET /edge/fleet/{id}` returns the same shape as a list row, so a drill-in would show identical data.) | Collectors | M |
-| P13 | ✅ SHIPPED — Historian metric dropdown from `/telemetry/{id}/metrics`; TelemetryCharts' phantom OEE bar deleted and its chart retitled to what it plots. (Asset/metric multi-select on TelemetryCharts still open.) | analytics | M |
-| P14 | ◐ PARTIAL — trend queries now poll (were frozen at mount under polling KPIs). OEE tile + inline ack still open. | Dashboard | S |
+| P13 | ✅ SHIPPED (complete) — Historian metric dropdown; TelemetryCharts' phantom OEE bar deleted, chart retitled, and asset + metric selection added | analytics | M |
+| P14 | ✅ SHIPPED (complete) — trend polling, a REAL three-factor OEE tile from `/oee/dashboard/summary`, and inline acknowledge on the alarm widget | Dashboard | S |
 | — | Cross-lane (recorded, need authorisation): kanban comments/timers/rules, engine test-fire, NLP session mgmt, OTA table actions, RAG library, ERP mapping UI, operator workspace | — | — |
 
 
@@ -375,9 +375,27 @@ the truncation sweep refused a hand-rolled header read; the swallow ratchet char
 every new broad handler; `frontendSafetyRatchets` caught an inline `toLocaleString`; and
 the route-auth walk demanded a reviewed policy for the new PATCH.
 
-**Still open, and why.** P13's TelemetryCharts multi-select and P14's Dashboard OEE tile
-+ inline acknowledge are in my lane and simply next. Everything else outstanding is
+**All fourteen ranked items are now shipped.** Everything outstanding is
 cross-lane: kanban comments/timers/rules (Harsh), engine test-fire and NLP session
 management (HARSH), OTA table actions (Hridyansh), the RAG document library (htreinen),
 ERP field-mapping UI, and the operator (non-admin) workspace — which is a missing
 surface rather than a page gap and needs a product decision before code.
+
+
+## The tile the survey asked for, and why it is a different tile
+
+The survey's Dashboard item read: *"wire the range selector's `hours` into
+`dashboardApi.getFleetOEE(hours)` and add a real OEE tile."* Implementing that literally
+would have been the FS-399 overstatement a third time — `getFleetOEE` reports fleet
+**availability** and sets `availabilityOnly: true` to say so, which is exactly why the
+tile beside it has been carefully named "Availability" since FS-192.
+
+The figure comes from `/oee/dashboard/summary` instead, which multiplies the three
+factors and returns `null` rather than `0` when nothing was measured. Its window is the
+route's own fixed hour, not the range selector's — the endpoint takes no time parameter,
+and FastAPI drops unknown query params silently, so feeding it `hours` would have given
+an operator a control that appears to move a figure it cannot touch. The tile says "last
+hour" for that reason.
+
+A survey item is a lead, not a specification. This one was right that the dashboard
+needed an OEE tile and wrong about where the number comes from.

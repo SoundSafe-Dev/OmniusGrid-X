@@ -151,31 +151,47 @@ const METRIC_COLORS = ['#3B82F6', '#10B981', '#F59E0B', '#8B5CF6', '#EF4444'];
 export const TelemetryCharts: FC = () => {
   const [timeRange, setTimeRange] = useState('24h');
   const [showAdvanced, setShowAdvanced] = useState(false);
+  // The asset and metrics are CHOSEN. This page charted `assets[0]` — whichever machine
+  // sorted first — and every metric it happened to report, so an operator with a
+  // specific press in mind had no way to reach it and a busy asset drew six overlapping
+  // series. Empty selection means "all of them", which keeps the page's existing
+  // behaviour as the default rather than making the user pick before seeing anything.
+  const [assetId, setAssetId] = useState('');
+  const [selectedMetrics, setSelectedMetrics] = useState<string[]>([]);
 
   // Real data: first asset's telemetry history, current fleet OEE, and the
   // fleet's PackML-state distribution. (Nozzle/bed/vibration were 3D-printer
   // demo metrics; the chart now plots whatever metrics the asset actually has.)
   const { data: assetsPage, isLoading: assetsLoading, isError: assetsError } = useQuery({ queryKey: ['analytics-assets'], queryFn: () => assetsApi.list({ limit: 500 }) });
   const assets = assetsPage?.items ?? [];
-  const firstAsset = assets[0];
+  // Falls back to the first asset so the page still renders something on arrival — the
+  // behaviour it had — while the selector decides from then on.
+  const selectedAsset = assets.find((a) => a.id === assetId) ?? assets[0];
 
   const startTime = new Date(Date.now() - (RANGE_HOURS[timeRange] ?? 24) * 3600_000).toISOString();
   const { data: history, isLoading: historyLoading, isError: historyError } = useQuery({
-    queryKey: ['analytics-telemetry', firstAsset?.id, timeRange],
+    queryKey: ['analytics-telemetry', selectedAsset?.id, timeRange],
     // getHistoryPage, not getHistory (FS-486). `getHistory` returns `response.data.items`
     // and discards the `meta` envelope, so the 1000-point server default was invisible
     // here: a chart headed "Last 30 Days" plotting one end of the window and nothing
     // saying which end, or that there was another. `TelemetryHistoryChart` already reads
     // `meta.hasMore` to gate its "Load older" control; this page ignored it.
-    queryFn: () => telemetryApi.getHistoryPage(firstAsset!.id, { startTime }),
-    enabled: !!firstAsset,
+    queryFn: () => telemetryApi.getHistoryPage(selectedAsset!.id, { startTime }),
+    enabled: !!selectedAsset,
   });
   const { data: fleetOEE, isLoading: oeeLoading, isError: oeeError } = useQuery({ queryKey: ['analytics-fleet-oee'], queryFn: () => dashboardApi.getFleetOEE() });
 
   // Pivot the flat TelemetryPoint[] into chart rows keyed by the full timestamp
   // (not time-of-day) so multi-day ranges don't collapse different days into the
   // same HH:MM bucket. Label includes the date for ranges longer than a day.
-  const points = history?.items ?? [];
+  const allPoints = history?.items ?? [];
+  // Every metric this asset reported in the window — the checkbox list, independent of
+  // what is currently selected, so unticking one does not remove it from the list.
+  const availableMetrics = Array.from(new Set(allPoints.map((p) => p.metricName))).sort();
+  const points =
+    selectedMetrics.length === 0
+      ? allPoints
+      : allPoints.filter((p) => selectedMetrics.includes(p.metricName));
   const metricNames = Array.from(new Set(points.map((p) => p.metricName))).slice(0, METRIC_COLORS.length);
   const multiDay = (RANGE_HOURS[timeRange] ?? 24) > 24;
   const byTime = new Map<number, Record<string, any>>();
@@ -267,9 +283,10 @@ export const TelemetryCharts: FC = () => {
   return (
     <div className="space-y-6">
       <Card title="Telemetry Visualization" subtitle="Historical data analysis">
-        <div className="mb-4">
-          <select 
-            value={timeRange} 
+        <div className="mb-4 flex flex-wrap items-center gap-3">
+          <select
+            aria-label="Time range"
+            value={timeRange}
             onChange={(e) => setTimeRange(e.target.value)}
             className="px-3 py-2 bg-opsgrid-bg border border-opsgrid-border rounded-lg text-opsgrid-text-primary"
           >
@@ -277,13 +294,60 @@ export const TelemetryCharts: FC = () => {
             <option value="7d">Last 7 Days</option>
             <option value="30d">Last 30 Days</option>
           </select>
+          <select
+            aria-label="Asset"
+            value={selectedAsset?.id ?? ''}
+            onChange={(e) => {
+              setAssetId(e.target.value);
+              // Metrics do not carry across machines: a name selected on a press is
+              // rarely one an oven reports, and filtering by it would empty the chart
+              // in a way that reads as a quiet asset.
+              setSelectedMetrics([]);
+            }}
+            className="px-3 py-2 bg-opsgrid-bg border border-opsgrid-border rounded-lg text-opsgrid-text-primary"
+          >
+            {assets.map((asset: any) => (
+              <option key={asset.id} value={asset.id}>{asset.name}</option>
+            ))}
+          </select>
+          {availableMetrics.length > 0 && (
+            <div className="flex flex-wrap items-center gap-2">
+              {availableMetrics.map((name) => {
+                const active = selectedMetrics.length === 0 || selectedMetrics.includes(name);
+                return (
+                  <button
+                    key={name}
+                    type="button"
+                    aria-pressed={active}
+                    onClick={() =>
+                      setSelectedMetrics((current) => {
+                        // Empty means "all", so the first click starts from the full set
+                        // and removes one rather than leaving a single metric selected.
+                        const base = current.length === 0 ? availableMetrics : current;
+                        return base.includes(name)
+                          ? base.filter((m) => m !== name)
+                          : [...base, name];
+                      })
+                    }
+                    className={`px-2 py-1 rounded text-xs border ${
+                      active
+                        ? 'border-opsgrid-primary text-opsgrid-primary'
+                        : 'border-opsgrid-border text-opsgrid-text-secondary'
+                    }`}
+                  >
+                    {name}
+                  </button>
+                );
+              })}
+            </div>
+          )}
         </div>
 
         <div className="space-y-8">
           {/* Real metric trends for the first asset */}
           <div>
             <h3 className="text-lg font-semibold mb-4 text-opsgrid-text-primary">
-              Metric Trends{firstAsset ? ` — ${firstAsset.name}` : ''}
+              Metric Trends{selectedAsset ? ` — ${selectedAsset.name}` : ''}
             </h3>
             {/* Say so when the chart is a slice of the window it is labelled with (FS-486).
                 The server caps at 1000 points by default; a 30-day range at minute
@@ -298,7 +362,11 @@ export const TelemetryCharts: FC = () => {
             )}
             {metricSeries.length === 0 ? (
               <p className="text-sm text-opsgrid-text-secondary">
-                {firstAsset ? 'No telemetry in this range.' : 'No assets available.'}
+                {!selectedAsset
+                  ? 'No assets available.'
+                  : selectedMetrics.length > 0 && allPoints.length > 0
+                    ? 'No readings for the selected metrics in this range.'
+                    : 'No telemetry in this range.'}
               </p>
             ) : (
               <div className="h-64">

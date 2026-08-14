@@ -11,7 +11,7 @@
  * keeps getting wrong in both directions: an empty result and a failed request must not
  * render the same way.
  */
-import { render, screen, waitFor } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -237,5 +237,83 @@ describe('a chart of part of the range says so (FS-486)', () => {
 
     await waitFor(() => expect(getHistoryPage).toHaveBeenCalled())
     expect(screen.queryByRole('status')).not.toBeInTheDocument()
+  })
+})
+
+/**
+ * Asset and metric selection (the last in-lane item of the page-enhancement arc).
+ *
+ * This page charted `assets[0]` — whichever machine sorted first — and every metric it
+ * happened to report. An operator with a specific press in mind had no way to reach it,
+ * and a busy asset drew six overlapping series with no way to isolate one.
+ *
+ * Empty selection means "all", deliberately: the page's existing behaviour stays the
+ * default rather than making a user choose before seeing anything.
+ */
+describe('TelemetryCharts — choosing what to look at', () => {
+  const twoAssets = [
+    { id: 'a1', name: 'CNC Mill #1', currentPackmlState: 'Execute' },
+    { id: 'a2', name: 'Press 2', currentPackmlState: 'Idle' },
+  ]
+  const points = [
+    { timestamp: '2026-08-14T10:00:00Z', metricName: 'temperature', value: 40 },
+    { timestamp: '2026-08-14T10:01:00Z', metricName: 'vibration', value: 2 },
+  ]
+
+  beforeEach(() => {
+    listAssets.mockResolvedValue(assetsPage(twoAssets))
+    getHistoryPage.mockResolvedValue({ items: points, meta: { hasMore: false, count: 2 } })
+  })
+
+  it('charts the first asset on arrival, as it always did', async () => {
+    wrap(<TelemetryCharts />)
+    await waitFor(() => expect(getHistoryPage).toHaveBeenCalled())
+    expect(getHistoryPage.mock.calls[0][0]).toBe('a1')
+  })
+
+  it('requests the asset the operator picked', async () => {
+    wrap(<TelemetryCharts />)
+    const picker = await screen.findByLabelText('Asset')
+    fireEvent.change(picker, { target: { value: 'a2' } })
+    await waitFor(() => {
+      const last = getHistoryPage.mock.calls[getHistoryPage.mock.calls.length - 1]
+      expect(last[0]).toBe('a2')
+    })
+  })
+
+  it('offers the metrics this asset actually reported', async () => {
+    wrap(<TelemetryCharts />)
+    expect(await screen.findByRole('button', { name: 'temperature' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'vibration' })).toBeInTheDocument()
+  })
+
+  it('unticking one metric leaves the others charted', async () => {
+    // The subtle half: empty means "all", so the first click must start from the full
+    // set and REMOVE one — not leave a single metric selected, which is the opposite of
+    // what clicking a lit chip means.
+    wrap(<TelemetryCharts />)
+    fireEvent.click(await screen.findByRole('button', { name: 'temperature' }))
+    expect(screen.getByRole('button', { name: 'temperature' })).toHaveAttribute(
+      'aria-pressed',
+      'false',
+    )
+    expect(screen.getByRole('button', { name: 'vibration' })).toHaveAttribute(
+      'aria-pressed',
+      'true',
+    )
+  })
+
+  it('clearing the metric filter on an asset switch, so a stale name cannot empty the chart', async () => {
+    // A metric name selected on a press is rarely one an oven reports; carrying it over
+    // would filter every point away and read as a quiet machine.
+    wrap(<TelemetryCharts />)
+    fireEvent.click(await screen.findByRole('button', { name: 'temperature' }))
+    fireEvent.change(screen.getByLabelText('Asset'), { target: { value: 'a2' } })
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: 'temperature' })).toHaveAttribute(
+        'aria-pressed',
+        'true',
+      ),
+    )
   })
 })

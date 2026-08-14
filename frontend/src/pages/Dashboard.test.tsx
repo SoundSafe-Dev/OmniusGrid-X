@@ -1,4 +1,4 @@
-import { render, screen, waitFor, within } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router-dom'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
@@ -34,10 +34,14 @@ vi.mock('@tanstack/react-query', async (orig) => {
   }
 })
 
+const getDashboardSummary = vi.fn()
+const acknowledgeMock = { mutate: vi.fn(), isPending: false }
 vi.mock('../api', () => ({
   dashboardApi: { getOverview: () => getOverview() },
   alarmsApi: { getActive: () => getActive() },
+  oeeApi: { getDashboardSummary: (...a: unknown[]) => getDashboardSummary(...a) },
 }))
+vi.mock('../hooks', () => ({ useAcknowledgeAlarm: () => acknowledgeMock }))
 
 vi.mock('../api/dashboardAnalytics', () => ({
   dashboardAnalyticsApi: {
@@ -150,6 +154,19 @@ const ALARMS = {
 
 function happyPath() {
   getOverview.mockResolvedValue(OVERVIEW)
+  getDashboardSummary.mockResolvedValue({
+    organizationId: 'org-1',
+    timestamp: '2026-08-14T10:00:00Z',
+    aggregate: {
+      avgOee: 68.4,
+      avgAvailability: 88,
+      avgPerformance: 91,
+      avgQuality: 85,
+      assetCount: 10,
+      assetsMeasured: 8,
+      assetsUnavailable: 2,
+    },
+  })
   getActive.mockResolvedValue(ALARMS)
   getAvailabilityTrend.mockResolvedValue(AVAILABILITY)
   getThroughput.mockResolvedValue(THROUGHPUT)
@@ -327,5 +344,73 @@ describe('the trend charts do not freeze at mount', () => {
     expect(byKey('dash-availability').refetchInterval).toBeGreaterThan(
       byKey('active-alarms').refetchInterval,
     )
+  })
+})
+
+/**
+ * A real fleet OEE tile, and acknowledging without leaving the page.
+ *
+ * The survey suggested feeding an OEE tile from `dashboardApi.getFleetOEE(hours)`. That
+ * would have been the FS-399 overstatement a third time: that endpoint reports
+ * availability only and sets `availabilityOnly: true` to say so, which is exactly why the
+ * tile beside this one is carefully named "Availability" (FS-192). The figure comes from
+ * `/oee/dashboard/summary`, which multiplies the three factors — and returns null rather
+ * than zero when nothing was measured, because a fleet-wide 0% OEE is an emergency.
+ */
+describe('the fleet OEE tile', () => {
+  beforeEach(() => {
+    happyPath()
+  })
+
+  it('shows the three-factor average', async () => {
+    renderDashboard()
+    expect(await screen.findByText('Fleet OEE')).toBeInTheDocument()
+    expect(await screen.findByText('68.4%')).toBeInTheDocument()
+  })
+
+  it('shows a dash, never a zero, when nothing was measured', async () => {
+    // The average of an empty set is not zero. A 0% here reads as a stopped factory.
+    getDashboardSummary.mockResolvedValue({
+      organizationId: 'org-1',
+      timestamp: '2026-08-14T10:00:00Z',
+      aggregate: {
+        avgOee: null, avgAvailability: null, avgPerformance: null, avgQuality: null,
+        assetCount: 3, assetsMeasured: 0, assetsUnavailable: 3,
+      },
+    })
+    renderDashboard()
+    await screen.findByText('Fleet OEE')
+    expect(screen.queryByText('0%')).not.toBeInTheDocument()
+  })
+
+  it('shows a dash when the request failed, rather than the last good number', async () => {
+    getDashboardSummary.mockRejectedValue(new Error('500'))
+    renderDashboard()
+    await screen.findByText('Fleet OEE')
+    expect(screen.queryByText('68.4%')).not.toBeInTheDocument()
+  })
+})
+
+describe('acknowledging from the dashboard', () => {
+  beforeEach(() => {
+    happyPath()
+    acknowledgeMock.mutate = vi.fn()
+  })
+
+  it('acknowledges an alarm without navigating away', async () => {
+    renderDashboard()
+    const ack = await screen.findAllByRole('button', { name: /^acknowledge /i })
+    fireEvent.click(ack[0])
+    expect(acknowledgeMock.mutate).toHaveBeenCalled()
+  })
+
+  it('says an acknowledgement that did not happen', async () => {
+    // FS-480: a row that stays exactly as it was is what success looks like for the
+    // moment before the list refetches, so silence on failure reads as success.
+    acknowledgeMock.mutate = vi.fn((_vars: any, opts: any) => opts?.onError?.(new Error('502')))
+    renderDashboard()
+    const ack = await screen.findAllByRole('button', { name: /^acknowledge /i })
+    fireEvent.click(ack[0])
+    expect((await screen.findByRole('alert')).textContent).toMatch(/could not acknowledge/i)
   })
 })
