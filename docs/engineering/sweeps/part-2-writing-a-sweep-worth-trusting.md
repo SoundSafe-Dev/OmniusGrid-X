@@ -1424,6 +1424,36 @@ one of its findings. The habit that catches it:
      came from matching the argument of `setEvidenceError(...)`: the string *is* the
      failure branch, and reporting it as an empty state inverts the finding.
 
+209. **A session handed across a module boundary is still your session, and a file-local
+     tenant check cannot see it.** `operations_assistant.py` took `Depends(get_db)` and
+     named no RLS-backed model anywhere — it passes the session to a helper imported from
+     the correlation router, which reads `intake_items` under FORCE ROW LEVEL SECURITY. So
+     the static guard cleared it and **both operations endpoints answered 404 for the
+     caller's own uploads**. The same blindness one layer down cost more: the async job's
+     `AsyncSessionLocal()` sits in a nested `async def run(report)` whose entire body is a
+     call, so it named nothing either, and **every queued evidence job failed** with an
+     error that reads as "you passed bad ids". A background task is where this always
+     hides — it has no request to take a dependency from, so it builds its own session, and
+     the query is always somewhere else. Both halves of the guard now follow the call.
+
+210. **The same bug can live in two halves of one file, and fixing one half does not fix
+     the other.** This guard learned in FS-431 that prose is not code: it stripped comments
+     before counting `Depends(get_db)`, because a comment explaining that a handler no
+     longer takes the unscoped session had been counted as a handler that does. The
+     `AsyncSessionLocal` half of the same file still read raw source. Reverting a fix left a
+     comment saying why the GUC matters, the word `current_org_id` appeared in the function
+     body, and the guard exempted the very function whose session had no GUC — so the
+     mutation test passed and reported the guard as working. When you fix a detector flaw,
+     grep the file for the other places that make the same assumption.
+
+211. **Recognise the extracted helper, or the false positive teaches someone to add an
+     exemption.** Stripping comments made the inline check honest and immediately flagged
+     `run_erp_sync`, which binds its tenant correctly through `_set_tenant_guc(db, org)` —
+     the extraction any file makes once it does the thing twice. Only the inline spelling
+     was recognised. The natural response to a false positive is an exemption entry, and
+     that is how a guard quietly loses the ability to see the real thing; following the
+     call one hop keeps both the check and the list honest.
+
 ---
 
 ## Open observations, not yet tickets

@@ -21,12 +21,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.auth import get_current_active_user
 from app.api.nlp_correlation import load_intake_content
 from app.core.config import settings
-from app.db.database import AsyncSessionLocal
 # `get_tenant_db`, not `get_db`: `intake_items` is FORCE ROW LEVEL SECURITY (migration
 # 011), so a session with no `app.current_org_id` GUC reads ZERO rows and no error —
 # these handlers would 404 on the caller's own uploads. The explicit user/org filters in
 # `_owned_intake_items` stay as the second layer; RLS is the one a new handler cannot
 # forget, the filter is the one that survives a session opened without the GUC.
+from app.core.tenant import tenant_session
 from app.middleware.tenant_isolation import get_tenant_db
 from app.db.models import IntakeItem, User
 from app.models.correlation_evaluation import (
@@ -1437,9 +1437,22 @@ async def create_intake_evidence_job(
     org_id = str(current_user.organization_id)
 
     async def run(report):
-        # A BackgroundTask outlives the request-scoped session.  Rehydrate the
-        # actor identity only after scoping every DB query explicitly.
-        async with AsyncSessionLocal() as job_db:
+        # A BackgroundTask outlives the request-scoped session, so the session is rebuilt
+        # here — through `tenant_session`, NOT `AsyncSessionLocal`.
+        #
+        # It was `AsyncSessionLocal()`, under a comment saying every DB query was scoped
+        # explicitly. Nothing scoped them: that session carries no `app.current_org_id`,
+        # `intake_items` is FORCE ROW LEVEL SECURITY, so the job's first lookup matched
+        # zero rows and **every asynchronous evidence job failed** with "One or more
+        # intake sources were not found" — while the synchronous preview, on a
+        # `get_tenant_db` session and the same ids, returned 200. The queued path was
+        # therefore 100% broken and its failure was indistinguishable from a caller
+        # passing bad ids.
+        #
+        # `tenant_session` is the same context manager `get_tenant_db` yields from and the
+        # one the bulk and export processors use for exactly this: it re-establishes the
+        # GUC on every transaction, which a long job that commits will need.
+        async with tenant_session(UUID(org_id)) as job_db:
             actor = type("EvidenceJobActor", (), {
                 "id": user_id,
                 "organization_id": org_id,

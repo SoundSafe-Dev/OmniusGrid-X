@@ -21,6 +21,12 @@ on:
       # reports "this branch has no gates". `test_ci_covers_every_branch.py` now compares
       # this list against the branches that actually exist on the remotes.
       - alex
+      # `rag-**`, a PATTERN rather than another name. `rag-async-ingest` appeared on the
+      # backup remote and matched nothing, so htreinen's async-ingestion work was running
+      # zero gates — the third time this list has gone stale by exactly one branch
+      # (`develop`, then `alex`, now this). A name-per-branch allowlist fails silently
+      # every time somebody creates one; a pattern covers the next one too.
+      - 'rag-**'
     # Docs/media-only pushes don't need the gates — skip them so a README or
     # demo-video commit doesn't run (and fail-email) the whole pipeline.
     paths-ignore:

@@ -250,8 +250,55 @@ def _code_only(source: str) -> str:
     return _COMMENT.sub("", _DOCSTRING.sub("", source))
 
 
+#: `from app.api.<module> import <names>` — a router borrowing another router's helper.
+_API_IMPORT = re.compile(r"^from app\.api\.(\w+) import ([^\n(]+|\([^)]*\))", re.M)
+
+
+def _names_rls_model(text: str, models: dict[str, str], rls: set[str]) -> bool:
+    return any(models[cls] in rls and re.search(rf"\b{cls}\b", text) for cls in models)
+
+
+def _reaches_rls(name: str, text: str, models, rls, seen=frozenset()) -> bool:
+    """Does this router query an RLS table — ITSELF, or through a helper it imports from
+    another router?
+
+    THE SECOND HALF WAS THE BLIND SPOT, and it cost two live endpoints (FS-718).
+    `operations_assistant.py` took `Depends(get_db)` and named no model at all: it hands the
+    session to `_execute_evidence_request`, which lives in `correlation_evidence.py` and
+    reads `intake_items` (FORCE RLS). By the file-local rule this router touched nothing, so
+    it was never a candidate — and `POST /operations/answer` and `POST /operations/briefing`
+    answered **404 on the caller's own uploads**, in the exact fail-quiet shape this guard
+    was written for.
+
+    A router that imports another router's helper is presumed to reach whatever that helper
+    reaches. That is deliberately generous: passing an unscoped session across a module
+    boundary is the thing being checked, and the cost of a false positive is one
+    `get_tenant_db`, while the cost of a false negative is silent tenant-wide emptiness.
+
+    One hop, cycle-guarded. Two routers importing from each other resolve rather than recur.
+    """
+    if _names_rls_model(text, models, rls):
+        return True
+    if name in seen:
+        return False
+    for match in _API_IMPORT.finditer(text):
+        module = match.group(1)
+        other = API_DIR / f"{module}.py"
+        if not other.exists() or module in seen:
+            continue
+        imported = re.findall(r"\w+", match.group(2))
+        other_text = _code_only(other.read_text())
+        # Only if the borrowed name is actually CALLED here — an import that is re-exported
+        # or used in a type annotation moves no session.
+        if not any(re.search(rf"\b{n}\s*\(", text) for n in imported):
+            continue
+        if _reaches_rls(module, other_text, models, rls, seen | {name, module}):
+            return True
+    return False
+
+
 def _offenders() -> dict[str, int]:
-    """Routers using get_db that reference a model backed by an RLS table."""
+    """Routers using get_db that reach a model backed by an RLS table."""
     rls = _rls_tables()
     models = _model_to_table()
     found: dict[str, int] = {}
@@ -262,10 +309,7 @@ def _offenders() -> dict[str, int]:
         count = text.count("Depends(get_db)")
         if not count:
             continue
-        touches_rls = any(
-            models[cls] in rls and re.search(rf"\b{cls}\b", text) for cls in models
-        )
-        if touches_rls:
+        if _reaches_rls(path.stem, text, models, rls):
             found[path.name] = count
     return found
 
@@ -350,6 +394,86 @@ INLINE_SESSION_ALLOWED: dict[str, str] = {
 }
 
 
+#: stem -> {function name: its source}. Built once per module; used to follow a call from a
+#: background-task closure into the helper that actually queries.
+_FUNC_SRC: dict[str, dict[str, str]] = {}
+
+
+def _module_functions(stem: str) -> dict[str, str]:
+    if stem in _FUNC_SRC:
+        return _FUNC_SRC[stem]
+    _FUNC_SRC[stem] = {}
+    try:
+        source = (API_DIR / f"{stem}.py").read_text()
+        tree = ast.parse(source)
+    except (OSError, SyntaxError):  # pragma: no cover - unparseable modules fail elsewhere
+        return _FUNC_SRC[stem]
+    _FUNC_SRC[stem] = {
+        node.name: (ast.get_source_segment(source, node) or "")
+        for node in ast.walk(tree)
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+    }
+    return _FUNC_SRC[stem]
+
+
+def _body_reaches_rls(body, stem, models, rls, depth=0, seen=frozenset()) -> bool:
+    """Does this FUNCTION reach an RLS table — itself, or through a helper it calls?
+
+    THE CLOSURE THAT NAMED NOTHING (FS-718). `create_intake_evidence_job` opens its
+    background session inside a nested `async def run(report)` whose whole body is a call to
+    `_execute_evidence_request`. It names no model, so the body-local check cleared it — and
+    the session it built was `AsyncSessionLocal()`, with no GUC, against `intake_items`
+    under FORCE RLS. **Every asynchronous evidence job failed**, reporting an error that
+    reads as "the caller passed ids that do not exist".
+
+    A background task is exactly where this hides: it has no request to take a dependency
+    from, so it builds its own session, and the query is always somewhere else.
+    """
+    if _names_rls_model(body, models, rls):
+        return True
+    if depth > 2:
+        return False
+    calls = set(re.findall(r"\b(\w+)\s*\(", body))
+    local = _module_functions(stem)
+    for name in calls & set(local):
+        if (stem, name) in seen:
+            continue
+        if _body_reaches_rls(local[name], stem, models, rls, depth + 1, seen | {(stem, name)}):
+            return True
+    module_source = _code_only((API_DIR / f"{stem}.py").read_text())
+    for match in _API_IMPORT.finditer(module_source):
+        other = match.group(1)
+        for name in set(re.findall(r"\w+", match.group(2))) & calls:
+            fns = _module_functions(other)
+            if name in fns and (other, name) not in seen:
+                if _body_reaches_rls(
+                    fns[name], other, models, rls, depth + 1, seen | {(other, name)}
+                ):
+                    return True
+    return False
+
+
+def _binds_tenant(body: str, stem: str) -> bool:
+    """Does this function bind a tenant — itself, or through a helper it calls?
+
+    Setting the GUC by hand is a legitimate alternative to `get_tenant_db`; the ingestion
+    worker and the audit writers do it. `erp_integrations.run_erp_sync` does it too, but
+    through `_set_tenant_guc(db, organization_id)` — the same extraction any file makes once
+    it does this twice — so the literal `current_org_id` lives in the helper, not the caller.
+
+    Recognising only the inline spelling would have reported that function as unscoped when
+    it is scoped, and the natural way to silence a false positive is to add an exemption,
+    which is how a guard loses the ability to see the real thing.
+    """
+    if "current_org_id" in body or "tenant_session(" in body:
+        return True
+    local = _module_functions(stem)
+    for name in set(re.findall(r"\b(\w+)\s*\(", body)) & set(local):
+        if "current_org_id" in _code_only(local[name]):
+            return True
+    return False
+
+
 def _inline_session_offenders() -> dict[str, list[str]]:
     """file -> handlers that open AsyncSessionLocal, touch an RLS model, bind no tenant."""
     rls = _rls_tables()
@@ -368,14 +492,20 @@ def _inline_session_offenders() -> dict[str, list[str]]:
         for node in ast.walk(tree):
             if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 continue
-            body = ast.get_source_segment(source, node) or ""
+            # `_code_only`, NOT the raw segment. THIS IS FS-431 A SECOND TIME, in the
+            # other half of the same file: the `Depends(get_db)` sweep above learned that a
+            # comment explaining the pattern reads as the pattern, and this half was never
+            # given the same treatment. It cost a real mutation test — reverting the
+            # FS-718 job fix left behind a comment saying why the GUC matters, the word
+            # `current_org_id` appeared in the body, and the guard exempted the very
+            # function whose session had no GUC at all. A guard a comment can satisfy is a
+            # guard whose result depends on prose.
+            body = _code_only(ast.get_source_segment(source, node) or "")
             if "AsyncSessionLocal(" not in body:
                 continue
-            # Setting the GUC by hand is a legitimate alternative to get_tenant_db —
-            # the ingestion worker and the audit writers do exactly that.
-            if "current_org_id" in body:
+            if _binds_tenant(body, path.stem):
                 continue
-            if any(models[cls] in rls and re.search(rf"\b{cls}\b", body) for cls in models):
+            if _body_reaches_rls(body, path.stem, models, rls):
                 found.setdefault(path.name, []).append(node.name)
     return found
 

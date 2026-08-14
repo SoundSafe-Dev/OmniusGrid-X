@@ -16,7 +16,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import get_current_active_user
 from app.api.correlation_evidence import EvidencePreviewRequest, _execute_evidence_request
-from app.db.database import get_db
+# `get_tenant_db`, not `get_db`. Both handlers below hand their session to
+# `_execute_evidence_request`, which reads `intake_items` — FORCE ROW LEVEL SECURITY since
+# migration 011 — so an unscoped session matched ZERO rows and both routes answered
+# "One or more intake sources were not found" for the caller's own uploads. The static
+# tenant guard could not see it: it flags a router that names an RLS-backed model, and this
+# one names none, because the query happens one import away.
+from app.core.tenant import get_tenant_db
 from app.db.models import User
 from app.services.correlation_jobs import correlation_jobs
 from app.services.operations_question_service import (
@@ -262,7 +268,7 @@ async def operations_question_types(
 @router.post("/answer", response_model=OperationsAnswerResponse)
 async def answer_operations_lead_question(
     request: OperationsQuestionRequest,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_tenant_db),
     current_user: User = Depends(get_current_active_user),
 ):
     """Build evidence first, then answer an Operations Lead's question."""
@@ -273,7 +279,7 @@ async def answer_operations_lead_question(
 @router.post("/briefing", response_model=OperationsBriefingResponse)
 async def create_operations_briefing(
     request: EvidencePreviewRequest,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_tenant_db),
     current_user: User = Depends(get_current_active_user),
 ):
     """Return a consistent overview plus a proposed next-shift checklist."""

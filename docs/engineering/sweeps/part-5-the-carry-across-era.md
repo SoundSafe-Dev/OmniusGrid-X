@@ -3086,3 +3086,59 @@ Both narrowings are safe for the same reason: a component with no fetch of its o
 failure of its own, and text passed to an error setter is displayed only on failure. Neither
 can hide a page that renders its own failure as emptiness — which the same run found three
 times in that very file, where a `catch` set an error and left the previous answer on screen.
+
+## Rule 209 — a session handed across a module boundary is still your session
+
+`operations_assistant.py` took `Depends(get_db)` and named no RLS-backed model anywhere in
+the file. It passes the session to `_execute_evidence_request`, imported from the
+correlation router, which reads `intake_items` — FORCE ROW LEVEL SECURITY since migration
+011. The static guard asks whether a router *names* a model whose table is under RLS, so
+this one was never a candidate, and `POST /operations/answer` and `POST /operations/briefing`
+answered **404 "One or more intake sources were not found"** for the caller's own uploads.
+
+One layer down it cost more. The asynchronous job rebuilds its session in a nested
+`async def run(report)` whose entire body is a call, under a comment claiming every query
+was scoped explicitly. It was `AsyncSessionLocal()`, which sets no GUC, so **every queued
+evidence job failed** — with an error a caller reads as "I passed ids that do not exist",
+while the synchronous preview returned 200 for the same ids on a `get_tenant_db` session.
+
+A background task is where this always hides. It has no request to take a dependency from,
+so it builds its own session, and the query it feeds is always somewhere else. Both halves
+of the guard now follow the call — one hop into a same-module helper, one across a
+`from app.api.… import`.
+
+Note what found it. Not the guard, and not a unit test: the services under these routes have
+900 lines of direct coverage and every one of those tests calls the service, not the route.
+It was found by driving the pipeline over HTTP the way a user drives it — upload, catalog,
+correlate, ask — which nothing had ever done.
+
+## Rule 210 — the same bug can live in two halves of one file
+
+This guard learned in FS-431 that prose is not code. A comment explaining that a handler no
+longer takes the unscoped session was being counted as a handler that does, so the
+`Depends(get_db)` sweep started stripping comments and docstrings first.
+
+The `AsyncSessionLocal` half of the same file still read raw source.
+
+The cost was a mutation test that lied. Reverting the FS-718 job fix left behind a comment
+saying why the GUC matters; the words `current_org_id` appeared in the function body; the
+guard exempted the very function whose session had no GUC; and the mutation passed, which
+reads as "the guard is fine". Only reverting the comment *as well* exposed it.
+
+When you fix a detector flaw, grep the file for every other place that makes the same
+assumption. One fix in one half is not the same as the file having learned.
+
+## Rule 211 — recognise the extracted helper, or the false positive writes an exemption
+
+Stripping comments made the inline check honest, and it immediately flagged
+`erp_integrations.run_erp_sync` — which binds its tenant correctly, through
+`_set_tenant_guc(db, organization_id)`. The check knew only the inline `set_config`
+spelling, so the literal it looks for lived in the helper rather than the caller.
+
+That function's own comment records this defect class in detail, having been fixed for it
+once already. Reporting it as unscoped would have been the guard calling its best-documented
+success a failure.
+
+The natural response to a false positive is an exemption entry, and an exemption is
+permanent in a way the false positive is not: the next real offender in that file is now
+invisible. Following the call one hop keeps both the check and the list honest.

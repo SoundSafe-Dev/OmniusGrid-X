@@ -11200,3 +11200,63 @@ and `actions/decide` flagged as approver-shaped surfaces any member can currentl
 `document_store.get_document` came *off* the orphan list: the new artifact store calls it.
 
 Backend 4,738 passing, frontend 1,192, edge 427, `tsc` clean.
+
+## FS-719 — reviewing FS-718 found the two worst defects in the merge
+
+FS-718 declared response models on twenty routes and drove eight of them. Reviewing that
+work asked the obvious question about the other twelve — and the answer was that **no test
+had ever sent an HTTP request to any of these routes**. The services beneath them carry
+about 900 lines of direct coverage; every one of those tests calls the service. Everything
+that exists only at the route boundary — the session dependency, the response model, the
+background task — was unexercised.
+
+Driving the pipeline the way a user drives it (upload two sheets, catalog, preview,
+correlate, ask a question) found three defects in ten minutes, two of them severe:
+
+**Both operations-assistant routes answered 404 for the caller's own uploads.**
+`POST /operations/answer` and `POST /operations/briefing` took `Depends(get_db)`. Their
+session goes to `_execute_evidence_request`, which reads `intake_items` under FORCE ROW
+LEVEL SECURITY, so it matched zero rows and the routes reported "One or more intake sources
+were not found" — while `/intake/preview` returned 200 for the same ids on a tenant-bound
+session. The entire operations-assistant surface was unreachable.
+
+**Every asynchronous evidence job failed.** The job rebuilds its session in a background
+task as `AsyncSessionLocal()`, under a comment stating that every DB query was scoped
+explicitly. Nothing scoped them. The first lookup matched nothing and the job ended
+`failed`, with an error indistinguishable from a caller passing bad ids. It now uses
+`tenant_session`, the same context manager `get_tenant_db` yields from and the one the bulk
+and export processors already use. The job now completes and carries a result.
+
+**A response model annotated from the field's name.** `GET /capabilities` declared
+`approval: Dict[str, Any]`; it is a sentence. Caught by the GET smoke, which is why the new
+serialisation smoke exists for the POST half — and it caught the second instance, where
+three evaluation fields were typed as dicts and are Pydantic models.
+
+**Why the static guard missed both tenant defects, and what it does now.** It asks whether a
+router *names* a model whose table is under RLS. `operations_assistant.py` names none — the
+query is one import away. The job's `AsyncSessionLocal()` sits in a nested closure whose
+whole body is a call, so it names none either. Both halves now follow the call: one hop into
+a same-module helper, one across a `from app.api.… import`.
+
+Widening it surfaced two further problems in the guard itself. The `AsyncSessionLocal` half
+still read RAW SOURCE, so a comment mentioning `current_org_id` exempted a function — FS-431
+repeating in the other half of the same file, and it made a mutation test pass while
+reporting a broken guard as working. And once comments were stripped, the check flagged
+`run_erp_sync`, which binds its tenant correctly through an extracted `_set_tenant_guc`
+helper; recognising only the inline spelling would have turned that file's best-documented
+fix into a false positive, and false positives are what write permanent exemptions.
+
+All seven other inline sessions in `app/api/` were checked by hand and every one binds its
+tenant. The correlation job was the only offender, so this check is ABSOLUTE — no register.
+
+`test_evidence_pipeline_over_http.py` pins all of it: catalog returns the caller's own
+sources, a preview proposes a join for sheets that share a key, both operations routes
+answer, a queued job reaches `completed` with a result, and another organisation gets 404
+for that job. Each of the three fixes was mutation-verified by reverting it.
+
+Rules 209-211. Backend 4,772 passing, frontend 1,192, edge 427.
+
+One unrelated find on the same run: `rag-async-ingest` appeared on the backup
+remote and matched no push trigger, so htreinen's async-ingestion work was running
+ZERO gates. Covered by a `rag-**` pattern rather than a fourth branch name — the
+list has now gone stale by exactly one branch three times (`develop`, `alex`, this).
