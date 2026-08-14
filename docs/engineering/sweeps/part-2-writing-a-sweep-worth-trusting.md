@@ -1330,6 +1330,17 @@ one of its findings. The habit that catches it:
 
 ## Open observations, not yet tickets
 
+**The health monitor's auto-restart and `restart_collector` can race on a crashed task.**
+The monitor restarts any done-and-not-cancelled task whose config is enabled
+(`coordinator.py`, the FS-698 block), calling `_start_collector` directly; `restart_collector`
+serialises itself through `_restart_locks`, which the monitor never takes. A collector that
+crashes moments before an operator triggers an API restart can get two `_start_collector`
+calls: the second overwrites the first's dict entries and the first's task runs orphaned —
+two collectors polling one device. Needs the monitor to honour `_restart_locks` (skip a
+collector whose lock is held), which touches restart semantics and deserves its own change
+rather than a rider on FS-698. The cancel-window half of this race no longer exists —
+cancelled tasks are skipped, not restarted.
+
 **The password-reveal toggle on the login page has no accessible name.** It is an
 icon-only `<button>` whose meaning lives in a Radix tooltip, which is exposed as a
 *description*, not a name — a screen-reader user hears "button". Found while writing
