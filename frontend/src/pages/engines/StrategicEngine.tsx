@@ -1,19 +1,36 @@
 import { FC } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Lightbulb, CheckCircle, XCircle, Clock, Zap, TrendingUp } from 'lucide-react';
-import { Card, Badge, Button, SkeletonCard } from '../../components';
+import { Card, Badge, Button, SkeletonCard, EngineStoppedBanner } from '../../components';
 import { enginesApi, twinOptimizerApi, defaultOptimizeRequest } from '../../api';
 import type { OptimizeRecommendation } from '../../api/twinOptimizer';
 import { StrategicRecommendation } from '../../types';
 import { formatDateTime, formatPercentage } from '../../utils';
 import { Tooltip, TooltipTrigger, TooltipContent } from '../../components/ui';
+import { useAuthStore } from '../../stores/authStore';
 
 export const StrategicEngine: FC = () => {
   const queryClient = useQueryClient();
+  // The authed user, not the literal 'current-user' (P4): the engine records
+  // decided_by verbatim, and a history where every decision was made by a
+  // string constant is an audit trail of nobody.
+  const operatorId = useAuthStore((s) => s.user?.id ?? s.user?.email ?? 'unknown-operator');
 
   const { data: recommendations, isLoading, isError } = useQuery({
     queryKey: ['strategic-recommendations'],
     queryFn: () => enginesApi.getStrategicRecommendations(),
+    refetchInterval: 30000,
+  });
+
+  // Decision history from the route FS-567 added (P4 wired this client). Carries two
+  // header signals: the strategic loop's liveness, and truncation — a decision log cut
+  // at `limit` must not read as "these are all the calls anyone made".
+  const {
+    data: history,
+    isError: historyError,
+  } = useQuery({
+    queryKey: ['strategic-history'],
+    queryFn: () => enginesApi.getRecommendationHistory(),
     refetchInterval: 30000,
   });
 
@@ -52,7 +69,12 @@ export const StrategicEngine: FC = () => {
   // otherwise the Approve/Reject cards would never render. History keeps only
   // recs that carry an explicit resolved status.
   const pendingRecs = recommendations?.filter((r) => !r.status || r.status === 'pending') || [];
-  const historyRecs = recommendations?.filter((r) => r.status && r.status !== 'pending') || [];
+  // The dedicated history endpoint supersedes deriving history from the pending list —
+  // which was empty BY CONSTRUCTION (the list route serves pending only). Kept as a
+  // fallback so a server without the history route still shows what it can.
+  const historyRecs =
+    history?.items ??
+    (recommendations?.filter((r) => r.status && r.status !== 'pending') || []);
 
   // WHETHER DECISION HISTORY IS OBTAINABLE AT ALL (FS-366).
   //
@@ -71,10 +93,15 @@ export const StrategicEngine: FC = () => {
   //
   // DERIVED FROM THE PAYLOAD, not hardcoded — so on the day a route starts sending
   // `status`, the counters and the list populate with no further change to this file.
-  const decisionHistoryAvailable = (recommendations ?? []).some((r) => r.status !== undefined);
+  // `history === null` is a server that predates the route — availability then falls
+  // back to the payload-derived check the page used before the route existed.
+  const decisionHistoryAvailable =
+    (history != null && !historyError) ||
+    (recommendations ?? []).some((r) => r.status !== undefined);
 
   return (
     <div className="space-y-6">
+      <EngineStoppedBanner running={history?.engineStopped ? false : undefined} />
       {isError && (
         <Card className="p-4">
           <p className="text-status-alarm text-sm">
@@ -116,7 +143,7 @@ export const StrategicEngine: FC = () => {
                 <CheckCircle className="w-8 h-8 text-status-running" />
                 <div>
                   <p className="text-2xl font-bold">
-                    {isError || !decisionHistoryAvailable
+                    {(isError && historyError) || !decisionHistoryAvailable
                       ? '—'
                       : historyRecs.filter((r) => r.status === 'approved').length}
                   </p>
@@ -134,7 +161,7 @@ export const StrategicEngine: FC = () => {
                 <XCircle className="w-8 h-8 text-status-alarm" />
                 <div>
                   <p className="text-2xl font-bold">
-                    {isError || !decisionHistoryAvailable
+                    {(isError && historyError) || !decisionHistoryAvailable
                       ? '—'
                       : historyRecs.filter((r) => r.status === 'rejected').length}
                   </p>
@@ -219,8 +246,19 @@ export const StrategicEngine: FC = () => {
               <RecommendationCard
                 key={rec.recommendationId}
                 rec={rec}
-                onApprove={() => approveMutation.mutate({ recId: rec.recommendationId, operatorId: 'current-user' })}
-                onReject={() => rejectMutation.mutate({ recId: rec.recommendationId, operatorId: 'current-user', reason: 'User rejected' })}
+                onApprove={() => approveMutation.mutate({ recId: rec.recommendationId, operatorId })}
+                onReject={() => {
+                  // A hardcoded 'User rejected' made every rejection reason identical —
+                  // and a rejection is a decision NOT to act, whose why is the only
+                  // content it has. Cancel aborts rather than submitting an empty why.
+                  const reason = window.prompt('Why is this recommendation being rejected?');
+                  if (reason === null) return;
+                  rejectMutation.mutate({
+                    recId: rec.recommendationId,
+                    operatorId,
+                    reason: reason.trim() || 'No reason given',
+                  });
+                }}
               />
             ))
           )}
@@ -235,26 +273,31 @@ export const StrategicEngine: FC = () => {
               `decisionHistoryAvailable` is false and the API-contract message below would
               render — blaming the endpoint's shape for what was actually a request that
               did not complete. Both statements are only true once the query succeeded. */}
-          {isError && (
+          {historyError && (
             <p className="py-3 text-sm text-opsgrid-text-secondary">
-              History could not be loaded — the recommendations request failed.
+              History could not be loaded — the history request failed.
             </p>
           )}
-          {!isError && !decisionHistoryAvailable && (
+          {!historyError && !decisionHistoryAvailable && (
             // An untitled empty div under a card headed "History" reads as "nothing has
             // happened yet". What is true is that this view cannot see what happened:
             // the endpoint returns pending recommendations only and omits the decision
             // fields, so approvals made here are real but invisible to this pane.
             <p className="py-3 text-sm text-opsgrid-text-secondary">
-              Decision history is not available from the API — the recommendations
-              endpoint returns pending items only and omits approval status. Approvals and
-              rejections you make here are recorded by the engine, but cannot be listed
-              until an endpoint exposes them.
+              Decision history is not available from the API — this server predates the
+              history endpoint. Approvals and rejections you make here are recorded by
+              the engine, but cannot be listed until the backend is updated.
             </p>
           )}
-          {!isError && decisionHistoryAvailable && historyRecs.length === 0 && (
+          {!historyError && decisionHistoryAvailable && historyRecs.length === 0 && (
             <p className="py-3 text-sm text-opsgrid-text-secondary">
               No recommendations have been approved or rejected yet.
+            </p>
+          )}
+          {history?.truncated && (
+            <p className="py-2 text-xs text-amber-300">
+              Showing the most recent decisions only — the full history is longer than
+              this page.
             </p>
           )}
           {historyRecs.slice(0, 10).map((rec) => (

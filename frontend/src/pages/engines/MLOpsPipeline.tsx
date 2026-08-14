@@ -1,7 +1,7 @@
 import { FC, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Cpu, RotateCcw, Download, CheckCircle } from 'lucide-react';
-import { Card, Badge, Button, Select, SkeletonCard } from '../../components';
+import { Card, Badge, Button, Select, SkeletonCard, EngineStoppedBanner } from '../../components';
 import { enginesApi } from '../../api';
 import { Tooltip, TooltipTrigger, TooltipContent } from '../../components/ui';
 
@@ -43,6 +43,7 @@ export const MLOpsPipeline: FC = () => {
 
   return (
     <div className="space-y-6">
+      <EngineStoppedBanner running={status?.running} note={status?.note} />
       {isError && (
         <Card className="p-4">
           <p className="text-status-alarm text-sm">

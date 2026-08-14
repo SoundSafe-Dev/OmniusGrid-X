@@ -11,7 +11,7 @@
  * for: **a failed read must not render as an empty one**, because "no collectors" and "we
  * could not ask" send an operator to different places.
  */
-import { render, screen, waitFor } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { MemoryRouter } from 'react-router-dom'
 import { TooltipProvider } from '../../components/ui'
@@ -67,6 +67,48 @@ describe('SystemHealthPage', () => {
     await waitFor(() =>
       expect(get).toHaveBeenCalledWith(expect.stringContaining('/health/detailed')),
     )
+  })
+
+  /** P2 (page-enhancement review): `details` and `checked_at` were fetched and
+   * DISCARDED — the endpoint has carried per-component payloads since the FS-693 arc
+   * gave every background service a check, and the page typed them away. */
+  it('expands a tile into the details the endpoint sends', async () => {
+    const healthPayload = {
+      status: 'ready',
+      checked_at: '2026-08-13T12:00:00Z',
+      checks: { command_dispatch: 'ok' },
+      details: { command_dispatch: { running: true, consecutive_failures: 0 } },
+    }
+    get.mockImplementation(async (url: string) =>
+      url.includes('/health/detailed') ? { data: healthPayload } : { data: {} },
+    )
+    show(<SystemHealthPage />)
+
+    fireEvent.click(await screen.findByRole('button', { name: /command dispatch health/i }))
+
+    expect(await screen.findByText(/consecutive failures/i)).toBeInTheDocument()
+    expect(screen.getByText(/overall: ready/i)).toBeInTheDocument()
+  })
+
+  it('does not paint a disabled subsystem as an error', async () => {
+    // "disabled" is a deployment posture, not a fault. The old two-state badge rendered
+    // an instance with exports switched off as red — and red that is always wrong is red
+    // an admin learns to ignore, which un-alarms the genuinely broken tile beside it.
+    const healthPayload = {
+      status: 'ready',
+      checked_at: '2026-08-13T12:00:00Z',
+      checks: { export_scheduler: 'disabled', database: 'error: down' },
+      details: {},
+    }
+    get.mockImplementation(async (url: string) =>
+      url.includes('/health/detailed') ? { data: healthPayload } : { data: {} },
+    )
+    show(<SystemHealthPage />)
+
+    const disabledBadge = await screen.findByText('disabled')
+    const errorBadge = screen.getByText('error: down')
+    expect(disabledBadge.className).not.toMatch(/alarm|error|red/i)
+    expect(errorBadge.className).toMatch(/alarm|error|red/i)
   })
 })
 

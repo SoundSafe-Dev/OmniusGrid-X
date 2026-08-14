@@ -25,11 +25,12 @@
  * Both blind spots are closed in `failureIsNotEmptiness.test.ts`, each with a control
  * that fails against this file as it was.
  */
-import { render, screen, waitFor } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const getStrategicRecommendations = vi.fn()
+const getRecommendationHistory = vi.fn()
 const approveRecommendation = vi.fn()
 const rejectRecommendation = vi.fn()
 const optimize = vi.fn()
@@ -37,11 +38,17 @@ const optimize = vi.fn()
 vi.mock('../../api', () => ({
   enginesApi: {
     getStrategicRecommendations: (...a: unknown[]) => getStrategicRecommendations(...a),
+    getRecommendationHistory: (...a: unknown[]) => getRecommendationHistory(...a),
     approveRecommendation: (...a: unknown[]) => approveRecommendation(...a),
     rejectRecommendation: (...a: unknown[]) => rejectRecommendation(...a),
   },
   twinOptimizerApi: { optimize: (...a: unknown[]) => optimize(...a) },
   defaultOptimizeRequest: () => ({ objective: 'throughput', candidates: [] }),
+}))
+
+vi.mock('../../stores/authStore', () => ({
+  useAuthStore: (selector: any) =>
+    selector({ user: { id: 'user-42', email: 'op@example.com' } }),
 }))
 
 import { TooltipProvider } from '../../components/ui'
@@ -94,6 +101,10 @@ const wrap = () => {
 beforeEach(() => {
   vi.clearAllMocks()
   getStrategicRecommendations.mockResolvedValue([rec()])
+  // Default: a server that predates the history route. The tests describing the
+  // pre-route world (the "cannot see decisions" pair) rely on this; the post-route
+  // tests override it.
+  getRecommendationHistory.mockResolvedValue(null)
   approveRecommendation.mockResolvedValue(undefined)
   rejectRecommendation.mockResolvedValue(undefined)
   optimize.mockResolvedValue({
@@ -278,11 +289,12 @@ describe('StrategicEngine — decision history it cannot see', () => {
   })
 
   it('does not blame the API contract when the request simply failed', async () => {
-    // THE HOLE `failureIsNotEmptiness` CAUGHT in the first draft of this fix. On a failed
-    // query `recommendations` is undefined, so `decisionHistoryAvailable` is false and the
-    // "not available from the API" message rendered — attributing a request that never
-    // completed to the endpoint's shape. Two different failures, one explanation.
-    getStrategicRecommendations.mockRejectedValue(new Error('network down'))
+    // THE HOLE `failureIsNotEmptiness` CAUGHT in the first draft of the original fix,
+    // restated for the history route (P4): a history REQUEST that fails and a server
+    // that LACKS the route are different statements. The client maps a 404 to null
+    // (absent) and rethrows everything else, so only a genuine failure lands here —
+    // and it must not read as "the API cannot do this".
+    getRecommendationHistory.mockRejectedValue(new Error('network down'))
     wrap()
     expect(await screen.findByText(/History could not be loaded/i)).toBeInTheDocument()
     expect(
@@ -291,6 +303,63 @@ describe('StrategicEngine — decision history it cannot see', () => {
     expect(
       screen.queryByText(/No recommendations have been approved or rejected yet/i),
     ).not.toBeInTheDocument()
+  })
+
+  it('counts the tiles from the history endpoint when it exists', async () => {
+    // The day FS-567's route landed, this page had to light up — that was the promise
+    // the "—" convention made. The history endpoint is now the source of the counts.
+    getRecommendationHistory.mockResolvedValue({
+      items: [
+        rec({ recommendationId: 'h1', status: 'approved' }),
+        rec({ recommendationId: 'h2', status: 'approved' }),
+        rec({ recommendationId: 'h3', status: 'rejected' }),
+      ],
+      engineStopped: false,
+      truncated: false,
+    })
+    wrap()
+    await waitFor(() => expect(tileValue('Approved')).toBe('2'))
+    expect(tileValue('Rejected')).toBe('1')
+  })
+
+  it('warns when the strategic loop behind the data is not running', async () => {
+    // The X-Engine-Not-Running header, finally read (P4): the engine pages could render
+    // confident status for a dead loop, because the signal rode a header no frontend
+    // code looked at.
+    getRecommendationHistory.mockResolvedValue({ items: [], engineStopped: true, truncated: false })
+    wrap()
+    expect(await screen.findByText(/engine loop not running/i)).toBeInTheDocument()
+  })
+
+  it('says when the decision log is cut rather than complete', async () => {
+    getRecommendationHistory.mockResolvedValue({
+      items: [rec({ recommendationId: 'h1', status: 'approved' })],
+      engineStopped: false,
+      truncated: true,
+    })
+    wrap()
+    expect(await screen.findByText(/most recent decisions only/i)).toBeInTheDocument()
+  })
+
+  it('sends the real operator and a real reason on rejection', async () => {
+    // 'current-user' and 'User rejected' were string constants — an audit trail of
+    // nobody, for no stated reason. The prompt's Cancel aborts instead of submitting.
+    const promptSpy = vi.spyOn(window, 'prompt').mockReturnValue('Cost model is stale')
+    wrap()
+    const reject = await screen.findByRole('button', { name: /reject/i })
+    fireEvent.click(reject)
+    await waitFor(() =>
+      expect(rejectRecommendation).toHaveBeenCalledWith('rec-1', 'user-42', 'Cost model is stale'),
+    )
+    promptSpy.mockRestore()
+  })
+
+  it('cancelling the rejection prompt rejects nothing', async () => {
+    const promptSpy = vi.spyOn(window, 'prompt').mockReturnValue(null)
+    wrap()
+    fireEvent.click(await screen.findByRole('button', { name: /reject/i }))
+    expect(rejectRecommendation).not.toHaveBeenCalled()
+    promptSpy.mockRestore()
   })
 
   it('distinguishes "nothing decided yet" from "cannot see decisions"', async () => {

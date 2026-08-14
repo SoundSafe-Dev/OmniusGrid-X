@@ -4,6 +4,7 @@ import { Activity, HardDrive } from 'lucide-react';
 import { Badge, Button, Card, Input, Select, SkeletonCard } from '../../components';
 import { Tooltip, TooltipContent, TooltipTrigger } from '../../components/ui';
 import { api } from '../../api';
+import { formatDateTime } from '../../utils/formatters';
 
 interface EdgeAgent {
   agent_id: string;
@@ -81,14 +82,25 @@ export const CollectorsPage: FC = () => {
 };
 
 export const SystemHealthPage: FC = () => {
+  // P2 (page-enhancement review): `details` and `checked_at` were FETCHED AND DISCARDED —
+  // the endpoint has carried per-component payloads (consecutive-failure counts, running
+  // flags, error strings) since the FS-693 arc gave every background service a check, and
+  // this page typed them away. The tiles now expand into their details, and the header
+  // says when the report was taken and what the overall verdict is.
   const { data: health } = useQuery({
     queryKey: ['health-detailed'],
     queryFn: async () => {
-      const res = await api.get<{ status: string; checks: Record<string, string> }>('/health/detailed');
+      const res = await api.get<{
+        status: string;
+        checks: Record<string, string>;
+        details?: Record<string, Record<string, unknown>>;
+        checked_at?: string;
+      }>('/health/detailed');
       return res.data;
     },
     refetchInterval: 15000,
   });
+  const [expanded, setExpanded] = useState<string | null>(null);
   const { data: sys } = useQuery({
     queryKey: ['health-system'],
     queryFn: async () => {
@@ -99,29 +111,76 @@ export const SystemHealthPage: FC = () => {
   });
 
   const checks = health?.checks ?? {};
+  const details = health?.details ?? {};
   const healthy = (s: string) => s === 'healthy' || s === 'ok' || s === 'up' || s === 'ready';
+  // "disabled" and "skipped" are deployment postures, not faults — the old two-state
+  // badge painted an instance with exports switched off as a red error, which teaches
+  // admins to ignore red. Neutral gets its own colour.
+  const neutral = (s: string) => s === 'disabled' || s === 'skipped' || s === 'not_running';
+  const badgeVariant = (s: string) => (healthy(s) ? 'success' : neutral(s) ? 'default' : 'error');
   const label = (k: string) => k.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
   const pct = (v: number | null | undefined) => (v == null ? '—' : `${Math.round(v)}%`);
+  const detailValue = (v: unknown) =>
+    typeof v === 'object' && v !== null ? JSON.stringify(v) : String(v);
+
+  const overall = health?.status;
+  const anyBroken = Object.values(checks).some((s) => !healthy(s) && !neutral(s));
 
   return (
     <div className="space-y-6">
+      {/* The overall verdict and its timestamp, so a degraded report is visible without
+          scanning fifteen tiles — and a stale report is visibly stale. */}
+      {overall && (
+        <div
+          className={`rounded border px-3 py-2 text-sm flex items-center justify-between ${
+            anyBroken || (overall !== 'ready' && overall !== 'ok' && overall !== 'healthy')
+              ? 'border-status-alarm/40 bg-status-alarm/10 text-status-alarm'
+              : 'border-status-running/40 bg-status-running/10 text-status-running'
+          }`}
+        >
+          <span className="font-medium">Overall: {overall}</span>
+          {health?.checked_at && (
+            <span className="text-opsgrid-text-secondary">
+              checked {formatDateTime(health.checked_at)}
+            </span>
+          )}
+        </div>
+      )}
+
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        {Object.entries(checks).map(([name, status]) => (
-          <Tooltip key={name}>
-            <TooltipTrigger asChild>
-              <Card className="p-4">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-3">
-                    <Activity className="w-5 h-5 text-opsgrid-primary" />
-                    <span className="font-medium">{label(name)}</span>
-                  </div>
-                  <Badge variant={healthy(status) ? 'success' : 'error'} size="sm">{status}</Badge>
+        {Object.entries(checks).map(([name, status]) => {
+          const componentDetails = details[name] ?? {};
+          const hasDetails = Object.keys(componentDetails).length > 0;
+          const isOpen = expanded === name;
+          return (
+            <Card key={name} className="p-4">
+              <button
+                onClick={() => hasDetails && setExpanded(isOpen ? null : name)}
+                className={`w-full flex items-center justify-between text-left ${
+                  hasDetails ? '' : 'cursor-default'
+                }`}
+                aria-expanded={isOpen}
+                aria-label={`${label(name)} health`}
+              >
+                <div className="flex items-center gap-3">
+                  <Activity className="w-5 h-5 text-opsgrid-primary" />
+                  <span className="font-medium">{label(name)}</span>
                 </div>
-              </Card>
-            </TooltipTrigger>
-            <TooltipContent>{label(name)} status: {status}</TooltipContent>
-          </Tooltip>
-        ))}
+                <Badge variant={badgeVariant(status)} size="sm">{status}</Badge>
+              </button>
+              {isOpen && (
+                <dl className="mt-3 pt-3 border-t border-opsgrid-border space-y-1">
+                  {Object.entries(componentDetails).map(([key, value]) => (
+                    <div key={key} className="flex justify-between gap-2 text-sm">
+                      <dt className="text-opsgrid-text-secondary">{label(key)}</dt>
+                      <dd className="font-mono text-right break-all">{detailValue(value)}</dd>
+                    </div>
+                  ))}
+                </dl>
+              )}
+            </Card>
+          );
+        })}
         {Object.keys(checks).length === 0 && (
           <p className="text-sm text-opsgrid-text-secondary">Loading component health…</p>
         )}

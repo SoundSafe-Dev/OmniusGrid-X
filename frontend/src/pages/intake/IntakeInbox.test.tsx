@@ -26,12 +26,14 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 const listIntakeItems = vi.fn()
 const analyzeIntake = vi.fn()
 const uploadToIntake = vi.fn()
+const getIntakeItem = vi.fn()
 
 vi.mock('../../api/nlpCorrelation', () => ({
   nlpCorrelationApi: {
     listIntakeItems: (...a: unknown[]) => listIntakeItems(...a),
     analyzeIntake: (...a: unknown[]) => analyzeIntake(...a),
     uploadToIntake: (...a: unknown[]) => uploadToIntake(...a),
+    getIntakeItem: (...a: unknown[]) => getIntakeItem(...a),
   },
 }))
 
@@ -75,6 +77,7 @@ beforeEach(() => {
   listIntakeItems.mockReset()
   analyzeIntake.mockReset()
   uploadToIntake.mockReset()
+  getIntakeItem.mockReset()
   listIntakeItems.mockResolvedValue({ items: [item()], total: 1 })
 })
 
@@ -168,5 +171,77 @@ describe('an empty inbox is not a failed one', () => {
       expect(screen.getByText(/No items in the inbox/i)).toBeInTheDocument(),
     )
     expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+  })
+})
+
+
+/**
+ * The two dead controls (P3, page-enhancement review). The status dropdown wrote state
+ * an already-fired request had captured — it APPEARED to filter and did nothing. And
+ * "View Results" had no onClick, while the list endpoint never sends `analysis_result`,
+ * so for anything analysed before the last reload the dead button was the only path to
+ * results only `GET /intake/{id}` carries.
+ */
+describe('the status filter actually filters', () => {
+  it('re-requests with the selected status', async () => {
+    show()
+    await screen.findByText('Q3 maintenance report')
+
+    fireEvent.change(screen.getByDisplayValue('All Status'), { target: { value: 'analyzed' } })
+
+    await waitFor(() => {
+      const lastCall = listIntakeItems.mock.calls[listIntakeItems.mock.calls.length - 1]
+      expect(lastCall[2]).toBe('analyzed')
+    })
+  })
+
+  it('maps All Status back to no filter', async () => {
+    show()
+    await screen.findByText('Q3 maintenance report')
+    fireEvent.change(screen.getByDisplayValue('All Status'), { target: { value: 'analyzed' } })
+    await waitFor(() => expect(listIntakeItems).toHaveBeenCalledTimes(2))
+    fireEvent.change(screen.getByDisplayValue('Analyzed'), { target: { value: 'all' } })
+    await waitFor(() => {
+      const lastCall = listIntakeItems.mock.calls[listIntakeItems.mock.calls.length - 1]
+      expect(lastCall[2]).toBeUndefined()
+    })
+  })
+})
+
+describe('View Results fetches what the list cannot carry', () => {
+  it('loads the detail and renders the analysis inline', async () => {
+    listIntakeItems.mockResolvedValue({ items: [item({ status: 'analyzed' })], total: 1 })
+    getIntakeItem.mockResolvedValue({
+      ...item({ status: 'analyzed' }),
+      analysis_result: analysis(),
+    })
+    show()
+
+    fireEvent.click(await screen.findByRole('button', { name: /view results/i }))
+
+    expect(await screen.findByText(/peak risk score 87/i)).toBeInTheDocument()
+    expect(getIntakeItem).toHaveBeenCalledWith('item-1')
+  })
+
+  it('reports a failed detail fetch instead of doing nothing', async () => {
+    // Doing nothing is exactly what the dead button did; the failure mode must not
+    // round-trip back to it.
+    listIntakeItems.mockResolvedValue({ items: [item({ status: 'analyzed' })], total: 1 })
+    getIntakeItem.mockRejectedValue(new Error('500'))
+    show()
+
+    fireEvent.click(await screen.findByRole('button', { name: /view results/i }))
+
+    expect(await screen.findByText(/could not load results/i)).toBeInTheDocument()
+  })
+
+  it('does not offer the button for an item whose results are already shown', async () => {
+    listIntakeItems.mockResolvedValue({
+      items: [item({ status: 'analyzed', analysis_result: analysis() })],
+      total: 1,
+    })
+    show()
+    await screen.findByText(/peak risk score 87/i)
+    expect(screen.queryByRole('button', { name: /view results/i })).not.toBeInTheDocument()
   })
 })

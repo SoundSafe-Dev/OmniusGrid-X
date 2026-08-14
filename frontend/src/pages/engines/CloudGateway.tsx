@@ -1,7 +1,7 @@
 import { FC } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Cloud, Upload, Shield, Clock, Server } from 'lucide-react';
-import { Card, Badge, Button, SkeletonCard } from '../../components';
+import { Card, Badge, Button, SkeletonCard, EngineStoppedBanner } from '../../components';
 import { enginesApi } from '../../api';
 import { Tooltip, TooltipTrigger, TooltipContent } from '../../components/ui';
 import type { CloudGatewayStatus } from '../../types';
@@ -52,6 +52,7 @@ export const CloudGateway: FC = () => {
 
   return (
     <div className="space-y-6">
+      <EngineStoppedBanner running={status?.running} note={status?.note} />
       {isError && (
         <Card className="p-4">
           <p className="text-status-alarm text-sm">

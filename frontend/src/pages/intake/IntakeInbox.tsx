@@ -22,6 +22,7 @@ export const IntakeInbox: React.FC = () => {
   const [actionError, setActionError] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
   const [analyzing, setAnalyzing] = useState<string | null>(null);
+  const [loadingResults, setLoadingResults] = useState<string | null>(null);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
@@ -30,9 +31,13 @@ export const IntakeInbox: React.FC = () => {
   const [statusFilter, setStatusFilter] = useState<string>('all');
 
   useEffect(() => {
+    // P3 (page-enhancement review): this effect ran once with `[]` while the status
+    // select wrote state the request had already captured — the dropdown APPEARED to
+    // filter and did nothing. `loadIntakeItems` reads `statusFilter` from the closure,
+    // so the filter is the dependency that makes the request follow the control.
     loadIntakeItems();
-  // eslint-disable-next-line react-hooks/exhaustive-deps -- pre-existing; adding deps changes retrigger behavior (FS-54)
-  }, []);
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- loadIntakeItems is stable per render; statusFilter is the real input
+  }, [statusFilter]);
 
   const loadIntakeItems = async () => {
     setIsLoading(true);
@@ -366,14 +371,49 @@ export const IntakeInbox: React.FC = () => {
                         <TooltipContent>Run AI correlation analysis on this item</TooltipContent>
                       </Tooltip>
                     )}
-                    {item.analysis_result && (
+                    {item.status === 'analyzed' && !item.analysis_result && (
                       <Tooltip>
                         <TooltipTrigger asChild>
-                          <Button variant="outline" size="sm">
-                            View Results
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            disabled={loadingResults === item.id}
+                            onClick={async () => {
+                              // P3: this button had NO onClick — and the list endpoint
+                              // never sends analysis_result, so for any item analysed
+                              // before the last reload this dead button was the only
+                              // path to results that only GET /intake/{id} carries.
+                              setActionError(null);
+                              setLoadingResults(item.id);
+                              try {
+                                const full = await nlpCorrelationApi.getIntakeItem(item.id);
+                                setItems((prev) =>
+                                  prev.map((existing) =>
+                                    existing.id === item.id
+                                      ? { ...existing, analysis_result: full.analysis_result }
+                                      : existing,
+                                  ),
+                                );
+                              } catch {
+                                setActionError(
+                                  `Could not load results for "${item.title}".`,
+                                );
+                              } finally {
+                                setLoadingResults(null);
+                              }
+                            }}
+                          >
+                            {loadingResults === item.id ? (
+                              <>
+                                <Loader2 className="w-3 h-3 mr-2 animate-spin" />
+                                Loading…
+                              </>
+                            ) : (
+                              'View Results'
+                            )}
                           </Button>
                         </TooltipTrigger>
-                        <TooltipContent>View detailed analysis results</TooltipContent>
+                        <TooltipContent>Load the detailed analysis results</TooltipContent>
                       </Tooltip>
                     )}
                   </div>

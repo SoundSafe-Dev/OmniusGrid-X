@@ -14,3 +14,4 @@ export { PerformancePanel } from './fleet/PerformancePanel';
 // initial bundle. RealtimeTelemetryChart itself is the light (recharts) chart.
 export { RealtimeTelemetryChart } from './charts/RealtimeTelemetryChart';
 export { CommandPanel } from './commands';
+export { EngineStoppedBanner } from './engines';

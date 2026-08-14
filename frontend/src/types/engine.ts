@@ -23,6 +23,13 @@ export interface TacticalDecision {
  *  Removed rather than marked optional. An optional field that nothing can ever populate
  *  still reads as an invitation. */
 export interface TacticalEngineStatus {
+  /** Whether the engine's background loop is actually up. The status routes have sent
+   *  `running` + `note` since FS-530 stamped them; the types omitted both, so every
+   *  engine page rendered construction-time defaults as if they were measurements.
+   *  Optional: a server predating the field sends nothing, and absent must not render
+   *  as "stopped". */
+  running?: boolean;
+  note?: string | null;
   modelLoaded: boolean;
   modelVersion: string;
   maxLatencyTargetMs: number;
@@ -92,6 +99,9 @@ export interface StrategicRecommendation {
  *  against the real API. Same shape as FS-366 and as the eleven fields removed from
  *  `CloudGatewayStatus` below. */
 export interface MLOpsStatus {
+  /** See TacticalEngineStatus.running — same contract, same reason. */
+  running?: boolean;
+  note?: string | null;
   currentModel: string;
   cachedModels: string[];
   pollIntervalSeconds: number;
@@ -113,6 +123,11 @@ export interface MLOpsStatus {
  *  the wire.
  */
 export interface CloudGatewayStatus {
+  /** See TacticalEngineStatus.running. For the gateway this is the field that separates
+   *  "the cloud is unreachable" from "the gateway has never been asked to connect" —
+   *  `connected: false` alone cannot tell those apart (FS-530). */
+  running?: boolean;
+  note?: string | null;
   connected: boolean;
   queueSize: number;
   endpoint: string;
