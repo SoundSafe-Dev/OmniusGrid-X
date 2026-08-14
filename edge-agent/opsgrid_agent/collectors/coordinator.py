@@ -601,6 +601,14 @@ class UnifiedCollectorCoordinator:
         if task is not None and not task.done():
             task.cancel()
 
+        # Withdraw the liveness series (FS-699) — the config is read BEFORE the reloader
+        # pops it, which is why this lives here and not in config_reload. Left in place,
+        # the label child freezes at its last value: EdgeCollectorDown firing forever for
+        # a decommissioned device, or a phantom healthy collector, depending on timing.
+        config = self.configs.get(asset_id)
+        if config is not None:
+            metrics.clear_connection_state(asset_id, config.collector_type)
+
     async def restart_collector(
         self,
         asset_id: str,

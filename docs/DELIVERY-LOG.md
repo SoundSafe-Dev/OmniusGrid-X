@@ -10822,3 +10822,27 @@ which caught the widened-guard mutation (`if True:`) that the first two tests le
 The live-drive harness itself hung for 30 seconds the moment the fix worked, because its
 sleep patch was timing-dependent; the committed test shrinks the pacing sleep through the
 module's own reference and runs exactly one iteration deterministically.
+
+---
+
+## FS-699 — a removed collector kept exporting its liveness gauge forever
+
+The removal case of the frozen-gauge class. A prometheus_client label child persists until
+removed, and `stop_collector` (config hot-reload's teardown) popped the collector and its
+task while leaving the `edge_collector_connection_state` child in the registry, frozen at
+whatever the health monitor last wrote. Frozen at 0, `EdgeCollectorDown` — HIGH, `for: 5m`
+— fires forever for a device that was deliberately decommissioned, and an alert that is
+permanently wrong about the same collector is an alert operators learn to silence. Frozen
+at 1, a phantom healthy collector nobody configured.
+
+Fixed with `clear_connection_state`, called at the end of `stop_collector` — which reads
+the config **before** the reloader pops it, and which is race-free by construction: between
+the clear and the reloader's `configs.pop` there is no `await`, so the monitor cannot
+republish the child in the gap. Absence is the honest answer for a removed collector.
+
+The guard drives the real `stop_collector`, because `test_config_reload.py` substitutes a
+`FakeCoordinator` at exactly this seam — the double records that "stop" was called and
+cannot see what the registry still exports afterwards, which is the whole finding
+(rule 191). Mutations: the clear removed (caught), and the subtler one — `clear()` of the
+entire gauge instead of one child, which would blind `EdgeCollectorDown` for every *other*
+collector until the monitor's next pass — caught by the negative control.

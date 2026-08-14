@@ -66,6 +66,23 @@ def set_connection_state(asset_id: str, collector_type: str, up: bool) -> None:
     )
 
 
+def clear_connection_state(asset_id: str, collector_type: str) -> None:
+    """Withdraw the liveness claim for a collector that no longer exists (FS-699).
+
+    A prometheus_client label child persists until removed, so a collector taken away by
+    config hot-reload kept exporting `connection_state` frozen at its last value — a
+    state claim about nothing. Frozen at 1 it reads as a healthy collector nobody
+    configured; frozen at 0 it holds `EdgeCollectorDown` firing forever for a device
+    that was deliberately decommissioned, which teaches operators to silence the alert.
+    Absence is the honest answer for a removed collector.
+    """
+    try:
+        connection_state.remove(asset_id, collector_type)
+    except KeyError:
+        # Never published for this collector — nothing to withdraw.
+        pass
+
+
 # --- Store-and-forward buffer -------------------------------------------------
 
 buffer_messages = Gauge(
