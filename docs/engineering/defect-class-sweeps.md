@@ -140,6 +140,9 @@ to ask where else it could live.
 | A supervision loop killable by what it supervises | the writers of every liveness gauge | **1: `task.exception()` on a cancelled task raises CancelledError past `except Exception` — one hot-reload ends all collector supervision** | `test_the_health_monitor_survives_a_cancelled_task.py` |
 | A label child outliving what it described | every teardown path vs the series it published | **1: hot-reload removal left `connection_state` frozen — EdgeCollectorDown firing forever for a decommissioned device** | `test_a_removed_collector_withdraws_its_liveness_claim.py` |
 | A panel or link that can never work | all 30 dashboard panel exprs + all 31 runbook URLs | **5 panels rendering "No data" since they shipped; links all valid** | `test_every_alert_watches_a_series_something_exports.py`, `test_runbook_links_resolve.py` |
+| An endpoint the product cannot reach | all 37 pages vs the routers behind them | **the dominant class: 9 export-schedule endpoints, 2 whole routers, 6 alarm + 3 asset filter params, SSO, the metrics list — 12 fixes needed 2 new routes between them** | the page-enhancement review + each page's own tests |
+| A control that renders but does nothing | every page's buttons and filters | **2 live: IntakeInbox's dead View Results and its non-reactive status filter** | `IntakeInbox.test.tsx`, `everyButtonIsNamedAndDoesSomething` |
+| A field the wire carries and the client drops | the frontend interfaces vs their response models | **1 live: `dropped` — permanently lost telemetry, put on the wire by FS-591 so a fleet view could show it, then omitted by that view's interface** | `AdminPages.test.tsx` |
 
 Twenty-nine of these carry a numbered section below. **Response-shape mismatch is the
 exception**: it was swept in the same pass as the `get_db` work and came back clean, so

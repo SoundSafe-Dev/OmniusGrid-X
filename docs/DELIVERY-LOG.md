@@ -10947,3 +10947,149 @@ degrade path in `idempotency.py` and `alarm_rules.py` now catches
 `(redis.RedisError, OSError, asyncio.TimeoutError)` — what the client actually raises when
 the store is unreachable — instead of hiding programming errors as "store unavailable".
 The ceiling ratcheted down 201 → 199.
+
+---
+
+# The page-by-page arc — FS-706…717
+
+A survey of all 37 pages against their routers, then twelve ranked fixes. The survey's
+own conclusion is the finding that matters most, and it is recorded as FS-706 because
+everything after it is a consequence.
+
+## FS-706 — the frontend was a release behind its own backend
+
+Four parallel readers over the whole page tree, each asked the same question: what does
+this page show, what can a user do, and **what does the router behind it serve that the
+page never calls?**
+
+The dominant defect class was not missing capability. It was unreached capability:
+
+* **export schedules and templates — nine endpoints, zero frontend references.** A user
+  could see that a scheduled report had failed and could not see what the schedule was,
+  who received it, when it next ran, or how to pause it;
+* all of `logistics_correlation.py` (detention risk, dock-production sync, liability);
+* all of `model_monitoring.py` (drift, performance history);
+* the whole `/api/v1/oee` router — losses, historical, current;
+* `alarmsApi.list`'s six filter params, of which the page sent one;
+* `list_assets`' three filter params, of which the page sent none;
+* SSO (three routes, no UI), `GET /telemetry/{id}/metrics`, `GET /intake/{id}`,
+  kanban comments/timers/rules, `GET /edge/fleet/{agent_id}`.
+
+Twelve shipped enhancements needed **two** new backend routes between them
+(`GET /shop-floor/downtime/open`, `PATCH /notifications/subscriptions/{id}`) plus one
+query parameter (`assets?search=`). Everything else was a wire. Rule 198.
+
+## FS-707…712 — six pages that could not answer their own question
+
+**FS-707 · Alarms could not be filtered** (P1). `alarmsApi.list` supported `assetId`,
+`isActive`, `severity`, `acknowledged`, `startTime`, `endTime`; the page sent `skip`. And
+because the backend defaults to the last 24 hours when no range arrives, the "Total
+Alarms" tile was a 24-hour count under an "all alarms in system history" tooltip. The
+filter bar sends an explicit `start_time` always — "All time" sends the epoch — so the
+default can no longer assert itself silently, and the tile names its window.
+`acknowledgeAll` and `clear` existed as dormant client methods with no buttons.
+
+**FS-708 · ShopFloor stranded its own downtime** (P5). The Machine Down card held the
+open event id in component state, so a page reload left a machine recorded as down with
+nobody able to end it — not the operator who started it, not anyone else, because no
+other browser knew it existed. Open downtime is org-visible state; a new
+`GET /shop-floor/downtime/open` is now what the card renders. The asset was a free-text
+UUID box: nobody types 36 hex characters at a down machine.
+
+**FS-709 · AlarmRules could not aim a rule** (P10). `assetId`, `assetTypeId` and
+`workcellId` sat in the form's state and were copied on edit, and **no input ever set
+them** — so every rule was org-wide and the backend's `_validate_targets` was unreachable
+from the UI. A threshold that suits a press is rarely the one that suits an oven, so
+rules were written for the loosest machine on the floor.
+
+**FS-710 · AssetDetail had neither alarms nor OEE** (P7). The page an operator opens to
+ask "what is wrong with this machine" listed no alarms — they had to leave for `/alarms`
+and filter there, which per FS-707 they could not do either. It had no OEE while the
+fleet table had a good three-factor breakdown locked inside `pages/OEE.tsx` as a local
+component; extracted to `components/oee` rather than copied, because the honest-rendering
+conventions (an unmeasured factor is "—", never "100%") are the content.
+
+**FS-711 · The OEE question the product could not answer** (P8). "Where is my OEE going"
+is what the number exists to raise, and `/api/v1/oee/losses` — the only endpoint that
+answers it — had no client. The Pareto renders biggest-loss-first, scaled to the largest
+loss rather than to 100 or to the total, because the three losses are independent factors
+summed and the server says so: a stacked bar would draw an arithmetic that does not
+exist. One time-range selector now drives the fleet query, the per-asset panels and the
+PDF export, which previously hardcoded 24h beside a table pinned to the same default —
+they could not disagree because neither could move.
+
+**FS-712 · Notifications could not be edited, paused, or honestly tested** (P11). No
+PATCH route existed, so a wrong URL meant delete-and-recreate — losing the id every
+delivery log entry refers to. The `enabled` column was displayed and writable only at
+creation, so the action an operator most wants mid-incident (stop paging this channel)
+meant destroying the subscription. And Send Test hardcoded `warning`, so a critical-only
+subscription could never match one: every check of it reported "matched 0", which is the
+FS-487 failure arriving from the test button itself.
+
+## FS-713…716 — four things that were true on screen and false in fact
+
+**FS-713 · A legend promising a series that could never draw.** `TelemetryCharts`
+declared `<Bar dataKey="oee">` over rows carrying only `availability`, so an "OEE (%)"
+swatch has always sat beside a bar that cannot render — a chart asserting a second series
+exists and happens to be empty today. Its heading said "Fleet OEE (current)" over the
+same availability-only data: the FS-192/FS-399 overstatement, still standing one page
+over from where it was corrected.
+
+**FS-714 · Permanently lost telemetry, dropped a second time.** FS-591 traced `dropped`
+the whole way — the agent counts discarded readings, sends them every heartbeat, the
+handler persists them, and `AgentStatusOut` was given the field *specifically so a fleet
+view could show it*. The fleet view then declared a TypeScript interface without it, so
+the number arrived and was discarded one layer later: the same omission, one boundary
+further on. Of the three buffer figures it is the only unrecoverable one — buffered is
+waiting, dead-lettered is replayable, this is gone — and it now renders in its own colour.
+Certificate expiry moved out of a hover tooltip into a badge at the alert rules' own
+thresholds, so the page and the pager agree.
+
+**FS-715 · System Health fetched its details and threw them away.** The endpoint has
+carried a per-component `details` payload since the FS-693 arc gave every background
+service a check — consecutive-failure counts, running flags, last error — and the page
+typed them out of existence. Tiles expand into them now, with an overall verdict banner
+and `checked_at`, and "disabled"/"skipped" stopped rendering as red errors: a deployment
+posture painted as a fault is red that is always wrong, which is red an admin learns to
+ignore.
+
+**FS-716 · Two controls that did nothing.** IntakeInbox's status filter wrote state an
+already-fired request had captured (`[]` effect deps), so the dropdown appeared to filter
+and did not; and "View Results" had no `onClick` while the list endpoint never sends
+`analysis_result`, so for anything analysed before the last reload the dead button was
+the only path to data only `GET /intake/{id}` carries.
+
+## FS-717 — the engine pages could not tell a stopped loop from an idle one
+
+Every engine status route has reported `running` and a `note` since FS-530, and the
+frontend types omitted both; strategic — whose list routes signal via the
+`X-Engine-Not-Running` header instead — had no reader for it anywhere. So all four pages
+rendered construction-time defaults as measurements. A shared banner now says it.
+
+The same commit closed FS-567's frontend half: the decision-history route had landed and
+`api/engines.ts` never followed, so the History card still read "not available from the
+API" against an API where it was. Its client surfaces both header signals, maps a 404 to
+null so an older server gets the honest "predates the endpoint" copy rather than "request
+failed", and rejections now carry a real reason and the authenticated operator instead of
+the string constants `'current-user'` and `'User rejected'` — an audit trail of nobody.
+
+## What the guards taught, and one they got wrong
+
+Four guards refused good-looking work, each correctly: `mutationFailureIsVisible` (a
+per-call `onError` reads as silent at the mutation definition), the truncation sweep (a
+hand-rolled header read bypassing `toListResult`), `frontendSafetyRatchets` (an inline
+`toLocaleString`), and the route-auth walk (a new PATCH with no reviewed policy). A
+fifth, `test_frontend_fields_exist_on_the_wire`, refused a client type invented for a
+method nothing called — the "declared and never produced" defect written by the person
+who sweeps for it (rule 202).
+
+One detector was genuinely too narrow: the truncation sweep recognised its idiom only
+*before* the `api.get` call, flagging the equally-correct capture-then-wrap shape needed
+to read a second header off the same response. Its window is symmetric now. Rule 203 is
+about the order of those two conclusions.
+
+**And three of the arc's own tests were too weak, each exposed only by mutation**: a
+`<select>` value check that passed with the state sync deleted (rule 199), a "paused"
+presence check that matched a badge rather than the cell (rule 200), and a losses-failure
+path no page test drove. Every fix in this arc is mutation-verified; three of the guards
+had to be strengthened before that sentence was true.

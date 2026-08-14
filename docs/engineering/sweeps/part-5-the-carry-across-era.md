@@ -2905,3 +2905,98 @@ Worth keeping in the pattern library because the failure needs two ingredients t
 individually innocent: `except Exception` (correct — the loop must survive anything) and
 `task.exception()` (correct — that is how you read a failure). Neither line looks wrong.
 The bug lives in the pair.
+
+## Rule 198 — sweep for endpoints nobody calls before features nobody built
+
+The page-by-page arc opened with a survey rather than a backlog: four readers over all 37
+pages, each asked what its page shows, what a user can do, and *what the router behind it
+serves that the page never calls*.
+
+The third question was the one that paid. The dominant gap was not missing capability but
+unreached capability — nine export-schedule endpoints with zero frontend references, two
+entire routers (`logistics_correlation`, `model_monitoring`) unreachable, six alarm filter
+parameters of which the page sent one, three asset filter parameters of which it sent
+none.
+
+Twelve shipped enhancements then needed **two** new backend routes between them.
+Everything else was a wire.
+
+A product can be a full release behind its own API, and nothing inside either half
+notices: the backend's tests pass because the routes work, the frontend's tests pass
+because the pages render, and the gap lives precisely in the space no test on either side
+is looking at. Enumerating routes against callers is a morning's work and it should
+happen before any design conversation about what to build next.
+
+## Rule 199 — assert the request, not the rendering
+
+The historian's metric picker gained a state-sync effect: when the asset's metric list
+arrives and the current selection is not among it, select the first one instead. The test
+read `select.value` and passed.
+
+It also passed with the effect deleted — because a `<select>` renders its first option as
+its value whether or not state followed it. The display was derived, not bound, so it
+agreed with the correct code and the broken code equally.
+
+What matters is which metric the historian is actually *asked for*, and only an assertion
+on the outgoing request could see the difference. Wherever a control's displayed value is
+derived rather than bound to the state under test, the display is the weaker witness.
+
+## Rule 200 — when the right answer's text is not unique, assert the absence of the wrong one
+
+A paused export schedule shows "paused" twice: in its status badge, and in place of a
+next-run date that is not going to happen. `findAllByText(/paused/i)` was therefore
+satisfied by the badge alone, and passed while the cell still printed the stale date.
+
+The check that distinguishes them asserts what must NOT be there — no date rendered for a
+paused row — with a negative control that a live schedule does show one. Presence checks
+are the default reflex and they are blind exactly when a word appears in more than one
+role.
+
+## Rule 201 — a surviving mutation is not automatically a weak test
+
+Deleting the explicit `organization_id` filter from the new notifications PATCH did not
+fail its cross-tenant tests. The instinct is to conclude the tests are weak and add
+assertions until they bite.
+
+The right move was to find out why. Migration 056 had given
+`notification_subscriptions` a row-level-security policy — the file's own header still
+said the table had none — so the other tenant's row was invisible to the SELECT whichever
+filter the handler wrote. The mutation survived because a second layer caught it.
+
+Both layers stay, for different reasons: RLS is the one a new handler cannot forget, the
+explicit filter is the one that survives a session opened without the GUC — which is how
+`_check_ingestion` and the FS-704 fleet sweep were each caught reading zero rows. The
+test file now states which layer it is proving. Adding an assertion that pins the
+redundant layer would have made the suite slower and no stronger.
+
+## Rule 202 — an unused client with a guessed shape is the defect, written by the sweeper
+
+While wiring the OEE loss breakdown I added a `getHistorical` client alongside it, on the
+reasoning that the aggregation endpoint was in the same router and would be wanted soon.
+It declared a `points` array of a `HistoricalOEEPoint` type.
+
+The endpoint sends `data`, and the calculator owns the row shape, so there is no point
+type to declare. `test_frontend_fields_exist_on_the_wire.py` refused it.
+
+The method was deleted rather than corrected. An accurate type for a function nothing
+calls is still a claim nothing exercises, and the next person to reach for it would
+inherit whatever drift had accumulated. This repository has spent findings on declared
+fields the server never sends; writing one speculatively, in the same arc as sweeping for
+them, is the failure mode worth naming.
+
+## Rule 203 — a guard that rejects your work is usually right
+
+Five guards refused work in this arc. Four were straightforwardly correct:
+`mutationFailureIsVisible` (a per-call `onError` reads as silent at the mutation
+definition, which is where a reader looks), the truncation sweep (a hand-rolled header
+read bypassing the shared `toListResult`), `frontendSafetyRatchets` (an inline
+`toLocaleString`), and the route-auth walk (a new PATCH with no reviewed role policy).
+
+The fifth was the detector's fault, and it looked exactly like the other four. The
+truncation sweep matched its idiom only in the 200 characters *before* the `api.get`
+call, which recognises `return toListResult(await api.get(...))` and not the
+capture-then-wrap shape needed to read a second header off the same response. Widening
+that window was right.
+
+The order of those two conclusions is the whole rule. Reaching for the detector first
+would have shipped four regressions with a green suite.

@@ -1326,6 +1326,55 @@ one of its findings. The habit that catches it:
      one raw site — the monitor. The general form: any code that inspects a task it did not
      just create must treat cancellation as a state, not an error to catch.
 
+198. **Sweep for endpoints nobody calls before sweeping for features nobody built.**
+     Surveying all 37 pages against their routers found the dominant gap was not missing
+     capability but UNREACHED capability: export schedules (nine endpoints, zero frontend
+     references), all of `logistics_correlation.py`, all of `model_monitoring.py`, OEE
+     losses, alarm and asset filters, SSO, the telemetry metrics list. Twelve shipped
+     enhancements needed **two** new backend routes between them; everything else was a
+     wire. A product can be a full release behind its own API, and the cheapest large
+     wins are always on that boundary — so enumerate routes-versus-callers before
+     designing anything.
+
+199. **Assert the request, not the rendering, when what you care about is what the system
+     does.** A `<select>` displays its first option as its value whether or not state
+     followed it, so a test reading `select.value` passed with the state-sync effect
+     deleted. The metric the historian is actually *asked for* is the thing that matters,
+     and only asserting on the outgoing call could see it. Wherever a control's display
+     is derived rather than bound, the display is a weaker witness than the effect.
+
+200. **When the right answer's text is not unique, assert the absence of the wrong one.**
+     A row for a paused schedule shows "paused" in its status badge AND should show it in
+     place of a next-run date, so `findAllByText(/paused/)` passed while the cell still
+     printed the stale date. Asserting that no date is rendered — with a negative control
+     that a live schedule does show one — is the check that distinguishes them.
+
+201. **A mutation that survives is not automatically a hole in the test; ask which layer
+     caught it.** Deleting the explicit `organization_id` filter from a handler did not
+     fail its tenancy tests, because a migration had since given the table an RLS policy —
+     the row was invisible to the query either way. That is defence in depth working.
+     Both layers were kept for different reasons (RLS is the one a new handler cannot
+     forget; the explicit filter is the one that survives a session opened without the
+     GUC), and the test file now says which one it is actually proving. The wrong move is
+     to conclude the test is weak and add an assertion that pins the redundant layer.
+
+202. **An unused client carrying a guessed shape is the defect you sweep for, written by
+     the sweeper.** A speculative `getHistorical` was added with a `points` array of a
+     declared row type; the endpoint sends `data` with open rows, and
+     `test_frontend_fields_exist_on_the_wire.py` refused it. The method was deleted rather
+     than corrected: an accurate type for a function nothing calls is still a claim
+     nothing checks. Write the client when the screen needs it.
+
+203. **A guard that rejects your work is usually right; fix the detector only after
+     proving it wrong.** In one arc, four guards refused good-looking changes — a
+     per-call `onError` that read as silent at the mutation, a hand-rolled header read
+     that bypassed the shared truncation helper, an inline `toLocaleString`, an
+     unreviewed role policy — and each was a genuine correction. One was the detector's
+     fault: the truncation sweep recognised its idiom only *before* the `api.get` call,
+     flagging the equally-correct capture-then-wrap shape needed to read a second header
+     off the same response. Widening that window was right; widening it before checking
+     the other four would have been four regressions.
+
 ---
 
 ## Open observations, not yet tickets
