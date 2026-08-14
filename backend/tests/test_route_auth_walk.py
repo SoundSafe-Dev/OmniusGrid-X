@@ -280,6 +280,12 @@ AUTHENTICATED_OPERATIONAL_MUTATIONS = {
     ("POST", "/api/v1/simulation/monte-carlo"),
     ("POST", "/api/v1/notifications/subscriptions"),
     ("DELETE", "/api/v1/notifications/subscriptions/{subscription_id}"),
+    # P11. Same classification as its POST and DELETE siblings above: authenticated and
+    # tenant-scoped, with the org filter and RLS both proven in
+    # test_notification_tenant_isolation_realdb.py. A cross-tenant UPDATE is the sharper
+    # of the two — it can retarget another org's alerts rather than merely destroy them —
+    # which is why that file drives the retarget attempt explicitly.
+    ("PATCH", "/api/v1/notifications/subscriptions/{subscription_id}"),
     ("POST", "/api/v1/notifications/test"),
     ("POST", "/api/v1/edge/enroll"),
     ("POST", "/api/v1/edge/ingest"),

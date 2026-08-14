@@ -18,7 +18,7 @@
  * the failure message sits immediately above the button, so the disabled control is
  * explained rather than mysterious.
  */
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { within, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -27,6 +27,7 @@ const deliveryLog = vi.fn()
 const createSubscription = vi.fn()
 const deleteSubscription = vi.fn()
 const sendTest = vi.fn()
+const updateSubscription = vi.fn()
 
 vi.mock('../../api/notifications', async () => {
   const actual = await vi.importActual<any>('../../api/notifications')
@@ -38,6 +39,7 @@ vi.mock('../../api/notifications', async () => {
       createSubscription: (...a: unknown[]) => createSubscription(...a),
       deleteSubscription: (...a: unknown[]) => deleteSubscription(...a),
       sendTest: (...a: unknown[]) => sendTest(...a),
+      updateSubscription: (...a: unknown[]) => updateSubscription(...a),
     },
   }
 })
@@ -204,7 +206,8 @@ describe('Notifications — creating a subscription', () => {
     wrap()
     await screen.findByText('Ops webhook')
     fireEvent.change(screen.getByLabelText(/name/i), { target: { value: '  Pager  ' } })
-    fireEvent.change(screen.getByLabelText(/target/i), {
+    // Exact label: the create form below also has a Target field.
+    fireEvent.change(screen.getByLabelText('Target'), {
       target: { value: '  https://hooks.example/pager  ' },
     })
     fireEvent.click(screen.getByRole('button', { name: /create subscription/i }))
@@ -313,5 +316,89 @@ describe('a test that reached nobody (FS-487)', () => {
     await pressTest()
 
     expect((await screen.findByRole('status')).textContent).toMatch(/matched 1 subscription\./)
+  })
+})
+
+/**
+ * Editing, toggling and testing at the right severity (P11, page-enhancement review).
+ *
+ * Three gaps the survey found, all downstream of one absent route: there was no PATCH, so
+ * a wrong URL or severity meant delete-and-recreate; the `enabled` column the list has
+ * always returned could be written once at creation and never again; and Send Test
+ * hardcoded `warning`, so a critical-only subscription could never match one and every
+ * check of it reported "matched 0" — the FS-487 failure arriving from the test button
+ * itself.
+ */
+describe('editing and toggling a subscription', () => {
+  const sub = {
+    id: 'sub-1',
+    name: 'Ops webhook',
+    channel: 'webhook',
+    target: 'https://hooks.example.com/a',
+    minSeverity: 'critical',
+    domain: null,
+    assetId: null,
+    enabled: true,
+  }
+
+  beforeEach(() => {
+    listSubscriptions.mockResolvedValue([sub])
+    updateSubscription.mockResolvedValue({ ...sub, enabled: false })
+  })
+
+  it('disables a subscription without deleting it', async () => {
+    // The action an operator most wants mid-incident is "stop paging this channel", and
+    // it used to mean destroying the subscription — losing the id every delivery log
+    // entry refers to.
+    wrap()
+    fireEvent.click(await screen.findByRole('button', { name: /disable subscription ops webhook/i }))
+    await waitFor(() =>
+      expect(updateSubscription).toHaveBeenCalledWith('sub-1', { enabled: false }),
+    )
+    expect(deleteSubscription).not.toHaveBeenCalled()
+  })
+
+  it('edits the target in place and sends only what changed', async () => {
+    wrap()
+    fireEvent.click(await screen.findByRole('button', { name: /edit subscription ops webhook/i }))
+    // Scoped to the row: the CREATE form below has a Target field too, so a bare
+    // label lookup is ambiguous — and picking one by index would silently depend on
+    // DOM order.
+    const row = screen.getByRole('button', { name: /^save$/i }).closest('tr')!
+    const targetInput = within(row).getByLabelText('Target')
+    fireEvent.change(targetInput, { target: { value: 'https://hooks.example.com/b' } })
+    fireEvent.click(within(row).getByRole('button', { name: /^save$/i }))
+    await waitFor(() => expect(updateSubscription).toHaveBeenCalled())
+    expect(updateSubscription.mock.lastCall?.[1].target).toBe('https://hooks.example.com/b')
+  })
+
+  it('says an update that did not happen', async () => {
+    updateSubscription.mockRejectedValue(new Error('500'))
+    wrap()
+    fireEvent.click(await screen.findByRole('button', { name: /disable subscription ops webhook/i }))
+    const alerts = await screen.findAllByRole('alert')
+    expect(alerts.some((el) => /could not update/i.test(el.textContent ?? ''))).toBe(true)
+  })
+
+  it('sends the test at the chosen severity, not always warning', async () => {
+    sendTest.mockResolvedValue({ matched: 1, results: [] })
+    wrap()
+    fireEvent.change(await screen.findByLabelText(/test severity/i), {
+      target: { value: 'critical' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: /send test/i }))
+    await waitFor(() => expect(sendTest).toHaveBeenCalledWith({ severity: 'critical' }))
+  })
+
+  it('names the severity in the matched-nothing warning', async () => {
+    // "no subscription matches a warning-severity test event" was wrong the moment the
+    // severity became selectable.
+    sendTest.mockResolvedValue({ matched: 0, results: [] })
+    wrap()
+    fireEvent.change(await screen.findByLabelText(/test severity/i), {
+      target: { value: 'critical' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: /send test/i }))
+    expect(await screen.findByText(/critical-severity test event/i)).toBeInTheDocument()
   })
 })

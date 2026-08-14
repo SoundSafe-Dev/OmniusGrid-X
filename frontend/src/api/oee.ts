@@ -10,6 +10,15 @@ import { registerTransform } from './transformRegistry';
  * OEE in the product. The most conspicuous absence was the loss breakdown: "where is my
  * OEE going" is the question the number exists to raise, and only `/losses` answers it.
  *
+ * `getHistorical` IS NOT HERE, deliberately. The first draft of this client declared one
+ * with a `HistoricalOEEPoint[]` under a `points` key — and
+ * `test_frontend_fields_exist_on_the_wire.py` refused it: the envelope carries `data`,
+ * and the calculator owns the row shape (`List[Dict[str, Any]]`), so there is no point
+ * type to declare. Rather than write an accurate type for a method nothing calls, the
+ * method is gone until a historical chart needs it. An unused client carrying a guessed
+ * shape is the "declared and never produced" defect this repository sweeps for, written
+ * by the person doing the sweeping.
+ *
  * NO USE_MOCK BRANCH. The mock dataset has no loss figures and inventing them would put
  * a fabricated Pareto in front of an operator — the failure class this repository has
  * spent findings on. In mock mode these calls fail and the panel says the data is
@@ -40,20 +49,6 @@ export interface OEELossesOut {
   potentialOee: number;
 }
 
-export interface HistoricalOEEPoint {
-  periodStart: string;
-  availability: number;
-  performance: number;
-  quality: number;
-  oee: number;
-}
-
-export interface HistoricalOEEOut {
-  assetId: string;
-  aggregation: string;
-  points: HistoricalOEEPoint[];
-}
-
 export const oeeApi = {
   getLosses: async (assetId: string, hours = 8): Promise<OEELossesOut> => {
     const response = await api.get<OEELossesOut>(`/api/v1/oee/losses/${assetId}`, {
@@ -62,14 +57,4 @@ export const oeeApi = {
     return response.data;
   },
 
-  getHistorical: async (
-    assetId: string,
-    hours = 24,
-    aggregation: 'hourly' | 'daily' | 'shift' = 'hourly',
-  ): Promise<HistoricalOEEOut> => {
-    const response = await api.get<HistoricalOEEOut>(`/api/v1/oee/historical/${assetId}`, {
-      params: { hours, aggregation },
-    });
-    return response.data;
-  },
 };

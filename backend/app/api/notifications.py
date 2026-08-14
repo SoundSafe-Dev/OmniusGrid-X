@@ -82,6 +82,25 @@ class SubscriptionCreate(BaseModel):
     enabled: bool = True
 
 
+class SubscriptionUpdate(BaseModel):
+    """Every field optional — a PATCH that required the whole row would make a toggle
+    into a form (P11, page-enhancement review).
+
+    Same closed sets as `SubscriptionCreate`: a channel or severity this server does not
+    dispatch must be refused on the way in, not discovered when an alert goes nowhere.
+    """
+
+    name: Optional[str] = None
+    channel: Optional[str] = Field(default=None, pattern="^(webhook|slack|email)$")
+    target: Optional[str] = None
+    min_severity: Optional[str] = Field(
+        default=None, pattern="^(info|warning|error|critical)$"
+    )
+    domain: Optional[str] = None
+    asset_id: Optional[str] = None
+    enabled: Optional[bool] = None
+
+
 class TestEvent(BaseModel):
     severity: str = "warning"
     title: str = "Test notification"
@@ -136,6 +155,55 @@ async def list_subscriptions(
     return [{"id": str(r.id), "name": r.name, "channel": r.channel, "target": r.target,
              "min_severity": r.min_severity, "domain": r.domain, "asset_id": r.asset_id,
              "enabled": r.enabled} for r in rows]
+
+
+@router.patch("/subscriptions/{subscription_id}", response_model=SubscriptionResponse)
+async def update_subscription(
+    subscription_id: UUID,
+    payload: SubscriptionUpdate,
+    organization_id=Depends(get_tenant_org_id),
+):
+    """Edit a subscription, or just flip it off (P11, page-enhancement review).
+
+    There was no update route at all: a wrong URL or severity meant delete-and-recreate,
+    and the `enabled` column — which the list has always returned and the UI has always
+    shown as a badge — could be written once at creation and never again. So the one
+    action an operator most wants during an incident, *stop paging this channel*, meant
+    destroying the subscription and rebuilding it afterwards from memory.
+
+    SCOPED BY ORGANISATION AS WELL AS ID, for the reason the delete below documents: an
+    update on `id` alone would let any authenticated user retarget another tenant's
+    subscription — the same cross-tenant write, pointed at a webhook URL of their
+    choosing, which is worse than deletion.
+    """
+    fields = payload.model_dump(exclude_unset=True)
+    async with tenant_session(organization_id) as session:
+        subscription = (
+            await session.execute(
+                select(NotificationSubscription).where(
+                    NotificationSubscription.id == subscription_id,
+                    NotificationSubscription.organization_id == str(organization_id),
+                )
+            )
+        ).scalar_one_or_none()
+        # 404 rather than 403, matching delete: whether the row exists is itself tenant
+        # information.
+        if subscription is None:
+            raise HTTPException(status_code=404, detail="subscription not found")
+        for key, value in fields.items():
+            setattr(subscription, key, value)
+        await session.commit()
+        await session.refresh(subscription)
+        return {
+            "id": str(subscription.id),
+            "name": subscription.name,
+            "channel": subscription.channel,
+            "target": subscription.target,
+            "min_severity": subscription.min_severity,
+            "domain": subscription.domain,
+            "asset_id": subscription.asset_id,
+            "enabled": subscription.enabled,
+        }
 
 
 @router.delete("/subscriptions/{subscription_id}", response_model=SubscriptionDeleted)

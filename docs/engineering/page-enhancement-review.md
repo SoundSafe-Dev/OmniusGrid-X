@@ -341,7 +341,7 @@ E2 Mobile-first floor view. E3 Shift handover notes.
 | P8 | ✅ SHIPPED — loss Pareto from the uncalled /api/v1/oee router + one time range driving table, panels and export | OEE | M |
 | P9 | ✅ SHIPPED — /admin/export-schedules: list, create-paused, pause/resume, delete + both export pages added to the nav | new page | L |
 | P10 | ✅ SHIPPED — AlarmRules: asset/type/workcell scope selectors + a Scope column | AlarmRules | M |
-| P11 | Notifications edit/toggle (needs backend PATCH) + test severity | Notifications | M |
+| P11 | ✅ SHIPPED — Notifications: new PATCH route, inline edit, enable/disable toggle, test-severity selector | Notifications | M |
 | P12 | Collectors per-agent detail + badged cert/DLQ columns | Collectors | M |
 | P13 | TelemetryCharts asset/metric pickers; Historian metric dropdown | analytics | M |
 | P14 | Dashboard: OEE tile + inline ack + trend refetch | Dashboard | S |

@@ -53,6 +53,17 @@ export const Notifications: FC = () => {
   const [assetId, setAssetId] = useState('');
   const [formError, setFormError] = useState<string | null>(null);
   const [testSummary, setTestSummary] = useState<string | null>(null);
+  const [testSeverity, setTestSeverity] = useState<NotificationSeverity>('warning');
+  // Editing a subscription in place (P11). Before the PATCH route existed, a wrong URL
+  // or severity meant delete-and-recreate — losing the id every delivery log entry
+  // refers to.
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editForm, setEditForm] = useState<{ name: string; target: string; minSeverity: string }>({
+    name: '',
+    target: '',
+    minSeverity: 'warning',
+  });
+  const [rowError, setRowError] = useState<string | null>(null);
   // Whether that summary is bad news, so it can be told apart from the good kind at a
   // glance rather than by reading it (FS-487).
   const [testMatchedNone, setTestMatchedNone] = useState(false);
@@ -95,8 +106,24 @@ export const Notifications: FC = () => {
     },
   });
 
+  const updateMutation = useMutation({
+    mutationFn: ({ id, body }: { id: string; body: Record<string, unknown>; label: string }) =>
+      notificationsApi.updateSubscription(id, body),
+    onSuccess: () => {
+      setRowError(null);
+      setEditingId(null);
+      queryClient.invalidateQueries({ queryKey: ['notification-subscriptions'] });
+    },
+    onError: (_error, variables) =>
+      setRowError(`Could not update "${variables.label}" — it is unchanged.`),
+  });
+
   const testMutation = useMutation({
-    mutationFn: () => notificationsApi.sendTest({ severity: 'warning' }),
+    // SEVERITY CHOSEN, NOT HARDCODED (P11, page-enhancement review). This always sent
+    // `warning`, so a critical-only subscription could never match a test and every
+    // check of one reported "matched 0" — the exact failure the FS-487 copy below was
+    // written to make legible, arriving from the test button itself.
+    mutationFn: () => notificationsApi.sendTest({ severity: testSeverity }),
     onSuccess: (result) => {
       // MATCHED ZERO IS NOT A SUCCESS (FS-487). The request succeeded and nothing was
       // delivered — which is the one thing pressing Test is meant to find out. It used to
@@ -104,7 +131,7 @@ export const Notifications: FC = () => {
       // outcome, so the sentence a user skims says "dispatched" either way.
       setTestSummary(
         result.matched === 0
-          ? 'Nothing was sent — no subscription matches a warning-severity test event. ' +
+          ? `Nothing was sent — no subscription matches a ${testSeverity}-severity test event. ` +
             'Check the minimum severity, domain and asset filters below.'
           : `Test dispatched — matched ${result.matched} subscription${result.matched === 1 ? '' : 's'}.`
       );
@@ -149,16 +176,28 @@ export const Notifications: FC = () => {
         title="Notification Subscriptions"
         subtitle="Route platform events to webhooks, Slack, or email"
         action={
-          <Button
-            variant="secondary"
-            size="sm"
-            loading={testMutation.isPending}
-            disabled={testMutation.isPending || subs.length === 0}
-            onClick={() => testMutation.mutate()}
-          >
-            <Send size={16} className="mr-1" />
-            Send Test
-          </Button>
+          <div className="flex items-center gap-2">
+            <select
+              aria-label="Test severity"
+              value={testSeverity}
+              onChange={(e) => setTestSeverity(e.target.value as NotificationSeverity)}
+              className="bg-opsgrid-bg border border-opsgrid-border rounded px-2 py-1.5 text-sm"
+            >
+              {['info', 'warning', 'error', 'critical'].map((level) => (
+                <option key={level} value={level}>{level}</option>
+              ))}
+            </select>
+            <Button
+              variant="secondary"
+              size="sm"
+              loading={testMutation.isPending}
+              disabled={testMutation.isPending || subs.length === 0}
+              onClick={() => testMutation.mutate()}
+            >
+              <Send size={16} className="mr-1" />
+              Send Test
+            </Button>
+          </div>
         }
       >
         {testSummary && (
@@ -171,6 +210,9 @@ export const Notifications: FC = () => {
         )}
         {deleteError && (
           <p role="alert" className="text-sm text-status-alarm mb-3">{deleteError}</p>
+        )}
+        {rowError && (
+          <p role="alert" className="text-sm text-status-alarm mb-3">{rowError}</p>
         )}
         {isError ? (
           <p className="text-status-alarm text-sm py-4">Failed to load subscriptions.</p>
@@ -195,31 +237,135 @@ export const Notifications: FC = () => {
               <tbody className="divide-y divide-opsgrid-border">
                 {subs.map((sub) => (
                   <tr key={sub.id}>
-                    <td className="py-2 pr-4 font-medium">{sub.name}</td>
+                    <td className="py-2 pr-4 font-medium">
+                      {editingId === sub.id ? (
+                        <input
+                          aria-label="Subscription name"
+                          value={editForm.name}
+                          onChange={(e) => setEditForm({ ...editForm, name: e.target.value })}
+                          className="bg-opsgrid-bg border border-opsgrid-border rounded px-2 py-1 text-sm w-36"
+                        />
+                      ) : (
+                        sub.name
+                      )}
+                    </td>
                     <td className="py-2 pr-4">
                       <Badge variant="info" size="sm">
                         {sub.channel}
                       </Badge>
                     </td>
                     <td className="py-2 pr-4 font-mono text-xs max-w-[16rem] truncate" title={sub.target}>
-                      {sub.target}
+                      {editingId === sub.id ? (
+                        <input
+                          aria-label="Target"
+                          value={editForm.target}
+                          onChange={(e) => setEditForm({ ...editForm, target: e.target.value })}
+                          className="bg-opsgrid-bg border border-opsgrid-border rounded px-2 py-1 text-xs w-full font-mono"
+                        />
+                      ) : (
+                        sub.target
+                      )}
                     </td>
                     <td className="py-2 pr-4">
-                      <Badge variant={severityVariant(sub.minSeverity)} size="sm">
-                        {sub.minSeverity}
-                      </Badge>
+                      {editingId === sub.id ? (
+                        <select
+                          aria-label="Minimum severity"
+                          value={editForm.minSeverity}
+                          onChange={(e) =>
+                            setEditForm({ ...editForm, minSeverity: e.target.value })
+                          }
+                          className="bg-opsgrid-bg border border-opsgrid-border rounded px-2 py-1 text-sm"
+                        >
+                          {['info', 'warning', 'error', 'critical'].map((level) => (
+                            <option key={level} value={level}>{level}</option>
+                          ))}
+                        </select>
+                      ) : (
+                        <Badge variant={severityVariant(sub.minSeverity)} size="sm">
+                          {sub.minSeverity}
+                        </Badge>
+                      )}
                     </td>
                     <td className="py-2 pr-4 text-opsgrid-text-secondary">
                       {sub.domain || sub.assetId
                         ? [sub.domain, sub.assetId].filter(Boolean).join(' / ')
                         : 'All events'}
                     </td>
+                    {/* THE BADGE BECOMES A CONTROL (P11). `enabled` has always been
+                        displayed and could be written only at creation, so the one action
+                        an operator most wants during an incident — stop paging this
+                        channel — meant deleting the subscription and rebuilding it
+                        afterwards from memory. */}
                     <td className="py-2 pr-4">
-                      <Badge variant={sub.enabled ? 'success' : 'neutral'} size="sm">
-                        {sub.enabled ? 'enabled' : 'disabled'}
-                      </Badge>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setRowError(null);
+                          updateMutation.mutate({
+                            id: sub.id,
+                            body: { enabled: !sub.enabled },
+                            label: sub.name,
+                          });
+                        }}
+                        disabled={updateMutation.isPending}
+                        aria-label={`${sub.enabled ? 'Disable' : 'Enable'} subscription ${sub.name}`}
+                        title={sub.enabled ? 'Stop sending to this target' : 'Resume sending'}
+                      >
+                        <Badge variant={sub.enabled ? 'success' : 'neutral'} size="sm">
+                          {sub.enabled ? 'enabled' : 'disabled'}
+                        </Badge>
+                      </button>
                     </td>
-                    <td className="py-2 text-right">
+                    <td className="py-2 text-right whitespace-nowrap">
+                      {editingId === sub.id ? (
+                        <>
+                          <Button
+                            size="sm"
+                            className="mr-2"
+                            disabled={updateMutation.isPending}
+                            onClick={() => {
+                              setRowError(null);
+                              updateMutation.mutate({
+                                id: sub.id,
+                                body: {
+                                  name: editForm.name,
+                                  target: editForm.target,
+                                  minSeverity: editForm.minSeverity,
+                                },
+                                label: sub.name,
+                              });
+                            }}
+                          >
+                            Save
+                          </Button>
+                          <Button
+                            variant="secondary"
+                            size="sm"
+                            className="mr-2"
+                            onClick={() => setEditingId(null)}
+                          >
+                            Cancel
+                          </Button>
+                        </>
+                      ) : (
+                        <Button
+                          variant="secondary"
+                          size="sm"
+                          className="mr-2"
+                          onClick={() => {
+                            setRowError(null);
+                            setEditingId(sub.id);
+                            setEditForm({
+                              name: sub.name,
+                              target: sub.target,
+                              minSeverity: sub.minSeverity,
+                            });
+                          }}
+                          aria-label={`Edit subscription ${sub.name}`}
+                        >
+                          Edit
+                        </Button>
+                      )}
                       <Button
                         variant="secondary"
                         size="sm"

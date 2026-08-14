@@ -149,6 +149,26 @@ export const notificationsApi = {
     return response.data;
   },
 
+  /** Edit a subscription, or just flip it off (P11). Before the PATCH route existed, a
+   *  wrong URL or severity meant delete-and-recreate, and the `enabled` column the list
+   *  has always returned could be written once at creation and never again. */
+  updateSubscription: async (
+    subscriptionId: string,
+    body: Partial<SubscriptionCreate>,
+  ): Promise<NotificationSubscription> => {
+    if (USE_MOCK) {
+      await delay(MOCK_DELAY);
+      const sub = mockSubscriptions.find((s) => s.id === subscriptionId);
+      if (sub) Object.assign(sub, body);
+      return sub ?? mockSubscriptions[0];
+    }
+    const response = await api.patch<NotificationSubscription>(
+      `${BASE}/subscriptions/${subscriptionId}`,
+      body,
+    );
+    return response.data;
+  },
+
   deleteSubscription: async (subscriptionId: string): Promise<void> => {
     if (USE_MOCK) {
       await delay(MOCK_DELAY);

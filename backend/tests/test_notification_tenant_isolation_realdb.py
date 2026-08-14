@@ -399,3 +399,91 @@ class TestAUserWithNoOrganisationSeesNothing:
         source = re.sub(r"#[^\n]*", "", source)
         assert "if org is not None" not in source
         assert "_org(current_user)" not in source
+
+
+def _target_of(admin_sync_url: str, sub_id) -> str:
+    """The stored target, read with the admin connection — the point of a cross-tenant
+    update test is what landed in the row, not what the API answered."""
+    import psycopg2
+
+    conn = psycopg2.connect(admin_sync_url)
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT target FROM notification_subscriptions WHERE id = %s", (str(sub_id),)
+            )
+            row = cur.fetchone()
+            return row[0] if row else ""
+    finally:
+        conn.close()
+
+
+class TestUpdateIsScopedToTheTenant:
+    """The PATCH added for P11 gets the same scoping as the delete above, and needs it
+    MORE: a cross-tenant delete destroys a subscription, while a cross-tenant update can
+    RETARGET one — pointing another organization's alerts at a webhook of the caller's
+    choosing, which turns their incident traffic into your inbox.
+
+    WHAT THESE TESTS ACTUALLY PROVE, established by mutation rather than assumed: removing
+    the handler's explicit `organization_id` filter does NOT fail them. That is not a hole
+    in the tests, it is defence in depth working — migration 056 gave
+    `notification_subscriptions` a row-level-security policy (this file's own header
+    predates it and still says the table has none), so the other tenant's row is invisible
+    to the SELECT whichever filter the handler writes.
+
+    Both layers are kept deliberately. RLS is the one that cannot be forgotten by a new
+    handler; the explicit filter is the one that survives a session opened without the GUC
+    — which is exactly how `_check_ingestion` and the FS-704 fleet sweep have been caught
+    reading zero rows. A test that could only see one of them would be the weaker claim.
+    """
+
+    async def test_a_tenant_can_update_its_own(self, client_a, subscriptions, admin_sync_url):
+        """The positive control: without it, "the cross-tenant update is refused" is
+        satisfied by an endpoint that updates nothing at all."""
+        response = await client_a.patch(
+            f"{SUBS}/{subscriptions['a']['sub']}", json={"enabled": False}
+        )
+        assert response.status_code == 200, response.text
+        assert response.json()["enabled"] is False
+
+    async def test_another_tenants_subscription_is_not_retargeted(
+        self, client_a, subscriptions, admin_sync_url
+    ):
+        before = _target_of(admin_sync_url, subscriptions["b"]["sub"])
+        response = await client_a.patch(
+            f"{SUBS}/{subscriptions['b']['sub']}",
+            json={"target": "https://attacker.example.com/collect"},
+        )
+        assert response.status_code == 404, (
+            f"org A retargeted org B's subscription (got {response.status_code})"
+        )
+        assert _target_of(admin_sync_url, subscriptions["b"]["sub"]) == before, (
+            "the row changed — the update ran before the scope check, or without one"
+        )
+
+    async def test_a_partial_update_leaves_the_rest_alone(
+        self, client_a, subscriptions
+    ):
+        """PATCH semantics, asserted: `exclude_unset` is what keeps a toggle from
+        blanking the fields the form did not send."""
+        listed = (await client_a.get(SUBS)).json()
+        original = next(
+            row for row in listed if row["id"] == str(subscriptions["a"]["sub"])
+        )
+
+        response = await client_a.patch(
+            f"{SUBS}/{subscriptions['a']['sub']}", json={"enabled": False}
+        )
+        assert response.status_code == 200, response.text
+        updated = response.json()
+        assert updated["name"] == original["name"]
+        assert updated["target"] == original["target"]
+        assert updated["min_severity"] == original["min_severity"]
+
+    async def test_an_unknown_severity_is_refused(self, client_a, subscriptions):
+        """The closed set holds on the way in. A severity this server never dispatches
+        would be discovered when an alert silently goes nowhere."""
+        response = await client_a.patch(
+            f"{SUBS}/{subscriptions['a']['sub']}", json={"min_severity": "catastrophic"}
+        )
+        assert response.status_code == 422, response.text
