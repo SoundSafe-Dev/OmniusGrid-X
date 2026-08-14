@@ -23,9 +23,11 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 const query = vi.fn()
 const list = vi.fn()
 
+const getAvailableMetrics = vi.fn()
 vi.mock('../../api', () => ({
   historianApi: { query: (...a: unknown[]) => query(...a) },
   assetsApi: { list: (...a: unknown[]) => list(...a) },
+  telemetryApi: { getAvailableMetrics: (...a: unknown[]) => getAvailableMetrics(...a) },
 }))
 
 const { Historian } = await import('./Historian')
@@ -219,5 +221,54 @@ describe('an asset list still loading is not an empty plant (FS-489)', () => {
     show()
 
     await waitFor(() => expect(screen.getByText('No assets')).toBeInTheDocument())
+  })
+})
+
+/**
+ * The metric is PICKED, not guessed (P13, page-enhancement review).
+ *
+ * This was a free-text box defaulting to "temperature", so an operator had to know the
+ * metric names an asset reports — and a wrong guess returns an empty result set that
+ * reads exactly like a quiet machine. `GET /telemetry/{id}/metrics` has existed the
+ * whole time with no caller anywhere in the frontend.
+ */
+describe('the metric picker', () => {
+  beforeEach(() => {
+    getAvailableMetrics.mockReset()
+    getAvailableMetrics.mockResolvedValue({
+      assetId: 'asset-1',
+      metrics: ['spindle_load', 'coolant_temp'],
+    })
+  })
+
+  it('offers what the asset actually reports', async () => {
+    show()
+    expect(await screen.findByRole('option', { name: 'spindle_load' })).toBeInTheDocument()
+    expect(screen.getByRole('option', { name: 'coolant_temp' })).toBeInTheDocument()
+  })
+
+  it('QUERIES a reported metric, not the "temperature" default', async () => {
+    // The default was a guess about every asset in the fleet. When the list arrives and
+    // does not contain it, carrying it over would query a metric this machine has never
+    // reported and render the empty answer as history.
+    //
+    // Asserted on the REQUEST, not on the select's value: a <select> shows its first
+    // option as its value whether or not state followed, so the display-level check
+    // passed with the state sync deleted (proven by mutation). What matters is which
+    // metric the historian is actually asked for.
+    show()
+    await screen.findByRole('option', { name: 'spindle_load' })
+    await runQuery()
+    await waitFor(() => expect(query).toHaveBeenCalled())
+    expect(query.mock.lastCall?.[0].metric).toBe('spindle_load')
+  })
+
+  it('falls back to a text box when the metric list cannot be loaded', async () => {
+    // A dropdown with no options is a dead end; the old input at least let someone type
+    // a name they knew.
+    getAvailableMetrics.mockRejectedValue(new Error('500'))
+    show()
+    const input = await screen.findByPlaceholderText(/metric list unavailable/i)
+    expect(input).toBeInTheDocument()
   })
 })

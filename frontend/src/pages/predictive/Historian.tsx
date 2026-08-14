@@ -1,4 +1,4 @@
-import { FC, useMemo, useState } from 'react';
+import { FC, useEffect, useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Database, Download, Search } from 'lucide-react';
 import {
@@ -12,7 +12,7 @@ import {
   ResponsiveContainer,
 } from 'recharts';
 import { Card, Button } from '../../components';
-import { assetsApi, historianApi } from '../../api';
+import { assetsApi, historianApi, telemetryApi } from '../../api';
 import type {
   HistorianGranularity,
   HistorianQueryParams,
@@ -85,6 +85,23 @@ export const Historian: FC = () => {
   const [submitted, setSubmitted] = useState<HistorianQueryParams | null>(null);
 
   const effectiveAssetId = assetId || assets[0]?.id || '';
+
+  // What this asset actually reports (P13). Keyed on the asset so switching machines
+  // reloads the list; the selected metric follows when the current one is not among
+  // them, because a metric name carried over from another machine returns an empty
+  // result that reads like a quiet asset.
+  const metricsQuery = useQuery({
+    queryKey: ['historian-metrics', effectiveAssetId],
+    queryFn: () => telemetryApi.getAvailableMetrics(effectiveAssetId),
+    enabled: Boolean(effectiveAssetId),
+  });
+  const metricOptions = metricsQuery.data?.metrics ?? [];
+
+  useEffect(() => {
+    if (metricOptions.length > 0 && !metricOptions.includes(metric)) {
+      setMetric(metricOptions[0]);
+    }
+  }, [metricOptions, metric]);
 
   const { data, isFetching, isError } = useQuery({
     queryKey: ['historian-query', submitted],
@@ -170,13 +187,39 @@ export const Historian: FC = () => {
           </div>
           <div>
             <label htmlFor="historian-metric" className="block text-xs text-opsgrid-text-secondary mb-1">Metric</label>
-            <input
-              id="historian-metric"
-              value={metric}
-              onChange={(e) => setMetric(e.target.value)}
-              placeholder="e.g. temperature"
-              className="w-full px-3 py-2 bg-opsgrid-bg border border-opsgrid-border rounded-lg text-opsgrid-text-primary"
-            />
+            {/* PICKED FROM WHAT THE ASSET REPORTS (P13, page-enhancement review). This was
+                a free-text box defaulting to "temperature", so an operator had to GUESS
+                metric names — and a wrong guess returns an empty result set that reads
+                exactly like a quiet machine. `GET /telemetry/{id}/metrics` has existed
+                the whole time with no caller.
+
+                Falls back to the text box when the list cannot be loaded (or the asset
+                has reported nothing yet): a dropdown with no options would be a dead end
+                where the old input at least let someone type a name they knew. */}
+            {metricOptions.length > 0 ? (
+              <select
+                id="historian-metric"
+                value={metric}
+                onChange={(e) => setMetric(e.target.value)}
+                className="w-full px-3 py-2 bg-opsgrid-bg border border-opsgrid-border rounded-lg text-opsgrid-text-primary"
+              >
+                {metricOptions.map((name) => (
+                  <option key={name} value={name}>{name}</option>
+                ))}
+              </select>
+            ) : (
+              <input
+                id="historian-metric"
+                value={metric}
+                onChange={(e) => setMetric(e.target.value)}
+                placeholder={
+                  metricsQuery.isError
+                    ? 'metric list unavailable — type a name'
+                    : 'e.g. temperature'
+                }
+                className="w-full px-3 py-2 bg-opsgrid-bg border border-opsgrid-border rounded-lg text-opsgrid-text-primary"
+              />
+            )}
           </div>
           <div>
             <label htmlFor="historian-granularity" className="block text-xs text-opsgrid-text-secondary mb-1">Granularity</label>

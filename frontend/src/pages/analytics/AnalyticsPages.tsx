@@ -323,7 +323,12 @@ export const TelemetryCharts: FC = () => {
 
           {/* Current fleet OEE */}
           <div>
-            <h3 className="text-lg font-semibold mb-4 text-opsgrid-text-primary">Fleet OEE (current)</h3>
+            {/* TITLED FOR WHAT IS PLOTTED (P13). "Fleet OEE" over an availability-only
+                series is the FS-192/FS-399 overstatement the OEE page was corrected for,
+                still standing here. */}
+            <h3 className="text-lg font-semibold mb-4 text-opsgrid-text-primary">
+              Fleet availability (current)
+            </h3>
             <div className="h-64">
               <ResponsiveContainer width="100%" height="100%">
                 <BarChart data={oeeData}>
@@ -336,7 +341,13 @@ export const TelemetryCharts: FC = () => {
                   />
                   <Legend />
                   <Bar dataKey="availability" fill="#3B82F6" name="Availability (%)" />
-                  <Bar dataKey="oee" fill="#10B981" name="OEE (%)" />
+                  {/* THE SECOND BAR IS GONE (P13, page-enhancement review). It declared
+                      `dataKey="oee"` while `oeeData` rows carry only `availability`, so
+                      the legend has always shown an "OEE (%)" swatch beside a bar that
+                      could never draw — a chart asserting a second series exists and
+                      happens to be empty right now. `/dashboard/fleet/oee` reports
+                      availability only and says so (FS-399); three-factor OEE lives on
+                      `/dashboard/assets/{id}/oee` and is rendered by the OEE page. */}
                 </BarChart>
               </ResponsiveContainer>
             </div>

@@ -343,7 +343,41 @@ E2 Mobile-first floor view. E3 Shift handover notes.
 | P10 | ✅ SHIPPED — AlarmRules: asset/type/workcell scope selectors + a Scope column | AlarmRules | M |
 | P11 | ✅ SHIPPED — Notifications: new PATCH route, inline edit, enable/disable toggle, test-severity selector | Notifications | M |
 | P12 | ✅ SHIPPED — Collectors: `dropped` finally rendered, cert-expiry badges, worst-first order. (Per-agent detail NOT built: `GET /edge/fleet/{id}` returns the same shape as a list row, so a drill-in would show identical data.) | Collectors | M |
-| P13 | TelemetryCharts asset/metric pickers; Historian metric dropdown | analytics | M |
+| P13 | ✅ SHIPPED — Historian metric dropdown from `/telemetry/{id}/metrics`; TelemetryCharts' phantom OEE bar deleted and its chart retitled to what it plots. (Asset/metric multi-select on TelemetryCharts still open.) | analytics | M |
 | P14 | ◐ PARTIAL — trend queries now poll (were frozen at mount under polling KPIs). OEE tile + inline ack still open. | Dashboard | S |
 | — | Cross-lane (recorded, need authorisation): kanban comments/timers/rules, engine test-fire, NLP session mgmt, OTA table actions, RAG library, ERP mapping UI, operator workspace | — | — |
 
+
+
+## Where this left the system (2026-08-14)
+
+Twelve of the fourteen ranked items shipped; P13 and P14 landed their sharpest halves.
+Everything below was measured, fixed, mutation-verified and pushed to both remotes.
+
+**The pattern the survey predicted held.** The dominant defect class was not missing
+features but UNCALLED ENDPOINTS, and most of the value came from wires: alarm filters,
+asset filters, OEE losses, the export-schedule CRUD, the notifications PATCH, the
+telemetry metrics list. Two backend routes were added (`GET /shop-floor/downtime/open`,
+`PATCH /notifications/subscriptions/{id}`) and one query param (`assets?search=`);
+everything else already existed and was simply not reachable from a screen.
+
+**Honesty debt paid.** The 24h alarm count labelled as all-history; the phantom OEE bar
+whose legend promised a series that could never draw; "Fleet OEE" over availability-only
+data; System Health discarding the details it fetched; `dropped` — permanently lost
+telemetry — traced onto the wire by FS-591 and then omitted by the page's own interface;
+IntakeInbox's dead button and inert filter; a paused schedule advertising a next run.
+
+**What the guards taught this arc**, each caught by a check rather than by review:
+`everyRouteIsSwept` and `everyRoutedPageHasATest` gatekept the new admin page;
+`mutationFailureIsVisible` rejected per-call error handling that looked silent at the
+mutation; `test_frontend_fields_exist_on_the_wire` refused a client type I had guessed;
+the truncation sweep refused a hand-rolled header read; the swallow ratchet charged for
+every new broad handler; `frontendSafetyRatchets` caught an inline `toLocaleString`; and
+the route-auth walk demanded a reviewed policy for the new PATCH.
+
+**Still open, and why.** P13's TelemetryCharts multi-select and P14's Dashboard OEE tile
++ inline acknowledge are in my lane and simply next. Everything else outstanding is
+cross-lane: kanban comments/timers/rules (Harsh), engine test-fire and NLP session
+management (HARSH), OTA table actions (Hridyansh), the RAG document library (htreinen),
+ERP field-mapping UI, and the operator (non-admin) workspace — which is a missing
+surface rather than a page gap and needs a product decision before code.
