@@ -35,6 +35,8 @@ def test_retrieval_recall(indexed_doc_format, record):
     r3 = sum(1 for r in ranks if r and r <= 3) / n
     r5 = sum(1 for r in ranks if r and r <= 5) / n
     m = sum(mrr(r) for r in ranks) / n
+    conftest.set_metric(f"recall@1[{cell}]", round(r1, 3))
+    conftest.set_metric(f"recall@3[{cell}]", round(r3, 3))
     conftest.set_metric(f"recall@5[{cell}]", round(r5, 3))
     conftest.set_metric(f"mrr[{cell}]", round(m, 3))
     record("metrics", "retrieval_recall", r5 >= 0.6, fmt=cell,

@@ -101,24 +101,34 @@ class Retriever:
         org_id: str,
         top_n: Optional[int] = None,
         generate: bool = True,
+        rerank: Optional[bool] = None,
+        search_mode: Optional[str] = None,
     ) -> RagAnswer:
+        """``rerank`` and ``search_mode`` are ablation overrides for the eval
+        harness (default to the ``RAG_RERANK_ENABLED`` / ``RAG_SEARCH_MODE``
+        settings, i.e. today's hybrid+rerank behavior unless env-overridden).
+        Not exposed on the public /query API."""
         if not self.inference.available or not self.vectors.available:
             raise RuntimeError(
                 "Retrieval unavailable: the inference or vector service is not "
                 "configured/reachable."
             )
         top_n = top_n or settings.RAG_RERANK_TOP_N
+        rerank = settings.RAG_RERANK_ENABLED if rerank is None else rerank
+        search_mode = search_mode or settings.RAG_SEARCH_MODE
 
         # 1. Embed the query (BGE-M3 asymmetric query encoding).
         embedding = await self.inference.embed_query(query)
 
-        # 2. Hybrid (dense + sparse) search, scoped to the caller's org.
+        # 2. Search, scoped to the caller's org (hybrid by default; dense-only
+        #    or sparse-only is an ablation knob - see search_mode above).
         candidates = await self.vectors.hybrid_search(
             dense=embedding.dense,
             sparse_indices=embedding.sparse.indices,
             sparse_values=embedding.sparse.values,
             limit=settings.RAG_RETRIEVE_LIMIT,
             org_id=org_id,
+            mode=search_mode,
         )
         if not candidates:
             return RagAnswer(
@@ -128,12 +138,17 @@ class Retriever:
                 generated=False,
             )
 
-        # 3. Cross-encoder rerank; keep the strongest top_n passages.
-        passages = [c.payload.get("text", "") for c in candidates]
-        ranked = await self.inference.rerank_top_n(query, passages, top_n)
-        top: List[Tuple[SearchResult, float]] = [
-            (candidates[idx], score) for idx, score in ranked
-        ]
+        # 3. Cross-encoder rerank and keep the strongest top_n passages, or -
+        #    with reranking disabled - just take the top_n fused/raw candidates
+        #    as-is, carrying their search-stage score through unchanged.
+        if rerank:
+            passages = [c.payload.get("text", "") for c in candidates]
+            ranked = await self.inference.rerank_top_n(query, passages, top_n)
+            top: List[Tuple[SearchResult, float]] = [
+                (candidates[idx], score) for idx, score in ranked
+            ]
+        else:
+            top = [(c, c.score) for c in candidates[:top_n]]
 
         # 4. Assemble numbered context (capped) + citations.
         context, citations = self._build_context(top)

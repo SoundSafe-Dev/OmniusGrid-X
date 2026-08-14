@@ -136,13 +136,20 @@ class VectorStore:
         limit: int = 10,
         query_filter: Optional["models.Filter"] = None,
         org_id: Optional[str] = None,
+        mode: str = "hybrid",
     ) -> List[SearchResult]:
-        """Dense + sparse retrieval fused with RRF, server-side.
+        """Dense and/or sparse retrieval, depending on ``mode``.
 
-        ``limit`` is the fused result size (feed these to the reranker). The
-        per-mode candidate pool is ``QDRANT_PREFETCH_LIMIT``. Pass ``org_id``
-        for tenant isolation - it builds an ``org_id`` payload filter unless an
-        explicit ``query_filter`` is given.
+        ``limit`` is the result size (feed these to the reranker). Pass
+        ``org_id`` for tenant isolation - it builds an ``org_id`` payload
+        filter unless an explicit ``query_filter`` is given.
+
+        ``mode`` (default ``"hybrid"``, the only behavior before this knob
+        existed): both halves fused server-side with RRF, each drawing from a
+        ``QDRANT_PREFETCH_LIMIT`` candidate pool. ``"dense"``/``"sparse"`` run
+        just that one half as a plain ANN/lexical search - an ablation knob to
+        isolate each mode's contribution to retrieval quality, not used by
+        normal query traffic.
         """
         client = self._get_client()
         if query_filter is None and org_id is not None:
@@ -153,28 +160,51 @@ class VectorStore:
                     )
                 ]
             )
-        response = await client.query_points(
-            collection_name=self.collection,
-            prefetch=[
-                models.Prefetch(
-                    query=dense,
-                    using="dense",
-                    limit=self.prefetch_limit,
-                    filter=query_filter,
+        if mode == "dense":
+            response = await client.query_points(
+                collection_name=self.collection,
+                query=dense,
+                using="dense",
+                query_filter=query_filter,
+                limit=limit,
+                with_payload=True,
+            )
+        elif mode == "sparse":
+            response = await client.query_points(
+                collection_name=self.collection,
+                query=models.SparseVector(
+                    indices=sparse_indices, values=sparse_values
                 ),
-                models.Prefetch(
-                    query=models.SparseVector(
-                        indices=sparse_indices, values=sparse_values
+                using="sparse",
+                query_filter=query_filter,
+                limit=limit,
+                with_payload=True,
+            )
+        elif mode == "hybrid":
+            response = await client.query_points(
+                collection_name=self.collection,
+                prefetch=[
+                    models.Prefetch(
+                        query=dense,
+                        using="dense",
+                        limit=self.prefetch_limit,
+                        filter=query_filter,
                     ),
-                    using="sparse",
-                    limit=self.prefetch_limit,
-                    filter=query_filter,
-                ),
-            ],
-            query=models.FusionQuery(fusion=models.Fusion.RRF),
-            limit=limit,
-            with_payload=True,
-        )
+                    models.Prefetch(
+                        query=models.SparseVector(
+                            indices=sparse_indices, values=sparse_values
+                        ),
+                        using="sparse",
+                        limit=self.prefetch_limit,
+                        filter=query_filter,
+                    ),
+                ],
+                query=models.FusionQuery(fusion=models.Fusion.RRF),
+                limit=limit,
+                with_payload=True,
+            )
+        else:
+            raise ValueError(f"Unknown search mode: {mode!r} (expected hybrid/dense/sparse)")
         return [
             SearchResult(id=str(p.id), score=p.score, payload=p.payload or {})
             for p in response.points

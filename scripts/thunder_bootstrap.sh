@@ -135,6 +135,41 @@ status() {
   pgrep -af "app.workers.rag_indexing" >/dev/null && echo "worker: running" || echo "worker: down"
 }
 
+# Restart just the backend (not the worker or datastores) with retrieval
+# ablation env overrides - RAG_SEARCH_MODE / RAG_RERANK_ENABLED, see
+# app/core/config.py. Settings are read once at process startup, so picking
+# up a new config means recreating the process, not an in-process toggle.
+# Used by scripts/thunder_run_ablation.py between configs.
+#
+# Two non-obvious things here:
+#  - `[u]vicorn ...` (bracket on the first char) instead of `uvicorn ...`:
+#    plain `pkill -f 'uvicorn app.main:app ...'`, run non-interactively over
+#    ssh, matches its OWN argv (which literally contains that pattern as the
+#    -f value) and kills itself - and if the same literal string also occurs
+#    later in this same script invocation (e.g. the launch line below), that
+#    can kill the invoking shell before it gets there. The bracket avoids
+#    self-matching.
+#  - `disown` after backgrounding: without it, a `cmd &` launched via
+#    non-interactive `ssh host "..."` can leave the remote shell hanging
+#    indefinitely even though the child's stdio is fully redirected -
+#    interactive sessions (`tnr connect`) don't show this, only one-shot
+#    `ssh host "cmd"` invocations do.
+restart_backend() {
+  local search_mode="${1:?usage: restart-backend <hybrid|dense|sparse> <true|false>}"
+  local rerank_enabled="${2:?usage: restart-backend <hybrid|dense|sparse> <true|false>}"
+  pkill -f '[u]vicorn app.main:app --host 0.0.0.0 --port 8000' || true
+  sleep 1
+  ( set -a; . /home/ubuntu/rag.env; set +a
+    export RAG_SEARCH_MODE="$search_mode" RAG_RERANK_ENABLED="$rerank_enabled"
+    cd "$REPO/backend"
+    setsid nohup "$VENV/bin/uvicorn" app.main:app --host 0.0.0.0 --port 8000 \
+      > /tmp/backend.log 2>&1 < /dev/null &
+    disown
+  )
+  sleep 1
+  echo "backend relaunched: RAG_SEARCH_MODE=$search_mode RAG_RERANK_ENABLED=$rerank_enabled"
+}
+
 case "${1:-start}" in
   setup)  setup ;;
   start)  start_datastores; start_services; status ;;
@@ -142,5 +177,6 @@ case "${1:-start}" in
           pkill -f "uvicorn app.main:app" || true
           pkill -f "app.workers.rag_indexing" || true ;;
   status) status ;;
-  *) echo "usage: $0 {setup|start|stop|status}" >&2; exit 2 ;;
+  restart-backend) restart_backend "${2:-}" "${3:-}" ;;
+  *) echo "usage: $0 {setup|start|stop|status|restart-backend <mode> <rerank>}" >&2; exit 2 ;;
 esac

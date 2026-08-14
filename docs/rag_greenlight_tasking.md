@@ -202,3 +202,84 @@ this needs a driver script. What the greenlight needs:
 6. **CI RAG job**, once the suite runs without docker-in-docker.
 
 FS-667 and FS-668 need no work beyond confirming they survive the merge.
+
+---
+
+## Update — 2026-08-14, retrieval ablation knobs + first perf run
+
+Picking up at "Recommended order" step 3. FS-669 was independently re-verified
+against this branch's own tip (it was already fixed here) and confirmed still
+fixed. Two things landed since:
+
+### 1. `scripts/rag_perf.py` — run for the first time
+
+Previously present but never executed against live services (see workstream
+C). Now has a real run behind it on instance 0's stack (Qdrant + SeaweedFS +
+Postgres + BGE-M3, GPU). Ingest, queued→indexed latency, query latency, and
+worker-drain-under-backlog all measured; quota-check overhead recorded as a
+best-effort proxy per the driver's own caveat. Numbers are not reproduced
+here — they're a point-in-time snapshot, not a fixed target, and belong next
+to whatever run they're being compared against, not frozen into this doc.
+
+### 2. Retrieval ablation knobs (`RAG_SEARCH_MODE`, `RAG_RERANK_ENABLED`)
+
+Ported from a parallel branch (`feature/RAG-Compliance-Doc-Pipeline`, which
+built these independently) onto this branch:
+
+- `app/core/config.py` — `RAG_SEARCH_MODE` (`hybrid`\|`dense`\|`sparse`,
+  default `hybrid`) and `RAG_RERANK_ENABLED` (default `true`). Not exposed on
+  the public `/query` API — settings-only, read once at process startup.
+- `app/services/vector_store.py` — `VectorStore.hybrid_search(..., mode=...)`.
+  `dense`/`sparse` run just that half as a plain ANN/lexical search instead of
+  the RRF-fused default. **FS-669's org-scoping was left untouched** — this
+  branch's `delete_by_doc`/`delete_by_doc_excluding_generation` already
+  required `org_id`; the port only added the `mode` param to `hybrid_search`.
+- `app/services/rag_retriever.py` — `Retriever.retrieve(..., rerank=,
+  search_mode=)`, defaulting to the settings above. With rerank disabled, the
+  fused/raw candidates are taken top-N as-is instead of going through the
+  cross-encoder.
+- `backend/tests/rag_eval/test_metrics.py` — now also records `recall@1` and
+  `recall@3` per cell (previously only `recall@5`/`mrr`), since the ablation
+  aggregation wants all four.
+- `scripts/thunder_bootstrap.sh` — added a `restart-backend <mode> <rerank>`
+  subcommand: kills and relaunches just the bare backend process with the
+  override env vars (worker and datastores untouched, since only the query
+  path reads these settings). Two footguns documented inline: `pkill -f`
+  self-matching its own argv when the same pattern text appears later in the
+  same non-interactive SSH invocation, and a background job needing explicit
+  `disown` to fully detach a one-shot `ssh host "cmd &"` session (interactive
+  `tnr connect` sessions don't show this).
+- `scripts/thunder_run_ablation.py` — new. Same four configs and aggregation
+  as `backend/tests/rag_eval/run_ablation.py`, but drives
+  `thunder_bootstrap.sh restart-backend` instead of `docker compose up -d
+  backend`, since Thunder's Docker daemon can't build images or create
+  networks (see `thunder_bootstrap.sh`'s header). Run it on-box after
+  `thunder_bootstrap.sh start`.
+
+**Known ceiling, not a bug:** dense-only and sparse-only converge to the same
+result as hybrid whenever a document/format cell's chunk count is below
+`RAG_RETRIEVE_LIMIT` (default 20) — every mode then returns the same complete
+candidate set to the reranker, which decides the final order regardless of
+retrieval mode. The current eval corpus runs small enough per cell that this
+triggers. The no-rerank config is unaffected and is the only one of the four
+that isolates the reranker's own contribution. Growing the corpus (more
+chunks per document, or lowering `RAG_RETRIEVE_LIMIT` for the ablation run
+specifically) would be needed to make the dense-vs-sparse comparison
+meaningful — not done here.
+
+### State for further integration
+
+- **FS-666 (streaming route) is still the only unfixed item from the original
+  four.** Not started this session.
+- The ablation knobs are additive and default to today's only prior behavior
+  (`hybrid` + rerank on), so they carry no behavior change for existing
+  callers.
+- Workstream A (replay onto `main`, k8s manifests) and workstream B (CI RAG
+  job) are unchanged from the original verdict above — still not done, still
+  the largest gaps before a genuine greenlight.
+- tnr-0 was briefly cross-contaminated with files from
+  `feature/RAG-Compliance-Doc-Pipeline` while spot-checking FS-669 against
+  that branch's independent fix; restored to this branch's own files before
+  any further work. Worth a clean `thunder_bootstrap.sh` re-run from a fresh
+  snapshot before anything load-bearing, rather than trusting the live box's
+  file state.

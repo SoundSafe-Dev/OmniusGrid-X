@@ -271,6 +271,13 @@ class Settings(BaseSettings):
     RAG_RERANK_TOP_N: int = 5  # passages kept after rerank, sent to the LLM
     RAG_MAX_CONTEXT_CHARS: int = 12000  # cap on concatenated context
 
+    # Retrieval ablation knobs. Defaults reproduce today's only behavior
+    # (hybrid search + cross-encoder rerank); an eval harness flips these via
+    # env vars to isolate the reranker's and each search mode's contribution
+    # to retrieval quality. Not exposed on the public /query API.
+    RAG_RERANK_ENABLED: bool = True
+    RAG_SEARCH_MODE: str = "hybrid"  # hybrid | dense | sparse
+
     # Application
     ENVIRONMENT: str = "development"   # development | staging | production
     DEBUG: bool = True
