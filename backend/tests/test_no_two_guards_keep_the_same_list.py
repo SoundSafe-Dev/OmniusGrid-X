@@ -51,6 +51,15 @@ OVERLAP_THRESHOLD = 3
 #: compared them and found the overlap meaningful rather than accidental.
 DIFFERENT_QUESTIONS: Dict[frozenset, str] = {
     frozenset({
+        "test_every_alert_watches_a_series_something_exports.py::CODE_ROOTS",
+        "test_the_session_arc_is_a_real_range.py::SEARCH_ROOTS",
+    }): (
+        "Both enumerate the repo's code roots, because both sweeps must read the whole "
+        "tree — one collects exported metric series, the other verifies documentation "
+        "ranges. The overlap is path components, not subject matter: neither list could "
+        "be derived from the other without coupling a metrics guard to a docs guard."
+    ),
+    frozenset({
         "test_service_lifecycle_is_declared.py::EXPECTED_STARTED",
         "test_a_started_service_is_a_service_somebody_watches.py::UNWATCHED",
     }): (

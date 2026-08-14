@@ -10744,3 +10744,23 @@ now counts AST `Name` loads, under which an import alias is a reference, not a f
 Backend guard: `test_no_metric_is_exported_and_never_fed.py` (twin of the edge file by the
 same name), with the deletion of the eight pinned so a revert-happy merge cannot bring
 them back.
+
+### And the class gets a guard: every alert must watch a series something exports
+
+Three alerts were found unable to fire, by hand, three findings apart. The question is now
+asked mechanically: `test_every_alert_watches_a_series_something_exports.py` collects every
+series name both codebases export (AST, with prometheus_client's suffix behaviour — a
+`Counter("foo")` exports `foo_total`, a Histogram grows `_bucket`/`_sum`/`_count`), parses
+every `expr:` in `alerts.yml`, strips PromQL functions and label names (the first draft
+reported `agent_id` as an unbacked series, which is why the label parser is a named
+negative control), and requires the remainder to be exported by code or by a **named**
+infra exporter — node-exporter, kube-state-metrics, CloudNativePG, Redpanda — each register
+entry carrying the deployment that provides it, which is the honest boundary of what a
+repo test can verify.
+
+What it cannot ask: whether an exported series can reach the *value* the alert compares
+against — `edge_agent_up` existed the whole time; it was 0 that was unreachable. That half
+still needs a human asking rule 194's question, and promtool for the arithmetic.
+
+Mutation: deleting the worker's `INGESTION_LAG` definition fails both the denominator
+control and the main sweep.
