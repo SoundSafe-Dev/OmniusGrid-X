@@ -2,13 +2,22 @@ from uuid import uuid4
 
 
 async def test_board_metrics_and_workload_use_a_tenant_bound_session(
-    client_a, client_b
+    client_a, client_b, seeded_orgs
 ):
     """The Kanban dashboard must read through the authenticated tenant scope.
 
     A plain ``get_db`` session has no RLS organization setting and makes these
     endpoints appear empty or fail while creating their default board. Exercise
     both organizations to prove each can create and read only its own board.
+
+    THE WORKLOAD ASSERTION IS ABOUT WHOSE ROWS COME BACK, NOT HOW MANY. It first read
+    ``workload.json() == {"workloads": []}``, which described no real state: ``seeded_orgs``
+    gives each organisation exactly one user and ``/workload`` reports a row per user in the
+    org, so the endpoint returns one zeroed row and always did. Worse, an empty list is what
+    a completely broken endpoint returns — a tenant-scope test satisfied by "nothing came
+    back" cannot fail for the reason it exists (rule 165: assert the denominator). Asserting
+    the row IS org A's user and is NOT org B's fails both ways: if the scope leaks, and if
+    the endpoint goes dark.
     """
     board_a = await client_a.get("/api/v1/kanban/board")
     board_b = await client_b.get("/api/v1/kanban/board")
@@ -23,7 +32,14 @@ async def test_board_metrics_and_workload_use_a_tenant_bound_session(
     assert metrics.status_code == 200
     assert metrics.json()["total_tasks"] == 0
     assert workload.status_code == 200
-    assert workload.json() == {"workloads": []}
+
+    rows = workload.json()["workloads"]
+    assert [row["user_id"] for row in rows] == [str(seeded_orgs["user_a_id"])], (
+        "org A's workload must list org A's user and nobody else"
+    )
+    assert str(seeded_orgs["user_b_id"]) not in {row["user_id"] for row in rows}
+    assert rows[0]["assigned_tasks"] == 0
+    assert rows[0]["in_progress_tasks"] == 0
 
 
 async def test_task_endpoints_are_scoped_to_authenticated_organization(

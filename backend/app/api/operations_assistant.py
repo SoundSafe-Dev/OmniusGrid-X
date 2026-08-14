@@ -7,10 +7,11 @@ join, upgrade an association into causation, or trigger an operating action.
 
 from __future__ import annotations
 
-from typing import Any, Dict, Iterable, Optional
+from uuid import UUID
+from typing import Any, Dict, Iterable, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import get_current_active_user
@@ -42,6 +43,39 @@ class OperationsJobQuestionRequest(BaseModel):
     """Ask a question over a completed asynchronous evidence job."""
 
     question: str = Field(min_length=3, max_length=2_000)
+
+
+class _OpenModel(BaseModel):
+    """Open by construction — see the note on the response models in
+    `correlation_evidence.py`. An operations answer carries engine-decided keys, and a
+    closed model would delete them from the response without saying so."""
+
+    model_config = ConfigDict(extra="allow")
+
+
+class OperationsQuestionTypesResponse(_OpenModel):
+    questions: List[Dict[str, Any]] = Field(default_factory=list)
+    answer_contract: Dict[str, Any] = Field(default_factory=dict)
+
+
+class OperationsAnswerResponse(_OpenModel):
+    """`citation_evidence` and `evidence_scope` are declared, not incidental: they are what
+    makes the answer checkable, and an SDK that drops them leaves a confident paragraph
+    with nothing behind it."""
+
+    question: str
+    answer: Dict[str, Any] = Field(default_factory=dict)
+    citation_evidence: Optional[Dict[str, Any]] = None
+    evidence_scope: Optional[Dict[str, Any]] = None
+    job_id: Optional[str] = None
+
+
+class OperationsBriefingResponse(_OpenModel):
+    overview: Dict[str, Any] = Field(default_factory=dict)
+    next_shift_checklist: Dict[str, Any] = Field(default_factory=dict)
+    overview_citation_evidence: Optional[Dict[str, Any]] = None
+    next_shift_checklist_citation_evidence: Optional[Dict[str, Any]] = None
+    evidence_scope: Optional[Dict[str, Any]] = None
 
 
 def _company_name_from_evidence(evidence: Dict[str, Any]) -> Optional[str]:
@@ -209,7 +243,7 @@ async def _run_question(
     }
 
 
-@router.get("/question-types")
+@router.get("/question-types", response_model=OperationsQuestionTypesResponse)
 async def operations_question_types(
     current_user: User = Depends(get_current_active_user),
 ):
@@ -225,7 +259,7 @@ async def operations_question_types(
     }
 
 
-@router.post("/answer")
+@router.post("/answer", response_model=OperationsAnswerResponse)
 async def answer_operations_lead_question(
     request: OperationsQuestionRequest,
     db: AsyncSession = Depends(get_db),
@@ -236,7 +270,7 @@ async def answer_operations_lead_question(
     return await _run_question(request, db, current_user)
 
 
-@router.post("/briefing")
+@router.post("/briefing", response_model=OperationsBriefingResponse)
 async def create_operations_briefing(
     request: EvidencePreviewRequest,
     db: AsyncSession = Depends(get_db),
@@ -276,15 +310,15 @@ async def create_operations_briefing(
     }
 
 
-@router.post("/jobs/{job_id}/answer")
+@router.post("/jobs/{job_id}/answer", response_model=OperationsAnswerResponse)
 async def answer_completed_job_question(
-    job_id: str,
+    job_id: UUID,
     request: OperationsJobQuestionRequest,
     current_user: User = Depends(get_current_active_user),
 ):
     """Answer a question from a completed tenant-scoped evidence job result."""
 
-    job = await correlation_jobs.get(job_id)
+    job = await correlation_jobs.get(str(job_id))
     if (
         job is None
         or job.get("organization_id") != str(current_user.organization_id)

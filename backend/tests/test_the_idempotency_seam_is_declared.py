@@ -51,6 +51,14 @@ UNPROTECTED: dict[str, str] = {
     "/api/v1/engines": "Harsh's lane (tactical/strategic engines)",
     "/api/v1/logistics": "Harsh's lane (logistics correlation)",
     "/api/v1/nlp": "Harsh's lane (NLP correlation) — 17 routes, the largest unprotected surface",
+    "/api/v1/correlation": (
+        "Harsh's lane (correlation evidence), same owner and same subject as /api/v1/nlp "
+        "above. Recorded rather than protected because the two routes that would most "
+        "benefit are his to decide: POST /intake/jobs mints a job id per call, so a client "
+        "that retries a timed-out request gets a second full analysis running beside the "
+        "first, and both bill inference. The middleware is a no-op without an "
+        "Idempotency-Key header, so adopting it is additive whenever he wants it."
+    ),
     "/api/v1/model-monitoring": "Harsh's lane (MLOps)",
     "/api/v1/models": "Harsh's lane (MLOps model registry)",
     "/api/v1/fleet": "Hridyansh's lane (OTA) — rollouts carry their own resume semantics",

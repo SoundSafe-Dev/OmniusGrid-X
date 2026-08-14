@@ -11119,3 +11119,84 @@ clause alone did not fail the guard, and neither did deleting the field from the
 type — because each left the other, and the guard asks whether the frontend carries the
 field *anywhere*. Removing both fails it. Reporting either single mutation as "the guard
 does not bite" would have been the wrong conclusion from a true observation.
+
+## FS-718 — the correlation-engine merge, and the sixteen guards that read it
+
+Two developers' branches came onto the scrubbed history: three spreadsheet-intake commits
+(already present by content — every file byte-identical — so merged for ancestry only) and
+the correlation-engine work, which is 12,417 lines across twenty backend files and 2,018
+across seven frontend ones. The branch was at **4,646 passing, 0 failing** before it and
+**16 failing** after. None of the sixteen was a merge conflict; every one was a guard
+reading the new code and finding something. What they found, in the order the cost falls:
+
+**A tenant leak that reads as an empty page.** Four `correlation_evidence` handlers took
+`get_db`. `intake_items` is FORCE ROW LEVEL SECURITY, so a session with no
+`app.current_org_id` reads **zero rows and raises nothing** — the handlers would have
+404'd on the caller's own uploads with a clean log. `get_tenant_db` throughout.
+
+**A fix that would have broken what it fixed.** Three `job_id: str` path params were
+retyped to `UUID` for the id-typing guard, which is correct — and `correlation_jobs` keys
+its store by `str(uuid4())`, so a `UUID` object misses every lookup silently. Converted at
+the three call sites; the route validates the shape, the service keeps its contract.
+
+**Two behavioural tests that described no real state.** The merge's own kanban tenancy
+test asserted `workload.json() == {"workloads": []}` for an organisation that has exactly
+one user and an endpoint that reports a row per user — so it never passed here. Worse, an
+empty list is what a *broken* endpoint returns, so a tenant-scope test was satisfied by
+"nothing came back" (rule 165). It now asserts the row is org A's user and is not org B's,
+which fails both ways. The seeder smoke failure was three missing requirements —
+`odfpy`, `pyarrow`, `pyxlsb` — the stale-image message it printed being exactly right.
+
+**Stale-after-failure in the intake UI, found by a guard aimed at something else.** Three
+`catch` blocks set an error and left the previous result rendered, so a failed evidence
+rebuild showed "No safe automatic recommendation is available" and "No join candidate was
+available" — conclusions about the *previous* scope — under a message saying this scope
+could not be built. A stale answer beneath a fresh error reads as an answer.
+
+**Four truncation qualifiers that reached no screen.** `groups_truncated`,
+`rollups_truncated`, `sampled` and `input_truncated` each say how far to trust the number
+beside them, and no frontend file named any of them. They are declared on
+`EvidenceEntityRollups` and `OperationalAnalyticsResult` and rendered as a "What these
+figures leave out" list. `sampled` sits on each anomaly block and each relationship — the
+first draft of the type invented a top-level `series` map the server never sends, which is
+the defect the wire guard refuses (rule 202); the shape was then read from the service.
+The fifth, `scenario_sampled`, belongs to a route with no frontend caller at all and is
+registered against the field it qualifies, which the exemption test re-proves is unread.
+
+**The swallow surface, net +1 and now net zero.** Of four new broad handlers, two were
+already honest (the job executor writes `status: failed` to the job the caller polls; the
+parse handler returns a deterministic remediation). One was not a failure at all — an
+Arrow IPC format probe using `except Exception` as control flow, narrowed to
+`pa.ArrowInvalid`, which is the allowance lowered in exchange. The fourth is the one that
+mattered: a Redis ping failure silently demoting the correlation job store to process
+memory, where a second API worker turns every job into a 404. It is counted now
+(`opsgrid_correlation_job_store_degraded_total`) and the counted floor rose to 14.
+
+**Three detectors that were measuring the wrong thing** — see rules 204–208. The
+body-fields extractor could not see a request forwarded to a shared executor and would
+have absorbed five routes into its register, including `POST /answer`'s `question`. The
+emptiness sweep scoped its query check per file, so a presentational drawer inherited its
+page's fetch, and it matched the argument of `setEvidenceError(...)` as an empty state.
+And `idKeyedFetchesDoNotGoStale` had silently fallen to a population of **zero** because
+the tree's one id-keyed fetch is a wrapped promise chain and the pattern required the
+receiver and the dot to be adjacent — no code changed, a line break did.
+
+**Twenty routes wanted a response model, and the first answer was the cheap one.**
+`response_model=Dict[str, Any]` satisfies the coverage ratchet, does not filter, and is
+precedented here — and is precisely what `test_a_permissive_response_model_is_not_a_contract`
+exists to refuse. It caught it. The real answer is a model with `extra="allow"`: named
+fields in the schema, the SDK and the contract gate, with the engine's per-request keys
+still passing through. That last claim is measured against a live response and kept as a
+test, and the drop-detector now exempts open models for the same measured reason.
+
+Registered rather than fixed, each with what it is and whose it is: five orphaned
+definitions (one of them the enricher for a list its own module now deliberately leaves
+empty, because attributing file-level totals to assets produced a convincing false trend),
+`/api/v1/correlation` in the idempotency register with the two job routes that would most
+benefit named, and fifteen correlation mutations in the role-policy register — each
+checked for `get_current_active_user` before being listed, with `vocabulary/{id}/review`
+and `actions/decide` flagged as approver-shaped surfaces any member can currently reach.
+
+`document_store.get_document` came *off* the orphan list: the new artifact store calls it.
+
+Backend 4,738 passing, frontend 1,192, edge 427, `tsc` clean.

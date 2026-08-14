@@ -73,7 +73,16 @@ function idKeyedFetches(): Effect[] {
       // A LAZY IMPORT IS NOT A FETCH. `lazy(() => loader().then(...))` in App.tsx matched an
       // earlier version of this pattern, which is the kind of noise that stops a sweep being
       // read — the `Api.`/`await` requirement is what distinguishes data from code-splitting.
-      if (!/await\s|Api\.|api\./.test(body)) continue
+      // WHITESPACE BETWEEN THE RECEIVER AND THE DOT. `Api\.` required them adjacent, and
+      // the one id-keyed fetch in the tree is written as a wrapped promise chain:
+      //
+      //     transportationApi
+      //       .getShipmentCosts(shipment.id)
+      //
+      // so the sweep's population fell to ZERO and every id-keyed detail view in the tree
+      // was unchecked. Nothing about the code changed — a line break did. This is the
+      // failure the vacuity test above exists for, and the only reason it was noticed.
+      if (!/await\s|[Aa]pi\s*\.|\bfetch\s*\(/.test(body)) continue
       found.push({ file: file.replace(`${SRC}/`, ''), body, deps })
     }
   }

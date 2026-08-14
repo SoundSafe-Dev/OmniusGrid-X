@@ -49,6 +49,11 @@ LEGITIMATE_STRING_IDS = {
         "reaches a service layer typed str; converting the route without the service "
         "would only move the coercion"
     ),
+    ("correlation_evidence.py", "feedback_id"): (
+        "a caller-supplied vocabulary-feedback key held in the evaluation service's own "
+        "dict (correlation_evaluation.py `_feedback_by_id`), not a row id — there is no "
+        "column to type it against"
+    ),
     ("health_index.py", "asset_id"): (
         "passed into health_index_calculator.get_asset_health(asset_id: str); the "
         "service contract is the thing to change first"

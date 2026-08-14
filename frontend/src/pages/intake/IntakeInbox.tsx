@@ -53,6 +53,46 @@ const formatPercent = (value: unknown): string => {
   return numeric === undefined ? '—' : `${(numeric * 100).toFixed(1)}%`;
 };
 
+/**
+ * The bounding flags the evidence engine and the operational analytics attach to their own
+ * output. Each says the same kind of thing — what you are reading is a part, not the whole —
+ * and each is set independently, so they are collected rather than collapsed into one badge.
+ *
+ * Sending a caveat nobody renders is worse than not sending it: the server author believes
+ * the reader has been told. These four are set on every bounded preview and, until this was
+ * written, none of them reached a screen.
+ */
+export const boundedAnalysisNotes = (result?: EvidencePreviewResult | null): string[] => {
+  if (!result) return [];
+  const notes: string[] = [];
+  const rollups = result.entity_rollups;
+  if (rollups?.rollups?.some((rollup) => rollup.groups_truncated)) {
+    notes.push(
+      'Some rollups list only their first groups. The group count is the real total, so the largest contributor may not be in the list.',
+    );
+  }
+  if (rollups?.tables?.some((table) => table.rollups_truncated)) {
+    notes.push(
+      'Some tables produced more metric breakdowns than the limit allowed, so a metric you expect to see may be missing rather than absent from the data.',
+    );
+  }
+  const analytics = result.operational_analytics;
+  if (analytics?.bounded?.input_truncated) {
+    notes.push('The statistics ran over a bounded slice of the rows, not every row in the selection.');
+  }
+  const signals = Object.values(analytics?.field_signals ?? {});
+  const sampledSignal = signals.some(
+    (signal) => signal?.anomalies?.sampled || signal?.change_point?.sampled,
+  );
+  const sampledRelationship = (analytics?.relationships ?? []).some((rel) => rel?.sampled);
+  if (sampledSignal || sampledRelationship) {
+    notes.push(
+      'Some series were sampled before analysis, so anomaly and correlation figures describe the sample rather than every observation.',
+    );
+  }
+  return notes;
+};
+
 const humanizeTechnicalLabel = (value: unknown, fallback = 'Unknown'): string => {
   const text = String(value ?? '').trim();
   if (!text) return fallback;
@@ -631,6 +671,12 @@ export const IntakeInbox: React.FC = () => {
       const response = await nlpCorrelationApi.catalogEvidenceTables(evidenceSelection);
       setTableCatalog(response);
     } catch (error: any) {
+      // CLEAR THE PREVIOUS CATALOG. Setting only the error left the last successful
+      // catalog on screen beside a failure message, so a re-inspection that failed
+      // rendered the table list for the PREVIOUS selection — including "No tables match
+      // this filter" computed against sources the operator had already changed. A stale
+      // answer under a fresh error reads as an answer.
+      setTableCatalog(null);
       setTableCatalogError(apiErrorMessage(error, 'Could not inspect the available workbook/archive tables.'));
     } finally {
       setLoadingTableCatalog(false);
@@ -838,6 +884,11 @@ export const IntakeInbox: React.FC = () => {
       const response = await waitForEvidenceJob(request);
       applyEvidenceResult(response, request);
     } catch (error: any) {
+      // Same reason as the catalog above, and sharper here: the join panels below read
+      // `evidenceResult`, so leaving it set rendered "No safe automatic recommendation is
+      // available" and "No join candidate was available" — conclusions about the PREVIOUS
+      // evidence scope — beside an error saying this scope could not be built.
+      setEvidenceResult(null);
       setEvidenceError(apiErrorMessage(error, 'Could not build a common evidence table for the selected sources.'));
     } finally {
       setCorrelatingEvidence(false);
@@ -879,6 +930,7 @@ export const IntakeInbox: React.FC = () => {
       const confirmed = await waitForEvidenceJob(confirmedRequest);
       applyEvidenceResult(confirmed, confirmedRequest);
     } catch (error: any) {
+      setEvidenceResult(null);
       setEvidenceError(apiErrorMessage(error, 'Could not apply the recommended join.'));
     } finally {
       setCorrelatingEvidence(false);
@@ -1422,6 +1474,19 @@ export const IntakeInbox: React.FC = () => {
                 <p className="rounded bg-status-warning/10 p-2 text-xs text-opsgrid-text-secondary">
                   {evidenceResult.graph_scope.scope_note || 'Only part of the selected table graph was materialized. Narrow the table scope before relying on an operational answer.'}
                 </p>
+              )}
+              {boundedAnalysisNotes(evidenceResult).length > 0 && (
+                <div
+                  data-testid="bounded-analysis-notes"
+                  className="rounded border border-status-warning/50 bg-status-warning/10 p-2 text-xs text-opsgrid-text-secondary"
+                >
+                  <p className="font-medium text-opsgrid-text">What these figures leave out</p>
+                  <ul className="mt-1 list-disc space-y-1 pl-4">
+                    {boundedAnalysisNotes(evidenceResult).map((note) => (
+                      <li key={note}>{note}</li>
+                    ))}
+                  </ul>
+                </div>
               )}
               {evidenceJoinsConfirmed ? (
                 <div className="rounded border border-status-running/50 bg-status-running/10 p-3">

@@ -25,6 +25,7 @@ demanding work from lanes that did not ask for it; the register only shrinks.
 
 from __future__ import annotations
 
+import ast
 import json
 import pathlib
 import re
@@ -138,6 +139,104 @@ def _annotations(name: str) -> dict[str, str]:
     return out
 
 
+def _root_name(node: ast.AST) -> str | None:
+    """The variable an expression is rooted at: `request`, for `request.model_copy(update=…)`."""
+    while True:
+        if isinstance(node, ast.Attribute):
+            node = node.value
+        elif isinstance(node, ast.Call):
+            node = node.func
+        elif isinstance(node, (ast.Await, ast.Starred)):
+            node = node.value
+        else:
+            break
+    return node.id if isinstance(node, ast.Name) else None
+
+
+def _attr_reads(node: ast.AST, var: str) -> set[str]:
+    return {
+        n.attr
+        for n in ast.walk(node)
+        if isinstance(n, ast.Attribute) and isinstance(n.value, ast.Name) and n.value.id == var
+    }
+
+
+#: stem -> {callable name as it is spelled in that module: (def node, the stem that defines it)}.
+#: The second half of the pair is load-bearing: once a call is followed into another router's
+#: helper, the names visible from THERE are that module's, not the caller's.
+_VISIBLE: dict[str, dict[str, tuple[ast.AST, str]]] = {}
+
+
+def _visible(stem: str) -> dict[str, tuple[ast.AST, str]]:
+    """Functions a router module can call by bare name: its own, plus those it imports from a
+    sibling router. Cached, and re-entrant against a mutual import."""
+    if stem in _VISIBLE:
+        return _VISIBLE[stem]
+    _VISIBLE[stem] = {}
+    try:
+        tree = ast.parse((API_DIR / f"{stem}.py").read_text())
+    except (OSError, SyntaxError):  # pragma: no cover - unparseable modules fail elsewhere
+        return _VISIBLE[stem]
+    out = {
+        n.name: (n, stem)
+        for n in tree.body
+        if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
+    }
+    for node in tree.body:
+        if isinstance(node, ast.ImportFrom) and (node.module or "").startswith("app.api."):
+            other = _visible(node.module.split(".")[-1])
+            for alias in node.names:
+                if alias.name in other:
+                    out.setdefault(alias.asname or alias.name, other[alias.name])
+    _VISIBLE[stem] = out
+    return out
+
+
+def _forwarded_reads(node, var, stem, depth=0, seen=frozenset()) -> set[str]:
+    """Reads of the body that happen inside a helper the handler forwards it to.
+
+    Without this the extractor measures the handler body alone, and a route that hands the whole
+    request to a shared executor — the natural shape once three routes want the same work, one
+    synchronous, one queued, one preview — reads NOTHING by that measure. Five correlation
+    routes landed in exactly that shape and the register would have absorbed all five, including
+    `POST /answer`'s `question`, which is the entire point of the route. A register entry that
+    says "deliberate" about a field the service does honour is worse than no entry: it teaches
+    the next reader that the drop was reviewed.
+
+    Follows a forward two hops, across a `from app.api.… import` as well as within a module,
+    because that is exactly the shape here: the handler calls `_run_question`, which lives in
+    the correlation router and calls `_execute_evidence_request` beside it. Cycle-guarded on
+    (callee, parameter). An imported SERVICE is still a boundary this guard does not cross —
+    only routers are read — which is why `model_dump()` remains its own exemption above.
+    """
+    if depth > 2:
+        return set()
+    funcs = _visible(stem)
+    out: set[str] = set()
+    for call in ast.walk(node):
+        if not isinstance(call, ast.Call) or not isinstance(call.func, ast.Name):
+            continue
+        resolved = funcs.get(call.func.id)
+        if resolved is None:
+            continue
+        fn, fn_stem = resolved
+        positional = [p.arg for p in fn.args.posonlyargs + fn.args.args]
+        targets = {
+            positional[i]
+            for i, arg in enumerate(call.args)
+            if i < len(positional) and _root_name(arg) == var
+        }
+        targets |= {kw.arg for kw in call.keywords if kw.arg and _root_name(kw.value) == var}
+        for target in targets:
+            if (call.func.id, target) in seen:
+                continue
+            out |= _attr_reads(fn, target)
+            out |= _forwarded_reads(
+                fn, target, fn_stem, depth + 1, seen | {(call.func.id, target)}
+            )
+    return out
+
+
 def _routes():
     """(key, declared fields, fields the handler reads) for every body-taking route."""
     fields, bases = _schemas()
@@ -155,10 +254,17 @@ def _routes():
             declared = set(_declared(model, fields, bases))
             if not declared:
                 continue
-            # `model_dump()` forwards the whole body at once; nothing can be dropped.
-            if re.search(rf"\b{var}\.(model_dump|dict)\(", chunk):
-                continue
             read = set(re.findall(rf"\b{var}\.(\w+)", chunk))
+            try:
+                read |= _forwarded_reads(ast.parse(chunk), var, path.stem)
+            except SyntaxError:
+                pass
+            # `model_dump()` forwards the whole body at once; nothing can be dropped. Checked
+            # against the FOLLOWED reads, not the handler text: `POST /answer` dumps the body
+            # inside `_run_question`, one hop away, and testing the chunk alone called that a
+            # nine-field drop on the route whose whole purpose is to forward the question.
+            if read & {"model_dump", "dict"}:
+                continue
             yield f"{path.stem}:{verb.upper()} {route}", declared, read
 
 

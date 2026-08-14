@@ -103,3 +103,19 @@ AUDIT_WRITE_FAILURES = Counter(
     "Audit rows the middleware could not persist",
     ["action"],
 )
+
+
+#: A correlation job store that fell back to process memory because Redis did not answer.
+#:
+#: The handler is right to continue — local development runs without a broker, and refusing
+#: to start there would be worse than the fallback. What the fallback COSTS is invisible:
+#: the in-memory store is per-process, so with more than one API worker a job created on one
+#: is a 404 on the next, and a job whose progress is polled round-robin appears to move
+#: backwards. The log line says "unavailable" once, at the first ping, and the degraded mode
+#: then runs indefinitely with nothing to alert on.
+#:
+#: Unlabelled: there is one store and one reason, and error text is never a label value.
+CORRELATION_JOB_STORE_DEGRADED = Counter(
+    "opsgrid_correlation_job_store_degraded_total",
+    "Times the correlation job store fell back to in-process memory because Redis was unreachable",
+)

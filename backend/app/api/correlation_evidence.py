@@ -14,20 +14,30 @@ from uuid import UUID
 
 import structlog
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import get_current_active_user
 from app.api.nlp_correlation import load_intake_content
 from app.core.config import settings
-from app.db.database import AsyncSessionLocal, get_db
+from app.db.database import AsyncSessionLocal
+# `get_tenant_db`, not `get_db`: `intake_items` is FORCE ROW LEVEL SECURITY (migration
+# 011), so a session with no `app.current_org_id` GUC reads ZERO rows and no error —
+# these handlers would 404 on the caller's own uploads. The explicit user/org filters in
+# `_owned_intake_items` stay as the second layer; RLS is the one a new handler cannot
+# forget, the filter is the one that survives a session opened without the GUC.
+from app.middleware.tenant_isolation import get_tenant_db
 from app.db.models import IntakeItem, User
 from app.models.correlation_evaluation import (
     ApprovalPolicy,
+    ApprovalResult,
     AutomatedAction,
     CorrelationEvaluationFixture,
     CorrelationEvaluationCase,
+    CorrelationEvaluationResult,
+    CorrelationEvaluationSuiteReport,
+    CorrelationQualityReport,
     CorrelationCandidate,
     CustomerVocabularyFeedback,
     HumanApprovalDecision,
@@ -164,6 +174,145 @@ class ConnectorPlanRequest(BaseModel):
     configuration: Dict[str, Any] = Field(default_factory=dict)
     entities: Optional[List[str]] = Field(default=None, max_length=100)
     cursor: Optional[str] = Field(default=None, max_length=2_000)
+
+
+# ---------------------------------------------------------------------------
+# Response models
+# ---------------------------------------------------------------------------
+#
+# EVERY ONE OF THESE SETS `extra="allow"`, AND THAT IS THE WHOLE DESIGN.
+#
+# These routes answer with evidence payloads whose keys the engine decides per request:
+# which tables it could join, which qualifiers it had to attach, which rollups it
+# truncated. A closed model would DROP the keys it does not name — `response_model`
+# filters silently — so declaring one by enumerating today's keys would quietly delete
+# tomorrow's from the response, with no error anywhere.
+#
+# `extra="allow"` gives both halves: the fields below are named in the OpenAPI schema, the
+# contract gate and the generated SDK, and anything else the engine sends passes through
+# untouched. Verified rather than assumed — a route declaring one of these was called with
+# an undeclared nested key and the key came back.
+#
+# The alternative was `response_model=Dict[str, Any]`, which is what these routes carried
+# for about an hour. It satisfies the coverage ratchet and declares nothing, which is the
+# exact trap `test_a_permissive_response_model_is_not_a_contract.py` was written for
+# (rule 187: ask what the cheapest reduction of a ratchet would do). That file caught it.
+
+
+class _OpenModel(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+
+class EvidenceCapabilitiesResponse(_OpenModel):
+    """What this deployment can ingest, and the bounds it will enforce."""
+
+    capabilities: Dict[str, Any] = Field(default_factory=dict)
+    limits: Dict[str, Any] = Field(default_factory=dict)
+    normalization: Dict[str, Any] = Field(default_factory=dict)
+    #: A SENTENCE, not an object — read from the handler after typing it as a dict here
+    #: 500'd the route. `extra="allow"` protects against a missing key, never against a
+    #: wrong type for a declared one.
+    approval: str = ""
+
+
+class ConnectorPlanResponse(_OpenModel):
+    """A plan only. `connection_attempted` is always false and is declared so a caller
+    cannot read a plan as evidence that the source was reached."""
+
+    status: str
+    connection_attempted: bool = False
+    connector: Optional[Dict[str, Any]] = None
+    provided_configuration_keys: Optional[List[str]] = None
+    missing_required_configuration_keys: Optional[List[str]] = None
+    requested_entities: Optional[List[str]] = None
+    cursor_supplied: Optional[bool] = None
+    available_connectors: Optional[List[str]] = None
+    error: Optional[Dict[str, Any]] = None
+
+
+class EvidenceCatalogResponse(_OpenModel):
+    sources: List[Dict[str, Any]] = Field(default_factory=list)
+    selection_contract: Dict[str, Any] = Field(default_factory=dict)
+
+
+class EvidenceResultResponse(_OpenModel):
+    """The correlated evidence payload.
+
+    The bounding flags are declared explicitly — `truncated`, `response_truncated`,
+    `review_required` — because a caveat that is not in the schema is a caveat the
+    generated client does not carry, and these are the fields that say how far the numbers
+    beside them can be trusted.
+    """
+
+    selection_mode: Optional[str] = None
+    join_plan: Optional[Dict[str, Any]] = None
+    candidate_join_plans: Optional[List[Dict[str, Any]]] = None
+    evidence_rows: Optional[List[Dict[str, Any]]] = None
+    quality: Optional[Dict[str, Any]] = None
+    normalization: Optional[Dict[str, Any]] = None
+    operational_analytics: Optional[Dict[str, Any]] = None
+    entity_rollups: Optional[Dict[str, Any]] = None
+    ingestion_manifests: Optional[List[Dict[str, Any]]] = None
+    input_scope: Optional[Dict[str, Any]] = None
+    vocabulary_provenance: Optional[Dict[str, Any]] = None
+    review_required: Optional[bool] = None
+    truncated: Optional[bool] = None
+    response_truncated: Optional[bool] = None
+
+
+class EvidenceJobAcceptedResponse(_OpenModel):
+    """202. The two URLs are declared because they are the only way a caller learns where
+    to poll and how to stop the work it just started."""
+
+    job_id: str
+    status: str
+    status_url: str
+    cancel_url: str
+
+
+class EvidenceJobResponse(_OpenModel):
+    job_id: str
+    type: Optional[str] = None
+    status: str
+    stage: Optional[str] = None
+    progress: Optional[float] = None
+    processed: Optional[int] = None
+    total: Optional[int] = None
+    organization_id: Optional[str] = None
+    actor_id: Optional[str] = None
+    input_summary: Optional[Dict[str, Any]] = None
+    result: Optional[Dict[str, Any]] = None
+    error: Optional[str] = None
+    created_at: Optional[str] = None
+    updated_at: Optional[str] = None
+
+
+class CorrelationEvaluationResponse(_OpenModel):
+    #: THE REAL MODELS, not `Dict[str, Any]`. These handlers return
+    #: `CorrelationEvaluationResult` / `SuiteReport` / `QualityReport` objects, and a dict
+    #: annotation does not merely under-describe them — pydantic refuses to validate a
+    #: BaseModel as a mapping, so the route would 500 on serialisation. Read the callee's
+    #: return type before annotating what a handler returns; `GET /capabilities` proved the
+    #: same point from the other direction by declaring a sentence as an object.
+    case_result: Optional[CorrelationEvaluationResult] = None
+    suite_report: Optional[CorrelationEvaluationSuiteReport] = None
+    quality_report: Optional[CorrelationQualityReport] = None
+
+
+class FreshEvidenceEvaluationResponse(CorrelationEvaluationResponse):
+    evidence: Optional[Dict[str, Any]] = None
+    observed_candidates: Optional[List[CorrelationCandidate]] = None
+
+
+class CorrelationQualityResponse(_OpenModel):
+    """`quality_report` is nullable: no evaluation has run yet is a distinct state from a
+    report saying quality is bad, and a caller must be able to tell them apart."""
+
+    quality_report: Optional[CorrelationQualityReport] = None
+
+
+class VocabularyListResponse(_OpenModel):
+    items: List[CustomerVocabularyFeedback] = Field(default_factory=list)
 
 
 _vocabulary = CustomerVocabularyService()
@@ -1171,7 +1320,7 @@ async def _execute_evidence_request(
     return _compact_result(result)
 
 
-@router.get("/capabilities")
+@router.get("/capabilities", response_model=EvidenceCapabilitiesResponse)
 async def correlation_evidence_capabilities(
     current_user: User = Depends(get_current_active_user),
 ):
@@ -1195,7 +1344,7 @@ async def correlation_evidence_capabilities(
     }
 
 
-@router.post("/connectors/{connector}/plan")
+@router.post("/connectors/{connector}/plan", response_model=ConnectorPlanResponse)
 async def plan_evidence_connector(
     connector: str,
     request: ConnectorPlanRequest,
@@ -1218,10 +1367,10 @@ async def plan_evidence_connector(
         raise HTTPException(status_code=404, detail=str(exc))
 
 
-@router.post("/intake/catalog")
+@router.post("/intake/catalog", response_model=EvidenceCatalogResponse)
 async def catalog_intake_evidence_tables(
     request: EvidenceCatalogRequest,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_tenant_db),
     current_user: User = Depends(get_current_active_user),
 ):
     """List exact table/archive-child refs for a bounded evidence selection."""
@@ -1241,10 +1390,10 @@ async def catalog_intake_evidence_tables(
     }
 
 
-@router.post("/intake/preview")
+@router.post("/intake/preview", response_model=EvidenceResultResponse)
 async def preview_intake_evidence(
     request: EvidencePreviewRequest,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_tenant_db),
     current_user: User = Depends(get_current_active_user),
 ):
     """Create a synchronous, bounded common-evidence-table preview."""
@@ -1256,10 +1405,10 @@ async def preview_intake_evidence(
     )
 
 
-@router.post("/intake/analytics")
+@router.post("/intake/analytics", response_model=EvidenceResultResponse)
 async def analyze_intake_evidence(
     request: EvidencePreviewRequest,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_tenant_db),
     current_user: User = Depends(get_current_active_user),
 ):
     """Create evidence and deterministic association/lag/anomaly diagnostics."""
@@ -1271,7 +1420,7 @@ async def analyze_intake_evidence(
     )
 
 
-@router.post("/intake/jobs", status_code=status.HTTP_202_ACCEPTED)
+@router.post("/intake/jobs", status_code=status.HTTP_202_ACCEPTED, response_model=EvidenceJobAcceptedResponse)
 async def create_intake_evidence_job(
     request: EvidenceJobRequest,
     background_tasks: BackgroundTasks,
@@ -1312,12 +1461,12 @@ async def create_intake_evidence_job(
     }
 
 
-@router.get("/jobs/{job_id}")
+@router.get("/jobs/{job_id}", response_model=EvidenceJobResponse)
 async def get_intake_evidence_job(
-    job_id: str,
+    job_id: UUID,
     current_user: User = Depends(get_current_active_user),
 ):
-    job = await correlation_jobs.get(job_id)
+    job = await correlation_jobs.get(str(job_id))
     if (
         job is None
         or job.get("organization_id") != str(current_user.organization_id)
@@ -1327,13 +1476,13 @@ async def get_intake_evidence_job(
     return job
 
 
-@router.delete("/jobs/{job_id}")
+@router.delete("/jobs/{job_id}", response_model=EvidenceJobResponse)
 async def cancel_intake_evidence_job(
-    job_id: str,
+    job_id: UUID,
     current_user: User = Depends(get_current_active_user),
 ):
     job = await correlation_jobs.cancel(
-        job_id,
+        str(job_id),
         organization_id=current_user.organization_id,
         actor_id=current_user.id,
     )
@@ -1342,7 +1491,7 @@ async def cancel_intake_evidence_job(
     return job
 
 
-@router.post("/evaluations/run")
+@router.post("/evaluations/run", response_model=CorrelationEvaluationResponse)
 async def run_correlation_evaluation(
     request: EvaluationRunRequest,
     current_user: User = Depends(get_current_active_user),
@@ -1370,10 +1519,10 @@ async def run_correlation_evaluation(
     }
 
 
-@router.post("/evaluations/evidence")
+@router.post("/evaluations/evidence", response_model=FreshEvidenceEvaluationResponse)
 async def evaluate_fresh_evidence(
     request: EvidenceEvaluationRequest,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_tenant_db),
     current_user: User = Depends(get_current_active_user),
 ):
     """Build a current evidence preview, then compare it with a gold fixture.
@@ -1410,7 +1559,7 @@ async def evaluate_fresh_evidence(
     }
 
 
-@router.get("/quality/latest")
+@router.get("/quality/latest", response_model=CorrelationQualityResponse)
 async def latest_correlation_quality(
     current_user: User = Depends(get_current_active_user),
 ):
@@ -1421,7 +1570,7 @@ async def latest_correlation_quality(
     }
 
 
-@router.post("/vocabulary")
+@router.post("/vocabulary", response_model=CustomerVocabularyFeedback)
 async def submit_customer_vocabulary(
     feedback: CustomerVocabularyFeedback,
     current_user: User = Depends(get_current_active_user),
@@ -1440,7 +1589,7 @@ async def submit_customer_vocabulary(
         raise HTTPException(status_code=409, detail=str(exc))
 
 
-@router.get("/vocabulary")
+@router.get("/vocabulary", response_model=VocabularyListResponse)
 async def list_customer_vocabulary(
     review_status: Optional[VocabularyFeedbackStatus] = None,
     current_user: User = Depends(get_current_active_user),
@@ -1453,7 +1602,7 @@ async def list_customer_vocabulary(
     }
 
 
-@router.post("/vocabulary/{feedback_id}/review")
+@router.post("/vocabulary/{feedback_id}/review", response_model=CustomerVocabularyFeedback)
 async def review_customer_vocabulary(
     feedback_id: str,
     request: VocabularyReviewRequest,
@@ -1476,7 +1625,7 @@ async def review_customer_vocabulary(
     return feedback
 
 
-@router.post("/actions/assess")
+@router.post("/actions/assess", response_model=ApprovalResult)
 async def assess_operational_action(
     request: ActionAssessmentRequest,
     current_user: User = Depends(get_current_active_user),
@@ -1485,7 +1634,7 @@ async def assess_operational_action(
     return _approval_policy.assess(request.action, request.policy)
 
 
-@router.post("/actions/decide")
+@router.post("/actions/decide", response_model=ApprovalResult)
 async def decide_operational_action(
     request: ActionDecisionRequest,
     current_user: User = Depends(get_current_active_user),

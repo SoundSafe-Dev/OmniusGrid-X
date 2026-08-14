@@ -289,6 +289,102 @@ export const NOT_A_QUERY_EMPTY_STATE: Record<string, string> = {
   'Page not found': 'App.tsx',
 }
 
+/** A top-level component declaration. Used to attribute a phrase to the component that
+ *  renders it rather than to the file that contains it — see `fetchesItsOwnData`. */
+const COMPONENT_START = /^(?:export\s+)?(?:const|function)\s+([A-Z][A-Za-z0-9_]*)/gm
+
+/**
+ * THE COMPONENT THAT RENDERS THE PHRASE, not the file it lives in.
+ *
+ * This file already holds the principle — "a presentational list given its rows as props
+ * cannot fail a request, so it has nothing to distinguish" — and tests it, but the scope
+ * check applied it per FILE. A 1,900-line page module that declares its own drawer beside
+ * it therefore put every phrase in that drawer in scope, because the PAGE fetches.
+ *
+ * `IntakeInbox.tsx` is where that showed: `EvidenceDrawer` takes `edge` as a prop, issues
+ * no request, and says "No returned rows in this category" about rows it was handed. There
+ * is no failure that could reach it — the page it belongs to does not render it at all
+ * until an evidence result exists.
+ *
+ * Narrowing the scope this way cannot hide a real defect: a component with no fetch of its
+ * own has no failure of its own, and the fetching parent stays fully in scope.
+ */
+function fetchesItsOwnData(source: string, index: number): boolean {
+  const starts = [...source.matchAll(COMPONENT_START)].map((m) => m.index!)
+  const start = starts.filter((s) => s <= index).pop() ?? 0
+  const end = starts.find((s) => s > start) ?? source.length
+  const body = source.slice(start, end)
+  return (
+    (body.match(new RegExp(QUERIES.source, 'g')) ?? []).length > 0 ||
+    new RegExp(MANUAL_FETCH.source).test(body)
+  )
+}
+
+/** `setEvidenceError('No safe recommended join was found. …')` — the argument to an error
+ *  setter IS the failure branch. Matching it as an empty state inverts the finding: the
+ *  phrase is displayed only when a request failed, which is precisely what this file wants.
+ *  Anchored to the setter call immediately before the string, so ordinary prose near one
+ *  cannot borrow the exemption. */
+const ERROR_SETTER_ARGUMENT = /\bset[A-Za-z0-9_]*Error\s*\(\s*$/
+
+/**
+ * A GATE THE FAILURE PATH PROVABLY CLEARS.
+ *
+ * The existing receiver rule says a count read off an object is guarded by that object
+ * existing. The same reasoning covers a whole JSX block gated on that object — but only
+ * when failure really does clear it, which is the half a lexical sweep cannot assume. So
+ * it is not assumed: the gate is accepted only if a `catch` in the same file sets that
+ * state back to null.
+ *
+ * That evidence requirement is what keeps this from excusing the tree. A component that
+ * catches its error and leaves the previous data in place is exactly the defect — it
+ * renders the last answer under a fresh error message — and it does NOT match, because
+ * there is no `setX(null)` in its catch. `IntakeInbox` did that at three catch sites when
+ * this was written, and closing them is what made the gates below legitimate.
+ */
+function clearedOnFailure(source: string, state: string): boolean {
+  const setter = `set${state[0].toUpperCase()}${state.slice(1)}`
+  const clears = new RegExp(String.raw`\b${setter}\s*\(\s*(?:null|undefined|\[\s*\])\s*\)`)
+  // INSIDE the catch block, by brace matching — not "within N characters of the word
+  // `catch`". The proximity version passed its own mutation test for the wrong reason: a
+  // reset helper elsewhere in the file called `setEvidenceResult(null)` a few hundred
+  // characters after an unrelated `catch`, so the rule reported the failure path as
+  // clearing state that the failure path did not touch. Deleting the real fix then changed
+  // nothing, which is the only reason it was caught.
+  for (const m of source.matchAll(/\bcatch\s*(?:\([^)]*\))?\s*\{/g)) {
+    const open = m.index! + m[0].length - 1
+    let depth = 0
+    for (let i = open; i < source.length; i++) {
+      if (source[i] === '{') depth++
+      else if (source[i] === '}') {
+        depth--
+        if (depth === 0) {
+          if (clears.test(source.slice(open, i))) return true
+          break
+        }
+      }
+    }
+  }
+  return false
+}
+
+const GATE = /\{\s*([A-Za-z_$][\w$]*)\s*&&/g
+
+/** Does this `{X && …}` block actually contain the phrase? Structural, not a byte window:
+ *  the gate on a long JSX section sits hundreds of lines above the empty state it governs,
+ *  and `CHAIN_WINDOW` exists for the inline forms, which these are not. */
+function gateEncloses(source: string, gateAt: number, phraseAt: number): boolean {
+  let depth = 0
+  for (let i = gateAt; i < source.length; i++) {
+    if (source[i] === '{') depth++
+    else if (source[i] === '}') {
+      depth--
+      if (depth === 0) return i > phraseAt
+    }
+  }
+  return false
+}
+
 export function fallsThroughToEmptiness(raw: string, _file = ''): string[] {
   const source = raw.replace(COMMENT, ' ')
   if (!(source.match(QUERIES) ?? []).length && !MANUAL_FETCH.test(source)) return []
@@ -298,6 +394,17 @@ export function fallsThroughToEmptiness(raw: string, _file = ''): string[] {
       const phrase = match[1].trim()
       if (phrase in NOT_A_QUERY_EMPTY_STATE) continue
       const before = source.slice(0, match.index!)
+      if (ERROR_SETTER_ARGUMENT.test(before.slice(-40))) continue
+      if (!fetchesItsOwnData(source, match.index!)) continue
+      if (
+        [...before.matchAll(GATE)].some(
+          (g) =>
+            clearedOnFailure(source, g[1]) &&
+            gateEncloses(source, source.indexOf('{', g.index!), match.index!),
+        )
+      ) {
+        continue
+      }
       if (EARLY_RETURN.test(before) || THREE_STATE_CHAIN.test(before)) continue
       // A COUNT READ OFF AN OBJECT IS GUARDED BY THAT OBJECT EXISTING.
       //

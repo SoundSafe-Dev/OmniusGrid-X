@@ -276,6 +276,33 @@ CREDENTIAL_MUTATIONS = {
 # role tightening is tracked as an FS-73 follow-up; listing them keeps this test
 # a live guard for any NEW unclassified mutation without changing runtime auth.
 AUTHENTICATED_OPERATIONAL_MUTATIONS = {
+    # The correlation-evidence and operations-assistant routers, arriving with the
+    # correlation-engine merge. Each was checked for `get_current_active_user` before being
+    # listed here rather than assumed from the router: this set's whole value is that
+    # membership is a statement somebody verified. They are tenant-scoped through
+    # `get_tenant_db`, which the same merge needed fixing to obtain — the four handlers that
+    # read `intake_items` had `get_db`, and that table is FORCE ROW LEVEL SECURITY, so an
+    # untenanted session reads zero rows and raises nothing.
+    #
+    # Role tightening is Harsh's to decide, as with /api/v1/nlp beside it. Two are worth his
+    # attention: `evidence/vocabulary/{feedback_id}/review` is a REVIEW action any
+    # authenticated member can currently take, and `actions/decide` records an approval
+    # decision — both read as approver-role surfaces rather than member ones.
+    ("POST", "/api/v1/correlation/evidence/connectors/{connector}/plan"),
+    ("POST", "/api/v1/correlation/evidence/intake/catalog"),
+    ("POST", "/api/v1/correlation/evidence/intake/preview"),
+    ("POST", "/api/v1/correlation/evidence/intake/analytics"),
+    ("POST", "/api/v1/correlation/evidence/intake/jobs"),
+    ("DELETE", "/api/v1/correlation/evidence/jobs/{job_id}"),
+    ("POST", "/api/v1/correlation/evidence/evaluations/run"),
+    ("POST", "/api/v1/correlation/evidence/evaluations/evidence"),
+    ("POST", "/api/v1/correlation/evidence/vocabulary"),
+    ("POST", "/api/v1/correlation/evidence/vocabulary/{feedback_id}/review"),
+    ("POST", "/api/v1/correlation/evidence/actions/assess"),
+    ("POST", "/api/v1/correlation/evidence/actions/decide"),
+    ("POST", "/api/v1/correlation/operations/answer"),
+    ("POST", "/api/v1/correlation/operations/briefing"),
+    ("POST", "/api/v1/correlation/operations/jobs/{job_id}/answer"),
     ("POST", "/api/v1/transportation/vehicles"),
     ("POST", "/api/v1/simulation/monte-carlo"),
     ("POST", "/api/v1/notifications/subscriptions"),

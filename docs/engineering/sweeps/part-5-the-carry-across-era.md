@@ -3000,3 +3000,89 @@ that window was right.
 
 The order of those two conclusions is the whole rule. Reaching for the detector first
 would have shipped four regressions with a green suite.
+
+---
+
+## Rule 204 — a register entry about a field the service honours is worse than none
+
+The declared-body-fields extractor reads the handler body. Five correlation routes hand the
+whole request to a shared executor — the shape that appears the moment three routes want the
+same work, one synchronous, one queued, one preview — so by that measure each read *nothing*
+and all five were candidates for the register.
+
+One of them was `POST /answer`, whose dropped field was `question`.
+
+A register entry is a claim that somebody looked and decided the drop was acceptable. Adding
+five would have recorded the reverse of what the code does, and the next reader would have
+had no reason to doubt it. The extractor now follows a forward two hops, across a
+`from app.api.… import` as well as within a module, and checks the `model_dump()` exemption
+against the followed reads rather than the handler text — `POST /answer` dumps the body one
+call away, inside the helper.
+
+Before registering a batch, ask whether the detector can see the shape the code is written
+in. A register is where findings go to be remembered; it must not be where a detector's blind
+spot goes to be believed.
+
+## Rule 205 — notice when you have just taken the cheapest reduction
+
+Twenty new routes needed a `response_model`. Their payload keys are chosen by the engine per
+request, and `response_model` deletes what it does not declare, so a closed model would
+silently drop tomorrow's keys. `response_model=Dict[str, Any]` answers that: it does not
+filter, it is precedented in this tree, and it satisfies the coverage ratchet.
+
+It is also precisely what `test_a_permissive_response_model_is_not_a_contract.py` exists to
+refuse, and that guard caught it about an hour later. Rule 187 says to ask what the cheapest
+reduction of a ratchet would do; the harder half is recognising that the reasonable-sounding
+thing you just did *is* that reduction.
+
+The real answer was a model with `extra="allow"` — named fields in the schema, the SDK and
+the contract gate, with every undeclared key still passing through. That last claim was
+**measured against a live response** and the measurement kept as a test, because an exemption
+resting on framework behaviour nobody checked is how a real drop gets waved through. The
+drop-detector now exempts open models for the same measured reason.
+
+And `extra="allow"` protects nothing against a declared field of the wrong type: two of the
+twenty were annotated from the field's NAME rather than the callee's return type, and both
+would have answered 500 to every call.
+
+## Rule 206 — a guard can pass its own mutation test for the wrong reason
+
+A new rule accepted a JSX gate as safe when the failure path cleared the state behind it,
+implemented as "a `setX(null)` within 600 characters of the word `catch`".
+
+Deleting the real fix changed nothing. A reset helper elsewhere in the file called
+`setEvidenceResult(null)` shortly after an unrelated `catch`, so the rule had been reading
+the wrong evidence from the start and the mutation could not move it. Brace-matching the
+actual catch body fixed it, and the mutation then failed exactly where it should.
+
+Run the mutation. If it does not fail, that is a finding about the guard — not a formality
+that passed.
+
+## Rule 207 — a line break can empty a sweep, and only the vacuity check will say so
+
+`idKeyedFetchesDoNotGoStale` recognised a fetch by `Api\.`, requiring the receiver and the
+dot to be adjacent. The tree's one id-keyed fetch is a wrapped promise chain:
+
+    transportationApi
+      .getShipmentCosts(shipment.id)
+
+so the population fell to **zero** and every id-keyed detail view went unchecked. No code
+changed; formatting did. The count-based honesty check is the only thing standing between
+that and a permanently green guard over an empty list — the third time in this repository a
+sweep has been caught measuring nothing, and the first where the cause was whitespace.
+
+## Rule 208 — scope a per-file sweep to the component, not the file
+
+`failureIsNotEmptiness` already held the principle that a presentational list given its rows
+as props cannot fail a request, and tested it — but applied the query check per FILE. A
+1,900-line page module that declares its own drawer beside it therefore put every phrase in
+that drawer in scope, because the *page* fetches.
+
+Two more false positives in the same run came from matching the argument of
+`setEvidenceError(...)`. That string is the failure branch; reporting it as an empty state
+inverts the finding exactly.
+
+Both narrowings are safe for the same reason: a component with no fetch of its own has no
+failure of its own, and text passed to an error setter is displayed only on failure. Neither
+can hide a page that renders its own failure as emptiness — which the same run found three
+times in that very file, where a `catch` set an error and left the previous answer on screen.

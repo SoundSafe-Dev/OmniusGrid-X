@@ -57,7 +57,17 @@ MAX_SWALLOWING = 199
 #: (`opsgrid_ota_rollout_failures_total`) rather than narrowed. The total stayed at 201
 #: because two websocket sends were narrowed from `except Exception` in exchange, which is
 #: what this file means by "lower some other allowance first".
-MIN_COUNTED = 13
+#:
+#: RAISED TO 14 with the correlation-engine merge, which added four swallows and removed
+#: three. Two of the four were already honest — the job executor writes `status: failed` to
+#: the job the caller is polling, and the parse handler returns a deterministic remediation
+#: in the response body — so a log line is not their only record. The third was not a failure
+#: at all: an Arrow IPC format probe using `except Exception` as control flow, narrowed to
+#: `pa.ArrowInvalid`, which is the allowance lowered in exchange. The fourth is the one that
+#: mattered — a Redis ping failure silently demoting the correlation job store to process
+#: memory, where a second API worker turns every job into a 404 — and it is now counted
+#: (`opsgrid_correlation_job_store_degraded_total`).
+MIN_COUNTED = 14
 
 #: Files whose swallows are all counted, and must stay that way. A regression here is a
 #: specific failure going dark again, which the totals above cannot show: swapping a counted

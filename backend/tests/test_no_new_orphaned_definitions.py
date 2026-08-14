@@ -92,8 +92,28 @@ ORPHANS: dict[str, str] = {
     "app/services/yard_management.py::find_optimal_dock":
         "Dock assignment optimisation. The live path assigns by explicit door id "
         "(POST /yard/dock/doors/{door}/assign/{trailer}); nothing chooses a door for you.",
-    "app/services/document_store.py::get_document":
-        "Single-document read, unexposed. Part of the document-metadata gap (FS-565).",
+    # --- ARRIVED WITH THE CORRELATION-ENGINE MERGE (2026-08-14) --------------------------
+    # Five definitions, none of them a missing wire. Each was read before being listed.
+    "app/services/multi_spreadsheet_correlator.py::enrich_asset_trends":
+        "Enriches `asset_trends` — a list this module now DELIBERATELY leaves empty. The "
+        "comment above its producer records why: attributing a file-level downtime total to "
+        "every asset named in the file produced a convincing but false trend, so entity "
+        "trends moved to the lineage-preserving evidence engine. This is the enricher for "
+        "the behaviour that was removed. Wiring it would restore the false attribution.",
+    "app/services/correlation_evaluation.py::assess_action_approval":
+        "A two-line convenience wrapper over `ApprovalPolicyService().assess`. Callers use "
+        "the service directly, which is the path the approval tests drive.",
+    "app/services/operational_normalization.py::normalize_rows":
+        "The plural of `normalize_row`, which IS live. A list comprehension with a docstring; "
+        "callers iterate themselves because they interleave per-row error handling.",
+    "app/services/ingestion_adapters.py::set_legacy_doc_converter":
+        "An injection seam, twin of `set_ocr_adapter` beside it — that one has a test that "
+        "swaps in a fake, this one does not yet. The asymmetry is the finding: legacy-doc "
+        "conversion is the branch with no test double.",
+    "app/services/operations_question_service.py::_row_matches_fields":
+        "Private row filter. The question path filters through the normalized evidence rows "
+        "instead, so this predicate never sees a row.",
+
     "app/services/erp_webhook_receiver.py::replay_event":
         "Replay for a stored webhook event. The DLQ surface it belongs to is itself "
         "unreachable (erp_error_handler, module guard).",

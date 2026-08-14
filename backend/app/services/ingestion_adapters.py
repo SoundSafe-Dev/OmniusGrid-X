@@ -1654,7 +1654,12 @@ class ArrowAdapter(IngestionAdapter):
             input_buffer = pa.BufferReader(content)
             try:
                 reader = pa.ipc.open_file(input_buffer)
-            except Exception:
+            except pa.ArrowInvalid:
+                # Not a failure — a format probe. Arrow IPC has two container formats and
+                # only trying one tells them apart, so the raised `ArrowInvalid` IS the
+                # answer "this is a stream". Caught narrowly on purpose: a broad handler
+                # here would take a genuine corrupt-file error and retry it as a stream,
+                # reporting whatever the second parse said about the wrong format.
                 stream_mode = True
                 reader = pa.ipc.open_stream(pa.BufferReader(content))
             schema_names = list(reader.schema.names)

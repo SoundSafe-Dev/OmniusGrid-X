@@ -231,6 +231,19 @@ def test_no_returned_key_is_dropped_by_its_model(module, handler, model, keys):
     if cls is None or not hasattr(cls, "model_fields"):
         pytest.skip(f"{model} is not a local pydantic model (imported or aliased)")
 
+    # AN OPEN MODEL CANNOT DROP A KEY, so this file's whole premise — "FastAPI will
+    # DELETE those keys" — is not true of one. `extra="allow"` keeps every undeclared key
+    # on the way out; `TestAnOpenModelReallyKeepsExtras` below proves that against a real
+    # response rather than taking pydantic's word for it, because an exemption resting on
+    # a framework behaviour nobody checked is how a real drop gets waved through.
+    #
+    # The correlation-evidence and operations-assistant routes are declared this way on
+    # purpose: their payload keys are chosen by the engine per request, so a closed model
+    # would delete tomorrow's keys silently. Being open is not being undocumented — the
+    # coverage and permissive ratchets still require a real schema, and these have one.
+    if cls.model_config.get("extra") == "allow":
+        return
+
     declared = set(cls.model_fields)
     # A field may be populated under its alias on the wire.
     for name, field in cls.model_fields.items():
@@ -247,3 +260,55 @@ def test_no_returned_key_is_dropped_by_its_model(module, handler, model, keys):
         f"  returned: {sorted(keys)}\n"
         f"  declared: {sorted(declared)}"
     )
+
+
+class TestAnOpenModelReallyKeepsExtras:
+    """The exemption above is a claim about FastAPI, so it is measured here.
+
+    If a pydantic or FastAPI upgrade ever made `extra="allow"` stop passing undeclared keys
+    through, every route exempted above would start dropping fields silently and this file
+    would still be green. This test is what makes that impossible: it drives a real
+    response and reads the body.
+    """
+
+    def test_an_undeclared_key_survives_the_response_model(self):
+        from fastapi import FastAPI
+        from fastapi.testclient import TestClient
+        from pydantic import BaseModel, ConfigDict
+        from typing import Optional
+
+        class Open(BaseModel):
+            model_config = ConfigDict(extra="allow")
+            declared: Optional[str] = None
+
+        probe = FastAPI()
+
+        @probe.get("/probe", response_model=Open)
+        def _probe():
+            return {"declared": "yes", "undeclared": {"nested": [1, 2]}}
+
+        body = TestClient(probe).get("/probe").json()
+        assert body["undeclared"] == {"nested": [1, 2]}, (
+            "`extra=\"allow\"` no longer preserves undeclared keys, so the exemption in "
+            "test_no_returned_key_is_dropped_by_its_model is now hiding real field loss "
+            "on every open model. Remove the exemption and declare the keys."
+        )
+
+    def test_a_closed_model_still_drops(self):
+        """The other half. If this stopped dropping, the exemption would be pointless and
+        the whole file would be asserting nothing."""
+        from fastapi import FastAPI
+        from fastapi.testclient import TestClient
+        from pydantic import BaseModel
+        from typing import Optional
+
+        class Closed(BaseModel):
+            declared: Optional[str] = None
+
+        probe = FastAPI()
+
+        @probe.get("/probe", response_model=Closed)
+        def _probe():
+            return {"declared": "yes", "undeclared": "gone"}
+
+        assert "undeclared" not in TestClient(probe).get("/probe").json()

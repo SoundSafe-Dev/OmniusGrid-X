@@ -1375,6 +1375,55 @@ one of its findings. The habit that catches it:
      off the same response. Widening that window was right; widening it before checking
      the other four would have been four regressions.
 
+204. **A register entry that says "deliberate" about a field the service does honour is
+     worse than no entry.** The declared-body-fields extractor read the handler body only,
+     so five correlation routes that hand the whole request to a shared executor — the
+     natural shape once three routes want the same work, one synchronous, one queued, one
+     preview — measured as reading *nothing*. Registering all five would have recorded
+     `POST /answer`'s `question`, the entire point of the route, as a reviewed drop. The
+     extractor now follows a forward two hops, across a `from app.api.… import` as well as
+     within a module, and the `model_dump()` exemption is checked against the *followed*
+     reads rather than the handler text. Before registering a batch, ask whether the
+     detector can see the shape the code is actually written in.
+
+205. **Ask what the cheapest reduction of a ratchet would do — and then notice when you
+     have just done it.** Twenty new routes wanted `response_model`, their payload keys are
+     chosen by the engine per request, and a closed model would delete tomorrow's keys
+     silently. `response_model=Dict[str, Any]` looked like the honest answer to that: it is
+     precedented in the tree, it does not filter, and it satisfies the coverage ratchet. It
+     is also exactly what `test_a_permissive_response_model_is_not_a_contract.py` exists to
+     refuse (rule 187), and that guard caught it about an hour later. The real answer was a
+     model with `extra="allow"`: named fields in the schema, the SDK and the contract gate,
+     and every undeclared key still passing through — **verified against a live response
+     rather than taken from the docs**, and the verification kept as a test, because an
+     exemption resting on framework behaviour nobody measured is how a real drop gets waved
+     through.
+
+206. **A guard can pass its own mutation test for the wrong reason.** A new rule accepted a
+     JSX gate as safe when the failure path cleared it, implemented as "a `setX(null)`
+     within 600 characters of the word `catch`". Deleting the real fix changed nothing —
+     a reset helper elsewhere in the file called `setEvidenceResult(null)` shortly after an
+     unrelated `catch`, so the rule had been reading the wrong evidence all along and the
+     mutation could not move it. Brace-matching the actual catch body fixed it, and the
+     mutation then failed exactly where it should. **Run the mutation; if it does not fail,
+     that is a finding about the guard, not a formality that passed.**
+
+207. **A line break can empty a sweep's population, and only the vacuity check will say
+     so.** `idKeyedFetchesDoNotGoStale` matched a fetch with `Api\.`, requiring the receiver
+     and the dot to be adjacent. The tree's one id-keyed fetch is a wrapped promise chain —
+     `transportationApi\n  .getShipmentCosts(…)` — so the population fell to zero and every
+     id-keyed detail view went unchecked. No code changed; formatting did. The count-based
+     honesty check is the only thing between that and a permanently green guard over an
+     empty list.
+
+208. **Scope a per-file sweep to the component, not the file.** `failureIsNotEmptiness`
+     already held the principle — a presentational list given its rows as props cannot fail
+     a request — and tested it, but applied the query check per FILE. A 1,900-line page
+     module that declares its own drawer beside it therefore put every phrase in that
+     drawer in scope, because the *page* fetches. Two more false positives in the same run
+     came from matching the argument of `setEvidenceError(...)`: the string *is* the
+     failure branch, and reporting it as an empty state inverts the finding.
+
 ---
 
 ## Open observations, not yet tickets

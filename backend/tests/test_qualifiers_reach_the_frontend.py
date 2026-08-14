@@ -172,6 +172,15 @@ QUALIFIES_AN_UNREAD_FIELD: Dict[str, str] = {
     "appointments_assessed": "sync_status_breakdown",
     # Intake lane's scenario builder; its output is not rendered by any page today.
     "degraded": "scenario_confidence",
+    # Same route, same reason, arriving with the correlation-engine merge:
+    # `POST /nlp/intake/cross-correlate` has NO frontend caller at all, so the samples the
+    # flag bounds are not on any screen. Declaring a client type for an endpoint nothing
+    # calls is the "declared and never produced" defect this repository sweeps for, written
+    # by the person sweeping — so the flag waits for the feature. The four qualifiers that
+    # arrived WITH a rendered surface (`groups_truncated`, `rollups_truncated`, `sampled`,
+    # `input_truncated`) were wired instead, onto `EvidenceEntityRollups` and
+    # `OperationalAnalyticsResult`, and IntakeInbox renders the caveat.
+    "scenario_sampled": "scenario_samples",
     # "assets_unavailable": "avg_oee" — REMOVED 2026-08-14 (page-enhancement arc). The
     # exemption read: "/oee/dashboard/summary has NO frontend consumer at all … the
     # moment anything renders the aggregate, this fails and has to be wired with it."

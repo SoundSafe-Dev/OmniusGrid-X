@@ -18,6 +18,7 @@ from typing import Any, Awaitable, Callable, Dict, Optional
 import structlog
 
 from app.core.config import settings
+from app.core.http_metrics import CORRELATION_JOB_STORE_DEGRADED
 
 try:  # Tests and lightweight local installs may not include redis.
     import redis.asyncio as redis
@@ -57,6 +58,7 @@ class CorrelationJobManager:
             return self._client
         except Exception as exc:  # local dev can operate without a broker
             self._redis_unavailable = True
+            CORRELATION_JOB_STORE_DEGRADED.inc()
             logger.warning("correlation_job_redis_unavailable", error=str(exc))
             return None
 

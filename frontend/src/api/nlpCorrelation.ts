@@ -215,6 +215,88 @@ export interface EvidenceCatalogResponse {
   };
 }
 
+/**
+ * The four bounding flags the evidence engine and the operational analytics attach to say
+ * how far a number can be trusted. Each is declared here because the server sets it and a
+ * flag nobody reads is worse than one never sent: the author believes the caveat is shown.
+ *
+ * `groups_truncated` — this rollup lists SOME of its groups. `group_count` is the real
+ * number and the listed groups are a prefix of it, so the largest contributor may be absent.
+ * `rollups_truncated` — this table produced more metric/entity-level combinations than the
+ * limit allowed, so a metric the reader expects may simply not appear.
+ * `sampled` — the series or correlation was computed over a sample, not every observation
+ * (`available_observation_count` against `observation_count` gives the gap).
+ * `input_truncated` — the analytics ran over a bounded slice of the rows.
+ */
+export interface EvidenceEntityRollupGroups {
+  entity_level?: string;
+  entity_dimensions?: string[];
+  metric?: {
+    source_column?: string;
+    canonical_name?: string;
+    metric_name?: string;
+    unit?: string | null;
+    aggregation?: string;
+    metric_type?: string;
+  };
+  groups?: Array<Record<string, any>>;
+  group_count?: number;
+  groups_truncated?: boolean;
+  interpretation?: string;
+}
+
+export interface EvidenceEntityRollupTable extends EvidenceTableReference {
+  metric_count_considered?: number;
+  entity_levels_available?: string[];
+  rollup_count?: number;
+  rollups_truncated?: boolean;
+}
+
+export interface EvidenceEntityRollups {
+  source_table_scoped?: boolean;
+  cross_table_pooling?: boolean;
+  rollup_count?: number;
+  rollups?: EvidenceEntityRollupGroups[];
+  tables?: EvidenceEntityRollupTable[];
+  truncated?: boolean;
+}
+
+/** `sampled` sits on each anomaly/change-point block and on each relationship — NOT on a
+ *  top-level series list. The shape is read from `operational_analytics.py`, not inferred
+ *  from the field name: the first draft of this type invented a `series` map that the
+ *  server never sends, which is the same "declared and never produced" defect the wire
+ *  guard exists to refuse. */
+export interface OperationalAnalyticsSignal {
+  sampled?: boolean;
+  observation_count?: number;
+  available_observation_count?: number;
+  [key: string]: any;
+}
+
+export interface OperationalAnalyticsRelationship extends OperationalAnalyticsSignal {
+  left_field?: string;
+  right_field?: string;
+  status?: string;
+  pearson_r?: number | null;
+  direction?: string;
+}
+
+export interface OperationalAnalyticsResult {
+  status?: string;
+  row_count?: number;
+  relationships?: OperationalAnalyticsRelationship[];
+  field_signals?: Record<string, {
+    anomalies?: OperationalAnalyticsSignal;
+    change_point?: OperationalAnalyticsSignal;
+    ordering?: string;
+  }>;
+  bounded?: {
+    input_truncated?: boolean;
+    pair_limit_reached?: boolean;
+  };
+  [key: string]: any;
+}
+
 export interface EvidencePreviewResult {
   selection_mode: string;
   join_plan?: EvidenceJoinPlan | null;
@@ -226,7 +308,8 @@ export interface EvidencePreviewResult {
   evidence_sets?: EvidencePreviewResult[];
   quality?: EvidenceQuality;
   normalization?: Record<string, any>;
-  operational_analytics?: Record<string, any>;
+  operational_analytics?: OperationalAnalyticsResult;
+  entity_rollups?: EvidenceEntityRollups;
   source_profile?: EvidenceSourceProfile;
   graph_scope?: {
     table_count?: number;

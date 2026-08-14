@@ -51,6 +51,20 @@ OVERLAP_THRESHOLD = 3
 #: compared them and found the overlap meaningful rather than accidental.
 DIFFERENT_QUESTIONS: Dict[frozenset, str] = {
     frozenset({
+        "test_correlation_routes_serialize_their_models.py::ROUTES",
+        "test_route_auth_walk.py::AUTHENTICATED_OPERATIONAL_MUTATIONS",
+    }): (
+        "Three correlation routes appear in both, and the lists cannot be derived from "
+        "each other in either direction. The auth register is an inventory: EVERY mutating "
+        "route in the app, carrying no request bodies, and it must stay complete or a new "
+        "mutation slips in unreviewed. ROUTES is a chosen sample that each carries a valid "
+        "REQUEST BODY, and half of it is GETs — which the auth register can never contain. "
+        "Deriving the sample from the inventory would give the serialisation smoke a set of "
+        "paths it has no way to call; deriving the inventory from the sample would let an "
+        "unreviewed mutation land the moment somebody declined to write a body for it. The "
+        "overlap is three routes that happen to be both mutating and cheap to call."
+    ),
+    frozenset({
         "test_every_alert_watches_a_series_something_exports.py::CODE_ROOTS",
         "test_the_session_arc_is_a_real_range.py::SEARCH_ROOTS",
     }): (
