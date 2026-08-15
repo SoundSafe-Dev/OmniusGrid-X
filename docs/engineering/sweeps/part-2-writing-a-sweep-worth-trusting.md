@@ -1572,6 +1572,25 @@ one of its findings. The habit that catches it:
      the foreign key. Follow the value to where it is STORED, not to the table the route is
      named after.
 
+226. **Reading only the tail of a command's output is the same defect as hiding it — and
+     this session committed it three times.** Sixteen `git push`es looked like they had
+     failed because their output was suppressed (the cause was a shell quoting bug). A
+     contract-gate run failed invisibly because `migrate.py` was piped to `/dev/null`. Then,
+     pushing a security notice to fifteen branches, the success check read `tail -1` of each
+     push — and a legitimately rejected non-fast-forward on an active branch was counted as
+     a success, leaving the one developer most likely to pull without the warning. It was
+     caught by the verification pass afterwards, which is the only reason it is a footnote
+     rather than the finding. **Check the outcome, never the transcript.**
+
+227. **Put the recovery refs down before you touch anything.** A malicious force-push
+     replaced seventeen branches, and nothing was lost — the attacker overwrote REFS while
+     every original object was still local. The first action was writing all seventeen
+     pre-attack tips to `refs/rescue/*`, before a single restorative push, so that no `gc`
+     and no later mistake could drop them. The restore itself then used
+     `--force-with-lease=<ref>:<attacker-commit>`, which pins each push to the state being
+     replaced: if anything had arrived in between, the push fails instead of destroying it.
+     Recovery from a destructive event is itself a destructive operation.
+
 ---
 
 ## Open observations, not yet tickets

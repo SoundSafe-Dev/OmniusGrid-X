@@ -3418,3 +3418,49 @@ Then the same route's `session_id` turned out to be an FK on the activation row 
 statement of this whole class: **the read is protected and the reference is not.**
 
 Follow the value to where it is STORED, not to the table the route is named after.
+
+## Rule 226 — check the outcome, never the transcript
+
+Three times in one session, a failure was invisible because only part of a command's output
+was looked at:
+
+1. **Sixteen pushes reported as failed** that had actually failed for a different reason — the
+   output was suppressed, so the real cause (a zsh `:r` modifier eating a refspec) stayed
+   hidden until the output was made visible.
+2. **A contract-gate run collapsed** with "relation organizations does not exist", because the
+   script piped `migrate.py` to `/dev/null` to stay tidy. The migration had not run at all.
+3. **A security notice missed the one developer most likely to need it.** Pushing to fifteen
+   branches, the loop decided success by grepping `tail -1` of each push. One branch on the
+   backup remote was ahead of the branch the notice was built from, so git correctly refused
+   the non-fast-forward — and the rejection was not in the last line.
+
+The third is the sharpest because the loop reported `15 warned, 0 failed` and was wrong. What
+caught it was not the loop: it was the verification pass afterwards, which asked the remotes
+what they actually held rather than asking the pusher how it went.
+
+**A command's output is a story it tells about itself. Check the thing it was supposed to
+change.** Every one of these was a two-line fix once the outcome was inspected instead.
+
+## Rule 227 — put the recovery refs down before you touch anything
+
+A malicious force-push replaced all seventeen branches on `origin` with one commit. Nothing
+was lost — and the reason is worth stating precisely, because it is the whole recovery model:
+**the attacker overwrote refs, not objects.** Every original commit was still in the local
+repository, unreferenced but present.
+
+Unreferenced is exactly the state `git gc` exists to clean up.
+
+So the first action, before a single restorative push, was writing all seventeen pre-attack
+tips into `refs/rescue/*`. That converts "still in the object store, for now" into "referenced,
+and safe from any later mistake including my own".
+
+The restore then used, per branch:
+
+    git push --force-with-lease=refs/heads/<branch>:8d1b548d origin refs/rescue/<branch>:refs/heads/<branch>
+
+pinning each push to the attacker's commit. If anything had landed on a branch in between —
+another developer's legitimate work, or a second attack — the push fails rather than destroying
+it. A bare `--force` would have been a second destructive event on top of the first.
+
+**Recovery from a destructive event is itself a destructive operation**, and deserves the same
+care as the thing it is undoing.

@@ -11714,3 +11714,65 @@ read is protected and the reference is not.**
 
 Six tests, both fixes mutation-verified. The sweep is now complete across `app/api`: of 12
 request models accepting a tenant-owned foreign key, all 12 verify the id.
+
+## FS-730 — a malicious force-push over all 17 branches, and what it cost to find
+
+At **10:29 PDT on 2026-08-15**, while this session was working, every branch on `origin` —
+all seventeen, including `main` — was force-pushed to one commit, `8d1b548d`. It was found
+because a routine `git push` was rejected with "fetch first".
+
+**It was built to survive a glance.** The commit reused the subject and author date of a real
+2026-08-10 commit (`fix(ci): the coverage ratchet…`), so `git log` looked ordinary. Only the
+COMMITTER date — 2026-08-15 10:29:53 — gave it away, and only after `git fetch` reported
+`(forced update)` on seventeen refs at once.
+
+It changed exactly two files:
+
+* **`frontend/postcss.config.js`, 80 bytes → 31,473.** `createRequire(import.meta.url)`,
+  then an obfuscated blob referencing `child_process`, `eth_blockNumber` /
+  `eth_getBlockByNumber` / `eth_getTransaction*` against `drpc.org` and `1rpc.io`, an address
+  fragment `0xa322E5f3`, and `POST` to `:443/0x/cl` and `:443/0x/ls`. The C2 address is read
+  **from the Ethereum blockchain**, so there is no domain to take down.
+* **`.gitignore`**, adding `temp_auto_push.bat`, `temp_interactive_push.bat` and
+  `branch_structure.json` — the attacker's own tooling, hidden from `git status`. The `.bat`
+  extension names the platform; `auto_push` explains seventeen branches moving together.
+
+**Why that file.** `postcss.config.js` is four lines nobody has read since the project began,
+it sits outside every sweep that covers `src/`, and **Node executes it on every `npm run dev`,
+`npm run build` and vitest run.** Always executed, never reviewed.
+
+### Recovery
+
+Nothing was lost, because the attacker overwrote **refs**, not objects — every original commit
+was still in the local repository. The order mattered: all 17 pre-attack tips were written to
+`refs/rescue/*` **before** any recovery step, so a stray `gc` could not drop them. Restoration
+used `--force-with-lease=refs/heads/<br>:8d1b548d`, pinning each push to the attacker's commit
+so it could not clobber anything that arrived in between.
+
+Verified after: 16 branches byte-identical to their pre-attack tips, `converged-pre-main` at
+its tip plus the day's work, and **all 34 branches across both remotes** carrying the
+legitimate 80-byte config. The `backup` remote was never touched.
+
+`SECURITY-INCIDENT-2026-08-15.md` was pushed to 32 of 34 branches via git plumbing, so each
+developer meets it on their next fetch. Two exceptions, both deliberate: `rag-rewrite` on each
+remote is a preservation record of a laptop state and was left byte-identical.
+
+### FS-731 — the guard
+
+`test_build_configs_are_not_executable_payloads.py` fails if a frontend build config gains the
+ability to spawn a process or open a socket (`child_process`, `createRequire`, `eval`,
+`Function`, `atob`, sockets, DNS) or grows past 16 KB. Mutation-verified against the real
+payload — it fails on both axes.
+
+Not a hash pin, deliberately: that would fail on every legitimate tailwind edit and be silenced
+within a month. It asserts the two properties a build config has no reason to violate.
+
+The size limit is **measured**. The first draft set 8 KB and asserted "this repo's largest is
+well under it"; its own first run refused `vitest.config.ts` at 10,446 bytes. A limit taken
+from a belief about the tree instead of a reading of it fails on the first honest change and
+gets raised in irritation.
+
+### What this did not fix
+
+The push used **valid credentials**. Restoring refs does not address that, and branch
+protection on `main` and the integration branch would have refused the push outright.
