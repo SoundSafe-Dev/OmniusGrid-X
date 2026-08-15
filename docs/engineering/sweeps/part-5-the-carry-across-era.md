@@ -3384,3 +3384,37 @@ correct in isolation on every one of those lines.
 
 When a change is machine-written, the compiler — or the schema generator, or the app import —
 is the reviewer with standing. Run it between attempts, not at the end.
+
+## Rule 224 — a probe that finds nothing may be missing the state
+
+The question was whether org B could activate an insight against org A's asset. The probe
+posted it, got **201**, counted the rows that would prove the write crossed the boundary, and
+found **zero**. That is exactly what a correctly-scoped route looks like.
+
+The write happens in a Kanban task, and the task is only created when `_pick_board_and_column`
+finds a board for the caller. A fresh test tenant has no board. Every deployed organisation
+does, because the board is created the first time anyone opens the page.
+
+Re-running with `GET /kanban/board` first — one line, and the state any real caller already
+has — produced the cross-tenant task immediately.
+
+The general form: **before believing a probe found nothing, ask what state the code path needs
+and whether the fixture has it.** A fixture is a minimal world, and minimal worlds skip
+branches. The fixture in the permanent test now bootstraps the board explicitly and says why,
+because without it the test would pass against the defect.
+
+## Rule 225 — follow the value to where it is stored
+
+`insight_activations` has no `asset_id` column. A sweep that matches a request model's fields
+against the columns of the table its route writes to therefore clears
+`POST /insights/activations` completely — no foreign key, no question to ask.
+
+The value is carried into the Kanban `Task` the activation creates, and `tasks.asset_id` is
+the foreign key to `assets`. The id crosses the tenant boundary one object after the route
+that accepted it, in a different table, written by a service two calls down.
+
+Then the same route's `session_id` turned out to be an FK on the activation row itself, to
+`analysis_sessions` — a table that IS under row-level security. Which is the sharpest
+statement of this whole class: **the read is protected and the reference is not.**
+
+Follow the value to where it is STORED, not to the table the route is named after.

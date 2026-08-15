@@ -38,7 +38,7 @@ from app.core.responses import conflict_response
 from app.api.auth import get_current_active_user
 from app.core.tenant import get_tenant_db, get_tenant_org_id
 from app.db.insight_models import ActivationSource, ActivationStatus, InsightActivation
-from app.db.models import Task, User
+from app.db.models import AnalysisSession, Asset, Task, User
 from app.db.shop_floor_models import PostingStatus, SystemOfRecordPosting, TargetSystem
 from app.middleware.rbac import require_operator_or_admin
 from app.services.insight_activation import (
@@ -269,6 +269,32 @@ async def activate_insight(
     The response says what was created and what each external system's state is. It does not
     say the action is done — at this moment nothing has been done, and the postings say so.
     """
+    # THE ASSET MUST BE ONE THE CALLER CAN SEE (FS-729). `insight_activations` has no
+    # asset_id column of its own — the value is carried into the Kanban `Task` this creates,
+    # and `tasks.asset_id` IS a foreign key to `assets`. A foreign-key check runs below RLS,
+    # so an id belonging to another organisation was accepted: org B activated an insight
+    # against org A's machine and got a 201, leaving a card on org B's board pointing at an
+    # asset org B cannot resolve.
+    #
+    # It only reproduces when the caller's board already exists, which every real deployment
+    # does and a fresh test fixture does not — the first probe of this found nothing and had
+    # to be re-run with the board bootstrapped.
+    # BOTH ids, not just the asset. `insight_activations.session_id` is a foreign key to
+    # `analysis_sessions` — the same shape one field over, and the same 201 for another
+    # organisation's row. Rule 218: when a FIELD is the defect, enumerate every field on the
+    # route that can carry one, not just the one the report named.
+    for value, model, label in (
+        (payload.asset_id, Asset, "asset"),
+        (payload.session_id, AnalysisSession, "session"),
+    ):
+        if value is None:
+            continue
+        owned = (
+            await db.execute(select(model.id).where(model.id == value))
+        ).scalar_one_or_none()
+        if owned is None:
+            raise HTTPException(status_code=404, detail=f"{label} {value} not found")
+
     if payload.targets:
         unknown = [t for t in payload.targets if t not in TargetSystem.ALL]
         if unknown:

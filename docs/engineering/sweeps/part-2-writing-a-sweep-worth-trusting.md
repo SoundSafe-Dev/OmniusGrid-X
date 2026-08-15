@@ -1557,6 +1557,21 @@ one of its findings. The habit that catches it:
      lines; `import app.main` after each attempt named the file and the line. When a change
      is machine-written, the machine that consumes it is the reviewer.
 
+224. **A negative result from a fixture missing the state the path needs is not a negative
+     result.** Probing whether an activation could reference another tenant's asset returned
+     201 and ZERO rows written — which reads as "no defect". The row is a Kanban task, and
+     the task is only created when the caller's board exists; a fresh test tenant has none,
+     while every real deployment does. Bootstrapping the board produced the cross-tenant
+     write immediately. Before believing a probe found nothing, ask what state the code path
+     needs and whether the fixture has it.
+
+225. **An id can cross the boundary one object after the route that accepted it.**
+     `insight_activations` has no `asset_id` column, so a sweep matching request fields
+     against the columns of the table a route writes to clears that route completely. The
+     value is carried into the Kanban `Task` the activation creates, and `tasks.asset_id` is
+     the foreign key. Follow the value to where it is STORED, not to the table the route is
+     named after.
+
 ---
 
 ## Open observations, not yet tickets

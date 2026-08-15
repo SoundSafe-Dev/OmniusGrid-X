@@ -11673,3 +11673,44 @@ reproduction commands**, which contain `-H 'Content-Type: application/json'`. Th
 remainder after FS-724/725 is 34 server errors (mostly dependency outages reported correctly),
 9 undocumented 409s — now closed by FS-728 — and 1 schema violation, now closed by FS-727. A
 measurement taken by grepping a log measures the log.
+
+## FS-729 — the sweep completed, and the instance that hid one object away
+
+FS-724 fixed four shop-floor writes and FS-726 two notification subscriptions, both from the
+same question: *a foreign key is checked below RLS, so what proves this caller-supplied id
+belongs to the caller?* Both were answered against a partial list — eight columns picked by
+hand. Completing it properly (every FK column whose parent table carries `organization_id`)
+gives **33 such columns and 12 request models that accept one**:
+
+| accepted in | verified how |
+|---|---|
+| shop_floor ×4 | `_own_asset_id` (FS-724) |
+| notifications ×2 | `_own_asset_id` (FS-726) |
+| commands | looks the `Asset` up on the tenant session |
+| transportation ×2 | looks the `Driver` up; `drivers` and `yard_trailers` are both RLS |
+| bulk_operations | explicit `User.organization_id == organization_id` in the processor |
+| insight_activation ×2 | **nothing — FS-729** |
+
+**The activation instance is the one worth recording**, because two things hid it.
+
+`insight_activations` **has no `asset_id` column.** A sweep matching request fields against
+the columns of the table a route writes to would clear this route entirely. The value is
+carried into the Kanban `Task` the activation creates, and `tasks.asset_id` is the foreign
+key — the id crosses the boundary one object after the route that accepted it.
+
+**And it does not reproduce on an empty tenant.** The task is only created when
+`_pick_board_and_column` finds a board, so the first probe returned 201 and **zero** rows,
+which reads exactly like "no defect here". Re-running with the caller's board bootstrapped —
+which every real deployment has and a fresh fixture does not — produced the task. A negative
+result from a fixture missing the state the code path needs is not a negative result.
+
+Then the same route's `session_id` turned out to be an FK to `analysis_sessions` with the
+same hole: org B's activation referencing org A's session, 201 and a row written. Rule 218
+applied to fields on one route rather than routes on one field — fixing the asset alone would
+have left an identical door open, one line over.
+
+`analysis_sessions` is under RLS, which is the sharpest statement of this whole class: **the
+read is protected and the reference is not.**
+
+Six tests, both fixes mutation-verified. The sweep is now complete across `app/api`: of 12
+request models accepting a tenant-owned foreign key, all 12 verify the id.
