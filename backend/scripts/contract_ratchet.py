@@ -180,7 +180,14 @@ from pathlib import Path
 #: merged `/api/v1/correlation/evidence` or `/correlation/operations` routes**. The
 #: correlation names in the failure list belong to `registries/correlations` and
 #: `nlp/correlation/query`, both of which predate the merge.
-BASELINE_WITHOUT_BROKER = 436
+#: RAISED 436 -> 438 the same day, and this movement was EARNED rather than arithmetic:
+#: FS-724/725 fixed two of the eight operations that answered a bare `internal server error`
+#: (a shop-floor write whose asset id reached Postgres, and a timezone validator that caught
+#: one of three exception types), and a re-run measured **447**, up from 445. Two fixes, two
+#: operations, confirmed by measurement rather than assumed from the diff.
+#:
+#: Still below `BASELINE_WITH_BROKER` (440), as the doc guard requires.
+BASELINE_WITHOUT_BROKER = 438
 
 #: The floor for a run where a broker was reachable. 402 measured 2026-08-08, less the same
 #: 9-operation spread the lower floor allows for. Never lower it either — and note that this

@@ -116,8 +116,8 @@ class — any extension created by `conftest` and by no migration now fails the 
 
 ## Why a ratchet
 
-**445 of 546** operations conform with no broker and **449 of 546** with one, both measured
-2026-08-14 (floor: 436 / 440). The remaining ~100 are dominated by **one behaviour**:
+**447 of 546** operations conform with no broker (measured 2026-08-15, after FS-724/725) and
+**449 of 546** with one (measured 2026-08-14). Floors: 438 / 440. The remaining ~100 are dominated by **one behaviour**:
 generated input reaching Postgres unvalidated and surfacing as a 500 where the contract
 promises a 4xx (`DataError`, `ForeignKeyViolationError`, `CharacterNotInRepertoireError`).
 That is per-endpoint validation work spread across every lane. By check: **72 server errors,
@@ -219,8 +219,11 @@ There are now two:
 | a broker answered | **440** | 449 measured 2026-08-14, less the 9-operation spread |
 | no broker answered | **436** | 445 measured 2026-08-14, less the same spread |
 
-Both floors moved on 2026-08-14, and the **floor was re-baselined to 436** for the
-configuration CI runs by default. The correlation-engine merge took the schema from 452 to
+Both floors moved on 2026-08-14, and the **floor was re-baselined to 438** for the
+configuration CI runs by default — 436 first, from a 445 measurement, then 438 the next day
+when FS-724/725 fixed two of the eight operations answering a bare `internal server error`
+and a re-run measured 447. Two fixes, two operations, confirmed by measurement rather than
+assumed from the diff. The correlation-engine merge took the schema from 452 to
 546 operations, which broke this gate twice over before either number could be trusted:
 
 * `EXPECTED_TOTAL` was still 452 with a 10% drift tolerance, so |546 − 452| = 94 made the

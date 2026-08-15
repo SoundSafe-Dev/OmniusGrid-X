@@ -3,15 +3,18 @@
 FOUND BY THE CONTRACT GATE, once it could finish. Of the 546 operations it drives, 36 answer
 a 5xx under generated input, and most of those are dependency outages reported correctly —
 Redis for the feature-flag store, an unreachable vector store, a broker that is not running.
-Eight were not: they answered a bare `internal server error`. Three of the eight are here.
+Eight were not: they answered a bare `internal server error`. Three of the eight are here,
+and a FOURTH route in the same file had the same defect while answering 422 to the probe that
+found them — see the note on `WRITES`.
 
-**Defect one, the loud half.** `asset_id` was a bare `str` on three write models, so any
+**Defect one, the loud half.** `asset_id` was a bare `str` on four write models, so any
 value that is not a UUID reached Postgres and surfaced as a 500 where the contract promises
 a 4xx:
 
     POST /shop-floor/downtime/start   {"asset_id": "nope"}   ->  500
     POST /shop-floor/part-issues      {"asset_id": "nope"}   ->  500
     POST /shop-floor/labor/clock-in   {"asset_id": "nope"}   ->  500
+    POST /shop-floor/quality-events   {"asset_id": "nope"}   ->  500  (found a pass later)
 
 **Defect two, which the gate could not see and is worse.** Nothing checked WHOSE asset it
 was. `downtime_events.asset_id` is a foreign key to `assets`, and a foreign-key check is
@@ -48,6 +51,14 @@ WRITES = [
     (f"{SHOP_FLOOR}/downtime/start", {}),
     (f"{SHOP_FLOOR}/part-issues", {"part_number": "P-1", "quantity": 1}),
     (f"{SHOP_FLOOR}/labor/clock-in", {}),
+    # QUALITY EVENTS WAS MISSED ON THE FIRST PASS, and the reason is worth keeping: the
+    # probe that found the other three sent one body shape to every route, and this model
+    # requires `description`, so it answered 422 and read as already-correct. Its ownership
+    # check was reached (a foreign asset gave 404) while a malformed id still reached
+    # Postgres and returned 500 — a route can be half-fixed and look wholly fixed if the
+    # only probe that touched it never got past validation. Each entry now carries the
+    # minimum body its own model demands.
+    (f"{SHOP_FLOOR}/quality-events", {"description": "scratched housing"}),
 ]
 
 
@@ -85,6 +96,7 @@ async def org_a_asset(admin_sync_url, seeded_orgs):
         cur.execute("DELETE FROM downtime_events WHERE asset_id = %s", (str(ids["asset"]),))
         cur.execute("DELETE FROM part_issues WHERE asset_id = %s", (str(ids["asset"]),))
         cur.execute("DELETE FROM labor_entries WHERE asset_id = %s", (str(ids["asset"]),))
+        cur.execute("DELETE FROM quality_events WHERE asset_id = %s", (str(ids["asset"]),))
         cur.execute("DELETE FROM assets WHERE id = %s", (str(ids["asset"]),))
         cur.execute("DELETE FROM asset_types WHERE id = %s", (str(ids["type"]),))
     conn.close()
@@ -148,7 +160,7 @@ class TestTheOwnerIsStillServed:
         assert response.json()["asset_id"] == str(org_a_asset)
 
     async def test_an_asset_free_write_still_works(self, client_a):
-        """`asset_id` is optional on two of the three. Making it a UUID must not make it
+        """`asset_id` is optional on three of the four. Making it a UUID must not make it
         required — a part issued against no particular machine is a real thing."""
         response = await client_a.post(
             f"{SHOP_FLOOR}/part-issues", json={"part_number": "P-2", "quantity": 2}

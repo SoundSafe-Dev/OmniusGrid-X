@@ -11568,3 +11568,66 @@ reply that invites more probing.
 `logistics/optimize-assignment` (Harsh), `kanban/tasks` (Harsh),
 `engines/correlation/integration/analyze` (Harsh), `fleet/releases` (Hridyansh), `rag/query`
 (htreinen).
+
+## FS-726/727 — carrying FS-724's question across, and the one error shape a client could not parse
+
+FS-724 asked of a caller-supplied id: *what proves this belongs to the caller*. Carrying that
+across every request model that accepts a foreign key to a tenant-owned table found **eight**,
+of which two were unprotected — and both were in a router this arc had already touched.
+
+### FS-726 — a notification could watch another tenant's asset
+
+`SubscriptionCreate.asset_id` and `SubscriptionUpdate.asset_id` were `Optional[str]`, so:
+
+    {"asset_id": "nope"}                 ->  500   (reached Postgres)
+    {"asset_id": "<org A's asset>"}      ->  200   (accepted, from org B)
+
+The second is quieter than a leak and is why it earned a test rather than a shrug. The
+subscription is real, it belongs to the subscriber, and **it can never fire** — the alarms it
+filters for belong to a tenant this subscriber cannot see. A notification rule that cannot
+fire is worse than no rule: the operator believes they are covered and nothing reports the
+silence.
+
+Both doors are closed, and the PATCH was fixed alongside the POST **because it is a second
+door onto the same field** — an update can move a subscription onto another organisation's
+asset just as a create can point it there, and fixing only the create would have left the
+newer route (added by this arc's own page work) reintroducing the older defect.
+
+**A fourth shop-floor route was also half-fixed and looked whole.** FS-724 typed three models
+and missed `QualityEventCreate`, because the probe that found the other three sent one body
+shape to every route and this model requires `description` — so it answered 422 and read as
+already-correct. Its ownership check was reached (a foreign asset gave 404) while a malformed
+id still returned 500. Every entry in that test now carries the minimum body its own model
+demands.
+
+### FS-727 — 429 was the one error a client could not handle generically
+
+Every error in this API is `application/problem+json` carrying `type`, `title`, `status`,
+`instance` and a trace id. The rate limiter answered plain `{"detail": "..."}` from its own
+`JSONResponse` — so **429 was the single response shape the generated SDK could not parse**,
+and 429 is the error most likely to be handled programmatically, because the correct reaction
+to it is to back off and retry.
+
+The contract gate found it as the only "Response violates schema" failure across 546
+operations. `problem_response` is now exported from `app.core.errors` for handlers outside
+that module, and the retry headers are passed THROUGH the envelope rather than set on the
+response afterwards — `_envelope` rebuilds the response object, so a header attached to the
+old one is dropped, which is exactly how `Allow` and `WWW-Authenticate` were once lost.
+
+### The floor moved, and the movement was measured
+
+A re-run after FS-724/725 measured **447 of 546**, up from 445 — two fixes, two operations,
+confirmed rather than assumed. `BASELINE_WITHOUT_BROKER` is 438.
+
+**And one of the new tests was itself order-dependent.** The 429 envelope tests drove the
+handler with `asyncio.get_event_loop().run_until_complete(...)` from a sync test. They passed
+alone and failed in the full suite, because by then another test had left that loop closed.
+A test whose result depends on what ran before it is not a test — rewritten as `async def`,
+which pytest-asyncio's auto mode gives its own loop. Worth recording because the isolated run
+was green and the only thing that caught it was running everything.
+
+One process note: the first re-run failed with *"relation organizations does not exist"*
+because the script piped `migrate.py` to `/dev/null` and the migration had not run. **Hiding a
+command's output to keep a script tidy is how a failure becomes invisible** — the same
+mistake, in the same session, as the sixteen pushes that looked like they had failed. The
+second run printed it: `applied 67 migration(s)`.

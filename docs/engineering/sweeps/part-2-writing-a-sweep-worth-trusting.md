@@ -1515,6 +1515,26 @@ one of its findings. The habit that catches it:
      them is not derivable by thinking about timezones. Put the hostile shapes in the test
      and let it tell you what the library does.
 
+218. **Fix every door onto the field, not the one the report named.** A subscription's
+     `asset_id` could be pointed at another tenant's asset by the CREATE — and equally by
+     the PATCH, which this same arc had added. Fixing the create alone would have left the
+     newer route reintroducing the older defect the week after it was closed. When a field
+     is the defect, enumerate the routes that can set it.
+
+219. **A route can be half-fixed and look wholly fixed, if the probe never got past
+     validation.** The sweep that typed three shop-floor `asset_id` fields sent ONE body
+     shape to every route. `quality-events` requires `description`, so it answered 422 and
+     read as already-correct — while its ownership check was reached and its malformed-id
+     path still returned 500. A 4xx from a probe means "this input was refused", never
+     "this route is fine": give each route the minimum body its own model demands, or the
+     result measures the probe rather than the route.
+
+220. **The error shape a client is most likely to parse is the one worth checking hardest.**
+     Every error in this API is problem+json; the rate limiter alone answered plain
+     `{"detail": ...}`, so 429 was the single response the generated SDK could not handle
+     generically — and 429 is the one whose correct handling is automatic (back off, retry).
+     A special case is worst where the client is a program rather than a person.
+
 ---
 
 ## Open observations, not yet tickets

@@ -3270,3 +3270,63 @@ The general lesson is about where the list comes from. Reasoning enumerates the 
 have thought of; a test full of hostile shapes enumerates the ones that happen. When a check
 wraps a library call, the honest question is not "what can go wrong here" but "what does this
 library actually raise", and the cheapest way to answer it is to ask.
+
+## Rule 218 — fix every door onto the field
+
+`SubscriptionCreate.asset_id` accepted another organisation's asset. So did
+`SubscriptionUpdate.asset_id` — a PATCH added earlier in this same arc, during the
+page-enhancement work, months after the create was written.
+
+Fixing only the route the report named would have left the newer one reintroducing the older
+defect. That is not a hypothetical ordering: the PATCH exists *because* somebody wanted to
+edit a subscription in place, which means the field it edits is exactly the field the create
+validates.
+
+When the defect is a FIELD rather than a handler, enumerate the routes that can set it. Here
+it was two; in `operations` it was four; in shop-floor it was four write models sharing one
+`asset_id` shape.
+
+## Rule 219 — a 4xx from a probe means the input was refused, not that the route is fine
+
+The sweep that typed three shop-floor `asset_id` fields sent one body shape to every route in
+the file. `quality-events` requires `description`, so it answered **422** — and was read as
+already-correct and skipped.
+
+It was not. Its ownership check was reached (a foreign asset gave 404) while a malformed id
+still went to Postgres and came back 500. Half-fixed, and indistinguishable from whole-fixed
+by the only probe that touched it.
+
+A refusal tells you about the request you sent. To learn about the route, the request has to
+be one the route would otherwise accept: give each its minimum valid body, or the sweep is
+measuring the probe.
+
+## Rule 220 — the special case is worst where the client is a program
+
+Every error in this API is `application/problem+json` with a type, title, status, instance
+and trace id. One handler — the rate limiter — answered plain `{"detail": "..."}`.
+
+So **429 was the single error shape the generated SDK could not parse**, and 429 is precisely
+the error whose handling is automatic: a human reads a 500 and files a bug, but a client
+*programs* its response to a rate limit, and it programs it against the envelope every other
+status uses.
+
+The contract gate found this as the only "Response violates schema" failure across 546
+operations, which is the other half of the lesson: the inconsistency was invisible to every
+test that asserted a 429 happens, because they all asserted the status and none the shape.
+
+
+## A note attached to rule 220 — the test that passed alone
+
+The two tests pinning the 429 envelope drove the handler through
+`asyncio.get_event_loop().run_until_complete(...)` from a sync test. Green in isolation,
+**failing in the full suite**: by the time they ran, another test had left that loop closed.
+
+The failure was not in what they asserted — the assertions were right and the fix they guard
+is real. It was that their result depended on what had run before them, which makes a green
+run evidence about the ordering rather than about the code.
+
+Rewritten as `async def`, since pytest-asyncio runs in auto mode here and gives each its own
+loop. The general form: **a test that reaches for the ambient event loop is borrowing state
+from its neighbours.** And the only thing that surfaced it was running the whole suite rather
+than the file — which is the argument for doing that before every commit, not after the
+interesting ones.

@@ -37,7 +37,7 @@
 | [Documentation](#documentation) | The rest of `docs/` |
 
 **Engineering method.** The sweeps and guards in this repository follow a set of numbered
-rules, each written after a defect that a weaker check had missed. Rules 21–217 are recorded in
+rules, each written after a defect that a weaker check had missed. Rules 21–220 are recorded in
 `docs/engineering/defect-class-sweeps.md`, with the reasoning for each; the short list at the
 top of that file is what most people read.
 
@@ -298,9 +298,10 @@ python scripts/contract_ratchet.py contract-report.xml   # conformance may rise,
 It needs a **migrated** database owned by the `omniusgrid` role — the migration chain
 `GRANT`s to that name and rolls back without it. The job blocks on a **ratchet** rather than
 demanding green, and the floor only ever rises. Measured 2026-08-14 against a freshly
-migrated database: **445 of 546 operations conform with no broker, 449 with one**, so the two
-floors are **436** and **440** — each measurement less a 9-operation spread for generation
-variance. (The broker is worth four operations, not the "~20" this gate's own documentation
+migrated database: **447 of 546 operations conform with no broker, 449 with one**, so the two
+floors are **438** and **440** — each measurement less a 9-operation spread for generation
+variance. (The no-broker figure was 445 until FS-724/725 fixed two of the eight operations
+answering a bare `internal server error`; a re-run measured the gain rather than assuming it.) (The broker is worth four operations, not the "~20" this gate's own documentation
 had claimed since before the surface grew; the two floors stay separate because the
 distinction is real, but the headroom it buys is small.)
 

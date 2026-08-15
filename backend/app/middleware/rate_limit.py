@@ -20,6 +20,7 @@ from slowapi import Limiter
 from slowapi.errors import RateLimitExceeded
 from slowapi.util import get_remote_address
 
+from app.core.errors import problem_response
 from app.core.config import settings
 
 logger = structlog.get_logger()
@@ -157,16 +158,25 @@ async def rate_limit_exceeded_handler(
         limit=str(exc.detail),
     )
     await _audit_public_download_rate_limit(request)
-    response = JSONResponse(
+    # THE SHARED ENVELOPE, not a bare `{"detail": ...}`. Every other error in this API is
+    # `application/problem+json` with a type, title, status and trace id — that is what the
+    # OpenAPI document declares for 429 on every route and what the generated SDK parses.
+    # This handler answered plain JSON, making 429 the one error shape a client could not
+    # handle generically, and 429 is the error most likely to be handled programmatically:
+    # the correct response to it is to back off and retry. Found by the contract gate as
+    # the single "Response violates schema" failure across 546 operations.
+    #
+    # `Retry-After` and `X-RateLimit-Limit` are passed THROUGH the envelope rather than set
+    # on the response afterwards: `_envelope` rebuilds the response object, and a header
+    # attached to the old one would be dropped — the same mistake that once lost `Allow` on
+    # a 405 and `WWW-Authenticate` on a 401, recorded in `app/core/errors.py`.
+    return problem_response(
+        request,
+        message=f"Rate limit exceeded: {exc.detail}. Please slow down and try again.",
+        code="rate_limit_exceeded",
         status_code=429,
-        content={
-            "detail": f"Rate limit exceeded: {exc.detail}. "
-            "Please slow down and try again."
-        },
+        headers={"Retry-After": "60", "X-RateLimit-Limit": str(exc.detail)},
     )
-    response.headers["Retry-After"] = "60"
-    response.headers["X-RateLimit-Limit"] = str(exc.detail)
-    return response
 
 
 async def _audit_public_download_rate_limit(request: Request) -> None:

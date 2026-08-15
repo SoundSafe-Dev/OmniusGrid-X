@@ -9,6 +9,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select, delete
 
 from app.db.database import AsyncSessionLocal
+from app.db.models import Asset
 from app.db.notification_models import NotificationSubscription, NotificationDelivery
 from app.api.auth import get_current_active_user
 from app.core.tenant import get_tenant_org_id, tenant_session
@@ -78,7 +79,11 @@ class SubscriptionCreate(BaseModel):
     target: str
     min_severity: str = Field(default="warning", pattern="^(info|warning|error|critical)$")
     domain: Optional[str] = None
-    asset_id: Optional[str] = None
+    #: `UUID`, not `str` (FS-726). As a string, `{"asset_id": "nope"}` reached Postgres and
+    #: came back a 500; and nothing checked whose asset it was, so a subscription could be
+    #: scoped to ANOTHER organisation's machine — accepted with a 200, and then silently
+    #: dead, because the alarms it would match are ones this tenant can never see.
+    asset_id: Optional[UUID] = None
     enabled: bool = True
 
 
@@ -97,7 +102,7 @@ class SubscriptionUpdate(BaseModel):
         default=None, pattern="^(info|warning|error|critical)$"
     )
     domain: Optional[str] = None
-    asset_id: Optional[str] = None
+    asset_id: Optional[UUID] = None
     enabled: Optional[bool] = None
 
 
@@ -122,13 +127,36 @@ class TestEvent(BaseModel):
 # policy over unbound sessions would have emptied every read rather than protecting it.
 
 
+async def _own_asset_id(session, asset_id: Optional[UUID]) -> Optional[str]:
+    """The asset id as a string, having proved the caller can see the asset.
+
+    A subscription scoped to another organisation's asset is accepted by the database — the
+    foreign key is checked below RLS — and is then permanently silent, because the alarms it
+    filters for belong to a tenant this subscriber cannot see. A rule that can never fire is
+    worse than no rule: the operator believes they are covered.
+
+    Same shape as `shop_floor._own_asset_id` and `operations._own_operation`. Three files,
+    one question — what proves this id belongs to the caller.
+    """
+    if asset_id is None:
+        return None
+    found = (
+        await session.execute(select(Asset.id).where(Asset.id == asset_id))
+    ).scalar_one_or_none()
+    if found is None:
+        raise HTTPException(status_code=404, detail=f"asset {asset_id} not found")
+    return str(asset_id)
+
+
 @router.post("/subscriptions", response_model=SubscriptionCreated)
 async def create_subscription(
     body: SubscriptionCreate,
     organization_id=Depends(get_tenant_org_id),
 ):
-    sub = NotificationSubscription(organization_id=str(organization_id), **body.model_dump())
     async with tenant_session(organization_id) as session:
+        fields = body.model_dump()
+        fields["asset_id"] = await _own_asset_id(session, body.asset_id)
+        sub = NotificationSubscription(organization_id=str(organization_id), **fields)
         # `tenant_session`, NOT `AsyncSessionLocal`. These handlers opened their own
         # unbound session and relied entirely on the explicit organisation filter — and
         # `notification_subscriptions` / `notification_deliveries` had no policy either,
@@ -178,6 +206,12 @@ async def update_subscription(
     """
     fields = payload.model_dump(exclude_unset=True)
     async with tenant_session(organization_id) as session:
+        # The SAME ownership check the create does. A PATCH can move a subscription onto a
+        # different asset, so it can move it onto another organisation's asset — the create
+        # being fixed alone would leave the second door open, and this route is newer than
+        # the defect it would have reintroduced.
+        if "asset_id" in fields:
+            fields["asset_id"] = await _own_asset_id(session, payload.asset_id)
         subscription = (
             await session.execute(
                 select(NotificationSubscription).where(

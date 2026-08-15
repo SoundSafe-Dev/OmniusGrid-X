@@ -242,6 +242,40 @@ def _jsonable_validation_errors(exc: RequestValidationError) -> Any:
     return jsonable_encoder(cleaned)
 
 
+def problem_response(
+    request: Request,
+    *,
+    message: str,
+    code: str,
+    status_code: int,
+    details: Any = None,
+    headers: Optional[Mapping[str, str]] = None,
+) -> JSONResponse:
+    """Build the standard problem+json envelope from outside this module.
+
+    EXISTS BECAUSE ONE HANDLER WAS NOT USING IT. Every error in this API is an
+    `ErrorEnvelope` served as `application/problem+json` — that is what the OpenAPI
+    document declares for 400/401/403/404/405/422/429/500 on every route, and what the
+    generated SDK is built to parse. The rate limiter answered `{"detail": "..."}` as plain
+    JSON instead, so **429 was the one error shape a client could not handle generically** —
+    and 429 is the error most likely to be handled programmatically, since the correct
+    response to it is to back off and retry.
+
+    The contract gate found it as the single "Response violates schema" failure in 546
+    operations: `POST /auth/register` under a rate limit returned a body its own schema
+    refuses.
+    """
+    return _envelope(
+        message=message,
+        code=code,
+        status_code=status_code,
+        details=details,
+        trace_id=_trace_id(request),
+        instance=_instance(request),
+        headers=headers,
+    )
+
+
 def unhandled_exception_response(request: Request, exc: Exception) -> JSONResponse:
     """The envelope for an exception nothing else claimed.
 

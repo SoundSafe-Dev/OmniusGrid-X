@@ -106,3 +106,93 @@ def test_an_error_with_no_headers_is_unaffected(client: TestClient):
     assert response.status_code == 404
     assert "allow" not in response.headers
     assert response.json()["error"]["code"] == "not_found"
+
+
+def _rate_limited_request(client):
+    """A Starlette `Request` for the route the contract gate caught this on."""
+    from starlette.requests import Request
+
+    return Request(
+        {
+            "type": "http",
+            "method": "POST",
+            "path": "/api/v1/auth/register",
+            "headers": [],
+            "query_string": b"",
+            "client": ("127.0.0.1", 1234),
+            "app": client.app,
+        }
+    )
+
+
+class _Limit:
+    """The shape slowapi hands its handler. `str()` of it is the limit description."""
+
+    error_message = None
+    limit = "5 per 1 hour"
+
+    def __str__(self) -> str:
+        return self.limit
+
+
+class TestTheRateLimiterUsesTheSameEnvelope:
+    """429 was the one error shape a client could not handle generically (FS-727).
+
+    Every error in this API is `application/problem+json` carrying `type`, `title`,
+    `status`, `instance` and a trace id — that is what the OpenAPI document declares for
+    429 on every route, and what the generated SDK is built to parse. The rate limiter
+    answered plain JSON `{"detail": "..."}` from its own `JSONResponse`.
+
+    **429 is the error most likely to be handled programmatically**, because the correct
+    response to it is to back off and retry — so it is the worst one to make a special
+    case. The contract gate found it as the single "Response violates schema" failure
+    across 546 operations: `POST /auth/register` under a rate limit returned a body its own
+    schema refuses.
+
+    The headers matter for the same reason this file exists. `_envelope` REBUILDS the
+    response, so `Retry-After` set on the old object afterwards would have been dropped —
+    exactly how `Allow` and `WWW-Authenticate` were lost above. They are passed through the
+    envelope instead.
+
+    ASYNC TESTS, NOT `run_until_complete`. The first version drove the handler with
+    `asyncio.get_event_loop().run_until_complete(...)` from a sync test. It passed alone and
+    failed in the full suite, because by then another test had left that loop closed — a
+    test whose result depends on what ran before it is not a test. pytest-asyncio is in auto
+    mode here, so an `async def` gets its own loop.
+    """
+
+    async def test_the_body_is_the_problem_envelope(self, client: TestClient):
+        import json
+
+        from slowapi.errors import RateLimitExceeded
+
+        from app.middleware.rate_limit import rate_limit_exceeded_handler
+
+        response = await rate_limit_exceeded_handler(
+            _rate_limited_request(client), RateLimitExceeded(_Limit())
+        )
+
+        assert response.media_type == "application/problem+json", (
+            "the rate limiter answers plain JSON; every other error in this API is "
+            "problem+json and the schema declares that for 429"
+        )
+        body = json.loads(bytes(response.body))
+        for member in ("type", "title", "status", "instance"):
+            assert member in body, f"the 429 envelope is missing {member!r}"
+        assert body["status"] == 429
+
+    async def test_the_retry_headers_survive_the_rebuild(self, client: TestClient):
+        """`_envelope` builds a NEW response object. A header set on the old one is gone —
+        which is the defect this whole file was written for."""
+        from slowapi.errors import RateLimitExceeded
+
+        from app.middleware.rate_limit import rate_limit_exceeded_handler
+
+        response = await rate_limit_exceeded_handler(
+            _rate_limited_request(client), RateLimitExceeded(_Limit())
+        )
+        assert response.headers.get("Retry-After") == "60", (
+            "Retry-After was lost. A 429 without it tells a client to back off for an "
+            "unknown period, which in practice means immediately."
+        )
+        assert response.headers.get("X-RateLimit-Limit")

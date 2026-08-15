@@ -487,3 +487,114 @@ class TestUpdateIsScopedToTheTenant:
             f"{SUBS}/{subscriptions['a']['sub']}", json={"min_severity": "catastrophic"}
         )
         assert response.status_code == 422, response.text
+
+
+@pytest_asyncio.fixture
+async def owned_asset(admin_sync_url, seeded_orgs):
+    """An asset belonging to ORG A, so "another tenant's asset" means a row that genuinely
+    exists rather than an id nobody owns — the distinction the whole class turns on, since
+    a non-existent id is refused by the foreign key and an existing one is not.
+
+    Local rather than shared with `test_inline_session_tenant_scoping_realdb.py`, which has
+    the same fixture: `test_no_two_guards_keep_the_same_list.py` is about REGISTERS that
+    two guards must not both curate, and this is a two-row insert. Importing across test
+    modules to save it would couple two suites to each other's cleanup order.
+    """
+    import psycopg2
+
+    ids = {"type": uuid4(), "asset": uuid4()}
+    conn = psycopg2.connect(admin_sync_url)
+    conn.autocommit = True
+    with conn.cursor() as cur:
+        cur.execute(
+            "INSERT INTO asset_types (id, name, category) VALUES (%s, %s, 'machine')",
+            (str(ids["type"]), f"FS726-{uuid4().hex[:8]}"),
+        )
+        cur.execute(
+            "INSERT INTO assets (id, organization_id, asset_type_id, workcell_id, name, is_active) "
+            "VALUES (%s, %s, %s, %s, 'FS726 Asset', true)",
+            (
+                str(ids["asset"]),
+                str(seeded_orgs["org_a_id"]),
+                str(ids["type"]),
+                str(seeded_orgs["workcell_a_id"]),
+            ),
+        )
+    yield ids["asset"]
+    with conn.cursor() as cur:
+        cur.execute(
+            "DELETE FROM notification_subscriptions WHERE asset_id = %s", (str(ids["asset"]),)
+        )
+        cur.execute("DELETE FROM assets WHERE id = %s", (str(ids["asset"]),))
+        cur.execute("DELETE FROM asset_types WHERE id = %s", (str(ids["type"]),))
+    conn.close()
+
+
+class TestASubscriptionMayOnlyWatchAnAssetYouOwn:
+    """The third door into this router, found by carrying FS-724's question across
+    (`what proves this id belongs to the caller`) rather than by another leak report.
+
+    `asset_id` was `Optional[str]`, so two things were true at once:
+
+      * `{"asset_id": "nope"}` reached Postgres and came back a **500**, where the contract
+        promises a 4xx;
+      * a well-formed id belonging to ANOTHER organisation was accepted with a **200**. The
+        foreign key is checked below RLS, so the database has no objection.
+
+    The second is quieter than a leak and is the reason it is worth a test rather than a
+    shrug: the subscription is real, it belongs to the subscriber, and it can never fire,
+    because the alarms it filters for belong to a tenant this subscriber cannot see. **A
+    notification rule that cannot fire is worse than no rule** — the operator believes they
+    are covered, and nothing anywhere reports the silence.
+
+    THE PATCH IS TESTED SEPARATELY FROM THE POST because it is a second door onto the same
+    field: an update can move a subscription onto another organisation's asset just as a
+    create can point it there, and fixing only the create would have left the newer route
+    reintroducing the older defect.
+    """
+
+    BODY = {"name": "n", "channel": "email", "target": "a@b.com", "min_severity": "warning"}
+
+    async def test_a_malformed_asset_is_refused_not_a_crash(self, client_a):
+        response = await client_a.post(
+            "/api/v1/notifications/subscriptions", json={**self.BODY, "asset_id": "nope"}
+        )
+        assert response.status_code == 422, (
+            f"answered {response.status_code}; a bare `str` lets the value reach Postgres"
+        )
+
+    async def test_another_tenants_asset_is_refused(self, client_b, owned_asset):
+        response = await client_b.post(
+            "/api/v1/notifications/subscriptions",
+            json={**self.BODY, "asset_id": str(owned_asset)},
+        )
+        assert response.status_code == 404, (
+            f"org B subscribed to org A's asset and got {response.status_code}. The rule "
+            f"would be stored, owned by org B, and permanently silent."
+        )
+
+    async def test_a_patch_cannot_move_it_onto_another_tenants_asset(
+        self, client_b, owned_asset
+    ):
+        created = await client_b.post("/api/v1/notifications/subscriptions", json=self.BODY)
+        assert created.status_code == 200, created.text[:200]
+        response = await client_b.patch(
+            f"/api/v1/notifications/subscriptions/{created.json()['id']}",
+            json={"asset_id": str(owned_asset)},
+        )
+        assert response.status_code == 404, response.text[:200]
+
+    async def test_the_owner_can_still_watch_their_own_asset(self, client_a, owned_asset):
+        """The denominator. Every assertion above is satisfied by a route that refuses
+        every asset."""
+        response = await client_a.post(
+            "/api/v1/notifications/subscriptions",
+            json={**self.BODY, "asset_id": str(owned_asset)},
+        )
+        assert response.status_code == 200, response.text[:300]
+
+    async def test_a_subscription_without_an_asset_still_works(self, client_a):
+        """`asset_id` is optional — an organisation-wide rule is the common case, and
+        typing the field must not make it required."""
+        response = await client_a.post("/api/v1/notifications/subscriptions", json=self.BODY)
+        assert response.status_code == 200, response.text[:300]

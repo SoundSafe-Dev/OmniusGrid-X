@@ -141,7 +141,12 @@ class QualityEventCreate(BaseModel):
     description: str = Field(..., min_length=1)
     event_type: str = Field("defect", max_length=50)
     severity: str = Field("minor", max_length=20)
-    asset_id: Optional[str] = None
+    #: `UUID`, like its three siblings. This one was missed on the first pass because the
+    #: probe that found the others sent a body this model rejects for a different reason —
+    #: `description` is required here — so it answered 422 and looked fixed. The ownership
+    #: check reached it (a foreign asset is a 404) while a malformed id still reached
+    #: Postgres and came back 500.
+    asset_id: Optional[UUID] = None
     work_order_ref: Optional[str] = Field(None, max_length=100)
     part_number: Optional[str] = Field(None, max_length=100)
     quantity_affected: Optional[float] = Field(None, ge=0)
