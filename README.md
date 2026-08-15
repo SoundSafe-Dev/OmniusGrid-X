@@ -297,8 +297,20 @@ python scripts/contract_ratchet.py contract-report.xml   # conformance may rise,
 
 It needs a **migrated** database owned by the `omniusgrid` role — the migration chain
 `GRANT`s to that name and rolls back without it. The job blocks on a **ratchet** rather than
-demanding green: the passing floor is **380** without a broker and **393** with one, and it
-only ever rises.
+demanding green, and the floor only ever rises. **445 of 546 operations conform**, measured
+2026-08-14 against a freshly migrated database with no broker; the floor for that
+configuration is **436** — the measurement less a 9-operation spread for generation variance.
+
+Of the 101 that do not conform: 72 answer a 5xx under generated input, 18 return a status
+code their own schema does not declare, and 2 violate the response schema. **None of them is
+on the correlation-evidence or operations-assistant routes** the last merge added.
+
+**That run only happened because the suite stopped hanging.** `case.call_and_validate()`
+carried no request timeout, so a single unresponsive operation stopped the whole job — no
+report, no count, and the ratchet step then reading "collected 1 operations" and blaming the
+schema. An attempt sat for over an hour having used one minute of CPU in the last ten. With a
+30-second per-request timeout the same 546 operations finish in **14:41**. A gate that can
+hang reports nothing at all, which is strictly worse than a gate that fails.
 
 **The denominator was 452 and the schema now documents 546** — the correlation-engine merge
 added about ninety operations. That is more than the ratchet's own 10% drift tolerance, so

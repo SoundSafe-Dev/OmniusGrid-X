@@ -194,5 +194,17 @@ def test_api_conforms_to_openapi(case):
     # with 401s the per-operation schemas don't declare. ALLOW_DEV_TOKEN is the
     # dev/CI default; production rejects this token.
     case.headers = {**(case.headers or {}), "Authorization": "Bearer dev-token"}
-    # Exercises the operation and validates the response against the schema.
-    case.call_and_validate()
+    # A REQUEST TIMEOUT, because a gate that can hang reports nothing at all.
+    #
+    # This call had none. `call_and_validate()` passes **kwargs to the transport, and
+    # without a timeout one unresponsive operation stops the entire job — not a failure
+    # naming the operation, but silence: no junit XML, no conformance count, and a ratchet
+    # step that then reads "collected 1 operations" and blames the schema. The suite ran
+    # for over an hour on the 546-operation surface having used one minute of CPU in the
+    # last ten, which is what waiting looks like from the outside.
+    #
+    # 30 seconds is far above anything this API should take under generated input — the
+    # slowest legitimate operations here are a few hundred milliseconds — so a timeout is
+    # a finding about that operation rather than a flaky threshold. It fails ONE test with
+    # the operation's name on it, which is the whole point.
+    case.call_and_validate(timeout=30)

@@ -11429,8 +11429,32 @@ shipped at least once.
 
 Backend 4,829 passing, frontend 1,192, edge 427.
 
-**Open question, not a ticket:** the API contract gate did not complete within an hour on the
-546-operation surface, having completed in about eight minutes at 452. It was idle rather
-than busy when stopped. The six heaviest new correlation routes were cleared individually
-(sub-second on generated input), so the next step is to run it with a per-operation timeout
-and find which one it waits on — not to assume it is the newest code.
+**CLOSED, same session.** The gate was not slow, it was WAITING.
+`case.call_and_validate()` carried no request timeout, so a single unresponsive operation
+stopped the whole job: no junit XML, no conformance count, and the ratchet step then reading
+"collected 1 operations" and reporting it as a collapsed schema. The failure presents as
+silence, which is why an hour passed before it looked wrong.
+
+With a 30-second per-request timeout — far above anything this API should take under
+generated input, so a hit is a finding about that operation rather than a flaky threshold —
+the same 546 operations finish in **14:41** and the run reports:
+
+    contract conformance: 445/546 operations
+
+**The floor moves 380 → 436** (445 measured, less the 9-operation spread the file's other
+floor already allows for generation variance). Most of that gain is arithmetic rather than
+earned — the merge added ~90 operations and most conform — which is exactly why the floor
+has to move with the surface: 380 against 546 would let 65 operations regress unnoticed.
+
+`BASELINE_WITH_BROKER` was left at 393 **deliberately**, and it is now stale and loose: it
+sits below the without-broker floor, which cannot be right, since a reachable broker turns
+~20 correct 503s into 2xx. Raising it would be arithmetic, not measurement, and this file
+exists to prevent exactly that. Marked for the next run with a broker.
+
+Of the 101 non-conformers: 72 answer a 5xx under generated input, 18 return a status code
+their own schema does not declare, 2 violate the response schema — and **none is on the
+`/correlation/evidence` or `/correlation/operations` routes the merge added**. The
+correlation names in the failure list are `registries/correlations` and
+`nlp/correlation/query`, both older than the merge.
+
+A gate that can hang reports nothing at all, which is strictly worse than a gate that fails.

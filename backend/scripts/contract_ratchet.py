@@ -161,11 +161,38 @@ from pathlib import Path
 #: never been able to serialise its own handler's output** — see FS-608.
 #:
 #: Raise it when a fix clears the noise. Never lower it.
-BASELINE_WITHOUT_BROKER = 380
+#:
+#: RAISED 380 -> 436 on 2026-08-14. A full run measured **445 of 546 conforming** with no
+#: broker, so the floor moves to 445 less the same 9-operation spread the other floor allows
+#: for generation variance. The gain is mostly arithmetic rather than earned — the
+#: correlation-engine merge added ~90 operations and most of them conform — which is exactly
+#: why the floor has to move WITH the surface: 380 against 546 would let 65 operations
+#: regress unnoticed.
+#:
+#: THAT RUN ONLY HAPPENED BECAUSE THE SUITE STOPPED HANGING. `case.call_and_validate()` had
+#: no request timeout, so one unresponsive operation stopped the whole job — no junit XML, no
+#: count, and this script then reading "collected 1 operations" and blaming the schema. An
+#: earlier attempt sat for over an hour having used one minute of CPU in the last ten. With a
+#: 30-second per-request timeout the same surface finishes in 14:41.
+#:
+#: What this run found: 72 server errors, 18 undocumented status codes and 2 schema
+#: violations across 101 non-conforming operations — and **not one of them on the newly
+#: merged `/api/v1/correlation/evidence` or `/correlation/operations` routes**. The
+#: correlation names in the failure list belong to `registries/correlations` and
+#: `nlp/correlation/query`, both of which predate the merge.
+BASELINE_WITHOUT_BROKER = 436
 
 #: The floor for a run where a broker was reachable. 402 measured 2026-08-08, less the same
 #: 9-operation spread the lower floor allows for. Never lower it either — and note that this
 #: one catches a regression of 10 where the shared floor caught 22.
+#:
+#: **STALE AND LOOSE AS OF 2026-08-14, DELIBERATELY NOT GUESSED.** The without-broker floor is
+#: now 436, above this one, which cannot be right: a reachable broker turns ~20 correct 503s
+#: into 2xx, so a with-broker run must conform at least as well as one without. This number is
+#: therefore protecting nothing in the configuration CI actually runs. It is left at 393
+#: because raising a floor is a claim about a measurement, and no with-broker run has been
+#: taken since the surface grew — writing 445+ here from arithmetic is the guess this file
+#: exists to prevent. Re-measure on the next run with a broker reachable and raise it then.
 BASELINE_WITH_BROKER = 393
 
 #: Kept as the name the CLI default and older callers use: the floor that holds when nothing
