@@ -1494,6 +1494,27 @@ one of its findings. The habit that catches it:
      is worth four. A number inherited and never re-measured is the same defect whether it
      sits in a README, a ratchet or a comment.
 
+216. **A foreign key is checked below RLS, so a WRITE can name a row you cannot read.**
+     Three shop-floor writes took an `asset_id` and never asked whose asset it was. The
+     column is a foreign key to `assets`, which is FORCE ROW LEVEL SECURITY — and the
+     database performs referential integrity at a level the policy does not filter, so the
+     reference was accepted and org B logged downtime against org A's machine with a 201.
+     Reading is protected and REFERENCING is not; the row lands in the writer's own tenancy
+     carrying a pointer across the boundary, which is why no tenancy test looking for
+     leaked reads would see it. Ask of every caller-supplied id what proved it belongs to
+     the caller — the answer "the foreign key would have failed" is only true for ids that
+     exist nowhere.
+
+217. **Reasoning about a library's failure modes lists the ones you thought of.** A
+     timezone validator caught `ZoneInfoNotFoundError`, so an empty name — which raises
+     `ValueError` — answered 500 where every other bad value answered 400. The fix caught
+     `ValueError` too, having reasoned about it. Then its own test, which included a
+     300-character name because that is the shape a fuzzer sends rather than because
+     anybody predicted it, found a THIRD: `OSError: File name too long`. `ZoneInfo`
+     resolves a name to a file, so the failure modes are the filesystem's, and the list of
+     them is not derivable by thinking about timezones. Put the hostile shapes in the test
+     and let it tell you what the library does.
+
 ---
 
 ## Open observations, not yet tickets

@@ -8,6 +8,8 @@ from typing import List, Literal
 from uuid import UUID
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
+from app.core.datetime_utils import canonical_timezone_key
+
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from fastapi.responses import FileResponse, StreamingResponse
@@ -255,9 +257,11 @@ def _normalize_recipients(recipients: list[str]) -> list[str]:
 
 
 def _validate_schedule_timezone(timezone_name: str) -> None:
-    try:
-        ZoneInfo(timezone_name)
-    except ZoneInfoNotFoundError:
+    # `canonical_timezone_key`, not a bare `ZoneInfo(...)` in a try. This caught
+    # `ZoneInfoNotFoundError` only, and `ZoneInfo` raises a plain ValueError for an EMPTY
+    # name and for a traversal-shaped one — so `{"timezone": ""}` answered 500 while every
+    # other bad zone answered 400. Found by the contract gate.
+    if canonical_timezone_key(timezone_name) is None:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Unknown IANA timezone '{timezone_name}'",

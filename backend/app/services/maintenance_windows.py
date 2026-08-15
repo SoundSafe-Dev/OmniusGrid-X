@@ -8,6 +8,8 @@ from typing import Iterable, Sequence
 from uuid import UUID
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
+from app.core.datetime_utils import canonical_timezone_key
+
 
 UTC = timezone.utc
 DEFAULT_HORIZON_DAYS = 15
@@ -81,12 +83,14 @@ def validate_timezone_name(value: str) -> str:
     name = value.strip()
     if not name:
         raise MaintenanceWindowValidationError("Timezone is required")
-    try:
-        return ZoneInfo(name).key
-    except ZoneInfoNotFoundError as exc:
-        raise MaintenanceWindowValidationError(
-            f"Unknown IANA timezone '{name}'"
-        ) from exc
+    # `canonical_timezone_key` rather than a local try/except: this caught
+    # `ZoneInfoNotFoundError` only, and `ZoneInfo` raises a plain ValueError for a
+    # traversal-shaped key like `../etc/passwd`, which escaped uncaught. Two other modules
+    # had the same handler and the same hole, and in both it surfaced as a 500.
+    key = canonical_timezone_key(name)
+    if key is None:
+        raise MaintenanceWindowValidationError(f"Unknown IANA timezone '{name}'")
+    return key
 
 
 def validate_weekdays(values: Iterable[int]) -> list[int]:

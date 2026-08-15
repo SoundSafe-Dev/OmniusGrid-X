@@ -35,7 +35,7 @@ from app.api.auth import get_current_active_user
 from app.middleware.rbac import require_operator_or_admin
 from app.core.datetime_utils import utcnow
 from app.core.tenant import get_tenant_db, get_tenant_org_id
-from app.db.models import User
+from app.db.models import Asset, User
 from app.db.shop_floor_models import (
     DowntimeEvent, EventType, LaborEntry, PartIssue, PostingStatus, QualityEvent,
     SystemOfRecordPosting, TargetSystem,
@@ -82,7 +82,7 @@ class PartIssueCreate(BaseModel):
     quantity: float = Field(..., gt=0)
     unit_of_measure: str = Field("each", max_length=20)
     description: Optional[str] = None
-    asset_id: Optional[str] = None
+    asset_id: Optional[UUID] = None
     work_order_ref: Optional[str] = Field(None, max_length=100)
     #: Optional, and NOT defaulted to zero. See the column comment: "free" and "not priced
     #: yet" are different statements to an accounting system.
@@ -111,7 +111,7 @@ class PartIssueOut(BaseModel):
 
 class ClockInRequest(BaseModel):
     operator_ref: Optional[str] = Field(None, max_length=100)
-    asset_id: Optional[str] = None
+    asset_id: Optional[UUID] = None
     work_order_ref: Optional[str] = Field(None, max_length=100)
     labor_category: str = Field("direct", max_length=50)
     notes: Optional[str] = None
@@ -175,7 +175,7 @@ class QualityEventOut(BaseModel):
 
 
 class DowntimeStartRequest(BaseModel):
-    asset_id: str
+    asset_id: UUID
     downtime_type: str = Field("unplanned", max_length=30)
     reason_code: Optional[str] = Field(None, max_length=50)
     description: Optional[str] = None
@@ -283,6 +283,47 @@ def _posting_out(p: SystemOfRecordPosting) -> PostingOut:
 
 
 # --------------------------------------------------------------------------- part issues
+async def _own_asset_id(
+    db: AsyncSession, asset_id: Optional[UUID]
+) -> Optional[str]:
+    """Return the asset id as a string, having proved the CALLER can see the asset.
+
+    TWO DEFECTS IN ONE LINE OF SIGNATURE, both found by driving these routes with the input
+    the contract gate generates.
+
+    `asset_id` was a bare `str` on three write models. Anything non-UUID reached Postgres
+    and came back as a 500 — `POST /shop-floor/downtime/start`, `/part-issues` and
+    `/labor/clock-in` all did, where the contract promises a 4xx. Typing it as `UUID` moves
+    that to a 422 at the door.
+
+    And nothing checked whose asset it was. `downtime_events.asset_id` is a FOREIGN KEY to
+    `assets`, and a foreign-key check is performed by the database at a level RLS does not
+    filter — so a valid id belonging to ANOTHER ORGANISATION was accepted, and org B could
+    log downtime against org A's machine and get a 201. The row lands in org B's own
+    tenancy, so this is not a read of someone else's data; it is a write that references
+    it, and `/downtime/open` then returns an event whose asset the caller cannot resolve.
+    Downtime is also an OEE input, so the figure it feeds is computed against a machine the
+    tenant does not own.
+
+    The lookup itself is one statement and RLS does the work: on a `get_tenant_db` session,
+    another organisation's asset simply is not there. That is the same shape as
+    `_own_operation` in `api/operations.py` — where the table had no policy and the join had
+    to be written by hand — and the reason both exist is the same: the next handler will not
+    remember.
+    """
+    if asset_id is None:
+        return None
+    found = (
+        await db.execute(select(Asset.id).where(Asset.id == asset_id))
+    ).scalar_one_or_none()
+    if found is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"asset {asset_id} not found",
+        )
+    return str(asset_id)
+
+
 @router.post("/part-issues", dependencies=[Depends(require_operator_or_admin)], response_model=PartIssueOut, status_code=status.HTTP_201_CREATED)
 async def issue_part(
     payload: PartIssueCreate,
@@ -299,7 +340,7 @@ async def issue_part(
         description=payload.description,
         quantity=payload.quantity,
         unit_of_measure=payload.unit_of_measure,
-        asset_id=payload.asset_id,
+        asset_id=await _own_asset_id(db, payload.asset_id),
         work_order_ref=payload.work_order_ref,
         unit_cost=payload.unit_cost,
         currency=payload.currency,
@@ -398,7 +439,7 @@ async def clock_in(
         organization_id=str(org_id),
         user_id=str(current_user.id),
         operator_ref=payload.operator_ref,
-        asset_id=payload.asset_id,
+        asset_id=await _own_asset_id(db, payload.asset_id),
         work_order_ref=payload.work_order_ref,
         clock_in_at=utcnow(),
         labor_category=payload.labor_category,
@@ -500,7 +541,7 @@ async def report_problem(
     event = QualityEvent(
         id=str(uuid.uuid4()),
         organization_id=str(org_id),
-        asset_id=payload.asset_id,
+        asset_id=await _own_asset_id(db, payload.asset_id),
         work_order_ref=payload.work_order_ref,
         part_number=payload.part_number,
         event_type=payload.event_type,
@@ -584,7 +625,7 @@ async def start_downtime(
         await db.execute(
             select(DowntimeEvent).where(
                 DowntimeEvent.organization_id == str(org_id),
-                DowntimeEvent.asset_id == payload.asset_id,
+                DowntimeEvent.asset_id == await _own_asset_id(db, payload.asset_id),
                 DowntimeEvent.ended_at.is_(None),
             )
         )
@@ -601,7 +642,7 @@ async def start_downtime(
     event = DowntimeEvent(
         id=str(uuid.uuid4()),
         organization_id=str(org_id),
-        asset_id=payload.asset_id,
+        asset_id=await _own_asset_id(db, payload.asset_id),
         downtime_type=payload.downtime_type,
         reason_code=payload.reason_code,
         description=payload.description,

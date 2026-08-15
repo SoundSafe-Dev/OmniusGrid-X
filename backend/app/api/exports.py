@@ -41,6 +41,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import get_current_active_user
 from app.api.telemetry import _verify_asset_in_org
+from app.core.datetime_utils import canonical_timezone_key
 from app.core.config import settings
 from app.core.tenant import get_tenant_db, get_tenant_org_id
 from app.db.database import AsyncSessionLocal, get_db
@@ -382,9 +383,11 @@ def _validate_schedule_fields(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"frequency must be one of: {', '.join(sorted(SCHEDULE_FREQUENCIES))}",
         )
-    try:
-        ZoneInfo(timezone_name)
-    except ZoneInfoNotFoundError:
+    # `canonical_timezone_key`, not a bare `ZoneInfo(...)` in a try. The previous shape
+    # caught `ZoneInfoNotFoundError` only, and `ZoneInfo` raises a plain ValueError for an
+    # EMPTY name and for a traversal-shaped one — so those answered 500 where every other
+    # bad zone answered 400.
+    if canonical_timezone_key(timezone_name) is None:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Unknown IANA timezone '{timezone_name}'",

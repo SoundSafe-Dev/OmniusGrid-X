@@ -3230,3 +3230,43 @@ about the API rather than an error in either number.
 A figure inherited across documents and never re-measured is one defect wearing three hats —
 the same shape as `metadata` appearing on nine register entries, and as the operation count
 reading 451 in two places and 452 in a third.
+
+## Rule 216 — a foreign key is checked below RLS
+
+`downtime_events.asset_id` is a foreign key to `assets`, and `assets` is FORCE ROW LEVEL
+SECURITY. Three shop-floor writes took that id from the caller and never asked whose asset it
+was, on the reasonable assumption that the database would refuse a reference the caller could
+not see.
+
+It does not. Referential integrity is enforced at a level the policy does not filter, so a
+valid id belonging to another organisation was accepted: **org B logged downtime against org
+A's machine and got a 201.**
+
+The consequence is easy to under-rate because it is not a leak. Org B cannot READ org A's
+asset — the row it wrote lands in org B's own tenancy, carrying a pointer across the
+boundary. `/downtime/open` then returns an event whose asset the caller cannot resolve, and
+downtime is an OEE input, so the figure it feeds is computed against a machine the tenant
+does not own. A tenancy test looking for leaked reads sees none of this.
+
+**Reading is protected; REFERENCING is not.** Ask of every caller-supplied id what proved it
+belongs to the caller, and treat "the foreign key would have failed" as true only for ids
+that exist nowhere at all.
+
+## Rule 217 — put the hostile shapes in the test and let the library answer
+
+A timezone validator caught `ZoneInfoNotFoundError`. An empty name raises `ValueError`, so
+`{"timezone": ""}` answered 500 while every other bad value answered 400 — one of eight
+operations the contract gate found returning a bare `internal server error`.
+
+The fix caught `ValueError` as well, and the reasoning behind it was sound: `ZoneInfo` rejects
+keys that are not normalized relative paths, and traversal-shaped names raise the same thing.
+
+Then the test found a third. `ZoneInfo("x" * 300)` raises **`OSError: [Errno 63] File name
+too long`** — because `ZoneInfo` resolves a name to a FILE, so its failure modes are the
+filesystem's, not the timezone database's. That case was in the list because a 300-character
+string is what a fuzzer sends, not because anybody predicted the exception.
+
+The general lesson is about where the list comes from. Reasoning enumerates the failures you
+have thought of; a test full of hostile shapes enumerates the ones that happen. When a check
+wraps a library call, the honest question is not "what can go wrong here" but "what does this
+library actually raise", and the cheapest way to answer it is to ask.

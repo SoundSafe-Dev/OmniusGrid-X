@@ -11506,3 +11506,65 @@ day later.
 That is also the sharpest way to state FS-720's lesson: on `assets` the handler can be sloppy
 and the schema saves it; on `operations` there was no schema protection at all, so four
 handlers reached every tenant's rows and nothing underneath them was ever going to filter.
+
+## FS-724/725 — the eight bare 500s the gate could finally see
+
+With the contract gate completing again (FS-722), its 36 five-hundreds could be read rather
+than guessed at. Most are dependency outages reported correctly — Redis for the feature-flag
+and bulk job stores, an unreachable vector store, a broker that is not running, an
+unconfigured SSO — which schemathesis counts as 5xx because it counts any 5xx. **Eight were
+not.** They answered a bare `internal server error`, and three of the eight are in this lane.
+
+### FS-724 — a shop-floor write could name an asset you do not own
+
+`asset_id` was a bare `str` on three write models, so anything non-UUID reached Postgres and
+came back a 500 where the contract promises a 4xx: `POST /shop-floor/downtime/start`,
+`/part-issues` and `/labor/clock-in`.
+
+Typing it `UUID` fixes that, and asking *why it was a string* found the sharper defect
+underneath: **nothing checked whose asset it was.** `downtime_events.asset_id` is a foreign
+key to `assets`, and a foreign-key check is performed by the database at a level RLS does not
+filter — so a valid id belonging to another organisation was accepted, and **org B could log
+downtime against org A's machine and get a 201.** The row lands in org B's own tenancy, so
+this is not a read of someone else's data; it is a write that references it. `/downtime/open`
+then returns an event whose asset the caller cannot resolve, and downtime is an OEE input, so
+the figure it feeds is computed against a machine the tenant does not own.
+
+Both are closed by `_own_asset_id`, which types the id and proves the asset is visible on the
+caller's session — one statement, because RLS does the work as soon as something asks. Same
+shape as `_own_operation` (FS-720), and the same reason: the next handler will not remember.
+Nine tests, each fix mutation-verified separately, including that **no row is written** —
+because a handler can answer 404 after inserting.
+
+### FS-725 — an empty timezone was a 500, in three files
+
+`POST /compliance/reports/schedules` answered 400 to every bad timezone and **500 to an empty
+one**. `ZoneInfo` resolves a name to a FILE, so its failures are the filesystem's, and there
+are three exception types where every caller had caught one:
+
+    ZoneInfo("Not/AZone")      ZoneInfoNotFoundError   — caught everywhere
+    ZoneInfo("")               ValueError
+    ZoneInfo("../etc/passwd")  ValueError
+    ZoneInfo("x" * 300)        OSError: [Errno 63] File name too long
+
+`api/compliance_reports.py`, `api/exports.py` and `services/maintenance_windows.py` had each
+hand-rolled the same three lines and each carried the same hole. They now share
+`canonical_timezone_key`, which returns the canonical key or None — returning rather than
+raising, because the three callers own different error vocabularies and imposing one would
+make two of them translate it back.
+
+**The OSError was found by the test, against the first version of the fix.** The `x * 300`
+case was in the list because it is the shape a fuzzer sends, not because anybody predicted
+it — and a fix that had reasoned its way to ValueError still let it through as a 500.
+Reasoning about a library's failure modes lists the ones you thought of; the test lists the
+ones that happen.
+
+The traversal shape is worth naming even though `ZoneInfo` refuses it: a timezone name is
+caller-supplied and reaches a filesystem lookup, so the library saying no is correct — but
+answering 500 tells the caller their input caused a server fault, which is untrue and is the
+reply that invites more probing.
+
+**Left for their owners**, with what each answers: `logistics/truck-asset-readiness` and
+`logistics/optimize-assignment` (Harsh), `kanban/tasks` (Harsh),
+`engines/correlation/integration/analyze` (Harsh), `fleet/releases` (Hridyansh), `rag/query`
+(htreinen).
