@@ -186,14 +186,21 @@ BASELINE_WITHOUT_BROKER = 436
 #: 9-operation spread the lower floor allows for. Never lower it either — and note that this
 #: one catches a regression of 10 where the shared floor caught 22.
 #:
-#: **STALE AND LOOSE AS OF 2026-08-14, DELIBERATELY NOT GUESSED.** The without-broker floor is
-#: now 436, above this one, which cannot be right: a reachable broker turns ~20 correct 503s
-#: into 2xx, so a with-broker run must conform at least as well as one without. This number is
-#: therefore protecting nothing in the configuration CI actually runs. It is left at 393
-#: because raising a floor is a claim about a measurement, and no with-broker run has been
-#: taken since the surface grew — writing 445+ here from arithmetic is the guess this file
-#: exists to prevent. Re-measure on the next run with a broker reachable and raise it then.
-BASELINE_WITH_BROKER = 393
+#: RAISED 393 -> 440 on 2026-08-14, from a run with a broker genuinely reachable:
+#: **449 of 546**, less the same 9-operation spread.
+#:
+#: It was briefly left at 393 while the lower floor moved to 436, which
+#: `test_the_contract_gate_doc_matches_the_gate.py` refused — correctly: a run that reaches
+#: MORE operations because a dependency was present cannot be held to a lower bar than one
+#: that could not reach them. Rather than raise it by arithmetic, the run was taken.
+#:
+#: AND THE MEASUREMENT CORRECTED THE REASONING. The note here previously said a reachable
+#: broker turns "~20 correct 503s" into 2xx, inherited from the era when this gate's own
+#: documentation put the broker-dependent set at that size. Measured today it is worth
+#: **four** operations: 449 with a broker against 445 without. The gap between the two floors
+#: is therefore small, and that is a fact about the API — very little of it now blocks on the
+#: broker — rather than a mistake in either number.
+BASELINE_WITH_BROKER = 440
 
 #: Kept as the name the CLI default and older callers use: the floor that holds when nothing
 #: is known about the broker.

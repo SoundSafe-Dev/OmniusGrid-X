@@ -1474,6 +1474,26 @@ one of its findings. The habit that catches it:
      session was doing the work. The comment records the mutation result, so the next
      reader deletes it deliberately or not at all.
 
+214. **A gate that can hang reports nothing, which is strictly worse than a gate that
+     fails.** The contract suite's `call_and_validate()` had no request timeout, so one
+     unresponsive operation stopped the whole job: no junit XML, no conformance count, and
+     the ratchet step then reading "collected 1 operations" and blaming the schema. It
+     presents as SLOWNESS — a run sat for over an hour having used one minute of CPU in the
+     last ten — which is why nobody had looked. A 30-second per-request timeout turns the
+     same surface into a 15-minute run that fails ONE test with the operation's name on it.
+     Any long-running check that talks to something should be asked what it does when the
+     other side never answers.
+
+215. **When a guard refuses your number, take the measurement instead of doing the
+     arithmetic.** Raising the without-broker floor to 436 left the with-broker floor at 393,
+     and a guard failed: the configuration that reaches MORE operations cannot be held to a
+     lower bar. The tempting fix is to write 445-something in the higher slot, which is
+     arithmetic dressed as a floor. The run with a broker took seventeen minutes and gave
+     449 — and it also **corrected the reasoning that would have justified the guess**: the
+     broker-dependent set had been described as "~20 operations" across three documents, and
+     is worth four. A number inherited and never re-measured is the same defect whether it
+     sits in a README, a ratchet or a comment.
+
 ---
 
 ## Open observations, not yet tickets

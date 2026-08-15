@@ -11321,6 +11321,8 @@ latent rather than live. Not touched.
 
 Rules 212-213. Backend 4,795 passing, frontend 1,192, edge 427.
 
+*(FS-723 and the contract-gate work below took the backend suite to 4,831.)*
+
 ## FS-721 — the fifteen tables RLS cannot see, swept
 
 FS-720 turned on a fact worth generalising: `operations` has no `organization_id`, so no
@@ -11446,10 +11448,20 @@ floor already allows for generation variance). Most of that gain is arithmetic r
 earned — the merge added ~90 operations and most conform — which is exactly why the floor
 has to move with the surface: 380 against 546 would let 65 operations regress unnoticed.
 
-`BASELINE_WITH_BROKER` was left at 393 **deliberately**, and it is now stale and loose: it
-sits below the without-broker floor, which cannot be right, since a reachable broker turns
-~20 correct 503s into 2xx. Raising it would be arithmetic, not measurement, and this file
-exists to prevent exactly that. Marked for the next run with a broker.
+`BASELINE_WITH_BROKER` was left at 393 at first, and **a guard refused that** —
+`test_the_contract_gate_doc_matches_the_gate.py` asserts the with-broker floor is the higher
+one, because a run that reaches more operations *because a dependency was present* cannot be
+held to a lower bar than one that could not reach them. It was right, and the fix was not to
+raise it by arithmetic but to take the run: with a broker genuinely reachable,
+**449 of 546**, so that floor is 440.
+
+**That measurement also corrected the reasoning it replaced.** Both this log and the gate's
+own documentation described the broker-dependent set as "~20 correct 503s". Measured on the
+same tree it is **four** operations — 449 against 445. The two floors stay separate because
+the distinction is real and worth probing rather than claiming, but the headroom it buys is
+small, and that is a fact about the API rather than a fault in either number. A figure
+inherited across three documents and never re-measured is exactly the shape this session has
+now found in the README, the ratchet and here.
 
 Of the 101 non-conformers: 72 answer a 5xx under generated input, 18 return a status code
 their own schema does not declare, 2 violate the response schema — and **none is on the
@@ -11458,3 +11470,39 @@ correlation names in the failure list are `registries/correlations` and
 `nlp/correlation/query`, both older than the merge.
 
 A gate that can hang reports nothing at all, which is strictly worse than a gate that fails.
+
+## FS-723 — the parent-tenanted sweep carried into the services, and a one-sided isolation test
+
+FS-721 read every `select()` of the fifteen parent-tenanted models in `app/api` and found one
+offender. The same models are queried from `app/services` and `app/workers`, where a route's
+tenant boundary is just as easy to lose — so that half was swept too: **15 sites across nine
+files, and every one is scoped.** They all follow the same convention as the API layer —
+query children by a parent id that the caller's own request already verified —
+`insight_activation` off a board it fetched, `export_processor` off a registry the route
+scoped, `oee_calculator` and `platform_correlation` off an asset the handler looked up
+through an RLS-protected table.
+
+`/oee/current`, `/oee/historical` and `/oee/losses` were checked BEHAVIOURALLY rather than
+read: an asset was seeded in org A and requested by both tenants. Owner 200, other tenant
+404, all three routes. That is the second sweep of this class to come back clean, which is
+the useful result — `operations` was the exception, not the pattern.
+
+**But the test that already covered those routes was one-sided.** `TestTheOwnerCanReachTheirOwnAsset`
+is parametrized over all three; `TestTenantIsolationStillHolds` checked `current` alone. Two
+of the three routes were asserted to work for their owner and never asserted to be CLOSED to
+anyone else — including `losses`, which is the one the OEE page calls for its loss breakdown.
+Now parametrized to match.
+
+**And the mutations on it came back honest rather than flattering, which is worth recording.**
+Neither obvious break makes the new cases fail. Switching the handler to `get_db` fails the
+OWNER half instead — an unscoped session hides the asset from everybody, so isolation passes
+for the wrong reason. Deleting the ownership predicate entirely changes nothing, because
+`assets` is FORCE ROW LEVEL SECURITY and the session is bound: **the schema is the boundary
+here, not the handler.** The cases are kept as the check on that — if `assets` ever loses its
+policy, this is what says so — and the comment now states what the mutation showed rather
+than what the assertion looks like it proves. Rule 213, applied to the file that earned it a
+day later.
+
+That is also the sharpest way to state FS-720's lesson: on `assets` the handler can be sloppy
+and the schema saves it; on `operations` there was no schema protection at all, so four
+handlers reached every tenant's rows and nothing underneath them was ever going to filter.

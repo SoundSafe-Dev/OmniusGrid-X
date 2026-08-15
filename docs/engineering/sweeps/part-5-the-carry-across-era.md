@@ -3188,3 +3188,45 @@ table in the file's neighbourhood and false of this one. A handler that is ever 
 The rule is not "keep redundant code". It is that when you keep something a mutation cannot
 justify, the comment has to say the mutation was run and what it showed. Otherwise the next
 reader deletes it as noise — correctly, by the evidence available to them.
+
+## Rule 214 — a gate that can hang reports nothing
+
+`case.call_and_validate()` in the contract suite carried no request timeout. One
+unresponsive operation therefore stopped the entire job — and not with a failure naming it,
+but with silence: no junit XML, no conformance count, and `contract_ratchet.py` reading
+"collected 1 operations" and printing *"Check that the schema still loads and the server
+started."* Every visible signal pointed at the wrong thing.
+
+It presents as slowness, which is the reason it survived. A run that is 40 minutes into an
+8-minute job looks like a big surface, not a stuck one. The tell was CPU: one minute of it
+in the last ten, on a process that should be saturating a core.
+
+`timeout=30` turns that into a 15-minute run over 546 operations that fails one test with
+the operation's name on it. Thirty seconds is far above anything this API takes under
+generated input, so a hit is a finding rather than a flaky threshold.
+
+The general form: **any long-running check that talks to something else should be asked what
+it does when the other side never answers.** The answer "it waits" is a gate that can be
+silenced by the thing it is meant to be testing.
+
+## Rule 215 — when a guard refuses your number, measure rather than compute
+
+Raising the without-broker contract floor to 436 left the with-broker floor at 393, and
+`test_the_contract_gate_doc_matches_the_gate.py` failed: the configuration that reaches MORE
+operations, because a dependency was present, cannot be held to a lower bar than one that
+could not reach them.
+
+There were two ways out. One was to write 445-something into the higher slot — arithmetic
+dressed as a floor, in a file whose entire purpose is to stop exactly that. The other was to
+take the run: seventeen minutes with a broker reachable, **449 of 546**, floor 440.
+
+The measurement paid for itself by correcting the belief that would have justified the guess.
+Three documents — this repository's README, the gate's own reference page, and a comment in
+the ratchet — described the broker-dependent set as "~20 correct 503s". It is **four**: 449
+with a broker against 445 without. The two floors stay separate because the distinction is
+real and is probed rather than claimed, but the headroom it buys is small, and that is a fact
+about the API rather than an error in either number.
+
+A figure inherited across documents and never re-measured is one defect wearing three hats —
+the same shape as `metadata` appearing on nine register entries, and as the operation count
+reading 451 in two places and 452 in a third.

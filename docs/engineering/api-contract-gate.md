@@ -1,6 +1,6 @@
 # The API contract gate
 
-Schemathesis drives all 451 operations in the app's own OpenAPI schema with generated
+Schemathesis drives all 546 operations in the app's own OpenAPI schema with generated
 input and checks the responses against what the schema promises. The generated
 TypeScript SDK is built from that same schema, so drift here is a client that is wrong
 at runtime.
@@ -116,11 +116,13 @@ class — any extension created by `conftest` and by no migration now fails the 
 
 ## Why a ratchet
 
-**368–370 of 452** operations conform (floor: 360). The remaining ~82 are dominated by
-**one behaviour**: generated input reaching Postgres unvalidated and surfacing as a 500
-where the contract promises a 4xx (`DataError`, `ForeignKeyViolationError`,
-`CharacterNotInRepertoireError`). That is per-endpoint validation work spread across every
-lane.
+**445 of 546** operations conform with no broker and **449 of 546** with one, both measured
+2026-08-14 (floor: 436 / 440). The remaining ~100 are dominated by **one behaviour**:
+generated input reaching Postgres unvalidated and surfacing as a 500 where the contract
+promises a 4xx (`DataError`, `ForeignKeyViolationError`, `CharacterNotInRepertoireError`).
+That is per-endpoint validation work spread across every lane. By check: **72 server errors,
+18 undocumented status codes, 2 schema violations** — and none of them on the
+correlation-evidence or operations-assistant routes added by the 2026-08-14 merge.
 
 | check | count | nature |
 |---|---|---|
@@ -214,8 +216,26 @@ There are now two:
 
 | configuration | floor | derivation |
 |---|---|---|
-| a broker answered | **393** | 402 measured, less the 9-operation spread |
-| no broker answered | **380** | unchanged, held since 2026-08-07 |
+| a broker answered | **440** | 449 measured 2026-08-14, less the 9-operation spread |
+| no broker answered | **436** | 445 measured 2026-08-14, less the same spread |
+
+Both floors moved on 2026-08-14, and the **floor was re-baselined to 436** for the
+configuration CI runs by default. The correlation-engine merge took the schema from 452 to
+546 operations, which broke this gate twice over before either number could be trusted:
+
+* `EXPECTED_TOTAL` was still 452 with a 10% drift tolerance, so |546 − 452| = 94 made the
+  ratchet FAIL OUTRIGHT with *"check that the schema still loads and the server started"* —
+  the opposite of what had happened. Nothing collapsed; the API grew by a fifth.
+* The suite itself could not finish. `case.call_and_validate()` carried no request timeout,
+  so one unresponsive operation stopped the whole job with no report at all — a run sat for
+  over an hour having used one minute of CPU in the last ten. With a 30-second per-request
+  timeout the same 546 operations complete in about 15 minutes.
+
+**The broker is worth four operations, not twenty.** This document previously described the
+broker-dependent set as "~20 correct 503s"; measured on the same tree, with-broker conforms
+449 against without-broker's 445. The two floors stay separate because the distinction is
+still real and still worth measuring rather than claiming — but the headroom it buys is now
+small, which is a fact about the API rather than a fault in either figure.
 
 **The run measures which one applies.** `contract_ratchet.py` opens a TCP connection to the
 same bootstrap address the app was given and reports what it finds. It does not accept a claim:
