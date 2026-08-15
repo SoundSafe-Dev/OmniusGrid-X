@@ -13,6 +13,7 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.responses import conflict_response
 from app.api.auth import get_current_active_user
 from app.core.config import settings
 from app.core.tenant import get_tenant_db, get_tenant_org_id
@@ -376,6 +377,7 @@ async def list_sites(
     response_model=SiteResponse,
     status_code=status.HTTP_201_CREATED,
     dependencies=[Depends(require_admin)],
+    responses={**conflict_response},
 )
 @rate_limit("30/minute")
 async def create_site(
@@ -413,7 +415,7 @@ async def create_site(
     return _site_response(site)
 
 
-@router.patch("/sites/{site_id}", response_model=SiteResponse, dependencies=[Depends(require_admin)])
+@router.patch("/sites/{site_id}", response_model=SiteResponse, dependencies=[Depends(require_admin)], responses={**conflict_response})
 @rate_limit("30/minute")
 async def update_site(
     request: Request,
@@ -616,6 +618,7 @@ async def list_tags(
     response_model=TagResponse,
     status_code=status.HTTP_201_CREATED,
     dependencies=[Depends(require_admin)],
+    responses={**conflict_response},
 )
 @rate_limit("30/minute")
 async def create_tag(
@@ -654,7 +657,7 @@ async def create_tag(
     return _tag_response(tag)
 
 
-@router.patch("/tags/{tag_id}", response_model=TagResponse, dependencies=[Depends(require_admin)])
+@router.patch("/tags/{tag_id}", response_model=TagResponse, dependencies=[Depends(require_admin)], responses={**conflict_response})
 @rate_limit("30/minute")
 async def update_tag(
     request: Request,
@@ -1018,6 +1021,7 @@ async def list_groups(
     response_model=GroupResponse,
     status_code=status.HTTP_201_CREATED,
     dependencies=[Depends(require_admin)],
+    responses={**conflict_response},
 )
 @rate_limit("30/minute")
 async def create_group(
@@ -1055,7 +1059,7 @@ async def create_group(
     return _group_response(group)
 
 
-@router.patch("/groups/{group_id}", response_model=GroupResponse, dependencies=[Depends(require_admin)])
+@router.patch("/groups/{group_id}", response_model=GroupResponse, dependencies=[Depends(require_admin)], responses={**conflict_response})
 @rate_limit("30/minute")
 async def update_group(
     request: Request,
@@ -1301,6 +1305,7 @@ async def get_cohort(
     response_model=CohortResponse,
     status_code=status.HTTP_201_CREATED,
     dependencies=[Depends(require_admin)],
+    responses={**conflict_response},
 )
 @rate_limit("30/minute")
 async def create_cohort(
@@ -1339,7 +1344,7 @@ async def create_cohort(
     return _cohort_response(cohort)
 
 
-@router.patch("/cohorts/{cohort_id}", response_model=CohortResponse, dependencies=[Depends(require_admin)])
+@router.patch("/cohorts/{cohort_id}", response_model=CohortResponse, dependencies=[Depends(require_admin)], responses={**conflict_response})
 @rate_limit("30/minute")
 async def update_cohort(
     request: Request,

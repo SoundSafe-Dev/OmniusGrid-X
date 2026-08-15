@@ -18,6 +18,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.responses import conflict_response
 from app.api.auth import get_current_active_user
 from app.api.nlp_correlation import load_intake_content
 from app.core.config import settings
@@ -1583,7 +1584,7 @@ async def latest_correlation_quality(
     }
 
 
-@router.post("/vocabulary", response_model=CustomerVocabularyFeedback)
+@router.post("/vocabulary", response_model=CustomerVocabularyFeedback, responses={**conflict_response})
 async def submit_customer_vocabulary(
     feedback: CustomerVocabularyFeedback,
     current_user: User = Depends(get_current_active_user),
@@ -1615,7 +1616,7 @@ async def list_customer_vocabulary(
     }
 
 
-@router.post("/vocabulary/{feedback_id}/review", response_model=CustomerVocabularyFeedback)
+@router.post("/vocabulary/{feedback_id}/review", response_model=CustomerVocabularyFeedback, responses={**conflict_response})
 async def review_customer_vocabulary(
     feedback_id: str,
     request: VocabularyReviewRequest,
@@ -1647,7 +1648,7 @@ async def assess_operational_action(
     return _approval_policy.assess(request.action, request.policy)
 
 
-@router.post("/actions/decide", response_model=ApprovalResult)
+@router.post("/actions/decide", response_model=ApprovalResult, responses={**conflict_response})
 async def decide_operational_action(
     request: ActionDecisionRequest,
     current_user: User = Depends(get_current_active_user),

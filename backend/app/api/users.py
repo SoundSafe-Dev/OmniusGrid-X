@@ -13,6 +13,7 @@ from sqlalchemy import func, select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.responses import conflict_response
 from app.api.auth import get_password_hash
 from app.core.config import settings
 from app.core.pagination import MAX_OFFSET
@@ -536,6 +537,7 @@ async def list_invitations(
     "/invitations",
     response_model=InvitationResponse,
     status_code=status.HTTP_201_CREATED,
+    responses={**conflict_response},
 )
 async def create_invitation(
     request: Request,
@@ -760,7 +762,7 @@ async def get_user(
     return _user_response(user)
 
 
-@router.patch("/{user_id}", response_model=UserResponse)
+@router.patch("/{user_id}", response_model=UserResponse, responses={**conflict_response})
 async def update_user(
     user_id: UUID,
     request: Request,
@@ -894,7 +896,7 @@ async def update_user(
     return _user_response(target)
 
 
-@router.delete("/{user_id}", response_model=UserResponse)
+@router.delete("/{user_id}", response_model=UserResponse, responses={**conflict_response})
 async def deactivate_user(
     user_id: UUID,
     request: Request,
@@ -954,7 +956,7 @@ async def deactivate_user(
     return _user_response(target)
 
 
-@router.post("/{user_id}/reactivate", response_model=UserResponse)
+@router.post("/{user_id}/reactivate", response_model=UserResponse, responses={**conflict_response})
 async def reactivate_user(
     user_id: UUID,
     request: Request,
@@ -1025,6 +1027,7 @@ async def validate_invitation(
     "/accept",
     response_model=InvitationAcceptanceResponse,
     status_code=status.HTTP_201_CREATED,
+    responses={**conflict_response},
 )
 @auth_rate_limit(settings.AUTH_INVITE_ACCEPT_RATE_LIMIT)
 async def accept_invitation(

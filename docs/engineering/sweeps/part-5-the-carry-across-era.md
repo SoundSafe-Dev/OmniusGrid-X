@@ -3330,3 +3330,57 @@ loop. The general form: **a test that reaches for the ambient event loop is borr
 from its neighbours.** And the only thing that surfaced it was running the whole suite rather
 than the file — which is the argument for doing that before every commit, not after the
 interesting ones.
+
+## Rule 221 — a comment that explains an exclusion is half a rule
+
+`app/core/responses.py` attaches 400/401/403/404/405/422/429/500 to every route and excludes
+409, with an argument:
+
+> a handler raises 409 only where a conflict is possible […] an OpenAPI document that
+> over-promises misleads the generated SDK exactly as much as one that under-promises […]
+> They belong on the routes that raise them.
+
+Every sentence of that is right. It is also the whole enforcement: nothing put 409 on the
+routes that raise it, so **45 of them raised it and none declared it**, and the note reads —
+to anyone auditing the file — as though the matter had been handled.
+
+The tell is the closing phrase. *"They belong on the routes that raise them"* names a
+derivable set: a route can answer 409 if its body raises it, or a helper beside it does. A set
+you can derive is a set you can assert, in both directions — missing declarations leave a
+generated client without a branch, and phantom ones leave it with a branch that never runs.
+
+When a design note explains why something was left out, ask what would have to be true for the
+note to stay true, and check that instead.
+
+## Rule 222 — measure the artefact, not a grep of its log
+
+A taxonomy of contract-gate failures reported "60 Content-Type failures", which would have
+been the largest category by far and a systematic content negotiation bug.
+
+There were none. Schemathesis prints a curl reproduction for every failure, and each carries
+`-H 'Content-Type: application/json'`. The grep was counting example commands.
+
+The structured artefact — the junit XML, with one `<failure>` per operation and the check name
+inside it — was written by the same run. Parsing it takes the same ten lines and cannot count
+prose.
+
+A grep over a log measures the log: its examples, its prose, its embedded command lines, and
+the thing you were actually asking about, all in one number.
+
+## Rule 223 — check a generated edit against the thing it generates
+
+Adding one keyword argument to 45 route decorators failed three times, and every failure was a
+decorator SHAPE rather than a logic error:
+
+    @router.post("/x")                       ->  insert before `)`
+    @router.post(                            ->  trailing comma: `…,\n, responses=…` broke 19 files
+        "/x",
+    )                                        ->  `)` alone on its line: needs a new line above
+    @router.get("/x", responses={200: …})    ->  already has one: `keyword argument repeated`
+
+Each was found in seconds by running `import app.main` after the edit, which named the file
+and the line. Reading the diff would not have: `, responses={**conflict_response}` looks
+correct in isolation on every one of those lines.
+
+When a change is machine-written, the compiler — or the schema generator, or the app import —
+is the reviewer with standing. Run it between attempts, not at the end.

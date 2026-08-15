@@ -39,6 +39,7 @@ from sqlalchemy import select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.responses import conflict_response
 from app.api.auth import get_current_active_user
 from app.api.telemetry import _verify_asset_in_org
 from app.core.datetime_utils import canonical_timezone_key
@@ -490,6 +491,7 @@ async def list_export_templates(
     status_code=status.HTTP_201_CREATED,
     response_model=ExportTemplateOut,
     summary="Create a saved export template",
+    responses={**conflict_response},
 )
 async def create_export_template(
     payload: ExportTemplateCreate,
@@ -545,7 +547,7 @@ async def get_export_template(
     return _template_dict(template)
 
 
-@router.put("/templates/{template_id}", response_model=ExportTemplateOut, summary="Update a saved export template")
+@router.put("/templates/{template_id}", response_model=ExportTemplateOut, summary="Update a saved export template", responses={**conflict_response})
 async def update_export_template(
     template_id: UUID,
     payload: ExportTemplateUpdate,
@@ -1058,7 +1060,7 @@ async def get_export_job(job_id: str, current_user: User = Depends(get_current_a
     return _job_public(await _get_owned_job(job_id, current_user))
 
 
-@router.get("/jobs/{job_id}/download", responses={200: {"content": {"text/csv": {}}}}, summary="Download a finished async export")
+@router.get("/jobs/{job_id}/download", responses={**conflict_response, 200: {"content": {"text/csv": {}}}}, summary="Download a finished async export")
 async def download_export_job(job_id: str, current_user: User = Depends(get_current_active_user)):
     job = await _get_owned_job(job_id, current_user)
     if job.get("status") != "completed":
@@ -1116,7 +1118,7 @@ async def list_export_deliveries(
     # The three the handler's own `media_types` map produces, plus the fallback it
     # falls back to. Pool #38 fixed nine sibling routes in this file and this one was
     # missed — it lives at the bottom, past the public_router boundary.
-    responses={200: {"content": {
+    responses={**conflict_response, 200: {"content": {
         "text/csv": {},
         XLSX_MEDIA_TYPE: {},
         "application/pdf": {},

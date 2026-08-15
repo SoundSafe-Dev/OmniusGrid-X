@@ -34,6 +34,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.responses import conflict_response
 from app.api.auth import get_current_active_user
 from app.db.models import ActionableRegistry, User
 from app.middleware.tenant_isolation import get_tenant_db, get_tenant_org_id
@@ -331,7 +332,7 @@ async def get_bulk_job(
 
 
 @router.post("/jobs/{job_id}/cancel",
-    response_model=Dict[str, Any], summary="Cancel a pending or running bulk job", dependencies=[Depends(require_admin)])
+    response_model=Dict[str, Any], summary="Cancel a pending or running bulk job", dependencies=[Depends(require_admin)], responses={**conflict_response})
 async def cancel_bulk_job(
     job_id: str,
     current_user: User = Depends(get_current_active_user),

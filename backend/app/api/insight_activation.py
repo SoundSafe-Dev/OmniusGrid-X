@@ -34,6 +34,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import and_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.responses import conflict_response
 from app.api.auth import get_current_active_user
 from app.core.tenant import get_tenant_db, get_tenant_org_id
 from app.db.insight_models import ActivationSource, ActivationStatus, InsightActivation
@@ -356,6 +357,7 @@ async def get_activation(
     "/activations/{activation_id}/confirm",
     dependencies=[Depends(require_operator_or_admin)],
     response_model=ActivationOut,
+    responses={**conflict_response},
 )
 async def confirm_activation(
     activation_id: UUID,
@@ -390,6 +392,7 @@ async def confirm_activation(
     "/activations/{activation_id}/reject",
     dependencies=[Depends(require_operator_or_admin)],
     response_model=ActivationOut,
+    responses={**conflict_response},
 )
 async def reject_activation(
     activation_id: UUID,

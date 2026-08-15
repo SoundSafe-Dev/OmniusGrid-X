@@ -14,6 +14,7 @@ except ImportError:
     AsyncSession = None
     get_db = None
 
+from app.core.responses import conflict_response
 from app.api.auth import get_current_active_user
 from app.db.models import User
 from app.middleware.rbac import require_admin
@@ -246,7 +247,7 @@ async def get_historian_retention_policy(
     return _historian_policy_payload(row)
 
 
-@tenant_router.post("/policies", response_model=HistorianPolicyOut, status_code=status.HTTP_201_CREATED, dependencies=[Depends(require_admin)])
+@tenant_router.post("/policies", response_model=HistorianPolicyOut, status_code=status.HTTP_201_CREATED, dependencies=[Depends(require_admin)], responses={**conflict_response})
 async def create_historian_retention_policy(
     policy: HistorianRetentionCreate,
     current_user: User = Depends(get_current_active_user),

@@ -13,6 +13,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.core.responses import conflict_response
 from app.api.auth import get_current_active_user
 from app.workers.health_server import OTA_ROLLOUT_FAILURES
 from app.core.tenant import get_tenant_db, get_tenant_org_id
@@ -412,7 +413,7 @@ def _window_contract_error(window_eligibility) -> HTTPException | None:
     return None
 
 
-@router.post("/rollouts", response_model=AgentRolloutResponse, status_code=status.HTTP_201_CREATED, dependencies=[Depends(require_admin)])
+@router.post("/rollouts", response_model=AgentRolloutResponse, status_code=status.HTTP_201_CREATED, dependencies=[Depends(require_admin)], responses={**conflict_response})
 @rate_limit("30/hour")
 async def create_rollout(
     request: Request,

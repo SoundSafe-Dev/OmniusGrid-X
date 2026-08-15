@@ -12,6 +12,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.responses import conflict_response
 from app.api.auth import get_current_active_user
 from app.core.tenant import get_tenant_db, get_tenant_org_id
 from app.db.models import AuditLog, MaintenanceWindow, Site, User
@@ -332,6 +333,7 @@ async def preview_maintenance_windows(
     response_model=MaintenanceWindowResponse,
     status_code=status.HTTP_201_CREATED,
     dependencies=[Depends(require_admin)],
+    responses={**conflict_response},
 )
 @rate_limit("30/minute")
 async def create_maintenance_window(
@@ -395,6 +397,7 @@ async def create_maintenance_window(
     "/maintenance-windows/{window_id}",
     response_model=MaintenanceWindowResponse,
     dependencies=[Depends(require_admin)],
+    responses={**conflict_response},
 )
 @rate_limit("30/minute")
 async def update_maintenance_window(

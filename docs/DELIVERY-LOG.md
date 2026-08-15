@@ -11631,3 +11631,45 @@ because the script piped `migrate.py` to `/dev/null` and the migration had not r
 command's output to keep a script tidy is how a failure becomes invisible** — the same
 mistake, in the same session, as the sixteen pushes that looked like they had failed. The
 second run printed it: `applied 67 migration(s)`.
+
+## FS-728 — 45 routes could conflict and none of them said so
+
+`app/core/responses.py` documents 400/401/403/404/405/422/429/500 on every route and
+deliberately excludes 409, with a reason worth keeping:
+
+> a handler raises 409 only where a conflict is possible […] Declaring them on all ~450
+> operations would document responses most of them cannot produce, and an OpenAPI document
+> that over-promises misleads the generated SDK exactly as much as one that under-promises.
+
+The reasoning is right, and **nothing enforced its other half.** 45 routes raise 409 — a
+duplicate user, a second open labour entry, a rollout already running, an asset already down,
+a schedule whose name is taken — and not one declared it. The contract gate saw only nine,
+because generated input has to actually collide to produce one, and a client built from the
+schema had no branch for the single status that means *your request was well-formed and the
+world was not*.
+
+`conflict_response` now sits beside `unavailable_responses` and is spread into those 45
+routes. `test_a_conflict_is_declared.py` keeps it exact in BOTH directions, because each
+fails differently: a route that can conflict without declaring it leaves the SDK without a
+branch, and one that declares a conflict it cannot produce leaves the SDK with a branch that
+never runs — which is the over-promise the module comment names. Membership is derived from
+the code (does this handler, or a helper beside it, raise 409) rather than listed, so there
+is no register to rot.
+
+**Three attempts at the mechanical edit, and each failure is a decorator shape.** Inserting
+`responses={...}` before the closing paren works for a single-line decorator; a multi-line one
+ends with a trailing comma, so the first pass produced `…,\n, responses=…` and 19 files would
+not parse. The second handled that and broke on decorators whose `)` sits on its own line. The
+third handled both and hit `keyword argument repeated: responses`, because four routes already
+declared a `responses=` map and needed a merge rather than an addition. Every failure was
+caught by `import app.main` immediately after the edit — the value of checking a generated
+change against the thing it generates, rather than reading the diff and believing it.
+
+## Correction to FS-726's measurement
+
+The failure taxonomy in that entry said the contract report contained "60 Content-Type"
+failures. It does not: that count came from a grep matching schemathesis's own **curl
+reproduction commands**, which contain `-H 'Content-Type: application/json'`. The real
+remainder after FS-724/725 is 34 server errors (mostly dependency outages reported correctly),
+9 undocumented 409s — now closed by FS-728 — and 1 schema violation, now closed by FS-727. A
+measurement taken by grepping a log measures the log.

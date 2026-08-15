@@ -18,6 +18,7 @@ from pydantic import BaseModel, ConfigDict
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.responses import conflict_response
 from app.api.auth import get_current_active_user
 from app.core.tenant import get_tenant_db, get_tenant_org_id
 from app.db.models import AgentRelease, ModelRegistryEntry, User
@@ -60,6 +61,7 @@ class ModelReleaseResponse(BaseModel):
     response_model=ModelReleaseResponse,
     status_code=status.HTTP_201_CREATED,
     dependencies=[Depends(require_admin)],
+    responses={**conflict_response},
 )
 @rate_limit("30/hour")
 async def create_model_release(

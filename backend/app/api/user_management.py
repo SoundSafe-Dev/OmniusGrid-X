@@ -33,6 +33,7 @@ from types import SimpleNamespace
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.responses import conflict_response
 from app.api.auth import get_current_active_user, get_password_hash
 from app.core import roles as role_vocab
 from app.core.pagination import MAX_OFFSET, PaginatedResponse, paginate
@@ -121,6 +122,7 @@ async def get_user(
     status_code=201,
     summary="Create a user",
     description="Add a user to the caller's organization. Admin only.",
+    responses={**conflict_response},
 )
 async def create_user(
     payload: UserAdminCreate,
@@ -176,6 +178,7 @@ async def create_user(
     response_model=UserAdminResponse,
     summary="Update a user",
     description="Partial update of name, department, role or active state. Admin only.",
+    responses={**conflict_response},
 )
 async def update_user(
     user_id: UUID,
@@ -272,6 +275,7 @@ async def update_user(
     response_model=UserAdminResponse,
     summary="Deactivate a user",
     description="Deactivate a user. Their history is preserved — accounts are never hard-deleted.",
+    responses={**conflict_response},
 )
 async def deactivate_user(
     user_id: UUID,

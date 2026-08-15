@@ -17,6 +17,7 @@ from pydantic import BaseModel
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.responses import conflict_response
 from app.core.pagination import MAX_OFFSET
 from app.api.auth import get_current_active_user
 from app.db.database import get_db
@@ -401,7 +402,7 @@ async def error_detail(
     )
 
 
-@router.patch("/{fingerprint}", summary="Change error status", response_model=ErrorEventDetail, dependencies=[Depends(require_admin)])
+@router.patch("/{fingerprint}", summary="Change error status", response_model=ErrorEventDetail, dependencies=[Depends(require_admin)], responses={**conflict_response})
 @rate_limit("30/minute")
 async def update_error_status(
     fingerprint: str,

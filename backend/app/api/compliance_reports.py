@@ -8,6 +8,7 @@ from typing import List, Literal
 from uuid import UUID
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
+from app.core.responses import conflict_response
 from app.core.datetime_utils import canonical_timezone_key
 
 import structlog
@@ -652,7 +653,7 @@ async def get_compliance_report_job(
     # `application/octet-stream` covers a job whose media type was never recorded.
     # Same class as pool #38's nine export routes: a generated client typed a file
     # download as a parsed object.
-    responses={200: {"content": {
+    responses={**conflict_response, 200: {"content": {
         "application/pdf": {},
         "application/json": {},
         "application/octet-stream": {},
@@ -723,7 +724,7 @@ async def download_compliance_report(
     "/reports/{job_id}/signed-download",
     summary="Download a compliance report via a time-limited signed link",
     # Same artifact as /download, reached with a signed token instead of a session.
-    responses={200: {"content": {
+    responses={**conflict_response, 200: {"content": {
         "application/pdf": {},
         "application/json": {},
         "application/octet-stream": {},

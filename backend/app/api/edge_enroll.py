@@ -16,6 +16,7 @@ import structlog
 from fastapi import APIRouter, Header, HTTPException, Request, status
 from pydantic import BaseModel
 
+from app.core.responses import conflict_response
 from app.core.config import settings
 from app.services.edge_ca import (
     AgentPrincipal,
@@ -84,7 +85,7 @@ async def _enrolment_organization_id() -> str | None:
     return str(rows[0]) if len(rows) == 1 else None
 
 
-@router.post("/api/v1/edge/enroll", response_model=EnrollResponse, tags=["Edge"])
+@router.post("/api/v1/edge/enroll", response_model=EnrollResponse, tags=["Edge"], responses={**conflict_response})
 async def enroll_agent(
     body: EnrollRequest,
     authorization: str = Header(default=""),

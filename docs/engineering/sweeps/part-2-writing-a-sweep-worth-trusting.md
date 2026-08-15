@@ -1535,6 +1535,28 @@ one of its findings. The habit that catches it:
      generically — and 429 is the one whose correct handling is automatic (back off, retry).
      A special case is worst where the client is a program rather than a person.
 
+221. **A comment explaining why something is excluded is half a rule; the other half is a
+     check.** `common_responses` omits 409 with an argued reason — most routes cannot
+     conflict, and over-promising misleads a generated SDK as much as under-promising. That
+     reasoning was correct and unenforced, so the 45 routes that CAN conflict did not
+     declare it either. When a design note says "these belong on the routes that raise
+     them", the routes that raise them are a derivable set: derive it and assert both
+     directions.
+
+222. **Measure the artefact, not a grep of its log.** A failure taxonomy reported "60
+     Content-Type failures" in a contract run. There were none: the count came from
+     schemathesis's own curl reproduction lines, every one carrying
+     `-H 'Content-Type: application/json'`. The junit XML has the failures structured and
+     was right there. A grep over a log measures the log — including the parts of it that
+     are examples, prose, or someone else's command line.
+
+223. **Check a generated edit against the thing it generates.** Scripting one keyword into
+     45 route decorators failed three times, each on a decorator SHAPE: a trailing comma
+     before the closing paren, a `)` alone on its own line, and four routes that already had
+     a `responses=` map and needed a merge. Reading the diff would have shown plausible
+     lines; `import app.main` after each attempt named the file and the line. When a change
+     is machine-written, the machine that consumes it is the reviewer.
+
 ---
 
 ## Open observations, not yet tickets

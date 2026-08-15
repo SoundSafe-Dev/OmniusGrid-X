@@ -26,6 +26,7 @@ from sqlalchemy import select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.responses import conflict_response
 from app.api.auth import get_current_active_user
 from app.core.config import settings
 from app.core.tenant import get_tenant_db, get_tenant_org_id
@@ -152,6 +153,7 @@ async def _get_release(
     response_model=AgentReleaseResponse,
     status_code=status.HTTP_201_CREATED,
     dependencies=[Depends(require_admin)],
+    responses={**conflict_response},
 )
 @rate_limit("30/hour")
 async def create_release(
@@ -211,6 +213,7 @@ async def create_release(
     response_model=AgentReleaseResponse,
     status_code=status.HTTP_201_CREATED,
     dependencies=[Depends(require_admin)],
+    responses={**conflict_response},
 )
 @rate_limit("10/hour")
 async def create_agent_release(

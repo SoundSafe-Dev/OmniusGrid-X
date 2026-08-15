@@ -14,6 +14,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.responses import conflict_response
 from app.api.auth import get_current_active_user
 from app.api.correlation_evidence import EvidencePreviewRequest, _execute_evidence_request
 # `get_tenant_db`, not `get_db`. Both handlers below hand their session to
@@ -276,7 +277,7 @@ async def answer_operations_lead_question(
     return await _run_question(request, db, current_user)
 
 
-@router.post("/briefing", response_model=OperationsBriefingResponse)
+@router.post("/briefing", response_model=OperationsBriefingResponse, responses={**conflict_response})
 async def create_operations_briefing(
     request: EvidencePreviewRequest,
     db: AsyncSession = Depends(get_tenant_db),
@@ -316,7 +317,7 @@ async def create_operations_briefing(
     }
 
 
-@router.post("/jobs/{job_id}/answer", response_model=OperationsAnswerResponse)
+@router.post("/jobs/{job_id}/answer", response_model=OperationsAnswerResponse, responses={**conflict_response})
 async def answer_completed_job_question(
     job_id: UUID,
     request: OperationsJobQuestionRequest,

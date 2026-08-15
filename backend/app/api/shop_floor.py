@@ -31,6 +31,7 @@ from pydantic import BaseModel, Field, model_validator
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.responses import conflict_response
 from app.api.auth import get_current_active_user
 from app.middleware.rbac import require_operator_or_admin
 from app.core.datetime_utils import utcnow
@@ -408,7 +409,7 @@ async def list_part_issues(
 
 
 # ------------------------------------------------------------------------- labour / clock
-@router.post("/labor/clock-in", dependencies=[Depends(require_operator_or_admin)], response_model=LaborEntryOut, status_code=status.HTTP_201_CREATED)
+@router.post("/labor/clock-in", dependencies=[Depends(require_operator_or_admin)], response_model=LaborEntryOut, status_code=status.HTTP_201_CREATED, responses={**conflict_response})
 async def clock_in(
     payload: ClockInRequest,
     org_id=Depends(get_tenant_org_id),
@@ -614,7 +615,7 @@ async def open_downtime_events(
     ]
 
 
-@router.post("/downtime/start", dependencies=[Depends(require_operator_or_admin)], response_model=DowntimeEventOut, status_code=status.HTTP_201_CREATED)
+@router.post("/downtime/start", dependencies=[Depends(require_operator_or_admin)], response_model=DowntimeEventOut, status_code=status.HTTP_201_CREATED, responses={**conflict_response})
 async def start_downtime(
     payload: DowntimeStartRequest,
     org_id=Depends(get_tenant_org_id),

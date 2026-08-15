@@ -145,6 +145,25 @@ common_responses: Dict[int | str, Dict[str, Any]] = {
 }
 
 
+#: For the ROUTES that can genuinely conflict. Spread into a route's `responses=`, not a
+#: router's: `common_responses` deliberately omits 409 because "a handler raises 409 only
+#: where a conflict is possible", and mounting it router-wide would document a response most
+#: operations there cannot produce.
+#:
+#: 45 routes raise it — a duplicate name, a second open labour entry, a rollout already
+#: running, an asset already down. None of them declared it, so the contract gate saw nine
+#: operations answer an undocumented 409 and a generated SDK had no branch for the one status
+#: that means "your request was fine, the world was not".
+#:
+#: Membership is derived from the code that raises it: `test_a_conflict_is_declared.py` reads
+#: every route's body and its same-module helpers, and fails if one can raise 409 without
+#: declaring it — or declares it without being able to raise it. Neither direction is a
+#: judgement call, which is why this is a check rather than a list.
+conflict_response: Dict[int | str, Dict[str, Any]] = {
+    409: _resp("The request conflicts with the current state of the resource."),
+}
+
+
 #: For routers that report a dependency's availability and therefore really can return
 #: 503. Eleven modules raise it (health, rag, sso, exports, erp_integrations,
 #: feature_flags, model_monitoring, query_performance, compliance_reports,

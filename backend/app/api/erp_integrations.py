@@ -15,6 +15,7 @@ import structlog
 
 from sqlalchemy.exc import IntegrityError
 
+from app.core.responses import conflict_response
 from app.core.tenant import get_tenant_db
 from app.services.erp_sync_correlation import correlate_synced_records
 # NOTE (FS-56, for HARSH's review): ERP routes now use get_tenant_db — 020's
@@ -301,7 +302,7 @@ def _webhook_secret_conflict() -> HTTPException:
     )
 
 
-@router.post("", response_model=ERPIntegrationResponse)
+@router.post("", response_model=ERPIntegrationResponse, responses={**conflict_response})
 async def create_integration(
     request: ERPIntegrationCreate,
     db: AsyncSession = Depends(get_tenant_db),
@@ -468,7 +469,7 @@ async def get_integration(
     )
 
 
-@router.put("/{integration_id}", response_model=ERPIntegrationResponse)
+@router.put("/{integration_id}", response_model=ERPIntegrationResponse, responses={**conflict_response})
 async def update_integration(
     integration_id: UUID,
     request: ERPIntegrationUpdate,

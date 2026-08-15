@@ -9,6 +9,7 @@ from pydantic import BaseModel
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.responses import conflict_response
 from app.core.tenant import get_tenant_db, get_tenant_org_id
 from app.db.models import Asset
 from pydantic import BaseModel
@@ -199,6 +200,7 @@ async def fetch_agent_effective_config(
     response_model=RemoteOperationSubmission,
     status_code=status.HTTP_202_ACCEPTED,
     summary="Restart exactly one collector on an edge agent",
+    responses={**conflict_response},
 )
 @remote_operation_rate_limit("3/hour")
 async def restart_agent_collector(
@@ -276,6 +278,7 @@ async def restart_agent_collector(
     "/agents/{asset_id}/operations/{command_id}",
     response_model=RemoteOperationStatus,
     summary="Get a durable remote-operation result",
+    responses={**conflict_response},
 )
 @remote_operation_rate_limit("120/minute")
 async def get_remote_operation_status(
