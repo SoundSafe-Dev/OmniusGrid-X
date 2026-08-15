@@ -11356,3 +11356,81 @@ work — for every other table in sight, it is.
 Mutation-verified by removing `organization_id` from `Alarm`: the register names it.
 
 Backend 4,814 passing.
+
+## FS-722 — the README, section by section, and the gate it turned out to have broken
+
+A full pass over `README.md` against the tree. Eleven claims were wrong; one of them was
+not a documentation problem at all.
+
+**The contract gate was hard-broken and nothing said so.** The README quotes the gate as
+driving "all 546 documented operations" — a guarded figure, so it is current — and then, a
+paragraph later, reported conformance as **"370 of 452"**. Both numbers cannot be right.
+The second is the denominator `scripts/contract_ratchet.py` compares against, and it has a
+10% drift check whose purpose is to stop a COLLAPSED collection passing as a green ratchet:
+
+    if abs(total - EXPECTED_TOTAL) > EXPECTED_TOTAL * TOTAL_TOLERANCE:  # 452 ± 45
+
+The correlation-engine merge took the schema to 546. |546 − 452| = 94, so the gate now fails
+outright, printing *"Check that the schema still loads and the server started"* — the exact
+opposite of what happened. Nothing collapsed; the API grew by a fifth while the number it is
+measured against stood still. The check is right to exist and a denominator nobody
+re-measures turns it into a tripwire on ordinary growth (rule 165, from the other end).
+
+Re-baselined to **546, read straight from `app.openapi()`**. The PASSING floors were
+deliberately not moved with it: they count conforming operations and only ever rise, so a
+figure written from a guess would be worse than a loose floor. A full gate run was started to measure them
+properly against a freshly migrated database and **did not finish**: after an hour it had
+used one minute of CPU in the last ten, i.e. it was idle, which is the hang this gate's own
+documentation describes ("every component fast, the whole impossible — a per-example event
+loop plus a retry path with no backoff"). The cause was NOT established and is not being
+attributed to the new surface: each of the six heaviest correlation routes was then driven
+with the kind of input schemathesis generates (a random intake id, an empty configuration, a
+minimal fixture) and every one answered in under a second — 404, 409, 202, 200. Recorded as
+an open question rather than a conclusion. The denominator fix stands on an exact
+measurement either way, and the floors are marked for the next run that completes.
+
+**The route table listed 11 of 41 pages — and one of the 11 has never existed.**
+`/registries` sat there with a description of what it did; the surface is `/compliance`.
+Both directions are now generated from `App.tsx` and held by
+`test_readme_documents_every_route.py`: a routed page nobody documents is a page nobody
+finds, and a documented route that is not routed sends somebody looking for a page to write
+a client against. The second is the worse failure and is the one the table actually had.
+
+Writing that guard reproduced a mistake this repository has now made four times: the first
+version read the whole section, so an API path inside a description (`/oee/dashboard/summary`)
+and my own note *explaining* that `/registries` does not exist both registered as claims
+about the router. Scoped to the route column. Mutation-verified in both directions.
+
+**The document contradicted itself on its own subject.** The Overview said ERP was "13
+connectors"; the ERP section's own heading says 8, and lists 8 vendors. It also said "10
+protocol collectors" where the coordinator registers 17 types, 11 of them industrial
+protocols.
+
+The rest, each measured: the migration chain read `001..042` and is 71 files ending at 068;
+the planning pointer offered `fixed-sprints-344-393.md` as "the next 50" while the series is
+at FS-721, so it now points at the delivery log and marks that plan exhausted; Alex was
+listed as "not yet assigned a branch or task" with three commits merged; `rag-inference/` —
+a tracked service with its own image and requirements — had **zero mentions**; the Contents
+promised "every documented endpoint" where the reference carries 113 rows of 546 (every row
+IS checked to exist, which is the true half); the test floors had drifted to 4,600 against
+4,919 collected; and the page→API wiring table predated Shop Floor, Activations, System
+Health, Collectors, scheduled exports and the entire evidence pipeline.
+
+The API reference now documents the **evidence correlation and operations-assistant surface**
+— the twenty routes the merge added, the upload → catalog → preview → confirm → ask pipeline
+they form, why a join is proposed and never assumed, and why every response is an open model.
+Those rows are covered by `test_documented_endpoints_exist.py`, which was already checking
+each documented path against the running app; it went from 118 to 126 checks with them.
+
+The tenancy FAQ and the Security Model now say the thing FS-720 cost: RLS is not one
+mechanism, fifteen tables carry no `organization_id` at all, and under RLS a read fails
+silently while a write is refused — which is why every quiet variant of this class has
+shipped at least once.
+
+Backend 4,829 passing, frontend 1,192, edge 427.
+
+**Open question, not a ticket:** the API contract gate did not complete within an hour on the
+546-operation surface, having completed in about eight minutes at 452. It was idle rather
+than busy when stopped. The six heaviest new correlation routes were cleared individually
+(sub-second on generated input), so the next step is to run it with a per-operation timeout
+and find which one it waits on — not to assume it is the newest code.

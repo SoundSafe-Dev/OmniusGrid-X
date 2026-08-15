@@ -31,7 +31,7 @@
 | [Architecture](#architecture) | Data flow, subsystem map, deployment topology |
 | [FAQ](#faq) | Deployment model, vendor mapping, tenant isolation |
 | [Project structure](#project-structure) | Where things live |
-| [API reference](#api-reference) | Every documented endpoint — **checked by a test** |
+| [API reference](#api-reference) | The endpoints worth knowing, by area — 113 rows of 546 operations, and **every row is checked to exist** |
 | [Features](#features) | Capability detail per subsystem |
 | [Security model](#security-model) | Auth, tenancy, secrets |
 | [Documentation](#documentation) | The rest of `docs/` |
@@ -247,9 +247,9 @@ python scripts/seed_demo_kanban.py
 ## Running the suites
 
 ```bash
-cd backend && pytest          # 4,500+ pass, ~100 skip. Docker is OPTIONAL: the real-DB
+cd backend && pytest          # 4,800+ pass, ~100 skip. Docker is OPTIONAL: the real-DB
                               # tests skip without it, the rest run anyway
-cd frontend && npx vitest run  # 1,000+ across 130+ files
+cd frontend && npx vitest run  # 1,150+ across 135+ files
 cd frontend && npx tsc --noEmit
 ```
 
@@ -296,9 +296,19 @@ python scripts/contract_ratchet.py contract-report.xml   # conformance may rise,
 ```
 
 It needs a **migrated** database owned by the `omniusgrid` role — the migration chain
-`GRANT`s to that name and rolls back without it. **370 of 452** operations conform today
-(floor 360, raised from 350 by FS-259); the job blocks on a ratchet rather than demanding
-green, and the remaining ~82 are enumerated in
+`GRANT`s to that name and rolls back without it. The job blocks on a **ratchet** rather than
+demanding green: the passing floor is **380** without a broker and **393** with one, and it
+only ever rises.
+
+**The denominator was 452 and the schema now documents 546** — the correlation-engine merge
+added about ninety operations. That is more than the ratchet's own 10% drift tolerance, so
+until it was re-baselined on 2026-08-14 the gate failed outright with *"check that the schema
+still loads and the server started"*, which is the opposite of what had happened: nothing
+collapsed, the API grew by a fifth and the number it was compared against stayed still. The
+drift check is right to exist — it stops a collapsed collection from passing as a green
+ratchet — and a denominator nobody re-measures turns it into a tripwire on ordinary growth.
+The floors were NOT moved with it: they count passing operations and are raised only by a
+run that measures more. The non-conformers are enumerated in
 [docs/engineering/api-contract-gate.md](docs/engineering/api-contract-gate.md) — including
 the ~20 `503`s that are the job's own missing Redis and broker rather than API defects.
 
@@ -327,9 +337,9 @@ whether the code under a quarantined test is actually running* — are in
 
 ## Overview
 
-OmniusGrid is a resilient manufacturing operations platform designed for Industry 4.0. It correlates data from across the entire operation, unstructured business documents (spreadsheets, PDFs, images via the intake pipeline), ERP systems (13 connectors), industrial equipment on the factory floor (10 protocol collectors), audio/video sensors, fleet telematics (GeoTab), and yard and transportation logistics, into one queryable, cross-correlated picture. On top of that substrate it provides real-time edge AI inference, an NLP correlation assistant, compliance registries with RAG-backed document search, and secure cloud connectivity for model training and fleet-wide optimization.
+OmniusGrid is a resilient manufacturing operations platform designed for Industry 4.0. It correlates data from across the entire operation, unstructured business documents (spreadsheets, PDFs, images via the intake pipeline), ERP systems (8 connectors), industrial equipment on the factory floor (17 registered collector types, 11 of them industrial protocols), audio/video sensors, fleet telematics (GeoTab), and yard and transportation logistics, into one queryable, cross-correlated picture. On top of that substrate it provides real-time edge AI inference, an NLP correlation assistant, compliance registries with RAG-backed document search, and secure cloud connectivity for model training and fleet-wide optimization.
 
-**How we land and grow.** We start with a low-friction pilot — typically the intake pipeline, correlating a customer's existing spreadsheets, PDFs, and ERP records into a single queryable picture, so they see cross-correlated insight without touching a single machine. Once that proves value, we move into refinement and deployment, tuning the correlation to their operation and rolling it into production. From there the account expands beyond textual data intake onto the full data surface — factory-floor equipment (10 protocol collectors), audio/video sensors, fleet telematics, and real-time edge AI inference — turning a document-correlation pilot into the operation's central nervous system.
+**How we land and grow.** We start with a low-friction pilot — typically the intake pipeline, correlating a customer's existing spreadsheets, PDFs, and ERP records into a single queryable picture, so they see cross-correlated insight without touching a single machine. Once that proves value, we move into refinement and deployment, tuning the correlation to their operation and rolling it into production. From there the account expands beyond textual data intake onto the full data surface — factory-floor equipment (11 industrial protocols, 17 collector types in all), audio/video sensors, fleet telematics, and real-time edge AI inference — turning a document-correlation pilot into the operation's central nervous system.
 
 ### Key Capabilities
 
@@ -424,11 +434,20 @@ workaround, not a fix. They can be dropped whenever Hridyansh confirms.
 
 The integration branch for the next `main`: it merges every workstream
 (Hridyansh's OTA + tenant/RBAC hardening, Harsh's correlation-AI + MLOps +
-mobile/kanban, Hudson's RAG compliance-doc pipeline) and carries the
-**70-task hardening program** (fixed sprints FS-01..70, each sprint
-code-reviewed) plus the FS-71..140 fixed-sprint batches. It was **promoted to
-`main` on 2026-07-17** (main's tree now equals this branch); new work continues
-to land here and is promoted to `main` periodically. Highlights:
+mobile/kanban, the RAG compliance-doc pipeline, Alex's spreadsheet intake) and
+carries the **hardening program**, now at **FS-01..721** — each slice recorded in
+the delivery log with what it cost to learn. It was **promoted to `main` on
+2026-07-17** (main's tree equalled this branch then); new work continues to land
+here and is promoted periodically. It is currently **348 commits ahead of
+`main`**, so treat `main` as a release marker rather than as current.
+
+A merge onto this branch reliably produces GUARD failures rather than conflicts —
+the correlation-engine merge went from 0 failing to 16, and every one was a guard
+reading new code. Two of the worst defects it carried survived all sixteen and were
+found only by driving the routes over HTTP: an operations assistant that answered
+404 for the caller's own uploads, and an asynchronous job path where every job
+failed, both from a session that had no tenant bound. See FS-718..721 in the
+delivery log before merging a large surface. Highlights:
 
 - **Real mode is the default** — the frontend mock layer is opt-in
   (`VITE_USE_MOCK=true`); every API client has a real backend path, bridged by
@@ -450,7 +469,8 @@ to land here and is promoted to `main` periodically. Highlights:
   registration, missing secrets).
 - **One schema, one migration path** — `backend/scripts/migrate.py`
   (checksum-tracked, idempotent, baseline/rebaseline flows) applies the full
-  chain `001..042` on a clean Postgres for the first time in repo history;
+  chain — **71 files, `001..068`** — on a clean Postgres, and re-runs every
+  migration at its own point in the chain (`migration-hygiene`, FS-578);
   UUIDs are native on Postgres everywhere (dialect-aware `UUIDString`, with a
   guarded conversion migration for pre-existing databases); tests build their
   schema through the same runner (tenant-isolation RLS suite runs against the
@@ -516,19 +536,21 @@ verifier failed. On a UTC developer machine none of it is visible.
 | Correlation AI / NLP / intake / spreadsheet parsing | **Harsh** | `feature/gemma-correlation-ai`, `HARSH-CONTRIBUTION`. Coordinate before touching `correlation_ai_engine.py`, `nlp_correlation.py`, intake services. Owns the 3 failing intake tests + scenario-builder import drift, and the Gemma correlation model. |
 | Mobile app / Kanban / demo API | **Harsh** | Merged; kanban/nlp files received mechanical-only fixes on the convergence branch (flagged in commit messages). |
 | MLOps (model registry + training + monitoring) | **Harsh** | `model_registry` / `model_training_runs`; model-monitoring drift + performance tracking. |
-| RAG / compliance doc pipeline (SeaweedFS/S3 + Gemma inference) | **Hudson** (htreinen) | `htreinen`, `feature/RAG-Compliance-Doc-Pipeline`. `/api/v1/rag`; containerization seam in `docs/RAG_CONTAINERIZATION.md`. His `origin` is the SoundSafe-Dev mirror. |
+| RAG / compliance doc pipeline (SeaweedFS/S3 + Gemma inference) | **Hudson** (htreinen) | `htreinen`, `feature/RAG-Compliance-Doc-Pipeline`, `rag-async-ingest`, `rag-rewrite` (a frozen record, not development). `/api/v1/rag`; containerization seam in `docs/RAG_CONTAINERIZATION.md`. His `origin` is the SoundSafe-Dev mirror — `rag-async-ingest` exists only there, and matched no CI push trigger until a `rag-**` pattern was added. |
 | Compliance Assistant page + the operational-context leg | **Hamad** | Consumes Hudson's pipeline; does not change it. `docs/compliance_assistant.md`. Coordinate with Hudson before altering `rag_retriever.py` prompt assembly — the citation numbering is a contract with the UI. |
 | Tenant isolation / RBAC / security hardening | **Hridyansh** | `hridyansh/tenant-isolation-middleware`. RLS enforced through the canonical `app.current_org_id` GUC everywhere (incl. ERP tables). |
 | OTA / edge command dispatch / agent releases | **Hridyansh** | `hridyansh/edge-command-dispatch`, `hridyansh/edge-agent-retry-logic`. Rollout orchestrator + agent-side executor; `ota-rollout-worker` runs in compose + k8s. |
 | ERP integration surface / package layout | **Hridyansh** | `hridyansh/integration`, `hridyansh/integration-erp`, `hridyansh/package-renaming-fix`. |
 | ERP **connector internals + validation harness** | **Hamad** | Reassigned during the convergence program. The 8 connectors, their auth/pagination/envelope handling, and the Tier 0–4 harness. **Read [`docs/erp/README.md`](docs/erp/README.md) before touching a connector** — the guards there encode defects that already shipped. |
 | Edge platform, backend platform, frontend/UI, deploy/CI, schema, observability, docs | **Hamad** | `hamad/converged-pre-main` (integration → `main`). The convergence program + the FS fixed-sprints above. |
-| *(ramp-up)* — under Harsh's lane | **Alex** | New contributor (joining the correlation/MLOps area under Harsh); not yet assigned a branch or task. |
+| Spreadsheet intake / column normalisation — under Harsh's lane | **Alex** | `alex`. Three commits merged onto the convergence branch (already present by content at the time; merged for ancestry). |
 
-> 📋 **The next 50 fixed sprints are planned in
-> [`docs/planning/fixed-sprints-344-393.md`](docs/planning/fixed-sprints-344-393.md)** — FS-344
-> onward plus the survivors of the previous tranche, weighted 10 honesty / 10 correctness /
-> 12 verification / 10 product / 8 production-readiness, with a measured lane map.
+> 📋 **The live record of the FS series is [`docs/DELIVERY-LOG.md`](docs/DELIVERY-LOG.md),
+> now at FS-01..721.** The last written plan document,
+> [`docs/planning/fixed-sprints-344-393.md`](docs/planning/fixed-sprints-344-393.md), covers
+> FS-344..393 and is **exhausted** — it is kept for the method note below, not as a backlog.
+> Read the delivery log for what shipped and what each slice cost to learn; a plan written
+> before the work is a worse guide to the tree than the record written after it.
 >
 > **It was derived from the codebase, and the one before it was not — which is why it needed
 > replacing.** Executing part of Wave A of
@@ -825,7 +847,7 @@ reliability layers (each with its own README):
 | **Object storage** | Generated exports & compliance reports go to SeaweedFS (S3) so a worker on one pod and the API on another share one bucket — fixes cross-pod download | [`base/object-store.yaml`](infrastructure/k8s/base/object-store.yaml) |
 | **Secrets** | Sealed Secrets (encrypted, safe-in-git) **or** External Secrets Operator (Vault / AWS SM / GCP SM). Placeholder dev credentials are **enforced** out of both deployed environments — a blocking gate fails if one becomes reachable, or if the deploy stops filtering them | [`secrets/`](infrastructure/k8s/secrets/) |
 | **Referential integrity in tests** | SQLite ships with `PRAGMA foreign_keys=OFF`, so an in-memory test can insert a child before its parent, or against a parent nobody created, and pass. That is why none of 3,200 tests could see the ordering defect that killed the demo seed. **Foreign keys are now enforced for every SQLite engine in the suite** (a `connect` listener in `conftest.py`) and the whole suite passes with them on. Getting there cost 76 failures at the first measurement, 39 after eleven missing `relationship()` edges were added at the model level, and 0 after the last eight fixtures were converted — not one of which was a test bug. `Base` now has **no model carrying an FK column without a relationship**, so the unit of work can order every parent before its child; the two genuinely mutual pairs keep a one-sided exemption that is itself asserted |
-| **CI safety** | **14 blocking gates** on every branch push. Backend: `backend-realdb` (schema parity, tenant isolation + RLS, timestamp defaults — against an ephemeral TimescaleDB, because RLS and server defaults are both no-ops on SQLite), `backend-full` (**4,600+ tests** — the whole suite bar the Kafka e2e, which runs in its own job; the figure is a FLOOR asserted by `test_readme_test_count_is_not_stale.py`, because the exact number was written down once as 2,149 and was a thousand short within weeks), `backend-kafka-e2e` (container e2e in its own process), `migration-hygiene` (duplicate prefixes; and since FS-578 the suite also applies the whole chain to an empty database and **re-runs every migration at its own point in it** — the runner executes statements one at a time in autocommit, because continuous aggregates refuse a transaction block, so a file that fails halfway has committed its earlier statements and recorded nothing, and running it again is the only recovery there is. 22 files look non-idempotent to a text search; **4 are**, and none of them can be repaired — editing an applied migration is checksum drift). Kubernetes: `k8s-manifests` (build + kubeconform + placeholder-credential check, **per environment** — the stacks used to be validated one way and applied another, which is how staging never had monitoring applied at all; plus a namespace/scale-target lint, a replica-floor check against each autoscaler's declared minimum, a secret-source pairing over BOTH provisioning paths, and a check that the canonical README names every buildable tree), `netpol-simulate`, `k8s-smoke` (kind: real operator webhooks), `k8s-netpol` (kind + **Calico**: policies genuinely enforced, 19 allow/deny cases), `netpol-coverage` (every workload in a default-deny namespace has a policy in both directions — the gap that killed tracing). Plus `prometheus-rules` (lints `alerts.yml` + `slo_rules.yml`, checks **both** Prometheus configs, and runs the alert unit tests — **globbed, not listed**, and **all 51 rules are now provably FIRABLE** rather than merely well-formed — each driven true from a series the product publishes, each with a must-stay-quiet companion, and the `UNTESTED` set in `test_every_alert_rule_is_provably_firable.py` went 23 → 15 → **0** and is closed: `check rules` cannot tell a rule that fires from one that never can, which is how `EdgeAgentBufferHigh` stayed unfirable for its whole existence: they were six filenames written out, so a new one ran only if somebody remembered to edit the workflow, and an alert test that does not run is indistinguishable from one that passes), `frontend-e2e-authenticated` (stands up Postgres + migrations + demo data + uvicorn and asserts the dashboard shows **non-zero** data — an element-visibility check would have passed against the FS-191 tenancy bug), `supply-chain`, `repo-hygiene`, frontend unit + e2e | `.github/workflows/quality-gates.yml` |
+| **CI safety** | **14 blocking gates** on every branch push. Backend: `backend-realdb` (schema parity, tenant isolation + RLS, timestamp defaults — against an ephemeral TimescaleDB, because RLS and server defaults are both no-ops on SQLite), `backend-full` (**4,800+ tests** — the whole suite bar the Kafka e2e, which runs in its own job; the figure is a FLOOR asserted by `test_readme_test_count_is_not_stale.py`, because the exact number was written down once as 2,149 and was a thousand short within weeks), `backend-kafka-e2e` (container e2e in its own process), `migration-hygiene` (duplicate prefixes; and since FS-578 the suite also applies the whole chain to an empty database and **re-runs every migration at its own point in it** — the runner executes statements one at a time in autocommit, because continuous aggregates refuse a transaction block, so a file that fails halfway has committed its earlier statements and recorded nothing, and running it again is the only recovery there is. 22 files look non-idempotent to a text search; **4 are**, and none of them can be repaired — editing an applied migration is checksum drift). Kubernetes: `k8s-manifests` (build + kubeconform + placeholder-credential check, **per environment** — the stacks used to be validated one way and applied another, which is how staging never had monitoring applied at all; plus a namespace/scale-target lint, a replica-floor check against each autoscaler's declared minimum, a secret-source pairing over BOTH provisioning paths, and a check that the canonical README names every buildable tree), `netpol-simulate`, `k8s-smoke` (kind: real operator webhooks), `k8s-netpol` (kind + **Calico**: policies genuinely enforced, 19 allow/deny cases), `netpol-coverage` (every workload in a default-deny namespace has a policy in both directions — the gap that killed tracing). Plus `prometheus-rules` (lints `alerts.yml` + `slo_rules.yml`, checks **both** Prometheus configs, and runs the alert unit tests — **globbed, not listed**, and **all 51 rules are now provably FIRABLE** rather than merely well-formed — each driven true from a series the product publishes, each with a must-stay-quiet companion, and the `UNTESTED` set in `test_every_alert_rule_is_provably_firable.py` went 23 → 15 → **0** and is closed: `check rules` cannot tell a rule that fires from one that never can, which is how `EdgeAgentBufferHigh` stayed unfirable for its whole existence: they were six filenames written out, so a new one ran only if somebody remembered to edit the workflow, and an alert test that does not run is indistinguishable from one that passes), `frontend-e2e-authenticated` (stands up Postgres + migrations + demo data + uvicorn and asserts the dashboard shows **non-zero** data — an element-visibility check would have passed against the FS-191 tenancy bug), `supply-chain`, `repo-hygiene`, frontend unit + e2e | `.github/workflows/quality-gates.yml` |
 | **Load / failover testing** | Kafka ingestion load generator (drives KEDA scaling + DB writes) + a runbook for driving throughput and DB-failover-under-load | [`tests/load/`](tests/load/) |
 
 ### 5. Page → API wiring
@@ -849,11 +871,16 @@ How each frontend page is wired to the backend (primary endpoints; all under
 | Transportation (TMS) | `transportation`, `geotab`, `geofencing`, `maintenance`, `fleet` (health) | transportation_management, geotab_service, routing |
 | Kanban | `kanban` | kanban / correlation task creation |
 | ERP | `erp/integrations`, `erp/webhooks` | erp_connector_factory, erp_webhook_receiver |
-| Intake / Correlation | `nlp`, `analysis-sessions`, `platform-correlation` | correlation_ai_engine, intake parsers |
+| Intake / Correlation | `nlp`, `analysis-sessions`, `platform-correlation`, **`correlation/evidence`, `correlation/operations`** | correlation_ai_engine, ingestion_adapters, evidence_engine, operational_normalization, operations_question_service, correlation_jobs |
 | Compliance Assistant | `rag/query`, `rag/documents/link` | rag_retriever (Qdrant + BGE), rag_erp_context, document_store |
-| Notifications | `notifications` | notification_service |
 | Admin — Error Triage | `admin/errors` | error_tracker |
 | Admin — Audit / Settings | `audit`, `organizations`, `feature-flags`, `admin/query-performance` | audit_trail, feature_flags |
+| Shop Floor | `shop-floor`, `operations`, `assets` | shop_floor_fanout, posting drain |
+| Activated Insights | `insights` | insight_activation |
+| Admin — System Health | `health`, `admin/system/status` | the loop watchdogs each check names |
+| Admin — Collectors | `admin/collectors`, `edge` | edge_fleet, edge_fleet_sweep |
+| Admin — Scheduled exports | `exports`, `admin/export-deliveries` | export_scheduler, export_processor, export_delivery |
+| Admin — Notifications | `notifications` | notification_service |
 
 ---
 
@@ -897,6 +924,29 @@ A: No rename in flight - this is a bug. The correct convention is `opsgrid_agent
 **Q: Kanban endpoints derive organization_id from the authenticated user, but assets.py and telemetry.py take it as a query parameter or skip it entirely. Is there a tenant isolation middleware or Postgres RLS policy I'm missing?**
 
 A: Assets and telemetry derive organization ownership from the authenticated user, not from client input. The canonical dependencies are ``get_tenant_org_id`` and ``get_tenant_db`` (implemented in ``app/core/tenant.py`` and imported through ``app/middleware/tenant_isolation.py``). Tenant-scoped endpoints declare ``org_id: UUID = Depends(get_tenant_org_id)`` and ``db: AsyncSession = Depends(get_tenant_db)``; the session configures PostgreSQL RLS via ``app.current_org_id``. Application queries still include explicit ``organization_id`` predicates. Cross-tenant asset and telemetry requests return ``404``. Client-provided ``organization_id`` values do not control tenant scope.
+
+**But RLS is not one mechanism, and knowing which one a table has is the whole job.**
+`get_tenant_db` sets `app.current_org_id`, and the policies in migration 011 reference it —
+for tables that CARRY an `organization_id`. **Fifteen do not.** Their tenant is the row's
+PARENT: an operation belongs to whoever owns its asset, a task comment to whoever owns the
+board behind the task, a consent record to its user. Those tables have no policy of that
+shape, so the session does nothing for them and every handler must scope them by hand —
+verify the parent with an explicit organisation predicate, then query children by its id.
+
+`operations` did not, and four of its five handlers reached every tenant's rows, one of them
+a WRITE (FS-720). The fifteen are registered in
+[`backend/tests/test_parent_tenanted_tables_are_declared.py`](backend/tests/test_parent_tenanted_tables_are_declared.py),
+each naming the parent it inherits from, so a sixteenth is a decision rather than an
+accident.
+
+Two failure modes are worth telling apart, because only one announces itself. With no GUC
+set, a **read** matches zero rows and raises nothing — the endpoint 404s on the caller's own
+data or renders an empty page — while a **write** is refused outright by the policy's
+`WITH CHECK`. Under RLS an UPDATE is *filtered* rather than rejected: it succeeds having
+matched nothing, so a 200 and a silent no-op look identical. Every quiet variant of this has
+cost this repository a shipped defect: an audit trail that was silently empty, a dashboard
+of zeros, a maintenance-mode toggle that changed nothing, and an asynchronous job path where
+every job failed with an error that read like bad caller input.
 
 ---
 
@@ -995,7 +1045,12 @@ OmniusGrid/
 │           ├── formatters.ts
 │           ├── constants.ts
 │           └── helpers.ts
-├── database/              # Schema migrations
+├── database/              # Schema migrations (71 files, 001..068)
+├── rag-inference/         # RAG inference service — own image; seam in docs/RAG_CONTAINERIZATION.md
+├── mobile/                # React Native shell (Harsh's lane)
+├── dataset_synthesis/     # Scenario generation for correlation-model training
+├── infra/                 # Prometheus, Grafana, alert rules
+├── tools/                 # Repo tooling
 ├── infrastructure/        # Deployment configs
 │   ├── k8s/              # Kubernetes manifests
 │   │   ├── base/         # Base Kustomize layer
@@ -1134,6 +1189,45 @@ now — `test_documented_endpoints_exist.py` fails if a documented path is not s
 | POST | `/api/v1/engines/correlation/analyze` | Run AI correlation analysis on scenario |
 | GET | `/api/v1/engines/correlation/scenarios` | List generated correlation scenarios |
 | POST | `/api/v1/engines/correlation/generate` | Generate synthetic scenarios for training |
+
+### Evidence correlation & the operations assistant
+
+The surface that turns uploaded spreadsheets into an evidence-backed answer. Twenty routes,
+added by the correlation-engine merge; the pipeline a caller actually walks is
+**upload → catalog → preview → confirm a join → ask**.
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/v1/correlation/evidence/capabilities` | What this deployment can ingest, and the bounds it enforces |
+| POST | `/api/v1/correlation/evidence/intake/catalog` | List the tables/sheets inside the selected uploads, before parsing them all |
+| POST | `/api/v1/correlation/evidence/intake/preview` | Profile the selected tables and PROPOSE join plans (nothing is confirmed) |
+| POST | `/api/v1/correlation/evidence/intake/analytics` | The same, with deterministic operational statistics attached |
+| POST | `/api/v1/correlation/evidence/intake/jobs` | 202 — the same work queued, with a status and cancel URL |
+| GET/DELETE | `/api/v1/correlation/evidence/jobs/{job_id}` | Poll or cancel that job |
+| POST | `/api/v1/correlation/operations/answer` | Ask a question against a CONFIRMED evidence scope |
+| POST | `/api/v1/correlation/operations/briefing` | An overview plus a next-shift checklist from the same scope |
+| GET | `/api/v1/correlation/operations/question-types` | Prompts an operations lead can use directly, and the answer contract |
+| POST | `/api/v1/correlation/evidence/evaluations/run` | Score the engine against a curated gold-standard fixture |
+| POST | `/api/v1/correlation/evidence/vocabulary` | Propose a customer term mapping (inactive until reviewed) |
+| POST | `/api/v1/correlation/evidence/actions/assess` | Policy assessment for a proposed automated action |
+
+**A join is proposed, never assumed.** `preview` returns `candidate_join_plans` with a
+safety verdict on each; an operations question against an unconfirmed scope is refused
+(422 `confirmed_join_unavailable`) rather than answered from a guess. That is the whole
+design: the engine's output is evidence with lineage, and a correlation nobody approved is
+not evidence.
+
+**Every response is an OPEN model** (`extra="allow"`). The payload keys are chosen per
+request — which tables could be joined, which qualifiers had to be attached, which rollups
+were truncated — so the schema names the stable fields and lets the rest through. A closed
+model would silently delete the keys it did not enumerate, which is the defect the
+`response_model` guards sweep for.
+
+**Read the bounding flags.** `truncated`, `response_truncated`, `groups_truncated`,
+`rollups_truncated`, `sampled` and `input_truncated` each say how far to trust the number
+beside them. They are not decoration: a bounded preview's row list is a sample and its plan
+metrics are the reliable counts. The intake page renders them as "What these figures leave
+out"; a client that drops them shows a confident number with its footnote removed.
 
 ### Correlation AI Integration with Registries and Kanban
 
@@ -1690,18 +1784,38 @@ and the instructions for doing so.
 
 ### Frontend Dashboard Routes
 
-| Route | Description |
-|-------|-------------|
-| `/` | Main Dashboard |
-| `/assets` | Asset Management |
-| `/alarms` | Alarm Management |
-| `/oee` | OEE Analytics |
-| `/kanban` | **Kanban Board** - Task management with grouping, assignment, approval workflows |
-| `/activations` | **Activated Insights** - Every correlation recommendation someone acted on and what each still needs: the Kanban task, and one row per system of record it has to reach. Opens on the outstanding ones; a target with no integration shows the sentence to hand to a person |
-| `/shop-floor` | **Shop Floor** - Issue a part, clock time, report a problem, log downtime. Each is routed to the systems of record it affects, with a per-target ledger; a target with no integration is handed to a person, with the words to use |
-| `/logistics/yard` | **Yard Management (YMS)** - Trailer tracking, dock doors, appointments |
-| `/logistics/transportation` | **Transportation Management (TMS)** - Fleet, drivers, shipments, GeoTab |
-| `/registries` | **Actionable Registries** - Compliance (OSHA, ISO), operational registries, data correlation |
+**41 routed pages.** This table used to list eleven, which is the state a hand-written
+inventory reaches; it is now generated from `App.tsx` and held there by two guards —
+`everyRouteIsSwept` (a route must appear in `frontend/e2e/routes.ts`) and
+`everyRoutedPageHasATest` (a `.test.tsx` beside the page).
+
+| Route | Page |
+|-------|------|
+| `/` | **Dashboard** — fleet tiles, trend charts on a 60s poll, inline alarm acknowledge, Fleet OEE from `/oee/dashboard/summary` (not the availability-only figure beside it) |
+| `/login`, `/accept-invite` | Sign-in and invitation acceptance |
+| `/assets`, `/assets/:id` | **Assets** — debounced search plus workcell/type/active filters; the detail page carries alarms and an OEE card |
+| `/alarms`, `/alarms/rules` | **Alarms** — range/severity/status/asset filters, acknowledge-all scoped to the filter, per-row clear with a note; rules carry their scope |
+| `/oee` | **OEE** — three-factor OEE with a loss Pareto ("where is my OEE going") |
+| `/shop-floor` | **Shop Floor** — issue a part, clock time, report a problem, log downtime; each routed to the systems of record it affects, with a per-target ledger. A target with no integration is handed to a person, with the words to use |
+| `/kanban` | **Kanban** — task management with grouping, assignment and approval workflows |
+| `/activations` | **Activated Insights** — every correlation recommendation someone acted on, and one row per system of record it still has to reach |
+| `/intake` | **Intake Inbox** — upload spreadsheets/PDFs/images, then the evidence pipeline: catalog tables, preview proposed joins, confirm one, ask an operations question. Renders the bounding flags as "What these figures leave out" |
+| `/nlp` | **Correlation AI** — the conversational pane over analysis sessions |
+| `/compliance` | **Compliance Assistant** — RAG-backed document search over the actionable registries (OSHA/ISO and operational). NOTE: the old route table listed a `/registries` page; there is no such route, and this is the surface that exists |
+| `/erp` | **ERP Integrations** — the 8 connectors, their sync state and correlation results |
+| `/fleet`, `/fleet/organization` | **Fleet Overview** and the organization tree |
+| `/logistics/yard` | **Yard Management (YMS)** — trailers, dock doors, appointments, detention |
+| `/logistics/transportation` | **Transportation (TMS)** — fleet, drivers, shipments, GeoTab |
+| `/engines/tactical`, `/engines/strategic`, `/engines/mlops`, `/engines/cloud` | **The four engines.** Each says when its loop is not running rather than rendering construction-time defaults as measurements (FS-717) |
+| `/analytics/telemetry`, `/analytics/health`, `/analytics/maintenance` | Telemetry charts, asset health, predictive maintenance |
+| `/predictive/historian`, `/predictive/rul` | Historian (metric dropdown from the server's own list) and remaining-useful-life |
+| `/admin/health` | **System Health** — per-check detail and an overall banner; disabled/skipped checks read as neutral, not as failures |
+| `/admin/collectors` | **Collectors** — includes `dropped`, certificate-expiry badges at 2/14 days, worst-first |
+| `/admin/fleet`, `/admin/fleet/targeting`, `/admin/fleet/maintenance`, `/admin/fleet/rollouts/:rolloutId` | **Edge fleet** — agents, targeting, maintenance windows, OTA rollout detail |
+| `/admin/errors`, `/admin/errors/:fingerprint` | **Error triage** — grouped by fingerprint |
+| `/admin/export-schedules`, `/admin/export-deliveries` | **Scheduled exports** — the schedules, and the delivery-attempt ledger behind them |
+| `/admin/notifications` | **Notifications** — subscriptions with inline edit, enable/disable and a test severity |
+| `/admin/users`, `/admin/settings` | Users and organisation settings |
 
 ---
 
@@ -1853,6 +1967,7 @@ and the instructions for doing so.
 | Device | mTLS mutual certificate authentication per device |
 | Identity | Unique cryptographic identity per device |
 | API | JWT Bearer token authentication |
+| Multi-tenancy | Postgres RLS bound per transaction from the authenticated user (`app.current_org_id`), plus explicit `organization_id` predicates. **15 tables carry no org column and are scoped through their parent instead** — see the Tenant Isolation FAQ, and the register that keeps that list exact |
 | Audit | Hash-chained tamper-evident command logging |
 | Secrets | No plaintext secrets in git — Sealed Secrets (encrypted) or External Secrets Operator (Vault / AWS SM / GCP SM); see [`infrastructure/k8s/secrets/`](infrastructure/k8s/secrets/) |
 | Cluster network | Zero-trust: `default-deny-all` NetworkPolicy + per-workload allow-lists across every stack, with enforcement verified in CI on Calico (9 allow/deny cases); see [`infrastructure/k8s/NETWORK_SECURITY.md`](infrastructure/k8s/NETWORK_SECURITY.md) |

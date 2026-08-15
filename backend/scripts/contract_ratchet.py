@@ -175,7 +175,19 @@ BASELINE_PASSING = BASELINE_WITHOUT_BROKER
 #: Total operations the schema documents, checked so a collapse in collection cannot
 #: pass the ratchet by making "passing" small and "total" equally small.
 #: 452 measured 2026-07-31 across four runs; was recorded as 451.
-EXPECTED_TOTAL = 452
+#:
+#: **546 measured 2026-08-14**, read straight from `app.openapi()`. The correlation-engine
+#: merge added ~90 operations, and this file's own drift check then made the gate fail
+#: OUTRIGHT: |546 - 452| = 94 against a 45-operation tolerance, printing "check that the
+#: schema still loads and the server started" — which is the opposite of what happened.
+#: Nothing collapsed; the API grew by a fifth and the denominator was left behind.
+#:
+#: THE DENOMINATOR IS RE-BASELINED, THE FLOORS ARE NOT. `BASELINE_WITHOUT_BROKER` and
+#: `BASELINE_WITH_BROKER` are counts of PASSING operations and only ever rise, so they stay
+#: exactly as measured — a floor of 380 against 546 is looser than it was against 452, and
+#: the honest fix for that is the next full gate run raising it, not a number written here
+#: from a guess. Re-measure both on the next run that completes.
+EXPECTED_TOTAL = 546
 
 #: How far total may drift before the run is treated as untrustworthy. Routes get
 #: added legitimately; a 10% swing means something structural changed.
