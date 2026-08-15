@@ -11776,3 +11776,42 @@ gets raised in irritation.
 
 The push used **valid credentials**. Restoring refs does not address that, and branch
 protection on `main` and the integration branch would have refused the push outright.
+
+## FS-732 — the live e2e suite, and two locators my own page work had invalidated
+
+The last untested layer. The backend suite drives routes over HTTP (FS-719 onward) and the
+frontend suite runs against mocks; nothing had run the **browser against a live stack** this
+arc. Recipe: a dedicated Postgres on 55440, `migrate.py`, `seed_demo_data.py`,
+`seed_e2e_user.py`, uvicorn, then Playwright with `E2E_LIVE_BACKEND=1`.
+
+**131 tests, 3 failures, and none of them was a product defect** — which is worth stating
+plainly, because two of the three were caused by MY page work and the third by my harness.
+
+**One was my harness.** `writes-actually-persist.spec.ts` builds its own verification client
+from `E2E_API_URL` (default `:8000`), while `VITE_API_URL` only configures the browser app. I
+had set the second and not the first, so the spec's client hung against a port nothing served.
+Two env vars for two clients; setting one is not setting both.
+
+**Two were stale locators, and both broke because of the page-enhancement arc.**
+
+`authenticated.spec.ts` asserted `getByText(/CNC Mill|Conveyor|Acoustic Monitor/).first()` on
+`/assets`. That held only while nothing else on the page carried an asset name — and **P6
+added the filter bar**, whose "Asset type" dropdown lists `CNC Mill`. `.first()` resolved to
+an `<option>` inside a closed `<select>`, which Playwright reports as hidden, and the test
+failed against a page rendering all five assets correctly ("5 total", every card present).
+
+`data-reaches-the-screen.spec.ts` had the same shape on `/alarms`, where **P1 added the asset
+filter**. That one is the more instructive: it **passed alone and failed in the full suite**,
+because whether the dropdown had finished loading its assets decided which element `.first()`
+picked. A locator whose result depends on a race is not asserting the property it is named
+for — and it would equally have passed while the rows rendered nothing.
+
+Both now ask for the element that carries the meaning: the card's `h3` heading, and the
+alarm row's `<Link>` to the asset (which P1 introduced, so the assertion is also stronger —
+the operator can walk from the alarm to the machine).
+
+**The one remaining failure was harness slowness, and the cause is worth knowing.**
+`echo=settings.DEBUG` and `DEBUG` defaults to **True**, so a local uvicorn logs every SQL
+statement — 93 MB for one suite run — and the alarms page timed out at 20 s while the API was
+serving it fine (907 × 200 in the same run). With `DEBUG=false` the suite completes with no
+failures. Anyone running the live e2e should set it.

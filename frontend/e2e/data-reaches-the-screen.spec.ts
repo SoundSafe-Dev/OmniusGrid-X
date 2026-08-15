@@ -71,8 +71,22 @@ test.describe('data reaches the screen', () => {
     // Asserting the seeded asset NAME instead. `/api/v1/alarms/` has sent `asset_name`
     // since FS-436; until FS-448 the page received it and rendered the alarm code alone,
     // so an operator could see that something was wrong and not which machine.
+    // THE ROW'S LINK, not "any element with this text" (2026-08-15). The bare
+    // `getByText(…).first()` held only while nothing else on the page carried an asset
+    // name — and the P1 filter bar added an asset `<select>` whose options are exactly
+    // those names. `.first()` then resolved to an `<option>` inside a closed dropdown,
+    // which Playwright reports as hidden.
+    //
+    // It failed only in the FULL suite and passed alone, which is the tell: whether the
+    // dropdown has finished loading its assets decides which element `.first()` picks. A
+    // locator whose result depends on a race is not asserting the property it is named
+    // for, in either direction — it would equally have passed while the rows rendered
+    // nothing.
+    //
+    // P1 made the name a `<Link>` to the asset, so ask for the link. That is also the
+    // stronger claim: the operator can walk from the alarm to the machine.
     await expect(
-      page.getByText(/CNC Mill|Conveyor|Vibration Sensor/).first(),
+      page.getByRole('link', { name: /CNC Mill|Conveyor|Vibration Sensor/ }).first(),
       'no alarm row names its machine — `asset_name` is resolved by join on /alarms/, so ' +
         'either the resolver stopped running or the page stopped rendering it',
     ).toBeVisible({ timeout: 20_000 })

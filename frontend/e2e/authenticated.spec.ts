@@ -132,9 +132,20 @@ test.describe('authenticated journey', () => {
     // Asserting a seeded NAME rather than a container is also the stronger check and the
     // one this file argues for elsewhere: an empty grid and a grid of cards rendering
     // `undefined` are both "rows exist" to a structural selector.
-    await expect(page.getByText(/CNC Mill|Conveyor|Acoustic Monitor/).first()).toBeVisible({
-      timeout: 20_000,
-    })
+    //
+    // THE CARD'S HEADING, not "any element containing this text" (2026-08-15). The bare
+    // `getByText(…).first()` held only while nothing else on the page carried an asset
+    // name — and the P6 filter bar added an "Asset type" dropdown whose options include
+    // `CNC Mill`. `.first()` then resolved to an `<option>` inside a closed `<select>`,
+    // which Playwright reports as hidden, and the test failed against a page that was
+    // rendering all five assets correctly.
+    //
+    // A locator that matches the right text in the wrong element is the same defect as a
+    // structural selector matching an empty grid: it stops describing the property the
+    // test is named for. The card renders the name in an `h3`, so that is what to ask for.
+    await expect(
+      page.getByRole('heading', { level: 3, name: /CNC Mill|Conveyor|Acoustic Monitor/ }).first(),
+    ).toBeVisible({ timeout: 20_000 })
   })
 
   test('the alarms page loads for an authenticated user', async ({ page }) => {
