@@ -1610,6 +1610,16 @@ one of its findings. The habit that catches it:
      running everything, which is the argument for doing that before every commit rather
      than after the interesting ones.
 
+230. **A reporter built for a terminal is a transcript, not an artefact — and piping it
+     invents findings.** Two runs of the same 131-test e2e suite accounted for 131 and 105.
+     The shortfall looked like tests silently not running, which is a serious class
+     (FS-490). It was the `line` reporter: it redraws its progress line with terminal
+     control codes, and its final tally does not survive redirection to a file. A
+     `--reporter=json` run attributed all 131, all passing. The suspicion was recorded
+     rather than asserted and the next step was named, which is what kept a fictional
+     coverage gap out of the permanent record — but the cheaper move is to reach for the
+     structured reporter the first time, exactly as rule 222 says of logs.
+
 ---
 
 ## Open observations, not yet tickets

@@ -3506,3 +3506,31 @@ another test had closed that loop.
 Both were found only by running the whole suite, and neither would have been found by
 re-running the failing file — which is what one naturally does. **Run everything before the
 commit, not after the interesting ones.**
+
+## Rule 230 — a terminal reporter is a transcript; pipe it and it invents findings
+
+Two runs of the same e2e suite, same 131 tests by `--list`, accounted for different totals:
+
+    run 1   125 passed +  3 failed + 3 did not run  = 131
+    run 2   102 passed +              3 did not run  = 105   ← 26 unaccounted, exit 0
+
+Twenty-six tests apparently vanishing while the run reports success is a serious shape: it is
+FS-490's class, where a suite is green because it counted something that did not run.
+
+It was the reporter. `--reporter=line` is built for a person watching a terminal — it redraws
+one progress line using control codes — and its final tally does not survive being redirected
+to a file. `--reporter=json` attributed every test on the next run: **131 tests, 131 passed,
+0 skipped, 0 did not run**, every spec file complete.
+
+Two things are worth taking from it.
+
+**The process saved the record.** The suspicion went into the delivery log as an *open
+observation*, with the evidence, and with the next step named — "needs the stack up and a
+`--reporter=json` run to attribute the 26". Taking that step cost four minutes. Asserting the
+conclusion instead would have put a coverage gap that never existed into the permanent record,
+and sent the next person looking for 26 missing tests.
+
+**The cheaper move was available from the start.** Rule 222 already says to measure the
+artefact rather than a grep of its log. A TTY reporter piped to a file is the same mistake in
+a different coat: the structured reporter exists, costs nothing, and cannot mangle its own
+totals.

@@ -11816,22 +11816,34 @@ statement — 93 MB for one suite run — and the alarms page timed out at 20 s 
 serving it fine (907 × 200 in the same run). With `DEBUG=false` the suite completes with no
 failures. Anyone running the live e2e should set it.
 
-### Open observation — the suite's own totals do not reconcile
+### RESOLVED — the totals reconcile; the REPORTER was the problem
 
-`--list` reports **131 tests in 7 files** (130 across 6 spec files, plus the auth setup). Two
-runs of that same suite accounted for different totals:
+The observation first recorded here said a green e2e run did not prove the suite had run:
+`--list` reported 131 tests, one run accounted for 131 and another for only 105, exiting 0
+with 26 unaccounted and no `skipped` count printed.
 
-    run 1 (DEBUG unset)   125 passed +  3 failed + 3 did not run  = 131  ✓
-    run 2 (DEBUG=false)   102 passed +              3 did not run  = 105  ✗ — 26 unaccounted
+Re-run against a fresh stack with `--reporter=json`, every test is attributed:
 
-Run 2 exited **0**, so a green result was reported over a suite that did not demonstrably run.
-No `skipped` count was printed, and every `test.skip` in the tree is conditioned on
-`E2E_LIVE_BACKEND`, which was set in both runs.
+    131 tests, 131 expected (passed), 0 skipped, 0 did not run
 
-Recorded rather than diagnosed, because the honest next step needs the stack up and a
-`--reporter=json` run to attribute the 26 — and guessing at it would be the thing this
-repository keeps writing rules about. **The finding as it stands is that a green e2e run does
-not currently prove the suite ran**, which is the same class as FS-490 ("counted what does not
-run") and deserves the same treatment: a count assertion, so the number cannot drift silently.
-`3 did not run` appears in BOTH runs and is the thread to pull — Playwright reports that when
-a serial-mode sibling fails or the run stops early, and `writes-actually-persist` is serial.
+    auth.setup.ts 1 · authenticated 5 · controls-do-not-break 38
+    data-reaches-the-screen 40 · failure-is-not-emptiness 40 · smoke 3
+    writes-actually-persist 4
+
+**The suite was fine. The `line` reporter's summary is not reliable when piped**: it is built
+for a terminal, redraws its progress line with control codes, and its final tally does not
+survive redirection to a file. The "26 unaccounted" were an artefact of reading that output,
+not tests that failed to run — and the earlier `3 did not run` was real but ordinary: the
+part-issue failure in a serial-mode describe block skipped its siblings, which is exactly what
+serial mode is for.
+
+Worth keeping as written rather than quietly deleting, because the process was right and the
+conclusion was wrong. The uncertainty was recorded instead of asserted, the next step was
+named ("needs the stack up and a `--reporter=json` run to attribute the 26"), and taking that
+step took four minutes and produced a definite answer. **Recording a suspicion honestly is
+cheap; asserting it would have put a fictional coverage gap into the permanent record** — and
+someone would have gone looking for 26 tests that were never missing.
+
+This is rule 222 one layer up: measure the artefact, not the transcript. The JSON reporter is
+the artefact; the line reporter is a transcript for a human watching it live.
+
