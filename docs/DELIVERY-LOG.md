@@ -11847,3 +11847,39 @@ someone would have gone looking for 26 tests that were never missing.
 This is rule 222 one layer up: measure the artefact, not the transcript. The JSON reporter is
 the artefact; the line reporter is a transcript for a human watching it live.
 
+
+## FS-733 — the other deliberate exclusion, and the grep its own comment asked for
+
+`app/core/responses.py` keeps two status codes out of `common_responses` on purpose, for the
+same reason each time: only some routes can produce them, and declaring them everywhere tells
+a generated SDK to handle responses most operations never send. FS-728 closed the first (409).
+This is the second.
+
+The module states how membership in `unavailable_responses` is meant to be decided:
+
+> Grep for `status_code=503` before adding a router here — the point of a separate mapping is
+> that membership means something.
+
+**Nothing performed that grep.** Twelve routers raise 503; eleven were mounted with the
+mapping. The twelfth, `analysis_sessions`, raises it for `CorrelationModelUnavailableError` —
+the correlation model being unreachable, which is exactly the outage this mapping exists for —
+and was mounted with `common_responses`. So the one status meaning *the model is down and this
+is not your fault* was absent from its schema, and a client generated from it had no branch
+for the case whose correct handling is a retry rather than a bug report.
+
+`test_an_unavailable_dependency_is_declared.py` derives membership from the code and asserts
+both directions, because they fail differently: a router that can report an outage without
+declaring it leaves the SDK unable to distinguish "your request was wrong" from "the
+dependency is down", and one that declares an outage it cannot report leaves a branch that
+never runs. Both mutation-verified.
+
+The granularity differs from the 409 check on purpose: `unavailable_responses` is applied at
+`include_router`, so this asks its question per ROUTER, while `conflict_response` is spread
+per route and its check asks per ROUTE. Each matches the shape of the thing it checks.
+
+**This is rule 221 twice from one file.** A comment explaining why something is excluded is
+half a rule; the other half is a check. Both halves of `responses.py`'s reasoning were correct
+and neither was enforced — and the giveaway was the same in both cases, a sentence naming a
+derivable set: *"they belong on the routes that raise them"*, and *"grep for `status_code=503`
+before adding a router here"*. When a design note tells you how to decide membership, that is
+a specification for a test.

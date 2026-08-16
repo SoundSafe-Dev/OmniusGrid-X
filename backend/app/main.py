@@ -411,7 +411,11 @@ app.include_router(correlation_integration.router, tags=["Correlation Integratio
 app.include_router(nlp_correlation.router, tags=["NLP Correlation"], responses=common_responses)
 app.include_router(correlation_evidence.router, tags=["Evidence Correlation"], responses=common_responses)
 app.include_router(operations_assistant.router, tags=["Operations Lead Assistant"], responses=common_responses)
-app.include_router(analysis_sessions.router, tags=["Analysis Sessions"], responses=common_responses)
+# `unavailable_responses`: this router raises 503 for `CorrelationModelUnavailableError`,
+# which is the dependency-outage case that mapping exists for. It was mounted with the
+# common set, so the one status meaning "the model is down, this is not your fault" was
+# undeclared and absent from the generated SDK (FS-733).
+app.include_router(analysis_sessions.router, tags=["Analysis Sessions"], responses=unavailable_responses)
 app.include_router(user_context.router, tags=["User Context"], responses=common_responses)
 app.include_router(audit.router, prefix="/api/v1/audit", tags=["Audit Logs"], responses=common_responses)
 app.include_router(api_keys.router, prefix="/api/v1/api-keys", tags=["API Keys"], responses=common_responses)

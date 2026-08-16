@@ -3534,3 +3534,32 @@ and sent the next person looking for 26 missing tests.
 artefact rather than a grep of its log. A TTY reporter piped to a file is the same mistake in
 a different coat: the structured reporter exists, costs nothing, and cannot mangle its own
 totals.
+
+
+## A second instance of rule 221, from the same file
+
+`app/core/responses.py` excludes two status codes from the common error map, and argues for
+each: only some routes can produce them, so declaring them everywhere misleads a generated SDK
+exactly as much as declaring them nowhere.
+
+FS-728 closed the first. 45 routes could answer 409 and none declared it.
+
+FS-733 closed the second, and the module had even written the procedure down:
+
+> Grep for `status_code=503` before adding a router here — the point of a separate mapping is
+> that membership means something.
+
+Nobody ran it. Twelve routers raise 503 and eleven were mounted with the mapping;
+`analysis_sessions` raises it for `CorrelationModelUnavailableError` and was mounted with the
+common set, so the status meaning *the model is down and this is not your fault* never reached
+its schema.
+
+**The tell was identical both times: a sentence naming a derivable set.** *"They belong on the
+routes that raise them."* *"Grep for `status_code=503` before adding a router here."* Each
+describes, in prose, a computation over the codebase — and a computation over the codebase is
+a test. The reasoning was right in both cases and unenforced in both cases, which is the whole
+of rule 221: when a design note explains an exclusion, ask what would have to stay true for
+the note to stay true, and check that instead of trusting it.
+
+Worth noticing that neither was found by a failure. Both were found by reading a comment
+carefully enough to see that it had specified a check nobody had written.
