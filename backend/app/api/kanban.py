@@ -1010,7 +1010,19 @@ async def execute_completion_actions(task_id: str, actions: Dict[str, Any], orga
         # (see `alarm_id=task_data.alarm_id` above) and is never validated against
         # the caller's organization. Without this join, org A could create a task
         # referencing org B's alarm and clear it by completing the task.
-        # `alarms` has no RLS policy, so nothing else would stop it.
+        #
+        # `alarms` HAS had an RLS policy since migration 046 — the sentence here used to say
+        # it had none, which was true when written and is now the kind of stale claim a
+        # reader reasons from. It does not make this join redundant, for two reasons worth
+        # keeping straight: a foreign-key check is performed BELOW RLS, so the policy does
+        # not stop a task being created against another tenant's alarm id; and this session
+        # is `get_tenant_db`-bound only on the request path, so the policy protects the read
+        # rather than the reference. The join is still the thing that closes the action.
+        #
+        # The SOURCE remains unvalidated — `alarm_id` is a bare `str` on `TaskCreate` in
+        # `app/models/schemas.py`, alongside `asset_id`, `operation_id`, `command_id` and
+        # `parent_task_id`. Closing it there would make every future consumer safe rather
+        # than each one defending itself; see FS-735, which measured the population.
         if actions.get("clear_alarm") and task.alarm_id:
             try:
                 result = await session.execute(

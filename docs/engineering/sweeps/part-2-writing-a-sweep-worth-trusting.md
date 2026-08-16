@@ -1636,6 +1636,15 @@ one of its findings. The habit that catches it:
      feature works is the one that finds it does not** — and it is the test most easily
      skipped, because the defect being chased is about somebody else's data.
 
+233. **State the population a sweep covered, not the population it was about.** FS-729
+     ended with *"of 12 request models accepting a tenant-owned foreign key, all 12 verify
+     the id"*. True, and about a fifth of the subject: the scan iterated `app/api/*.py`,
+     and most request models in this codebase live in `app/models/schemas.py` — 62 more
+     fields the detector never saw. Rule 102 says a sweep scoped to one IDIOM is blind to
+     the same defect in another; this is the same failure scoped to one DIRECTORY, and it
+     is harder to notice because the scan looks exhaustive within its own loop. Before
+     writing "complete", print the denominator and ask where else that thing is declared.
+
 ---
 
 ## Open observations, not yet tickets

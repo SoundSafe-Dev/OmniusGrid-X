@@ -11712,8 +11712,22 @@ have left an identical door open, one line over.
 `analysis_sessions` is under RLS, which is the sharpest statement of this whole class: **the
 read is protected and the reference is not.**
 
-Six tests, both fixes mutation-verified. The sweep is now complete across `app/api`: of 12
-request models accepting a tenant-owned foreign key, all 12 verify the id.
+Six tests, both fixes mutation-verified. The sweep is complete across `app/api`: of 12
+request models accepting a tenant-owned foreign key there, all 12 verify the id.
+
+**CORRECTION (FS-735). "The sweep is now complete" was true of the wrong population.** It
+scanned `app/api/*.py` for request models — and most of this codebase's request models live in
+`app/models/schemas.py`, which it never opened. Measured across both:
+
+    fields accepted in app/api/*.py    12   ← what was swept
+    fields accepted in models/schemas  62   ← what was not
+
+`TaskCreate`, `TaskUpdate`, `DockAppointmentUpdate`, `LoadQualityLogCreate`, `TaskRuleCreate`,
+`AlarmRuleUpdate`, `ActionableRegistryItemCreate` and others accept a tenant-owned foreign key
+and were outside the scan entirely. Two of them are in this lane and both hold: alarm-rule
+scoping refuses another tenant's asset AND workcell (404, no row), and `registries` selects
+its parent registry with an explicit organisation predicate before touching items (verified in
+FS-721). The rest are unswept and mostly belong to other lanes.
 
 ## FS-730 — a malicious force-push over all 17 branches, and what it cost to find
 
@@ -11944,3 +11958,44 @@ indistinguishable from outside.
 The explicit refusal is kept and **annotated as not load-bearing**, per rule 213: removing it
 changes no observable behaviour today, and it stays because an invariant defended by a
 coincidental parse failure is one the next refactor removes without noticing.
+
+## FS-735 — the sweep that was complete over the wrong population
+
+FS-729 closed with a confident sentence: *"of 12 request models accepting a tenant-owned
+foreign key, all 12 verify the id."* Every word of that is true, and it describes a fifth of
+the subject.
+
+The scan iterated `app/api/*.py` looking for `class …(Create|Request|Update|In)`. Most of this
+codebase's request models are not there — they are in `app/models/schemas.py`, imported by the
+routers. Re-running the same detector over both directories:
+
+    app/api/*.py          12 fields   ← swept, all verified
+    app/models/schemas.py 62 fields   ← never looked at
+
+Found while probing `kanban:POST /tasks` for the FK class: its `TaskCreate` accepts `asset_id`,
+`alarm_id`, `operation_id`, `command_id` and `parent_task_id` as bare `str`, and the detector
+had never seen the model because of where it lives.
+
+**Two in-lane instances checked, both clean.** Alarm-rule creation refuses another tenant's
+asset and workcell (404, no row written) — the P10 scope work holds. `registries` verifies its
+parent registry with an explicit organisation predicate before touching items, as FS-721
+recorded. The remaining ~60 belong mostly to kanban, yard and logistics, and are recorded here
+rather than edited across lanes.
+
+**What kanban's own code already says about its half.** `api/kanban.py:1010` documents the gap
+in a comment and defends the dangerous consumer rather than the source:
+
+> `alarm_id` is accepted verbatim from the request body on task creation and is never
+> validated against the caller's organization. Without this join, org A could create a task
+> referencing org B's alarm and clear it by completing the task.
+
+The join it describes is real and load-bearing, so the exploitable action is closed. **But the
+comment's justification is now stale**: it ends *"`alarms` has no RLS policy, so nothing else
+would stop it"*, and `alarms` has had one since migration 046. A reader trusting that sentence
+would conclude the table is unprotected and reason from it.
+
+Reproduce the measurement:
+
+```
+grep -c "class .*\(Create\|Request\|Update\|In\)(" backend/app/models/schemas.py
+```

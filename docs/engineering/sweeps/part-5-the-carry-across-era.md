@@ -3608,3 +3608,31 @@ It is also the test most easily left out, because the defect under investigation
 somebody else's data — the owner's case feels like scaffolding. Rule 165 says assert the
 denominator; this is why: the denominator is not a formality, it is frequently where the
 larger finding is.
+
+## Rule 233 — state the population you covered, not the one you were thinking about
+
+FS-729 closed the foreign-key sweep with a sentence designed to retire the question:
+
+> The sweep is now complete across `app/api`: of 12 request models accepting a tenant-owned
+> foreign key, all 12 verify the id.
+
+Every clause is accurate. The scan really did find twelve, and all twelve really are verified.
+It is also about a fifth of the subject, because the scan iterated `app/api/*.py` and **most
+request models in this codebase are declared in `app/models/schemas.py`** and imported by the
+routers. Re-running the identical detector over both:
+
+    app/api/*.py           12 fields
+    app/models/schemas.py  62 fields
+
+It surfaced by accident. A probe of `kanban:POST /tasks` returned 422 for a missing required
+field, and reading `TaskCreate` to fix the payload showed a model full of bare-`str` foreign
+keys that the sweep had never seen — because of where the file sits.
+
+Rule 102 already says a sweep scoped to one idiom is blind to the same defect in another. This
+is the same failure scoped to one DIRECTORY, and it is harder to catch: within its own loop the
+scan is exhaustive, every file matched, nothing errored. The number it printed was real. The
+sentence built on it was not.
+
+**Print the denominator and ask where else the thing is declared.** "12 models" invites the
+question "out of how many?" in a way "complete" does not — which is the whole of rule 165,
+turned on the sweep instead of the code.
