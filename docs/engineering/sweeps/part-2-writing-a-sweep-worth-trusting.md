@@ -1620,6 +1620,22 @@ one of its findings. The habit that catches it:
      coverage gap out of the permanent record — but the cheaper move is to reach for the
      structured reporter the first time, exactly as rule 222 says of logs.
 
+231. **A comment that states an invariant is a place to check whether the code keeps it.**
+     Rule 221 says a design note naming a derivable set specifies a test. The stronger
+     version: a note asserting *"X must never happen"* is a claim to verify on the spot.
+     Three lines below `# a webhook caller must never mutate another tenant's trip via a
+     device-id collision` sat `if org_id:` — a conditional that made absence mean
+     unrestricted. Grepping `must never` across `app/` took a minute and found six such
+     claims; five were kept, and this one was not.
+
+232. **The denominator test is where the bigger defect lives.** The cross-tenant assertions
+     for that webhook passed immediately — the interesting one was "and the owner's own
+     position still works", which failed with `new row violates row-level security policy`.
+     Every table those handlers write is FORCE RLS and the route binds no tenant, so the
+     receiver had never stored anything on any deployment. **The test that proves the
+     feature works is the one that finds it does not** — and it is the test most easily
+     skipped, because the defect being chased is about somebody else's data.
+
 ---
 
 ## Open observations, not yet tickets

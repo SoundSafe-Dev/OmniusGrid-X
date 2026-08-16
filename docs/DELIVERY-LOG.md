@@ -11883,3 +11883,64 @@ and neither was enforced — and the giveaway was the same in both cases, a sent
 derivable set: *"they belong on the routes that raise them"*, and *"grep for `status_code=503`
 before adding a router here"*. When a design note tells you how to decide membership, that is
 a specification for a test.
+
+## FS-734 — the GeoTab webhook receiver had never stored anything
+
+Found by reading a comment, following the method that produced FS-728 and FS-733: a design
+note that states an invariant is a specification for a check. This one stated it and then did
+the opposite three lines later.
+
+    # Scope the lookup to the SAME org as the payload: a webhook caller
+    # must never mutate another tenant's trip via a device-id collision.
+    …
+    if org_id:
+        trip_stmt = trip_stmt.where(GeoTabTrip.organization_id == org_id)
+
+An absent `organization_id` did not narrow the lookup — it REMOVED the narrowing, so the query
+matched any tenant's active trip for that device id and overwrote its end point. The insert on
+the other branch stored `organization_id=None`, a trip belonging to nobody. **Absence read as
+unrestricted access**, which this codebase already has a name and a fix for: `get_tenant_org_id`
+refuses rather than widens (*"we fail closed rather than fail open"*), and the notification
+handlers were repaired for the identical `if org is not None` pattern.
+
+`organization_id` arrives in the BODY. The route is secret-guarded, so this is not open to the
+internet — but with one shared secret across a multi-tenant deployment the body is the only
+thing deciding whose trip is rewritten, and **a genuine GeoTab callback carries no
+`organization_id` at all**, because it is our field and not theirs. The untenanted path is the
+ordinary one.
+
+### And then the test found something larger
+
+Writing the owner-still-works case — the denominator — failed with
+
+    new row violates row-level security policy for table "geotab_trips"
+
+The route takes `Depends(get_db)`, which binds no `app.current_org_id`, and **every table these
+four handlers touch is FORCE ROW LEVEL SECURITY** (`geotab_trips`, `geotab_exceptions`,
+`geotab_diagnostics`, `drivers` — migration 011). On an unbound session the SELECTs match
+nothing and the INSERTs are refused by the policy's WITH CHECK. Every handler catches
+`SQLAlchemyError` and logs it.
+
+**So the entire GeoTab webhook receiver accepted events, answered 200, stored nothing, and
+said so only in a log line.** FORCE is what makes that true on every deployment rather than
+only hardened ones: the table owner is subject to the policy too, so no connection is exempt.
+It is the FS-719 shape again — a whole path dead because of an unbound session, invisible
+because the failure is swallowed.
+
+The dispatcher now resolves the tenant once and runs all four handlers inside
+`tenant_session(org_id)`, refusing outright when there is no tenant to bind.
+
+### The ack was an echo
+
+`geotab_webhook` assigned the service's result and discarded it, returning
+`status: "processed"` unconditionally. A webhook the service refused was acknowledged as
+processed, and the sender could never learn that nothing was stored. It now reports what
+happened — and that mattered for the test, not just the caller: **a mutation removing the
+refusal was caught by nothing until the ack became honest**, because
+`tenant_session(UUID(str(None)))` raises `ValueError` and the outer handler turns that into
+the same `processed: False`. "Refused deliberately" and "crashed on a malformed UUID" were
+indistinguishable from outside.
+
+The explicit refusal is kept and **annotated as not load-bearing**, per rule 213: removing it
+changes no observable behaviour today, and it stays because an invariant defended by a
+coincidental parse failure is one the next refactor removes without noticing.

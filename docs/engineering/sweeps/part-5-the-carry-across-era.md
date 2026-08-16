@@ -3563,3 +3563,48 @@ the note to stay true, and check that instead of trusting it.
 
 Worth noticing that neither was found by a failure. Both were found by reading a comment
 carefully enough to see that it had specified a check nobody had written.
+
+## Rule 231 — "must never" is a claim to check, not a comment to trust
+
+Rule 221 came from design notes that named a derivable set. This is the sharper form: a
+comment asserting that something *must never* happen is an invariant somebody wrote down
+because it mattered, and it is checkable where it stands.
+
+    # Scope the lookup to the SAME org as the payload: a webhook caller
+    # must never mutate another tenant's trip via a device-id collision.
+    …
+    if org_id:
+        trip_stmt = trip_stmt.where(GeoTabTrip.organization_id == org_id)
+
+Three lines apart: the invariant, and a conditional that suspends it exactly when the payload
+omits the field. Absence did not narrow the query, it removed the narrowing — so a device-id
+collision rewrote another tenant's trip, which is the sentence directly above it.
+
+`grep -rniE "must never|never add|before adding" app/` takes a minute and returned six such
+claims. Five were kept by their code. This one was not, and nothing else in the repository
+would have found it: no test covered the path, and no guard inspects services for conditional
+tenant filters.
+
+## Rule 232 — the denominator test is where the bigger defect lives
+
+The cross-tenant assertions for that webhook passed on the first run: another tenant's trip was
+not touched, no orphan row was written. Comfortable, and nearly the end of it.
+
+The test that failed was the boring one — *and the owner's own position still works*:
+
+    new row violates row-level security policy for table "geotab_trips"
+
+Every table the four webhook handlers write is FORCE ROW LEVEL SECURITY, and the route takes
+`Depends(get_db)`, which binds no tenant. On an unbound session the SELECTs match nothing and
+the INSERTs are refused; each handler catches `SQLAlchemyError` and logs it. **The receiver had
+never stored anything, on any deployment, since the policy landed** — accepting events,
+answering 200, and reporting the failure only to a log.
+
+The cross-tenant tests could not have found that. They assert an absence, and absence is
+exactly what a completely broken write path produces. Only the assertion that the feature
+WORKS distinguishes "correctly scoped" from "dead".
+
+It is also the test most easily left out, because the defect under investigation is about
+somebody else's data — the owner's case feels like scaffolding. Rule 165 says assert the
+denominator; this is why: the denominator is not a formality, it is frequently where the
+larger finding is.

@@ -12,6 +12,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
 
+from app.core.tenant import tenant_session
+
 from app.db.models import Driver, Carrier, GeoTabTrip, GeoTabDiagnostic, GeoTabException
 from app.core.config import settings
 
@@ -184,9 +186,32 @@ class GeoTabService:
         webhook_data: Dict[str, Any],
         db: AsyncSession = None
     ) -> Dict[str, Any]:
-        """Handle incoming GeoTab webhook events"""
+        """Handle incoming GeoTab webhook events.
+
+        THE SESSION IS REBOUND TO THE PAYLOAD'S TENANT, and without that none of this
+        works (FS-734). The route takes `Depends(get_db)`, which sets no
+        `app.current_org_id`; every table these handlers touch — `geotab_trips`,
+        `geotab_exceptions`, `geotab_diagnostics`, `drivers` — has been **FORCE ROW LEVEL
+        SECURITY since migration 011**. On an unbound session that means the SELECTs match
+        nothing and the INSERTs are refused by the policy's WITH CHECK, and every handler
+        here catches `SQLAlchemyError` and logs it. So the whole webhook receiver accepted
+        events, answered 200, stored nothing, and said so only in a log line nobody reads.
+        Verified against a real database: the insert fails with
+        `new row violates row-level security policy for table "geotab_trips"`.
+
+        FORCE is what makes this true everywhere rather than only on hardened deployments —
+        the table owner is subject to the policy too, so no connection is exempt.
+
+        A WEBHOOK WITH NO TENANT IS REFUSED rather than processed unscoped. The organisation
+        arrives in the BODY, and the previous code used it only `if org_id:` — so an absent
+        value did not narrow the lookup, it removed the narrowing, and a device-id collision
+        would have rewritten another tenant's trip. `get_tenant_org_id` states the principle
+        this follows: *we fail closed rather than fail open*. A position that cannot be
+        attributed to a tenant is not a position that can be stored.
+        """
         event_type = webhook_data.get("type", "unknown")
         device_id = webhook_data.get("device_id")
+        org_id = webhook_data.get("organization_id")
         
         logger.info(
             "geotab_webhook_received",
@@ -200,18 +225,41 @@ class GeoTabService:
                 logger.warning("geotab_webhook_missing_device_id", data=webhook_data)
                 return {"processed": False, "error": "Missing device_id"}
             
-            # Process different event types
-            if event_type == "exception":
-                await self._process_exception_webhook(webhook_data, db)
-            elif event_type == "status_change":
-                await self._process_status_change_webhook(webhook_data, db)
-            elif event_type == "location_update":
-                await self._process_location_update_webhook(webhook_data, db)
-            elif event_type == "diagnostic":
-                await self._process_diagnostic_webhook(webhook_data, db)
-            else:
-                logger.warning("geotab_webhook_unknown_type", event_type=event_type)
-            
+            # NOT LOAD-BEARING, AND KEPT ANYWAY — the mutation says so, and rule 213 says
+            # to record that rather than let the next reader delete it as noise. Removing
+            # this branch changes no observable behaviour: `tenant_session(UUID(str(None)))`
+            # raises `ValueError: badly formed hexadecimal UUID string`, the outer handler
+            # catches it, and the caller still gets `processed: False`.
+            #
+            # It stays because "refused, for this reason" and "crashed on a malformed UUID"
+            # are the same outcome only by accident. The log line here names the actual
+            # condition, the error message names the missing field, and neither depends on
+            # a parse failure continuing to happen further down. An invariant defended by a
+            # coincidence is one the next refactor removes without noticing.
+            if not org_id:
+                logger.warning(
+                    "geotab_webhook_untenanted",
+                    event_type=event_type,
+                    device_id=device_id,
+                    reason="payload carried no organization_id; refusing rather than "
+                           "processing against an unscoped session",
+                )
+                return {"processed": False, "error": "Missing organization_id"}
+
+            # Every handler below writes a FORCE-RLS table, so they get a session bound to
+            # this payload's tenant rather than the request's unbound one.
+            async with tenant_session(UUID(str(org_id))) as scoped:
+                if event_type == "exception":
+                    await self._process_exception_webhook(webhook_data, scoped)
+                elif event_type == "status_change":
+                    await self._process_status_change_webhook(webhook_data, scoped)
+                elif event_type == "location_update":
+                    await self._process_location_update_webhook(webhook_data, scoped)
+                elif event_type == "diagnostic":
+                    await self._process_diagnostic_webhook(webhook_data, scoped)
+                else:
+                    logger.warning("geotab_webhook_unknown_type", event_type=event_type)
+
             return {"processed": True, "event_type": event_type}
             
         except Exception as e:
@@ -298,18 +346,44 @@ class GeoTabService:
         if ts.tzinfo is not None:
             ts = ts.astimezone(timezone.utc).replace(tzinfo=None)
 
+        # FAIL CLOSED WHEN THE TENANT IS UNKNOWN (FS-734). The scoping below used to be
+        # `if org_id:` — so an absent `organization_id` did not narrow the lookup, it
+        # REMOVED the narrowing, and the query matched any tenant's active trip for this
+        # device id. The comment beside it already said this must never happen; the
+        # condition made absence mean "unrestricted" instead of "refuse".
+        #
+        # That is the shape `core.tenant.get_tenant_org_id` exists to refuse, in the words
+        # of its own docstring — *we fail closed rather than fail open* — and the shape the
+        # notification handlers were fixed for: a filter applied only `if org is not None`
+        # let a caller with no organisation read every organisation's rows.
+        #
+        # `organization_id` here is supplied in the webhook BODY. The route is secret-
+        # guarded, so this is not open to the internet, but one shared secret across a
+        # multi-tenant deployment makes the body the only thing deciding whose trip is
+        # rewritten — and a genuine GeoTab callback carries no `organization_id` at all,
+        # since it is our field rather than theirs. Dropping the event is the honest
+        # outcome: a position that cannot be attributed to a tenant is not a position we
+        # can store.
+        if not org_id:
+            logger.warning(
+                "geotab_location_update_untenanted",
+                device_id=device_id,
+                reason="webhook payload carried no organization_id; refusing to match or "
+                       "write a trip that cannot be attributed to a tenant",
+            )
+            return
+
         try:
             # Scope the lookup to the SAME org as the payload: a webhook caller
             # must never mutate another tenant's trip via a device-id collision.
             trip_stmt = (
                 select(GeoTabTrip)
                 .where(GeoTabTrip.device_id == device_id,
-                       GeoTabTrip.status == "active")
+                       GeoTabTrip.status == "active",
+                       GeoTabTrip.organization_id == org_id)
                 .order_by(GeoTabTrip.start_time.desc())
                 .limit(1)
             )
-            if org_id:
-                trip_stmt = trip_stmt.where(GeoTabTrip.organization_id == org_id)
             latest = (await db.execute(trip_stmt)).scalar_one_or_none()
 
             if latest is not None:

@@ -241,10 +241,15 @@ async def geotab_webhook(
             webhook_data=webhook_data,
             db=db
         )
+        # REPORT WHAT THE SERVICE ACTUALLY DID. `result` was assigned and discarded, and
+        # this returned `status: "processed"` unconditionally — so a webhook the service
+        # refused (no `organization_id`, unknown device) was acknowledged as processed, and
+        # the sender had no way to learn that nothing was stored. A 200 that always says
+        # "processed" is not an acknowledgement, it is an echo.
         return {
-            "status": "processed",
+            "status": "processed" if result.get("processed") else "rejected",
             "event_type": webhook_data.get("type"),
-            "timestamp": datetime.now(timezone.utc).isoformat()
+            "timestamp": datetime.now(timezone.utc).isoformat(),
         }
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
