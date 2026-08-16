@@ -1591,6 +1591,25 @@ one of its findings. The habit that catches it:
      replaced: if anything had arrived in between, the push fails instead of destroying it.
      Recovery from a destructive event is itself a destructive operation.
 
+228. **A locator matches text; it does not match meaning — and a filter control repeats
+     every value on the page.** Two e2e tests asserted
+     `getByText(/CNC Mill|Conveyor|…/).first()`, which held only while nothing else on the
+     page carried an asset name. The page-enhancement arc then added filter bars to
+     `/assets` (P6) and `/alarms` (P1), whose dropdowns list exactly those names, so
+     `.first()` resolved to an `<option>` inside a closed `<select>` — hidden by definition
+     — and both tests failed against pages rendering correctly. **Adding a control that
+     repeats data invalidates every test that searched for that data by text.** Ask for the
+     element that carries the meaning: the card's heading, the row's link.
+
+229. **A test that passes alone and fails in the suite is asserting the ordering, not the
+     property.** The `/alarms` locator above did exactly that: whether the filter dropdown
+     had finished loading decided which element `.first()` picked. It would equally have
+     passed while the rows rendered nothing. This is the second instance in one session —
+     the first was a handler test driving `asyncio.get_event_loop().run_until_complete`,
+     green alone and red once another test had closed that loop. Both were found only by
+     running everything, which is the argument for doing that before every commit rather
+     than after the interesting ones.
+
 ---
 
 ## Open observations, not yet tickets

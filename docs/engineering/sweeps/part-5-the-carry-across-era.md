@@ -3464,3 +3464,45 @@ it. A bare `--force` would have been a second destructive event on top of the fi
 
 **Recovery from a destructive event is itself a destructive operation**, and deserves the same
 care as the thing it is undoing.
+
+## Rule 228 — a locator matches text, and a filter repeats every value on the page
+
+Two live e2e tests asserted the same shape:
+
+    await expect(page.getByText(/CNC Mill|Conveyor|Acoustic Monitor/).first()).toBeVisible()
+
+Both were correct when written, and both were correct for exactly as long as nothing else on
+the page carried an asset name. The page-enhancement arc then added a filter bar to `/assets`
+(P6) and to `/alarms` (P1). Their dropdowns list asset types and asset names — the same
+strings — and a `<select>`'s options come earlier in the DOM than the cards below it.
+
+`.first()` therefore resolved to an `<option>` inside a closed dropdown, which Playwright
+reports as **hidden**, and both tests failed against pages that were rendering everything
+correctly: five asset cards, "5 total", every alarm row naming its machine.
+
+The rule generalises past Playwright: **a control that repeats data invalidates every test
+that searched for that data by text.** Filter bars, autocompletes, export pickers and "recent
+items" menus all do this, and they are exactly what gets added to a page once it is useful.
+
+Ask for the element that carries the meaning — the card's `h3`, the row's `<Link>` — which is
+also the stronger assertion. `/alarms` now asserts the link P1 introduced, so the test says
+what the feature is for: an operator can walk from the alarm to the machine.
+
+## Rule 229 — passing alone and failing in the suite means the test asserts the ordering
+
+The `/alarms` locator failed in the full suite and passed when run by itself. That is not
+flakiness to be retried; it is the test telling you what it actually depends on. Here it was
+whether the filter dropdown had finished loading its assets, which decided which element
+`.first()` selected.
+
+The direction of the failure is the least interesting part. The same test would have **passed**
+while the alarm rows rendered nothing at all, as long as the dropdown had not loaded — a green
+run proving nothing about the property in its name.
+
+This is the second instance in one session. The first was a handler test driving
+`asyncio.get_event_loop().run_until_complete(...)` from a sync test: green alone, red once
+another test had closed that loop.
+
+Both were found only by running the whole suite, and neither would have been found by
+re-running the failing file — which is what one naturally does. **Run everything before the
+commit, not after the interesting ones.**

@@ -11815,3 +11815,23 @@ the operator can walk from the alarm to the machine).
 statement — 93 MB for one suite run — and the alarms page timed out at 20 s while the API was
 serving it fine (907 × 200 in the same run). With `DEBUG=false` the suite completes with no
 failures. Anyone running the live e2e should set it.
+
+### Open observation — the suite's own totals do not reconcile
+
+`--list` reports **131 tests in 7 files** (130 across 6 spec files, plus the auth setup). Two
+runs of that same suite accounted for different totals:
+
+    run 1 (DEBUG unset)   125 passed +  3 failed + 3 did not run  = 131  ✓
+    run 2 (DEBUG=false)   102 passed +              3 did not run  = 105  ✗ — 26 unaccounted
+
+Run 2 exited **0**, so a green result was reported over a suite that did not demonstrably run.
+No `skipped` count was printed, and every `test.skip` in the tree is conditioned on
+`E2E_LIVE_BACKEND`, which was set in both runs.
+
+Recorded rather than diagnosed, because the honest next step needs the stack up and a
+`--reporter=json` run to attribute the 26 — and guessing at it would be the thing this
+repository keeps writing rules about. **The finding as it stands is that a green e2e run does
+not currently prove the suite ran**, which is the same class as FS-490 ("counted what does not
+run") and deserves the same treatment: a count assertion, so the number cannot drift silently.
+`3 did not run` appears in BOTH runs and is the thread to pull — Playwright reports that when
+a serial-mode sibling fails or the run stops early, and `writes-actually-persist` is serial.
