@@ -102,16 +102,36 @@ class TestTheNumbersInTheDocAndTheRatchetAgree:
             f"names is what somebody will plan against."
         )
 
-    def test_the_broker_floor_is_the_higher_one(self):
+    def test_the_broker_floor_is_never_the_lower_one(self):
         """FS-654 split one floor into two, and the whole design rests on which is which. A
         transposition would hold a broker-less run to the broker floor — failing every build
         in which the broker did not come up, which is exactly how this job's predecessor
-        became advisory and got killed."""
+        became advisory and got killed.
+
+        WAS `with_broker > without`, RELAXED TO `>=` ON MEASUREMENT (FS-738). The strict
+        form encoded a premise — a reachable broker turns correct 503s into 2xx, so it must
+        reach more conforming operations — that four runs no longer support:
+
+            no broker   456, 458      (5xx: 33, 31)
+            broker      454, 457      (5xx: 35, 32)
+
+        The ranges overlap and the broker side is, if anything, marginally worse; every
+        non-`ServerError` check is IDENTICAL across all four runs (33 / 22 / 2 / 1), which
+        is what says the difference is the known flapping set rather than a real effect.
+        The gap the split was built on has closed — the ratchet file predicted this in as
+        many words ("very little of it now blocks on the broker") — so the two floors are
+        now equal, and equal must be allowed.
+
+        The invariant that still matters is the one this test is named for: the broker
+        floor may never be the LOWER of the two, because that is the transposition that
+        fails every broker-less build. `>=` keeps that and stops demanding a difference
+        the measurement does not show."""
         without, with_broker = _floors()
-        assert with_broker > without, (
-            f"BASELINE_WITH_BROKER ({with_broker}) is not above BASELINE_WITHOUT_BROKER "
-            f"({without}). A run that reaches more operations because a dependency was "
-            f"present cannot be held to a lower bar than one that could not reach them."
+        assert with_broker >= without, (
+            f"BASELINE_WITH_BROKER ({with_broker}) is BELOW BASELINE_WITHOUT_BROKER "
+            f"({without}). A run that reaches at least as many operations because a "
+            f"dependency was present cannot be held to a lower bar than one that could not "
+            f"reach them."
         )
 
     def test_neither_floor_has_been_lowered(self):

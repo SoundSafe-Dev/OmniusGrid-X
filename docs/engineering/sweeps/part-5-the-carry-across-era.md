@@ -3809,3 +3809,64 @@ as though they were.
 **Order the work with a heuristic. Never shorten it with one.** Every row in FS-737 was driven
 over HTTP before it was touched — including the ones the triage had already cleared, which is
 the only reason the check-in defect was found at all.
+
+## Rule 239 — publish the gap with the condition that clears it
+
+The brief was "DNP3's upstream Python driver has no py3.11 wheel". True, and weaker than what
+the repository can actually say:
+
+    requirements.txt   dnp3-python==0.2.3b3; sys_platform == "linux"
+                                             and python_version < "3.11"
+    Dockerfile         FROM python:3.11-slim
+    pyproject.toml     requires-python = ">=3.11"
+
+The marker and the image do not overlap. The driver is therefore absent from **every image we
+build** — "zero live DNP3 sites" is arithmetic on two files rather than an observation about
+customers, and a reviewer can confirm it in the time it takes to open them.
+
+That version of the sentence is better in three separate ways. It is checkable, so it buys
+credibility instead of spending it. It bounds the blast radius — the other ten industrial
+protocols are unaffected, which "no wheel" does not say. And it names the exit criterion: a
+maintained py3.11 DNP3 driver, or a vendored `libopendnp3` binding. A gap with a stated exit
+is a task; a gap without one is a worry.
+
+The same shape applies to the other two disclosures made that day. Not "some endpoints return
+500s" but "456–458 of 546 conform across two runs, 31–33 return a 5xx, the floor is 447 and it
+blocks CI". Not "PITR isn't finished" but "the deployed image ships no `pgbackrest` and sets no
+`archive_mode`; what runs is a nightly `pg_dump` with an RPO up to 24 hours".
+
+**State the mechanism, the measurement, and the condition that clears it.** The reader who was
+going to find out anyway now finds out from you, with the numbers already right.
+
+## Rule 240 — a caveat is only as good as its distance from the claim
+
+Point-in-time recovery was already documented as not operational. The bullet was accurate, it
+named the missing `pgbackrest` binary and the absent `archive_mode`, and it pointed at the
+runbook. It had been there for weeks.
+
+Three other places in the same README presented PITR as a live property of the platform:
+
+    Key Capabilities   "CloudNativePG HA (auto-failover + PITR)"
+    Reliability table  "synchronous replication (RPO≈0), continuous WAL archiving to S3 for PITR"
+    Documentation      "Auto-failover, PITR, cutover + failover runbook"
+
+A reader scanning the capability table meets the claim and never reaches the bullet. The
+caveat was not wrong; it was **out of range**.
+
+This is the documentation form of a defect this codebase keeps meeting in code — a check that
+exists somewhere other than where the thing it protects happens. The fix is the same one: pair
+them mechanically. `test_recovery_claims_match_what_is_deployed.py` finds every line asserting
+PITR or a near-zero RPO and requires a caveat within its immediate neighbourhood, keyed to a
+structural fact — is anything on the deployed path setting `archive_mode` — rather than to
+prose.
+
+Two details worth copying. The detector **ignores commented mentions**, because both manifests
+explain the absence of archiving in prose and a substring match would have read those as proof
+of the opposite, silently inverting the whole file. And the marker list includes "not yet
+operational" as well as "not operational", because the README already said the former: an
+over-tight guard would have demanded correct prose be reworded to satisfy it, which teaches
+people to write for the test.
+
+**And check the direction that rots.** When WAL archiving is switched on, a stale "not
+operational" understates the platform, and nobody re-reads the README on an infra change. Both
+guards written that day fail in both directions — gap-without-caveat, and caveat-without-gap.

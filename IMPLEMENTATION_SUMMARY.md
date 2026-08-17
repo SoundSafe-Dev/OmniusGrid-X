@@ -32,6 +32,9 @@
 - Model Registry + OTA release/rollout; Model Monitoring (drift)
 - ERP integration, Yard (YMS), Transportation (TMS), Kanban, Compliance/Registries
 - RAG compliance-doc pipeline; edge collectors incl. SNMP / Sparkplug B / DNP3
+  (DNP3 is implemented and swept but **not field-proven** — its upstream driver ships
+  no py3.11 wheel, so it is absent from every agent image; see the Maturity table in
+  the README)
 - One migration chain (`scripts/migrate.py`), documented API error responses,
   `Page[T]` pagination; non-root images + k8s egress + blocking supply-chain gate
 - **Offline demo seeder** (`scripts/seed_demo_data.py`) — full-platform demo data

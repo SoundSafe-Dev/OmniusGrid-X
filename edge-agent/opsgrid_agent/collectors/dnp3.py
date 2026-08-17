@@ -35,10 +35,37 @@ except ImportError as exc:  # pragma: no cover - exercised only without the driv
 
 
 class DNP3Collector(BaseCollector):
-    """Collector that polls a DNP3 outstation."""
+    """Collector that polls a DNP3 outstation.
+
+    NOT FIELD-PROVEN, and the reason is packaging rather than protocol (FS-738). The
+    collector is written, swept by the agent's hardening guards — backoff and breaker from
+    the one `ReconnectPolicy`, aware-UTC timestamps, counted failures — and exercised in
+    `tests/test_new_collectors.py` against a fake master. What it has never done is talk to
+    a real outstation, because `dnp3_python` publishes **cp38–cp310 linux wheels only**.
+    The pin in `edge-agent/requirements.txt` is marked `python_version < "3.11"` and the
+    agent image is `python:3.11-slim`, so the driver is absent from every image we build.
+    Live DNP3 sites: **zero**, by construction.
+
+    That is a supply gap in somebody else's package and it needs a maintained py3.11 DNP3
+    driver (or a vendored libopendnp3 binding) before a site can be commissioned. Until
+    then this class refuses to start and says why — see `driver_unavailable_reason`, which
+    the coordinator reports so the agent can answer "why is there no DNP3 data" without
+    anybody reading a log.
+    """
 
     def __init__(self, config: Dict[str, Any]):
         super().__init__(config)
+        #: Set when the driver could not be imported, and read by
+        #: `CollectorCoordinator.get_collector_status`. `None` means the driver is present
+        #: — the attribute always exists so a consumer never has to guess whether the
+        #: absence of the field means "fine" or "old collector".
+        self.driver_unavailable_reason: Optional[str] = (
+            None if _DNP3_AVAILABLE else (
+                f"dnp3_python is not installed ({_DNP3_IMPORT_ERROR}). It ships cp38-cp310 "
+                f"linux wheels only, so it is excluded from this image by the "
+                f'python_version < "3.11" marker in requirements.txt.'
+            )
+        )
         # Reconnect discipline, from the ONE policy (FS-473). FS-472 gave five collectors
         # a backoff and a breaker by copying the same four constants into each, which made
         # sixteen occurrences across eight files of a number `modbus` documents as a
@@ -61,8 +88,15 @@ class DNP3Collector(BaseCollector):
         await super().start()
         if not _DNP3_AVAILABLE:
             self._running = False
+            # `error`, not `warning`, and it carries the reason rather than a `pip install`
+            # hint that cannot succeed on this interpreter: there is no py3.11 wheel to
+            # install. `_run_collector` will treat this return as a restart and retry nine
+            # more times, which is wasted on a missing module — but the retry budget is the
+            # coordinator's policy and a collector should not reach up and change it, so
+            # the honest signal is the status field, not a special case here.
             logger.error("dnp3_driver_missing", asset_id=self.asset_id,
-                         error=_DNP3_IMPORT_ERROR, hint="pip install dnp3-python")
+                         error=_DNP3_IMPORT_ERROR,
+                         reason=self.driver_unavailable_reason)
             return
         if not self.host:
             self._running = False

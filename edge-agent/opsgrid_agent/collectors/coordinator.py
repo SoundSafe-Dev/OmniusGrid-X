@@ -709,6 +709,21 @@ class UnifiedCollectorCoordinator:
         }
         if collector is not None and hasattr(collector, "_connected"):
             status["connected"] = bool(getattr(collector, "_connected"))
+        # A COLLECTOR WHOSE DRIVER IS NOT INSTALLED IS NOT "DOWN", IT IS UNBUILDABLE
+        # (FS-738). `_run_collector` treats a `start()` that returns as a restart and gives
+        # up after ten, so this ends as `running: False` — indistinguishable from an
+        # outstation that is switched off, and answerable only by reading the log line at
+        # the moment it happened. The two need different people: one is an electrician,
+        # the other is a packaging change.
+        #
+        # DNP3 is the live instance. `dnp3-python` publishes cp38–cp310 linux wheels only,
+        # the pin in `requirements.txt` is therefore marked `python_version < "3.11"`, and
+        # the agent image is `python:3.11-slim` — so the driver is absent from every image
+        # we build, by construction rather than by accident.
+        unavailable = getattr(collector, "driver_unavailable_reason", None)
+        if unavailable:
+            status["driver_available"] = False
+            status["driver_error"] = unavailable
         return status
     
     def get_status(self) -> Dict[str, Any]:

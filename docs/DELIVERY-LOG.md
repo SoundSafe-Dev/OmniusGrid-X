@@ -12193,3 +12193,121 @@ that flags a safe route costs one probe. One that clears an exploitable route en
 investigation, and the reason it cleared — `organization_id` appearing nearby — is exactly
 what a handler that takes its tenant from the token correctly looks like. Use a heuristic to
 order the work, never to shorten it, and drive every candidate before believing either answer.
+
+## FS-738 — three claims graded by evidence, and a guard on each
+
+Three gaps were named for disclosure: DNP3 is not field-proven, point-in-time recovery is not
+operational, and a share of the API does not conform under generated input. All three were
+already known to somebody. None was findable by a reader, and two were contradicted elsewhere
+in the same README. The work was to measure each, state it where it will be met, and pair it
+to a test so it cannot drift back.
+
+### DNP3 — the gap is packaging, and it is total
+
+The brief said "no py3.11 wheel". The repository says something sharper:
+
+    requirements.txt   dnp3-python==0.2.3b3; sys_platform == "linux"
+                                             and python_version < "3.11"
+    Dockerfile         FROM python:3.11-slim
+    pyproject.toml     requires-python = ">=3.11"
+
+The marker and the image **do not overlap**, so the driver is absent from every image we
+build. Zero live sites is not a market observation, it is arithmetic on two files. That is a
+better sentence to own than "no wheel yet", because it is checkable and it names the exact
+condition that clears it.
+
+The collector itself is real work and stays: one shared `ReconnectPolicy` for backoff and
+breaking, aware-UTC timestamps, counted failures, fifteen tests against a fake master. The
+honest framing is *implemented and in our hardening sweeps, not yet field-proven*.
+
+**Runtime, not just prose.** `_run_collector` treats a `start()` that returns as a restart and
+gives up after ten, so a DNP3 collector ended as `running: false` — indistinguishable from an
+outstation that is switched off, and answerable only by finding the log line from the moment
+it happened. Those two states need different people: one needs an electrician, the other needs
+a packaging change. `driver_unavailable_reason` is set on the collector and surfaced by
+`get_collector_status` as `driver_available: false` plus the reason, so the agent can answer
+"why is there no DNP3 data" without anybody reading a log.
+
+### Point-in-time recovery — one honest bullet, three contradicting it
+
+What runs: a nightly `pg_dump -Fc` to S3 via the `db-backup` CronJob, with a restore drill in
+the blocking CI gate. **RPO up to 24 hours.** What does not run: PITR. The CloudNativePG
+manifest configures barman WAL archiving and `ci-cd.yml` applies that stack only if
+`clusters.postgresql.cnpg.io` exists, which no environment has; `legacy-patroni/`'s pgBackRest
+CronJob is in no kustomization at all; the deployed image ships no `pgbackrest` and sets no
+`archive_mode`.
+
+The README already said this — in ONE bullet, accurately — while three other places presented
+PITR as a live property, including a reliability table reading `RPO≈0`. **A caveat in one file
+does not constrain a claim in another.** That is the whole finding.
+
+### API conformance — the number is better than the one we were carrying
+
+Re-measured rather than repeated, because 20 handlers had changed since the last run. Two runs
+on a throwaway database, no broker:
+
+    run 1   456 / 546 conforming    33 operations returning 5xx
+    run 2   458 / 546 conforming    31 operations returning 5xx
+
+The figure being circulated was *101 non-conforming, 72 returning 5xx*. Both halves are stale:
+non-conformers are **88–90**, and **31–33** return a 5xx. The 72 was never operations — it was
+a count of failures **by check** in an older run, in a table this same document publishes. A
+number quoted out of its column.
+
+The gain is a side effect of the tenancy work. FS-736/737 made a request naming another
+tenant's row answer a declared 404 instead of reaching Postgres and surfacing as a 500, and
+conformance went 447 → 456–458 with nobody aiming at the gate. `BASELINE_WITHOUT_BROKER` was
+raised 438 → 447 on that evidence — the observed minimum less the same 9-operation spread the
+old floor was set by.
+
+**The spread is itself evidence.** `AcceptedNegativeData` (33), `UnsupportedMethodResponse`
+(22), `RejectedPositiveData` (2) and `UndefinedStatusCode` (1) are IDENTICAL across both runs;
+all the movement is in `ServerError`. A gain from luck would have moved the other checks too.
+
+### What went wrong on the way, worth keeping
+
+**I mis-parsed my own measurement.** The first classification of the junit XML matched
+`schemathesis.openapi.checks.*` only, and reported **0 operations returning 5xx** — because
+`ServerError` and `AcceptedNegativeData` live under `schemathesis.core.failures.*`. The two
+parses of the same file disagreed, which is the only reason it was caught. Enumerating every
+`schemathesis.*` class present, rather than the ones I expected, gave the real breakdown. Rule
+222 was written after miscounting this exact artefact by grepping its prose; this is the same
+mistake made against its structure.
+
+**And the floor could not be raised alone.** Lifting `BASELINE_WITHOUT_BROKER` to 447 put it
+above `BASELINE_WITH_BROKER` (440), and `test_the_contract_gate_doc_matches_the_gate.py`
+refused: a run that reaches MORE operations cannot be held to a lower bar. The file had already
+met this and recorded the answer — *"rather than raise it by arithmetic, the run was taken"* —
+so the broker run was taken.
+
+**And taking that run produced a second finding: the broker distinction has collapsed.**
+FS-654 split one floor into two because a reachable broker turned correct 503s into 2xx and
+reached more conforming operations — measured then at 449 with against 445 without. Four runs
+today:
+
+    no broker   456, 458    (5xx: 33, 31)
+    broker      454, 457    (5xx: 35, 32)
+
+The ranges overlap and the broker side is marginally WORSE. Every non-`ServerError` check is
+identical across all four runs — `AcceptedNegativeData` 33, `UnsupportedMethodResponse` 22,
+`RejectedPositiveData` 2, `UndefinedStatusCode` 1 — which is what rules out noise across the
+board and says the whole spread is the known flapping set. The ratchet file had already
+predicted this in as many words: *"very little of it now blocks on the broker."*
+
+So both floors are now 445, from the pooled minimum of 454 less the documented 9-operation
+spread, and the doc guard's `with_broker > without` was relaxed to `>=` — the strict form
+asserted a difference the measurement no longer shows. The invariant that mattered is kept:
+the broker floor may never be the LOWER of the two, which is the transposition that would fail
+every build where the broker did not come up.
+
+RULE 239 — publish the gap with the condition that clears it. "No py3.11 wheel" invites "when?"
+and has no answer; "the pin says `python_version < 3.11`, the image is `python:3.11-slim`, so
+the driver is in no build we produce" states the gap, its cause, its blast radius and its exit
+criterion, and every clause is checkable by the reader. A disclosure a reviewer can verify
+themselves is worth more than a reassuring one they must take on trust.
+
+RULE 240 — a caveat is only as good as its distance from the claim. The PITR gap was written
+down accurately, once, in a file nobody reads next to the table that contradicted it. Three
+other sites went on presenting it as live. If a claim appears in N places, the caveat has to be
+attached to the claim — enforced by a test that pairs them — or the honest sentence is simply
+the one nobody reaches.

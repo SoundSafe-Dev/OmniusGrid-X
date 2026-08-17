@@ -187,7 +187,41 @@ from pathlib import Path
 #: operations, confirmed by measurement rather than assumed from the diff.
 #:
 #: Still below `BASELINE_WITH_BROKER` (440), as the doc guard requires.
-BASELINE_WITHOUT_BROKER = 438
+#:
+#: RAISED 438 -> 447 on 2026-08-17 (FS-738), and the gain was a SIDE EFFECT rather than a
+#: target. FS-736/737 closed the foreign-key tenancy class: a request naming another
+#: tenant's row used to reach Postgres and surface as a 500, and now answers a declared
+#: 404. Two runs, same throwaway database, no broker:
+#:
+#:     run 1   456 conforming   33 operations returning 5xx
+#:     run 2   458 conforming   31 operations returning 5xx
+#:
+#: Both beat the previous measurement of 447 by more than the 2-operation spread between
+#: them, which is this file's standard for moving a floor. The spread is ALSO evidence in
+#: itself: `AcceptedNegativeData` (33), `UnsupportedMethodResponse` (22),
+#: `RejectedPositiveData` (2) and `UndefinedStatusCode` (1) are identical across both runs,
+#: so all the movement is in `ServerError` — the known flapping set, not noise everywhere.
+#:
+#: A BROKER WAS THEN MADE REACHABLE AND MEASURED TWICE MORE, because raising this floor
+#: alone pushed it above `BASELINE_WITH_BROKER` and the doc guard refused — correctly, and
+#: for the reason recorded below it. This file has met that before and its answer stands:
+#: take the run rather than raise by arithmetic. All four:
+#:
+#:     no broker   456, 458    (5xx: 33, 31)
+#:     broker      454, 457    (5xx: 35, 32)
+#:
+#: THE TWO CONFIGURATIONS NO LONGER SEPARATE. The ranges overlap, the broker side is
+#: marginally WORSE rather than better, and every non-`ServerError` check is identical
+#: across all four runs — `AcceptedNegativeData` 33, `UnsupportedMethodResponse` 22,
+#: `RejectedPositiveData` 2, `UndefinedStatusCode` 1. The note further down predicted this
+#: in as many words: very little of the API now blocks on the broker.
+#:
+#: So both floors are set from the POOLED minimum of 454, less the same 9-operation spread
+#: this file has always allowed: 445. That raises the broker-less floor 438 -> 445 and the
+#: broker floor 440 -> 445, and it stops asserting a difference the measurement does not
+#: show. Not pinned at 454: a gate that fails on its own documented spread is a gate
+#: somebody disables.
+BASELINE_WITHOUT_BROKER = 445
 
 #: The floor for a run where a broker was reachable. 402 measured 2026-08-08, less the same
 #: 9-operation spread the lower floor allows for. Never lower it either — and note that this
@@ -207,7 +241,7 @@ BASELINE_WITHOUT_BROKER = 438
 #: **four** operations: 449 with a broker against 445 without. The gap between the two floors
 #: is therefore small, and that is a fact about the API — very little of it now blocks on the
 #: broker — rather than a mistake in either number.
-BASELINE_WITH_BROKER = 440
+BASELINE_WITH_BROKER = 445
 
 #: Kept as the name the CLI default and older callers use: the floor that holds when nothing
 #: is known about the broker.

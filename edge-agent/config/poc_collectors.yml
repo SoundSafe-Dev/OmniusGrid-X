@@ -265,7 +265,15 @@ collectors:
       # username: "operator"
       # password: "password123"
 
-  # 15. Substation / utility outstation via DNP3 (requires dnp3-python)
+  # 15. Substation / utility outstation via DNP3
+  #
+  # NOT DEPLOYABLE AS SHIPPED. `dnp3-python` publishes cp38-cp310 linux wheels only,
+  # so its pin is marked `python_version < "3.11"` and the agent image is
+  # python:3.11-slim — the driver is absent from every image we build. Enabling this
+  # block gets you a collector that refuses to start and reports
+  # `driver_available: false` with the reason. Kept here because the collector is
+  # written and swept, and this is the config it will take on the day a py3.11 driver
+  # exists; not because a site can run it today.
   - asset_id: "outstation-001"
     collector_type: "dnp3"
     enabled: true

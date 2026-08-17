@@ -1692,6 +1692,24 @@ one of its findings. The habit that catches it:
      proximity check can PASS for the wrong reason; this is the same defect pointed the
      other way. Order the work with a heuristic, never shorten it: drive every candidate.
 
+
+239. **Publish the gap with the condition that clears it.** "DNP3 has no py3.11 wheel"
+     invites "when will it?" and has no answer. "The pin carries
+     `python_version < "3.11"`, the agent image is `python:3.11-slim`, so the driver is
+     in no build we produce — zero live sites, and it clears when a maintained py3.11
+     driver exists" states the gap, its cause, its blast radius and its exit criterion,
+     and every clause can be checked by the reader in two files. A disclosure someone can
+     verify beats a reassuring one they must take on trust, and it is also the version
+     that tells your own team what "done" looks like.
+
+240. **A caveat is only as good as its distance from the claim.** Point-in-time recovery
+     was documented as not operational — accurately, once, in a bullet — while three other
+     places in the same README presented it as live, one of them a table reading `RPO≈0`.
+     A caveat in one file does not constrain a claim in another. If a claim appears in N
+     places, attach the caveat to the claim and pair the two with a test; otherwise the
+     honest sentence is the one nobody reaches. Check BOTH directions: the stale caveat
+     left behind after a gap closes understates the product, and nobody re-reads the docs
+     on a dependency bump.
 ---
 
 ## Open observations, not yet tickets

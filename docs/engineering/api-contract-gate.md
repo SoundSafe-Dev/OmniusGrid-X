@@ -116,13 +116,24 @@ class — any extension created by `conftest` and by no migration now fails the 
 
 ## Why a ratchet
 
-**447 of 546** operations conform with no broker (measured 2026-08-15, after FS-724/725) and
-**449 of 546** with one (measured 2026-08-14). Floors: 438 / 440. The remaining ~100 are dominated by **one behaviour**:
+**456–458 of 546** operations conform with no broker and **454–457** with one (four runs,
+2026-08-17, after FS-736/737). Floors: 445 / 445. Of the 88–92 that do not conform, **31–35
+return a 5xx**. The remainder are dominated by **one behaviour**:
 generated input reaching Postgres unvalidated and surfacing as a 500 where the contract
 promises a 4xx (`DataError`, `ForeignKeyViolationError`, `CharacterNotInRepertoireError`).
-That is per-endpoint validation work spread across every lane. By check: **72 server errors,
-18 undocumented status codes, 2 schema violations** — and none of them on the
-correlation-evidence or operations-assistant routes added by the 2026-08-14 merge.
+That is per-endpoint validation work spread across every lane.
+
+By check, 2026-08-17 (counts are FAILURES, and one operation can fail two checks — quoting one
+of these as a count of operations is how "72 server errors" came to be repeated as "72
+operations returning 5xx", which was never what the column meant):
+
+| check | count | stable across runs? |
+|---|---|---|
+| `ServerError` | 31–35 | no — this is the entire spread |
+| `AcceptedNegativeData` | 33 | yes, all four runs |
+| `UnsupportedMethodResponse` | 22 | yes, all four runs |
+| `RejectedPositiveData` | 2 | yes, all four runs |
+| `UndefinedStatusCode` | 1 | yes, all four runs |
 
 | check | count | nature |
 |---|---|---|
@@ -216,10 +227,35 @@ There are now two:
 
 | configuration | floor | derivation |
 |---|---|---|
-| a broker answered | **440** | 449 measured 2026-08-14, less the 9-operation spread |
-| no broker answered | **436** | 445 measured 2026-08-14, less the same spread |
+| a broker answered | **445** | pooled minimum 454, less the 9-operation spread (2026-08-17) |
+| no broker answered | **445** | the same, and the two configurations no longer separate |
 
-Both floors moved on 2026-08-14, and the **floor was re-baselined to 438** for the
+**Both floors are 445 as of 2026-08-17, and the floor was re-baselined to 445 from four
+runs (FS-738).** The gain arrived as a side effect: FS-736/737 closed the foreign-key tenancy
+class, so a request naming another tenant's row now answers a declared 404 instead of reaching
+Postgres and surfacing as a 500.
+
+| configuration | conforming | operations returning 5xx |
+|---|---|---|
+| no broker, run 1 | 456 / 546 | 33 |
+| no broker, run 2 | 458 / 546 | 31 |
+| broker, run 1 | 454 / 546 | 35 |
+| broker, run 2 | 457 / 546 | 32 |
+
+**The broker distinction has collapsed**, and that is the more interesting result. The ranges
+overlap and the broker side is marginally *worse*, not better — while every non-`ServerError`
+check is IDENTICAL across all four runs (`AcceptedNegativeData` 33, `UnsupportedMethodResponse`
+22, `RejectedPositiveData` 2, `UndefinedStatusCode` 1). That stability is what rules out noise
+across the board: all the movement is in the known flapping set. This document already
+predicted it — "very little of it now blocks on the broker" — and the split into two floors,
+introduced when the gap was worth 4 operations, no longer describes anything measurable.
+
+So both floors come from the pooled minimum of 454 less the same 9-operation spread. The doc
+guard's `with_broker > without` assertion was relaxed to `>=` in the same commit, with the four
+runs recorded as the reason; the invariant it protects — the broker floor must never be the
+LOWER of the two, which would fail every build where the broker did not come up — is unchanged.
+
+The earlier history: both floors moved on 2026-08-14 to **438** for the
 configuration CI runs by default — 436 first, from a 445 measurement, then 438 the next day
 when FS-724/725 fixed two of the eight operations answering a bare `internal server error`
 and a re-run measured 447. Two fixes, two operations, confirmed by measurement rather than

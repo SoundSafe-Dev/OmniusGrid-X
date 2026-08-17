@@ -37,7 +37,7 @@
 | [Documentation](#documentation) | The rest of `docs/` |
 
 **Engineering method.** The sweeps and guards in this repository follow a set of numbered
-rules, each written after a defect that a weaker check had missed. Rules 21–238 are recorded in
+rules, each written after a defect that a weaker check had missed. Rules 21–240 are recorded in
 `docs/engineering/defect-class-sweeps.md`, with the reasoning for each; the short list at the
 top of that file is what most people read.
 
@@ -372,11 +372,29 @@ OmniusGrid is a resilient manufacturing operations platform designed for Industr
 | **Observability** | Prometheus metrics, Loki logs, Grafana dashboards, TimescaleDB |
 | **Security** | Agent enrollment with CA pinning, mTLS + proof-of-possession request signing, Redpanda broker mTLS, route-walk auth enforcement test, tamper-evident audit trails |
 | **DevOps** | GitHub Actions CI/CD with **31 blocking jobs and 1 advisory** across `quality-gates.yml` and `ci-cd.yml`, counted by `test_ci_gate_count_is_accurate.py` so this number cannot go stale (tsc/eslint/vitest/Playwright, the full backend suite against a real TimescaleDB, migration-chain hygiene, an API contract ratchet over all 546 documented operations, a k6 smoke load test against a real running app, supply-chain: pip-audit/npm-audit/Trivy, and four Kubernetes gates: manifest validation, NetworkPolicy simulation, kind smoke test, Calico policy-enforcement test), kustomize deploys with operator-gated platform stacks, Kubernetes base incl. workers + Redis + db-migrate Job, checksum-tracked SQL migration runner |
-| **Operations** | K3s-orchestrated, CloudNativePG HA (auto-failover + PITR), KEDA lag-based worker autoscaling, automatic disaster recovery. The deploy applies the monitoring/autoscaling/HA-DB stacks itself, each gated on its operator's CRDs being present |
+| **Operations** | K3s-orchestrated, CloudNativePG HA manifests (auto-failover + PITR) applied where the operator's CRDs are present — **PITR is not operational today; what runs is a nightly `pg_dump` with an RPO up to 24 h**, see [Maturity](#maturity--what-is-proven-what-is-implemented-what-is-aspirational). KEDA lag-based worker autoscaling, automatic disaster recovery. The deploy applies the monitoring/autoscaling/HA-DB stacks itself, each gated on its operator's CRDs being present |
 | **Logistics** | YMS/TMS with GeoTab telematics, detention billing, HOS compliance, dock-production sync, webhook processing |
 | **Task Management** | Kanban board with task grouping, assignment, approval workflows |
 | **Compliance** | Actionable registries (OSHA, ISO, internal), data correlation mapping, scoring. **Compliance Assistant** — grounded Q&A over the policy corpus (SOPs, OSHA, collective agreements) with inline citations, presigned links to the source documents, and the forms an answer implies you must file |
 | **Analytics** | Recharts integration with temperature trends, vibration analysis, OEE metrics, asset health distribution |
+
+### Maturity — what is proven, what is implemented, what is aspirational
+
+The table above is a capability list. This is the same platform graded by evidence, because
+"implemented" and "field-proven" are different claims and the difference is what a technical
+reviewer is actually looking for. Each row is measured, each has a guard that fails the build
+if it drifts, and each is stated here rather than left to be discovered.
+
+| Area | Status | The measured position |
+|---|---|---|
+| **DNP3** | Implemented, hardened, **not field-proven** | The collector is written and swept by the same guards as every other collector — one shared `ReconnectPolicy` for backoff and circuit-breaking, aware-UTC timestamps, counted failures — and tested against a fake master. It has never spoken to a real outstation. `dnp3_python` publishes **cp38–cp310 linux wheels only**, so its pin carries `python_version < "3.11"` and the agent image is `python:3.11-slim`: **the driver is absent from every image we build.** Live DNP3 sites: **zero**, by construction. This is a supply gap in an upstream package, not a protocol problem, and it clears when a maintained py3.11 DNP3 driver exists or we vendor a `libopendnp3` binding. The other 10 industrial protocols are unaffected |
+| **Point-in-time recovery** | **Not operational** | What runs is a nightly logical backup — `pg_dump -Fc` to S3 via the `db-backup` CronJob — with a restore drill in the blocking CI gate. **RPO is therefore up to 24 hours, not ≈0.** The CloudNativePG manifest with continuous WAL archiving does describe real PITR, and it is applied only where the CNPG operator CRDs are present, which no current environment has; the `legacy-patroni/` pgBackRest CronJob is in no kustomization and applied nowhere. Treat every pgBackRest instruction in the DR runbooks as **aspirational**. The deployed image ships no `pgbackrest` binary and sets no `archive_mode` |
+| **API contract conformance** | Measured, ratcheted, improving | **454–458 of 546** operations conform under generated input (four runs, 2026-08-17, with and without a broker). Of the 88–92 that do not, **31–35 return a 5xx** — generated input reaching Postgres unvalidated where the contract promises a 4xx. The rest are identical in every run: 33 accepting input their own schema forbids, 22 answering an undocumented status to an unsupported method, 3 others. Published rather than buried, because the instrument is the story: a Schemathesis ratchet over **all 546 operations blocks CI** at a floor that only moves up. It moved this week — the tenancy work in FS-736/737 replaced cross-tenant 500s with declared 404s, conformance went 447 → 454–458 with nobody targeting the gate, and both floors were raised (438/440 → 445) to keep the gain |
+
+Nothing above is a surprise waiting in a scanner report. If a diligence review runs
+Schemathesis, it will reproduce the third row's numbers; the ratchet, its floors and the named
+flapping operations are documented in
+[`docs/engineering/api-contract-gate.md`](docs/engineering/api-contract-gate.md).
 
 ---
 
@@ -819,7 +837,7 @@ flowchart TB
             FEAT["Feature Extraction"]
         end
         subgraph AGENTS["Edge Agents — collectors"]
-            COL["MQTT · OPC-UA · Modbus · EtherNet/IP<br/>PROFINET · BACnet · CAN · SNMP<br/>Sparkplug B · DNP3 · HTTP · OCR · file"]
+            COL["MQTT · OPC-UA · Modbus · EtherNet/IP<br/>PROFINET · BACnet · CAN · SNMP<br/>Sparkplug B · DNP3* · HTTP · OCR · file<br/>*DNP3: implemented, not field-proven"]
         end
         subgraph OPS["Operations & Correlation"]
             KANBAN["Kanban · Registries"]
@@ -850,7 +868,7 @@ reliability layers (each with its own README):
 
 | Concern | Implementation | Where |
 |---------|----------------|-------|
-| **Database HA** | 3-instance CloudNativePG — automatic failover, synchronous replication (RPO≈0), continuous WAL archiving to S3 for PITR, PgBouncer pooler | [`database-ha/`](infrastructure/k8s/database-ha/) |
+| **Database HA** | 3-instance CloudNativePG — automatic failover, synchronous replication (RPO≈0), continuous WAL archiving to S3 for PITR, PgBouncer pooler. **These are the manifest's properties, not a running cluster's — PITR is not operational today.** The stack is applied only where the CNPG operator is installed and no current environment has it, so the live RPO is the nightly `pg_dump`'s: up to 24 h | [`database-ha/`](infrastructure/k8s/database-ha/) |
 | **Worker autoscaling** | KEDA scales ingestion / export / compliance workers on Redpanda consumer-group **lag** (export + compliance scale to zero when idle) | [`autoscaling/`](infrastructure/k8s/autoscaling/) |
 | **Observability** | Prometheus + Alertmanager + kube-state-metrics + Grafana, in-cluster; canonical alert rules shared with docker-compose; a "Platform / Infra" dashboard for HA-DB / autoscaling / backups | [`monitoring/`](infrastructure/k8s/monitoring/) |
 | **Distributed tracing** | otel-collector + Jaeger, now actually reachable: policies both directions, OTLP export wired on the API and all four workers, and probes on the collector's `health_check` extension. Previously deployed with NO NetworkPolicy in a default-deny namespace and no OTEL env on the backend — dead in Kubernetes AND in compose, with nothing erroring | [`otel-collector.yaml`](infrastructure/k8s/base/otel-collector.yaml) |
@@ -2025,7 +2043,7 @@ today, start at [`docs/erp/README.md`](docs/erp/README.md) instead.
 **Infrastructure & operations**
 - [Database migrations](database/migrations/README.md) - Runner rules (never edit or rename an applied migration), the 019 gap, grandfathered duplicate prefixes, demo-data gating
 - [Kubernetes deployment](infrastructure/k8s/README.md) - Canonical k8s stack, required secrets, deploy flow
-- [Database HA (CloudNativePG)](infrastructure/k8s/database-ha/README.md) - Auto-failover, PITR, cutover + failover runbook
+- [Database HA (CloudNativePG)](infrastructure/k8s/database-ha/README.md) - Auto-failover, PITR, cutover + failover runbook. Describes the CNPG cluster, which is applied only where the operator is installed — **PITR is not operational today**
 - [Worker autoscaling (KEDA)](infrastructure/k8s/autoscaling/README.md) - Lag-based scaling, partition/threshold tuning
 - [Observability stack](infrastructure/k8s/monitoring/) - Prometheus + Alertmanager + kube-state-metrics + Grafana
 - [Secrets management](infrastructure/k8s/secrets/README.md) - Sealed Secrets + External Secrets Operator
