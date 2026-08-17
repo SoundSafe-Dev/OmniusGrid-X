@@ -37,7 +37,7 @@
 | [Documentation](#documentation) | The rest of `docs/` |
 
 **Engineering method.** The sweeps and guards in this repository follow a set of numbered
-rules, each written after a defect that a weaker check had missed. Rules 21–233 are recorded in
+rules, each written after a defect that a weaker check had missed. Rules 21–236 are recorded in
 `docs/engineering/defect-class-sweeps.md`, with the reasoning for each; the short list at the
 top of that file is what most people read.
 
@@ -1984,6 +1984,7 @@ inventory reaches; it is now generated from `App.tsx` and held there by two guar
 | Identity | Unique cryptographic identity per device |
 | API | JWT Bearer token authentication |
 | Multi-tenancy | Postgres RLS bound per transaction from the authenticated user (`app.current_org_id`), plus explicit `organization_id` predicates. **15 tables carry no org column and are scoped through their parent instead** — see the Tenant Isolation FAQ, and the register that keeps that list exact |
+| What RLS does **not** cover | **A foreign key is validated below row-level security.** A policy decides which rows a session may READ; Postgres checks a reference without consulting it, so a request body naming another tenant's id is accepted by the database and only the handler can refuse it. Six defects of this shape have been closed (operations, shop floor, notification subscriptions, insight activation, kanban task links, command submission), each with a real-database guard. Any new request field ending in `_id` needs an explicit ownership check — `verify_task_references` in [`app/api/kanban.py`](backend/app/api/kanban.py) is the pattern; 404, never 403 |
 | Audit | Hash-chained tamper-evident command logging |
 | Secrets | No plaintext secrets in git — Sealed Secrets (encrypted) or External Secrets Operator (Vault / AWS SM / GCP SM); see [`infrastructure/k8s/secrets/`](infrastructure/k8s/secrets/) |
 | Cluster network | Zero-trust: `default-deny-all` NetworkPolicy + per-workload allow-lists across every stack, with enforcement verified in CI on Calico (9 allow/deny cases); see [`infrastructure/k8s/NETWORK_SECURITY.md`](infrastructure/k8s/NETWORK_SECURITY.md) |

@@ -11999,3 +11999,100 @@ Reproduce the measurement:
 ```
 grep -c "class .*\(Create\|Request\|Update\|In\)(" backend/app/models/schemas.py
 ```
+
+## FS-736 — the same field, defended on one verb and not the other
+
+FS-735 measured a population and left it. Working it produced two defects on one route, plus a
+third in the guard that should have been watching.
+
+**One. `create_task` checked two ids and copied six.** It validated `board_id` against the
+organisation and `column_id` against the board — a route that plainly had tenancy in mind —
+and then wrote `asset_id`, `operation_id`, `alarm_id`, `command_id`, `parent_task_id` and
+`assigned_to` straight onto the row from the request body. A foreign key is checked BELOW
+row-level security, so Postgres accepted every one. Fifth instance of that class after
+FS-720, FS-724, FS-726 and FS-729, and the widest.
+
+What makes it worth its own entry is the ASYMMETRY. `update_task`, thirty lines below,
+**already refused a foreign `parent_task_id`** — its cycle walk calls `get_organization_task`,
+which 404s on a task in another tenant. The same field, on the same model, defended on `PUT`
+and unchecked on `POST`. An audit that read the update path would have come away satisfied.
+
+`alarm_id` and `command_id` were worse than unvalidated: neither column carries a foreign key
+at all, so both accepted a UUID naming nothing in any tenant.
+
+**Two, and the more serious: completing a task was a second entrance to the command API.**
+`completion_actions` is a free-form `Dict[str, Any]` on the same body, and completing the task
+hands its `execute_command` entry to `command_executor.submit_command`. Measured against the
+front door in `app/api/commands.py`:
+
+| | `POST /commands/submit` | `POST /kanban/tasks/{id}/complete` |
+|---|---|---|
+| remote agent operation | 400, use the Fleet API | **200, queued, no audit context** |
+| another org's asset | 404 | **200, command row written** |
+| `emergency_stop`, non-admin | 403 | **200, queued** |
+
+Both probes ran and both wrote a `commands` row.
+
+**What the cross-tenant variant is, and is not.** `submit_command` never compared the
+`asset_id` and `organization_id` it was handed, so the row named org A's machine and belonged
+to org B. It was never DELIVERABLE: the dispatched message carries the submitting org, and the
+edge agent drops any command whose `organization_id` is not its own
+(`edge-agent/opsgrid_agent/commands/consumer.py:440`). So the honest description is a bad row
+and a `command_executed: True` that never executed — not remote actuation of another tenant's
+machine. The two SAME-tenant variants are fully deliverable, and those are the worse half:
+they defeat an authorisation rule rather than a data boundary. An operator refused an
+emergency stop at the route that says admin-only could perform one by completing a card.
+
+Fixed in three places, deliberately not one:
+
+* `verify_task_references` on create and update — 404, not 403, because an id in another
+  tenant is an id that does not exist as far as this caller is concerned;
+* `authorize_completion_command` before the move to Done, so a completion whose action is
+  refused does not half-happen — the card must not read as finished when the side effect it
+  exists for never ran. It sits on the request path because that is where the ACTOR is known,
+  and a role check has no meaning once the request is over;
+* the asset/org agreement inside `submit_command` itself. Every route that reaches it checked;
+  the caller-by-caller arrangement is what let the next entrance start unguarded, and kanban's
+  own comment had already argued the general form of this: *"closing it there would make every
+  future consumer safe rather than each one defending itself."*
+
+Mutation-verified in three passes — create validation removed (8 failures), update validation
+removed (5), completion gate removed (4).
+
+The service-level check cost exactly one test, and it was worth reading rather than patching:
+`test_remote_operations_unit.py` drives `submit_command` through a hand-rolled `_Session` whose
+`execute` answers every query with the same object, so the new ownership lookup hit a fake with
+no `.first()`. The fake now carries `owns_asset`, stated on the fixture, **and a second test
+sets it False** — a fake that can only answer "yes" to a question the service really asks would
+keep passing after the check was deleted.
+
+**Three: the fix blinded the guard that watches for exactly this.**
+`test_declared_body_fields_reach_the_service.py` exempted any route whose handler mentioned
+`model_dump()`, reasoning that a forwarded body cannot drop a field. Adding the validation pass
+gave `create_task` a `supplied = task_data.model_dump(exclude_unset=True)` — and the route
+vanished from the sweep, taking its live register entry (`kanban:POST /tasks: ["status"]`) with
+it. The register caught the staleness; nothing would have caught the blindness.
+
+A handler that dumps the body to INSPECT it drops exactly as much as one that never dumped it.
+Measured before changing anything: **31 of 101 body-taking routes took the exemption, 17 of
+them by binding the dump to a local.** The exemption now asks what the dump is used FOR —
+splatted (`Asset(**payload)`) or iterated (`for field, value in updates.items()`), every key is
+applied and it holds; bound and read key by key, only the named keys count. Routes measured
+went 70 → 75, and the reported drops stayed at seven, all already registered. No new noise.
+
+RULE 234 — a guard that exempts on the PRESENCE of a construct exempts on a coincidence.
+`if read & {"model_dump", "dict"}: continue` asked whether the handler mentions a call, not
+what it does with the result, so any future handler could leave this sweep by adding a line
+that has nothing to do with forwarding. Exempt on the USE, and state the population the
+exemption covers.
+
+RULE 235 — when a field is validated on one verb, check the other verb before believing it.
+Create and update take the same model and are read as a pair, which is precisely why an
+inconsistency between them survives review: whichever path a reader opens first answers the
+question they came with. A per-field check belongs in a helper both call, not in whichever
+handler the defect was reported against.
+
+RULE 236 — a second entrance to a guarded surface starts with none of its guards. The command
+API's three checks live in its route, so every other path to `submit_command` began at zero.
+Ask what else calls the service, and put the invariant where the surface is, not where the
+report came from.

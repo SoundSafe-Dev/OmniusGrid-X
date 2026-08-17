@@ -1645,6 +1645,33 @@ one of its findings. The habit that catches it:
      is harder to notice because the scan looks exhaustive within its own loop. Before
      writing "complete", print the denominator and ask where else that thing is declared.
 
+234. **A guard that exempts on the PRESENCE of a construct exempts on a coincidence.**
+     `test_declared_body_fields_reach_the_service.py` skipped any route whose handler
+     mentioned `model_dump()`, on the reasoning that a forwarded body cannot drop a field.
+     Adding an ownership check to `create_task` — `supplied = task_data.model_dump(...)`,
+     then five lookups — removed the route from the sweep entirely and left its register
+     entry stale. A handler that dumps the body to INSPECT it drops exactly as much as one
+     that never dumped it. Measured: 31 of 101 body-taking routes took the exemption, 17
+     by binding the dump to a local. Exempt on the USE — splatted or iterated, every key
+     is applied; bound and read key by key, only the named keys count — and state what
+     the exemption covers. A guard weakened by an unrelated change is the failure a
+     register exists to prevent, so the exemption must be as specific as its own argument.
+
+235. **When a field is validated on one verb, check the other verb before believing it.**
+     `update_task` refused a `parent_task_id` in another tenant; `create_task`, thirty
+     lines above it on the same model, accepted it. Create and update are read as a pair,
+     which is exactly why an inconsistency between them survives review: whichever path a
+     reader opens first answers the question they arrived with. Put the per-field check in
+     a helper both call, rather than in whichever handler the report named.
+
+236. **A second entrance to a guarded surface starts with none of its guards.** The
+     command API performs three checks — asset ownership, remote operations belong to the
+     Fleet API, `emergency_stop` needs an admin — and all three live in its ROUTE. So
+     `completion_actions.execute_command` on a kanban task reached `submit_command` with
+     none of them, and an operator could queue an emergency stop by completing a card.
+     Ask what else calls the service, and put the invariant where the surface is rather
+     than where the report came from.
+
 ---
 
 ## Open observations, not yet tickets

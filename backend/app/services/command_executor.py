@@ -18,7 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.db.database import AsyncSessionLocal
-from app.db.models import Command, Organization
+from app.db.models import Asset, Command, Organization
 from app.services.remote_operations import (
     MAX_COMMAND_ACK_BYTES,
     RemoteOperationAuditContext,
@@ -184,6 +184,30 @@ class CommandExecutor:
         now = _utcnow()
         async def persist(session: AsyncSession) -> None:
             await self._set_org(session, organization_uuid)
+            # THE ASSET AND THE ORG MUST AGREE (FS-736). This method took both as
+            # arguments and never compared them, so a caller that had not checked wrote a
+            # command naming one tenant's machine and belonging to another. Every route
+            # that reaches here checks — `commands.py` looks the asset up and compares,
+            # `fleet_agents.py` goes through `_owned_agent_asset` — but a kanban task's
+            # `completion_actions.execute_command.asset_id` reached this unexamined, and
+            # the caller-by-caller arrangement means the next entrance starts unguarded
+            # too. The row was never DELIVERABLE — the edge agent drops a command whose
+            # organization_id is not its own — but it was written, counted, and reported
+            # to its submitter as executed.
+            #
+            # Checked here rather than only at the routes so the invariant belongs to the
+            # command surface itself. `_set_org` has already bound the GUC, so this read
+            # is under the same policy the write will be.
+            owner = (
+                await session.execute(
+                    select(Asset.id).where(
+                        Asset.id == asset_uuid,
+                        Asset.organization_id == organization_uuid,
+                    )
+                )
+            ).first()
+            if owner is None:
+                raise ValueError("asset_id does not belong to organization_id")
             command = Command(
                 id=command_id,
                 asset_id=asset_uuid,

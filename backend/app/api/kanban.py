@@ -10,6 +10,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, BackgroundTasks, R
 
 from app.core.pagination import mark_truncated
 from sqlalchemy import select, update, delete, func, and_, or_, text
+from sqlalchemy.exc import DBAPIError, StatementError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -19,7 +20,7 @@ from sqlalchemy.orm import selectinload
 from app.db.database import AsyncSessionLocal
 from app.db.models import (
     TaskBoard, TaskColumn, Task, TaskComment, TaskTimer, 
-    TaskRule, TaskEscalation, Asset, Alarm, User, Organization, Command
+    TaskRule, TaskEscalation, Asset, Alarm, Operation, User, Organization, Command
 )
 from app.models.schemas import (
     TaskBoardCreate, TaskBoardResponse, TaskColumnCreate, TaskColumnResponse,
@@ -35,6 +36,7 @@ from app.middleware.tenant_isolation import get_tenant_db
 from app.services.websocket_manager import websocket_manager
 
 from app.middleware.rbac import require_admin, require_operator_or_admin
+from app.services.remote_operations import is_remote_operation
 
 router = APIRouter()
 
@@ -128,6 +130,142 @@ async def get_organization_task(
     if task is None:
         raise HTTPException(status_code=404, detail="Task not found")
     return task
+
+
+#: The links a task carries, and the query that proves the caller's organisation owns
+#: each one. `parent_task_id` is absent on purpose — it is scoped through the board it
+#: sits on, so `get_organization_task` is its check and the ancestry walk in `update_task`
+#: already performs it.
+#:
+#: A FOREIGN KEY IS CHECKED BELOW ROW-LEVEL SECURITY (FS-720, FS-724, FS-726, FS-729).
+#: `assets`, `operations`, `alarms` and `commands` are all under FORCE RLS, and none of
+#: that helps here: the policy decides what a session may READ, and Postgres validates a
+#: reference without consulting it. `tasks.alarm_id` and `tasks.command_id` do not even
+#: carry a foreign key, so those two accepted a UUID naming nothing at all.
+def _owned_reference_queries(organization_id: str) -> Dict[str, Any]:
+    """field name -> a query returning one row iff the organisation owns that id."""
+    return {
+        "asset_id": lambda ref: select(Asset.id).where(
+            Asset.id == ref, Asset.organization_id == organization_id
+        ),
+        # `operations` carries no organization_id; it is tenanted through its asset, the
+        # same join `_own_operation` uses in `app/api/operations.py` (FS-720).
+        "operation_id": lambda ref: (
+            select(Operation.id)
+            .join(Asset, Operation.asset_id == Asset.id)
+            .where(Operation.id == ref, Asset.organization_id == organization_id)
+        ),
+        "alarm_id": lambda ref: select(Alarm.id).where(
+            Alarm.id == ref, Alarm.organization_id == organization_id
+        ),
+        "command_id": lambda ref: select(Command.id).where(
+            Command.id == ref, Command.organization_id == organization_id
+        ),
+        "assigned_to": lambda ref: select(User.id).where(
+            User.id == ref, User.organization_id == organization_id
+        ),
+    }
+
+
+async def verify_task_references(
+    session: AsyncSession, organization_id: str, supplied: Dict[str, Any]
+) -> None:
+    """Refuse a task link the caller's organisation does not own.
+
+    `create_task` validated `board_id` against the organisation and `column_id` against
+    the board, and then copied five more ids out of the request body into the row without
+    looking at any of them. The result was a card on your own board pointing at another
+    tenant's machine, alarm, operation or command, assigned to a user you cannot see.
+
+    404, not 403: an id belonging to another tenant is an id that does not exist as far as
+    this caller is concerned, and 403 would confirm that it does. `get_organization_task`
+    answers 404 for the same reason.
+
+    Only fields the caller actually sent reach here, so an explicit `null` still unlinks.
+    """
+    queries = _owned_reference_queries(organization_id)
+    for field, query_for in queries.items():
+        value = supplied.get(field)
+        if value is None:
+            continue
+        try:
+            owned = (await session.execute(query_for(str(value)))).first()
+        except (DBAPIError, StatementError):
+            # A malformed id is an id nobody owns. Postgres refuses to compare a
+            # non-UUID string to a uuid column, and that must read as "not found"
+            # rather than escape as a 500 — `tasks.command_id` is a text column, so
+            # this is reachable with an ordinary string.
+            await session.rollback()
+            owned = None
+        if owned is None:
+            raise HTTPException(status_code=404, detail=f"{field} not found")
+
+
+async def authorize_completion_command(
+    session: AsyncSession, task: Task, current_user: User
+) -> None:
+    """Apply the command API's own gates to a task's `execute_command` action (FS-736).
+
+    A task's `completion_actions` is a free-form dict on the request body, and completing
+    the task hands `execute_command` straight to `command_executor.submit_command`. That
+    is a second entrance to the command surface, and it had none of the three checks the
+    front entrance performs in `app/api/commands.py`:
+
+      * the asset must belong to the caller's organisation — `submit_command` does not
+        verify that its `asset_id` and its `organization_id` agree, so a command row was
+        written naming another tenant's machine and attributed to the caller's org;
+      * a remote agent operation must go through the Fleet operations API, which records
+        a `RemoteOperationAuditContext`. Submitted here, `remote_audit` is `None` and the
+        operation runs — if it runs at all — with no record of who asked for it;
+      * `emergency_stop` requires an admin. An operator could stop a line by completing a
+        card, having been refused at the route that says so.
+
+    WHAT THIS IS NOT. The dispatched message carries the SUBMITTING org, and the edge
+    agent drops any command whose `organization_id` is not its own
+    (`edge-agent/opsgrid_agent/commands/consumer.py:440`), so the cross-tenant variant was
+    never deliverable — it is a bad row and a false `command_executed: True`, not remote
+    actuation of another tenant's machine. The same-tenant variants are fully deliverable,
+    and those are the two that defeat an authorisation rule rather than a data boundary.
+
+    The gate lives here rather than in the background task because this is where the
+    ACTOR is known — a role check has no meaning once the request is over.
+    """
+    actions = task.completion_actions or {}
+    cmd_action = actions.get("execute_command")
+    if not isinstance(cmd_action, dict):
+        return
+
+    action_id = cmd_action.get("action_id")
+    if is_remote_operation(action_id):
+        raise HTTPException(
+            status_code=400,
+            detail="Remote agent operations must use the Fleet operations API",
+        )
+    if action_id == "emergency_stop" and current_user.role != "admin":
+        raise HTTPException(
+            status_code=403, detail="Emergency stop requires admin role"
+        )
+
+    # `or task.asset_id` mirrors the executor's own fallback. The task's own asset is
+    # verified at create and update time now, but resolving it the same way here means
+    # this check cannot be bypassed by omitting the field.
+    asset_id = cmd_action.get("asset_id") or task.asset_id
+    if asset_id is None:
+        return
+    try:
+        owned = (
+            await session.execute(
+                select(Asset.id).where(
+                    Asset.id == str(asset_id),
+                    Asset.organization_id == current_user.organization_id,
+                )
+            )
+        ).first()
+    except (DBAPIError, StatementError):
+        await session.rollback()
+        owned = None
+    if owned is None:
+        raise HTTPException(status_code=404, detail="Asset not found")
 
 
 async def log_task_comment(
@@ -369,7 +507,20 @@ async def create_task(
     column = result.scalar_one_or_none()
     if not column:
         raise HTTPException(status_code=404, detail="Column not found")
-    
+
+    # THE OTHER SIX IDS IN THIS BODY (FS-736). `board_id` and `column_id` were checked
+    # above and the rest were copied straight onto the row. `update_task` validates
+    # `parent_task_id` and this did not — the same field, defended on one verb and not
+    # the other, which is why the gap survived a route that clearly had tenancy in mind.
+    supplied = task_data.model_dump(exclude_unset=True)
+    await verify_task_references(session, current_user.organization_id, supplied)
+    if supplied.get("parent_task_id") is not None:
+        # 404s on a parent in another tenant, exactly as the update path does. No cycle
+        # walk is needed here: a task that does not exist yet cannot be its own ancestor.
+        await get_organization_task(
+            session, supplied["parent_task_id"], current_user.organization_id
+        )
+
     # Get max position for ordering
     result = await session.execute(
         select(func.max(Task.position)).where(Task.column_id == task_data.column_id)
@@ -471,6 +622,11 @@ async def update_task(
     # their `is not None` behaviour, because changing it would silently alter what an
     # existing client's `null` means.
     supplied = task_update.model_dump(exclude_unset=True)
+
+    # The links, before anything is assigned (FS-736). `parent_task_id` was already
+    # checked below by the ancestry walk; the other five reached `setattr` unexamined, so
+    # a task could be RE-pointed at another tenant's asset even after creation was fixed.
+    await verify_task_references(session, current_user.organization_id, supplied)
 
     if "board_id" in supplied and supplied["board_id"] != task.board_id:
         # A board move needs a column on the destination board, or the task lands in a
@@ -899,7 +1055,11 @@ async def complete_task(
     task = await get_organization_task(
         session, task_id, current_user.organization_id
     )
-    
+
+    # THE SECOND DOOR ONTO COMMAND SUBMISSION (FS-736). Refused BEFORE the task is moved,
+    # so a completion that cannot lawfully run its action does not half-happen.
+    await authorize_completion_command(session, task, current_user)
+
     # Move to Done
     done_column = await get_column_by_type(session, task.board_id, "done")
     if not done_column:

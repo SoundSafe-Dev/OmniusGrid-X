@@ -237,6 +237,97 @@ def _forwarded_reads(node, var, stem, depth=0, seen=frozenset()) -> set[str]:
     return out
 
 
+def _dumped_locals(tree, var: str) -> list[str]:
+    """Locals bound to `var.model_dump(...)` / `var.dict(...)`."""
+    out = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Assign) or not isinstance(node.value, ast.Call):
+            continue
+        func = node.value.func
+        if (
+            isinstance(func, ast.Attribute)
+            and func.attr in {"model_dump", "dict"}
+            and _root_name(func.value) == var
+        ):
+            out += [t.id for t in node.targets if isinstance(t, ast.Name)]
+    return out
+
+
+def _dump_is_applied_wholesale(tree, local: str) -> bool:
+    """Is every key of `local` applied, whatever those keys turn out to be?
+
+    Two constructs do that and are the reason the `model_dump()` exemption exists at all:
+    a splat — `Asset(**payload)`, `NotificationSubscription(**fields)` — and an iteration
+    — `for field, value in updates.items(): setattr(row, field, value)`. Both honour a
+    field the handler never names, which is exactly what the exemption claims.
+
+    Reading `updates.get("export_format")` is NOT that, and neither is passing the dict to
+    a helper that looks at four keys of it.
+    """
+    for node in ast.walk(tree):
+        if isinstance(node, ast.keyword) and node.arg is None:
+            if _root_name(node.value) == local:
+                return True  # f(**local)
+        if isinstance(node, ast.Dict) and any(
+            k is None and _root_name(v) == local for k, v in zip(node.keys, node.values)
+        ):
+            return True  # {**local}
+        if isinstance(node, (ast.For, ast.AsyncFor)):
+            iterated = node.iter
+            if isinstance(iterated, ast.Call) and isinstance(iterated.func, ast.Attribute):
+                if iterated.func.attr in {"items", "keys"} and _root_name(iterated.func.value) == local:
+                    return True  # for k, v in local.items()
+            if _root_name(iterated) == local:
+                return True  # for k in local
+    return False
+
+
+def _dump_key_reads(tree, local: str) -> set[str]:
+    """The keys of `local` a handler names explicitly, including through a literal loop.
+
+    `local["x"]`, `local.get("x")`, `"x" in local`, and the shape `update_task` uses:
+    `for field in ("a", "b", ...): setattr(task, field, supplied[field])`, where the names
+    are a literal tuple rather than the dict's own keys. That loop honours exactly the
+    fields it lists, so the list is the read set.
+    """
+    out: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Subscript) and _root_name(node.value) == local:
+            if isinstance(node.slice, ast.Constant) and isinstance(node.slice.value, str):
+                out.add(node.slice.value)
+        if (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "get"
+            and _root_name(node.func.value) == local
+            and node.args
+            and isinstance(node.args[0], ast.Constant)
+            and isinstance(node.args[0].value, str)
+        ):
+            out.add(node.args[0].value)
+        if isinstance(node, ast.Compare) and any(
+            isinstance(op, ast.In) for op in node.ops
+        ):
+            for comparator in node.comparators:
+                if _root_name(comparator) == local and isinstance(
+                    node.left, ast.Constant
+                ) and isinstance(node.left.value, str):
+                    out.add(node.left.value)
+        if isinstance(node, (ast.For, ast.AsyncFor)) and isinstance(
+            node.iter, (ast.Tuple, ast.List, ast.Set)
+        ):
+            names = {
+                e.value for e in node.iter.elts
+                if isinstance(e, ast.Constant) and isinstance(e.value, str)
+            }
+            if names and any(
+                isinstance(n, ast.Subscript) and _root_name(n.value) == local
+                for n in ast.walk(node)
+            ):
+                out |= names
+    return out
+
+
 def _routes():
     """(key, declared fields, fields the handler reads) for every body-taking route."""
     fields, bases = _schemas()
@@ -255,15 +346,41 @@ def _routes():
             if not declared:
                 continue
             read = set(re.findall(rf"\b{var}\.(\w+)", chunk))
+            tree = None
             try:
-                read |= _forwarded_reads(ast.parse(chunk), var, path.stem)
+                tree = ast.parse(chunk)
+                read |= _forwarded_reads(tree, var, path.stem)
             except SyntaxError:
                 pass
             # `model_dump()` forwards the whole body at once; nothing can be dropped. Checked
             # against the FOLLOWED reads, not the handler text: `POST /answer` dumps the body
             # inside `_run_question`, one hop away, and testing the chunk alone called that a
             # nine-field drop on the route whose whole purpose is to forward the question.
-            if read & {"model_dump", "dict"}:
+            #
+            # BUT ONLY WHEN IT IS ACTUALLY FORWARDED (FS-736). This began as `if read &
+            # {"model_dump", "dict"}: continue`, which exempted a route for MENTIONING the
+            # call — and a handler that dumps the body to INSPECT it drops just as much as
+            # one that never dumped it at all. Adding a validation pass to
+            # `kanban:POST /tasks` (`supplied = task_data.model_dump(exclude_unset=True)`,
+            # then five ownership checks) removed that route from this sweep entirely, and
+            # its live register entry went stale — the guard was weakened by a change that
+            # had nothing to do with it, which is the failure mode a register exists to
+            # prevent. Measured at the time: 31 of 101 body-taking routes took the
+            # exemption, 17 of them by binding the dump to a local.
+            #
+            # So the exemption now asks what the dump is USED for. Splatted or iterated,
+            # every key is applied and the exemption holds. Bound and read key by key, only
+            # the named keys count — and the route is measured like any other.
+            if tree is not None:
+                locals_ = _dumped_locals(tree, var)
+                if locals_:
+                    if any(_dump_is_applied_wholesale(tree, name) for name in locals_):
+                        continue
+                    for name in locals_:
+                        read |= _dump_key_reads(tree, name)
+                elif read & {"model_dump", "dict"}:
+                    continue  # dumped straight into a call, a return or a splat
+            elif read & {"model_dump", "dict"}:
                 continue
             yield f"{path.stem}:{verb.upper()} {route}", declared, read
 

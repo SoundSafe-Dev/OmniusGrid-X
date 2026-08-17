@@ -3636,3 +3636,104 @@ sentence built on it was not.
 **Print the denominator and ask where else the thing is declared.** "12 models" invites the
 question "out of how many?" in a way "complete" does not — which is the whole of rule 165,
 turned on the sweep instead of the code.
+
+## Rule 234 — a guard that exempts on the presence of a construct exempts on a coincidence
+
+`test_declared_body_fields_reach_the_service.py` asks whether a route declares body fields its
+handler never reads. It carried one exemption, and the exemption was argued well:
+
+```python
+# `model_dump()` forwards the whole body at once; nothing can be dropped.
+if read & {"model_dump", "dict"}:
+    continue
+```
+
+The argument is sound for the case it was written for — `POST /answer` hands the whole request
+to `_run_question`, and measuring the handler body alone called that a nine-field drop on the
+route whose entire purpose is to forward the question.
+
+The implementation asks a different question than the argument does. It asks whether the
+handler MENTIONS `model_dump`, not what it does with the result.
+
+I found this by breaking it. Closing the foreign-key gap on `create_task` meant inspecting the
+body before writing the row:
+
+```python
+supplied = task_data.model_dump(exclude_unset=True)
+await verify_task_references(session, current_user.organization_id, supplied)
+```
+
+That one line removed the route from the sweep. Its live register entry —
+`"kanban:POST /tasks": ["status"]`, a field the handler genuinely computes and discards — went
+stale in the same moment, and the register's own staleness check is what failed. Nothing would
+have caught the blindness itself; a route that quietly stops being measured has no symptom.
+
+A handler that dumps the body to INSPECT it drops exactly as much as one that never dumped it.
+Measured before touching anything:
+
+    body-taking routes with declared fields : 101
+    exempted by the model_dump shortcut     : 31
+    of those, bound to a local (inspected)  : 17
+
+Seventeen routes were exempt on a coincidence, and any future handler could leave the sweep by
+adding a line that has nothing to do with forwarding.
+
+The exemption now asks what the dump is USED for. Splatted (`Asset(**payload)`) or iterated
+(`for field, value in updates.items(): setattr(row, field, value)`), every key is applied
+whatever the keys turn out to be — that is what the original argument actually claimed, and it
+holds. Bound and read key by key — `updates.get("export_format")` — only the named keys count,
+and the route is measured like any other. The literal-loop form `update_task` uses
+(`for field in ("asset_id", …): setattr(task, field, supplied[field])`) reads exactly the names
+it lists, so the list is the read set.
+
+Routes measured went 70 → 75. Reported drops stayed at seven, all already registered: the
+sharpening added no noise, which is the check that matters — a guard made stricter at the cost
+of false positives gets silenced within a month.
+
+**Write the exemption so it can only fire for the reason you argued.** If the justification is
+"the body is forwarded", test for forwarding, not for the name of a method that sometimes
+forwards.
+
+## Rule 235 — when a field is validated on one verb, check the other verb
+
+`update_task` refuses a `parent_task_id` that belongs to another tenant. Its cycle walk calls
+`get_organization_task`, which 404s on a task the caller cannot see, and there is a comment
+explaining why the helper was chosen over a hand-rolled query.
+
+`create_task`, thirty lines above it, accepted the same field on the same model without
+looking at it.
+
+This is why that kind of gap survives review. Create and update are read as a pair; whichever
+one a reader opens first answers the question they arrived with. An audit that started at the
+update path would have found a careful, well-commented tenancy check and moved on.
+
+The fix is structural, not vigilance: `verify_task_references` is one helper and both handlers
+call it. A per-field check that lives inside a single handler is a check the sibling handler
+does not have.
+
+## Rule 236 — a second entrance to a guarded surface starts with none of its guards
+
+`POST /commands/submit` performs three checks before a command is queued: the asset must belong
+to the caller's organisation, a remote agent operation must go through the Fleet API so it
+carries an audit context, and `emergency_stop` requires an admin. All three live in the route.
+
+A kanban task's `completion_actions.execute_command` reaches `command_executor.submit_command`
+directly, so it had none of them. An operator refused an emergency stop at the door that says
+admin-only could perform one by completing a card.
+
+The cross-tenant version of this deserves its honest description rather than its alarming one.
+`submit_command` never compared the `asset_id` and `organization_id` it was handed, so the row
+it wrote named one tenant's machine and belonged to another — but it was never deliverable: the
+dispatched message carries the SUBMITTING org, and the edge agent drops any command whose
+`organization_id` is not its own. A bad row and a `command_executed: True` that never executed.
+The same-tenant variants are the worse half precisely because they ARE deliverable: they defeat
+an authorisation rule rather than a data boundary.
+
+The invariant now sits inside `submit_command`, where the surface is. Kanban's own code had
+already made this argument about a different field, one comment away from the defect:
+
+> Closing it there would make every future consumer safe rather than each one defending itself.
+
+**Ask what else calls the service.** A guard placed at the route where the report came from
+protects that route. A guard placed at the service protects the entrance nobody has written
+yet.

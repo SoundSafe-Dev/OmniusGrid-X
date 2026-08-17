@@ -16,16 +16,31 @@ from app.services.remote_operations import (
 
 
 class _Result:
-    def __init__(self, command):
+    def __init__(self, command, owns_asset=True):
         self.command = command
+        self.owns_asset = owns_asset
 
     def scalar_one_or_none(self):
         return self.command
 
+    def first(self):
+        """`submit_command` now verifies the asset belongs to the organisation before it
+        persists anything (FS-736), and this fake answers every query with one object.
+        `owns_asset` is what that check reads — stated on the fixture rather than assumed,
+        because the precondition is now part of what `submit_command` promises, and a fake
+        that silently answers "yes" to a question the service really asks is a fake that
+        will keep passing after the check is deleted.
+
+        The cross-tenant refusal is asserted against a real database, in
+        `test_a_task_may_only_link_what_you_own_realdb.py` — a hand-rolled session cannot
+        prove an ownership predicate, only that one was issued."""
+        return (object(),) if self.owns_asset else None
+
 
 class _Session:
-    def __init__(self, command=None):
+    def __init__(self, command=None, owns_asset=True):
         self.command = command
+        self.owns_asset = owns_asset
         self.added = []
         self.commits = 0
 
@@ -39,7 +54,7 @@ class _Session:
         return None
 
     async def execute(self, _query):
-        return _Result(self.command)
+        return _Result(self.command, self.owns_asset)
 
     def add(self, value):
         self.added.append(value)
@@ -146,6 +161,35 @@ async def test_submit_persists_requested_audit_atomically_without_result_content
     assert audits[0].details["target_agent_id"] == "agent-1"
     assert "result" not in audits[0].details
     assert session.commits == 1
+
+
+@pytest.mark.asyncio
+async def test_submit_refuses_an_asset_the_organization_does_not_own():
+    """The other side of `owns_asset` (FS-736), so the flag above is a precondition rather
+    than a rubber stamp — a fake that can only answer "yes" proves nothing about a check.
+
+    `submit_command` took `asset_id` and `organization_id` and never compared them. Every
+    ROUTE that reaches it did compare, so the gap was invisible until a kanban task's
+    `completion_actions.execute_command.asset_id` arrived here unexamined and wrote a
+    command naming one tenant's machine and belonging to another. Nothing is added and
+    nothing is committed: the refusal comes before the row exists.
+    """
+    session = _Session(owns_asset=False)
+    executor = CommandExecutor()
+    executor._broadcast_safely = AsyncMock()
+
+    with pytest.raises(ValueError, match="does not belong"):
+        await executor.submit_command(
+            asset_id=str(uuid4()),
+            command_type="system",
+            action_id="pause_job",
+            parameters={},
+            organization_id=str(uuid4()),
+            db_session=session,
+        )
+
+    assert session.added == [], "a command was added for an asset in another organisation"
+    assert session.commits == 0
 
 
 @pytest.mark.asyncio
