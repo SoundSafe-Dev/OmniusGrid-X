@@ -3737,3 +3737,75 @@ already made this argument about a different field, one comment away from the de
 **Ask what else calls the service.** A guard placed at the route where the report came from
 protects that route. A guard placed at the service protects the entrance nobody has written
 yet.
+
+## Rule 237 — when the sixth instance arrives, stop fixing instances
+
+Six defects of one shape had been closed by the time this came round again:
+
+    FS-720  operations                      the asset a completion names
+    FS-724  four shop-floor writes          asset_id on each
+    FS-726  two notification subscriptions  asset_id on create and patch
+    FS-729  insight activation              asset_id, session_id
+    FS-736  kanban task links               six fields, plus the command back door
+
+Every one is a correct fix with a real-database guard behind it. Not one of them made the
+seventh route any safer, because a check written inside a handler leaves nothing that a NEW
+field has to pass. The seventh instance starts exactly where the first did.
+
+What broke the pattern was asking for the denominator instead of the next report — rule 233,
+applied before the work rather than after it:
+
+    89 id-shaped fields
+    35 request models
+    31 live routes
+
+That number is the argument. It is not a number you answer with a seventh hand-written check,
+and seeing it written down is what makes the per-handler answer visibly wrong.
+
+So the deliverable changed shape. `backend/app/core/tenant_refs.py` holds one registry — field name to
+the query that proves the caller's organisation owns that row — and `verify_refs` is wired
+into twenty handlers across six routers. The FS-736 copy inside `kanban.py` was deleted; there
+is one implementation now.
+
+**The registry is not the durable part. The guard over it is.**
+`test_every_tenant_reference_is_registered.py` walks every request model in
+`app/models/schemas.py` and asserts that each id-shaped field appears either in `TENANT_REFS`,
+where it is verified, or in `NOT_TENANT_SCOPED` with a written reason. A field added next year
+fails the build. That is the difference between closing a class and closing seven instances of
+it.
+
+Pair it with a behavioural guard, always. An accounting can be perfect while a handler never
+calls the verifier — so `test_a_tenant_reference_is_refused_realdb.py` drives the routes over
+HTTP and asserts the 404. Unregistering `carrier_id` fails both, in different ways, which is
+how you know they are measuring different things.
+
+## Rule 238 — a heuristic that clears is more dangerous than one that flags
+
+Triaging 89 fields, I wrote a proximity scan: does an ownership check appear near this field
+in its handler? It marked 33 suspect and 33 apparently fine.
+
+Both halves were wrong, and asymmetrically.
+
+It **flagged** `operations:POST /`, which is safe — the handler looks the asset up on a
+tenant-bound session, so RLS returns nothing for another tenant and the 404 is already
+correct. Cost: one probe.
+
+It **cleared** `yard:POST /trailers/checkin`, which was exploitable, and a request naming
+another tenant's carrier and driver was accepted with a 200. It cleared because the word
+`organization_id` appears three lines from the fields in question — in this comment:
+
+> FROM THE TOKEN, NEVER THE REQUEST. This read `data.organization_id`, a field the client
+> supplies, so a caller could file the row under any organisation they named.
+
+A previous fix, correctly applied and carefully explained, sitting directly beside the ids
+nobody checked. The signal the heuristic keyed on is exactly what a handler doing tenancy
+RIGHT looks like.
+
+Rule 206 says a proximity check can PASS for the wrong reason. This is the same defect aimed
+the other way: it can CLEAR for the wrong reason, and a false clear ends the investigation
+where a false flag only costs a probe. The two are not symmetric and should not be traded off
+as though they were.
+
+**Order the work with a heuristic. Never shorten it with one.** Every row in FS-737 was driven
+over HTTP before it was touched — including the ones the triage had already cleared, which is
+the only reason the check-in defect was found at all.

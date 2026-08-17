@@ -32,6 +32,7 @@ from app.models.schemas import (
 from app.middleware.rbac import require_admin
 from app.db.database import get_db
 from app.core.tenant import get_tenant_db
+from app.core.tenant_refs import verify_refs
 from app.middleware.rbac import require_admin
 
 router = APIRouter(prefix="/api/v1/registries", tags=["registries"])
@@ -124,6 +125,11 @@ async def update_registry(
     db: AsyncSession = Depends(get_tenant_db)
 ):
     """Update an existing actionable registry"""
+
+    # EVERY ID IN THIS BODY, AGAINST THE CALLER'S OWN ORGANISATION (FS-737). A foreign key
+    # is checked BELOW row-level security, so a body naming another tenant's row is accepted
+    # by the database and only the handler can refuse it.
+    await verify_refs(db, current_user.organization_id, registry.model_dump(exclude_unset=True))
     result = await db.execute(
         select(ActionableRegistry).where(
             and_(
@@ -221,6 +227,11 @@ async def create_registry_item(
     db: AsyncSession = Depends(get_tenant_db)
 ):
     """Create a new item in a registry"""
+
+    # EVERY ID IN THIS BODY, AGAINST THE CALLER'S OWN ORGANISATION (FS-737). A foreign key
+    # is checked BELOW row-level security, so a body naming another tenant's row is accepted
+    # by the database and only the handler can refuse it.
+    await verify_refs(db, current_user.organization_id, item.model_dump(exclude_unset=True))
     # Verify registry exists and belongs to organization
     registry_result = await db.execute(
         select(ActionableRegistry).where(
@@ -255,6 +266,11 @@ async def update_registry_item(
     db: AsyncSession = Depends(get_tenant_db)
 ):
     """Update an existing registry item"""
+
+    # EVERY ID IN THIS BODY, AGAINST THE CALLER'S OWN ORGANISATION (FS-737). A foreign key
+    # is checked BELOW row-level security, so a body naming another tenant's row is accepted
+    # by the database and only the handler can refuse it.
+    await verify_refs(db, current_user.organization_id, item.model_dump(exclude_unset=True))
     result = await db.execute(
         select(ActionableRegistryItem).join(ActionableRegistry).where(
             and_(

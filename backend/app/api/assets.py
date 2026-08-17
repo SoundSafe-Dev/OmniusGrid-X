@@ -27,6 +27,7 @@ from app.models.schemas import (
     AssetCreate, AssetResponse, AssetUpdate,
     AssetTypeCreate, AssetTypeResponse
 )
+from app.core.tenant_refs import verify_refs
 
 router = APIRouter(dependencies=[Depends(get_current_active_user)])
 
@@ -141,6 +142,11 @@ async def create_asset(
     db: AsyncSession = Depends(get_tenant_db),
 ):
     """Create a new asset in the authenticated user's organization."""
+
+    # EVERY ID IN THIS BODY, AGAINST THE CALLER'S OWN ORGANISATION (FS-737). A foreign key
+    # is checked BELOW row-level security, so a body naming another tenant's row is accepted
+    # by the database and only the handler can refuse it.
+    await verify_refs(db, org_id, asset_data.model_dump(exclude_unset=True))
     result = await db.execute(
         select(AssetType).where(AssetType.id == asset_data.asset_type_id)
     )
@@ -180,6 +186,11 @@ async def update_asset(
     db: AsyncSession = Depends(get_tenant_db),
 ):
     """Update an asset within the authenticated user's organization."""
+
+    # EVERY ID IN THIS BODY, AGAINST THE CALLER'S OWN ORGANISATION (FS-737). A foreign key
+    # is checked BELOW row-level security, so a body naming another tenant's row is accepted
+    # by the database and only the handler can refuse it.
+    await verify_refs(db, org_id, asset_data.model_dump(exclude_unset=True))
     result = await db.execute(
         select(Asset).where(
             Asset.id == asset_id,

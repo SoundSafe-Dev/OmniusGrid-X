@@ -37,6 +37,7 @@ from app.services.websocket_manager import websocket_manager
 
 from app.middleware.rbac import require_admin, require_operator_or_admin
 from app.services.remote_operations import is_remote_operation
+from app.core.tenant_refs import verify_refs
 
 router = APIRouter()
 
@@ -132,73 +133,16 @@ async def get_organization_task(
     return task
 
 
-#: The links a task carries, and the query that proves the caller's organisation owns
-#: each one. `parent_task_id` is absent on purpose — it is scoped through the board it
-#: sits on, so `get_organization_task` is its check and the ancestry walk in `update_task`
-#: already performs it.
-#:
-#: A FOREIGN KEY IS CHECKED BELOW ROW-LEVEL SECURITY (FS-720, FS-724, FS-726, FS-729).
-#: `assets`, `operations`, `alarms` and `commands` are all under FORCE RLS, and none of
-#: that helps here: the policy decides what a session may READ, and Postgres validates a
-#: reference without consulting it. `tasks.alarm_id` and `tasks.command_id` do not even
-#: carry a foreign key, so those two accepted a UUID naming nothing at all.
-def _owned_reference_queries(organization_id: str) -> Dict[str, Any]:
-    """field name -> a query returning one row iff the organisation owns that id."""
-    return {
-        "asset_id": lambda ref: select(Asset.id).where(
-            Asset.id == ref, Asset.organization_id == organization_id
-        ),
-        # `operations` carries no organization_id; it is tenanted through its asset, the
-        # same join `_own_operation` uses in `app/api/operations.py` (FS-720).
-        "operation_id": lambda ref: (
-            select(Operation.id)
-            .join(Asset, Operation.asset_id == Asset.id)
-            .where(Operation.id == ref, Asset.organization_id == organization_id)
-        ),
-        "alarm_id": lambda ref: select(Alarm.id).where(
-            Alarm.id == ref, Alarm.organization_id == organization_id
-        ),
-        "command_id": lambda ref: select(Command.id).where(
-            Command.id == ref, Command.organization_id == organization_id
-        ),
-        "assigned_to": lambda ref: select(User.id).where(
-            User.id == ref, User.organization_id == organization_id
-        ),
-    }
-
-
-async def verify_task_references(
-    session: AsyncSession, organization_id: str, supplied: Dict[str, Any]
-) -> None:
-    """Refuse a task link the caller's organisation does not own.
-
-    `create_task` validated `board_id` against the organisation and `column_id` against
-    the board, and then copied five more ids out of the request body into the row without
-    looking at any of them. The result was a card on your own board pointing at another
-    tenant's machine, alarm, operation or command, assigned to a user you cannot see.
-
-    404, not 403: an id belonging to another tenant is an id that does not exist as far as
-    this caller is concerned, and 403 would confirm that it does. `get_organization_task`
-    answers 404 for the same reason.
-
-    Only fields the caller actually sent reach here, so an explicit `null` still unlinks.
-    """
-    queries = _owned_reference_queries(organization_id)
-    for field, query_for in queries.items():
-        value = supplied.get(field)
-        if value is None:
-            continue
-        try:
-            owned = (await session.execute(query_for(str(value)))).first()
-        except (DBAPIError, StatementError):
-            # A malformed id is an id nobody owns. Postgres refuses to compare a
-            # non-UUID string to a uuid column, and that must read as "not found"
-            # rather than escape as a 500 — `tasks.command_id` is a text column, so
-            # this is reachable with an ordinary string.
-            await session.rollback()
-            owned = None
-        if owned is None:
-            raise HTTPException(status_code=404, detail=f"{field} not found")
+# THE LOCAL COPY OF THIS IS GONE (FS-737). FS-736 closed the task links with a
+# `_owned_reference_queries` map declared here, and it was right for kanban and useless to
+# every other router — nine more cross-tenant writes were then reproduced across yard and
+# transportation, each needing the same five lines. `app/core/tenant_refs.py` holds the one
+# registry now, and `test_every_tenant_reference_is_registered.py` fails the build when a
+# request schema declares an id-shaped field that is neither verified nor explained.
+#
+# `parent_task_id` IS registered there (via its board), so it no longer needs the separate
+# `get_organization_task` call that `create_task` used to make — but the ancestry walk in
+# `update_task` still does, for the cycle check, which is a different question.
 
 
 async def authorize_completion_command(
@@ -513,7 +457,7 @@ async def create_task(
     # `parent_task_id` and this did not — the same field, defended on one verb and not
     # the other, which is why the gap survived a route that clearly had tenancy in mind.
     supplied = task_data.model_dump(exclude_unset=True)
-    await verify_task_references(session, current_user.organization_id, supplied)
+    await verify_refs(session, current_user.organization_id, supplied)
     if supplied.get("parent_task_id") is not None:
         # 404s on a parent in another tenant, exactly as the update path does. No cycle
         # walk is needed here: a task that does not exist yet cannot be its own ancestor.
@@ -626,7 +570,7 @@ async def update_task(
     # The links, before anything is assigned (FS-736). `parent_task_id` was already
     # checked below by the ancestry walk; the other five reached `setattr` unexamined, so
     # a task could be RE-pointed at another tenant's asset even after creation was fixed.
-    await verify_task_references(session, current_user.organization_id, supplied)
+    await verify_refs(session, current_user.organization_id, supplied)
 
     if "board_id" in supplied and supplied["board_id"] != task.board_id:
         # A board move needs a column on the destination board, or the task lands in a
@@ -1646,6 +1590,11 @@ async def create_task_rule(
     current_user: User = Depends(get_current_active_user)
 ):
     """Create a new automation rule"""
+
+    # EVERY ID IN THIS BODY, AGAINST THE CALLER'S OWN ORGANISATION (FS-737). A foreign key
+    # is checked BELOW row-level security, so a body naming another tenant's row is accepted
+    # by the database and only the handler can refuse it.
+    await verify_refs(session, current_user.organization_id, rule_data.model_dump(exclude_unset=True))
     rule = TaskRule(
         organization_id=current_user.organization_id,
         rule_name=rule_data.rule_name,
@@ -1685,6 +1634,11 @@ async def update_task_rule(
     current_user: User = Depends(get_current_active_user)
 ):
     """Update an automation rule"""
+
+    # EVERY ID IN THIS BODY, AGAINST THE CALLER'S OWN ORGANISATION (FS-737). A foreign key
+    # is checked BELOW row-level security, so a body naming another tenant's row is accepted
+    # by the database and only the handler can refuse it.
+    await verify_refs(session, current_user.organization_id, rule_update.model_dump(exclude_unset=True))
     result = await session.execute(
         select(TaskRule).where(
             and_(

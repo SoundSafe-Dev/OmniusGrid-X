@@ -328,6 +328,46 @@ def _dump_key_reads(tree, local: str) -> set[str]:
     return out
 
 
+#: Callees that INSPECT a dumped body rather than consume it. Passing
+#: `data.model_dump()` to one of these says nothing about whether the fields reach the
+#: service, so it must not exempt the route.
+#:
+#: THIS LIST EXISTS BECAUSE THE FIX FOR RULE 234 REPEATED THE MISTAKE IT FIXED. That rule
+#: narrowed the exemption from "the handler mentions model_dump" to "the dump is forwarded
+#: rather than bound and inspected" — and kept treating any call argument as a forward.
+#: Wiring `verify_refs(db, org, data.model_dump(exclude_unset=True))` into twenty handlers
+#: then removed three more routes from this sweep and staled three register entries, the
+#: identical symptom one level down. A call argument is a forward only if the callee is
+#: forwarding it.
+INSPECTORS = {"verify_refs", "verify_task_references", "_reject_explicit_nulls"}
+
+
+def _dump_is_only_inspected(tree, var: str) -> bool:
+    """Is every `var.model_dump()` in this handler an argument to an inspector?"""
+    dumps, inspected = [], []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        func = node.func
+        if (
+            isinstance(func, ast.Attribute)
+            and func.attr in {"model_dump", "dict"}
+            and _root_name(func.value) == var
+        ):
+            dumps.append(node)
+        callee = getattr(func, "id", None) or getattr(func, "attr", None)
+        if callee in INSPECTORS:
+            for arg in list(node.args) + [k.value for k in node.keywords]:
+                if (
+                    isinstance(arg, ast.Call)
+                    and isinstance(arg.func, ast.Attribute)
+                    and arg.func.attr in {"model_dump", "dict"}
+                    and _root_name(arg.func.value) == var
+                ):
+                    inspected.append(arg)
+    return bool(dumps) and len(inspected) == len(dumps)
+
+
 def _routes():
     """(key, declared fields, fields the handler reads) for every body-taking route."""
     fields, bases = _schemas()
@@ -378,7 +418,9 @@ def _routes():
                         continue
                     for name in locals_:
                         read |= _dump_key_reads(tree, name)
-                elif read & {"model_dump", "dict"}:
+                elif read & {"model_dump", "dict"} and not _dump_is_only_inspected(
+                    tree, var
+                ):
                     continue  # dumped straight into a call, a return or a splat
             elif read & {"model_dump", "dict"}:
                 continue

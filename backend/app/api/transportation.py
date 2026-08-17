@@ -16,6 +16,7 @@ from app.api.auth import get_current_active_user
 from app.core.pagination import MAX_OFFSET, PaginatedResponse, paginate
 from app.db.database import get_db
 from app.middleware.tenant_isolation import get_tenant_db, get_tenant_org_id
+from app.core.tenant_refs import verify_refs
 from app.db.models import Carrier, Driver, Shipment, Route, LoadPlan, FreightCharge
 from app.models.schemas import (
     CarrierCreate, CarrierUpdate, CarrierResponse,
@@ -456,6 +457,11 @@ async def create_driver(
     db: AsyncSession = Depends(get_tenant_db)
 ):
     """Create new driver profile"""
+
+    # EVERY ID IN THIS BODY, AGAINST THE CALLER'S OWN ORGANISATION (FS-737). `carrier_id`,
+    # `driver_id`, `trailer_id`, `shipment_id` and `route_id` all name tenant-owned rows
+    # and a foreign key is checked BELOW row-level security, so each was accepted verbatim.
+    await verify_refs(db, organization_id, data.model_dump(exclude_unset=True))
     driver = await transportation_management_service.create_driver(
     # FROM THE TOKEN, NEVER THE REQUEST. This read `data.organization_id`, a field the
     # client supplies, so a caller could file the row under any organisation they named.
@@ -620,9 +626,17 @@ async def get_driver(
 async def update_driver(
     driver_id: UUID,
     data: DriverUpdate,
+    # No organisation was needed here until the ids INSIDE the body had to be
+    # checked against one — the row itself is protected by RLS (FS-737).
+    organization_id: UUID = Depends(get_tenant_org_id),
     db: AsyncSession = Depends(get_tenant_db)
 ):
     """Update driver profile"""
+
+    # EVERY ID IN THIS BODY, AGAINST THE CALLER'S OWN ORGANISATION (FS-737). `carrier_id`,
+    # `driver_id`, `trailer_id`, `shipment_id` and `route_id` all name tenant-owned rows
+    # and a foreign key is checked BELOW row-level security, so each was accepted verbatim.
+    await verify_refs(db, organization_id, data.model_dump(exclude_unset=True))
     result = await db.execute(
         select(Driver).where(Driver.id == driver_id)
     )
@@ -664,6 +678,11 @@ async def create_shipment(
     db: AsyncSession = Depends(get_tenant_db)
 ):
     """Create new shipment"""
+
+    # EVERY ID IN THIS BODY, AGAINST THE CALLER'S OWN ORGANISATION (FS-737). `carrier_id`,
+    # `driver_id`, `trailer_id`, `shipment_id` and `route_id` all name tenant-owned rows
+    # and a foreign key is checked BELOW row-level security, so each was accepted verbatim.
+    await verify_refs(db, organization_id, data.model_dump(exclude_unset=True))
     shipment = await transportation_management_service.create_shipment(
     # FROM THE TOKEN, NEVER THE REQUEST. This read `data.organization_id`, a field the
     # client supplies, so a caller could file the row under any organisation they named.
@@ -796,9 +815,17 @@ async def get_shipment(
 async def update_shipment(
     shipment_id: UUID,
     data: ShipmentUpdate,
+    # No organisation was needed here until the ids INSIDE the body had to be
+    # checked against one — the row itself is protected by RLS (FS-737).
+    organization_id: UUID = Depends(get_tenant_org_id),
     db: AsyncSession = Depends(get_tenant_db)
 ):
     """Update shipment"""
+
+    # EVERY ID IN THIS BODY, AGAINST THE CALLER'S OWN ORGANISATION (FS-737). `carrier_id`,
+    # `driver_id`, `trailer_id`, `shipment_id` and `route_id` all name tenant-owned rows
+    # and a foreign key is checked BELOW row-level security, so each was accepted verbatim.
+    await verify_refs(db, organization_id, data.model_dump(exclude_unset=True))
     result = await db.execute(
         select(Shipment).where(Shipment.id == shipment_id)
     )
@@ -984,6 +1011,11 @@ async def create_load_plan(
     db: AsyncSession = Depends(get_tenant_db)
 ):
     """Create load plan for shipment"""
+
+    # EVERY ID IN THIS BODY, AGAINST THE CALLER'S OWN ORGANISATION (FS-737). `carrier_id`,
+    # `driver_id`, `trailer_id`, `shipment_id` and `route_id` all name tenant-owned rows
+    # and a foreign key is checked BELOW row-level security, so each was accepted verbatim.
+    await verify_refs(db, organization_id, data.model_dump(exclude_unset=True))
     load_plan = await transportation_management_service.create_load_plan(
     # FROM THE TOKEN, NEVER THE REQUEST. This read `data.organization_id`, a field the
     # client supplies, so a caller could file the row under any organisation they named.
@@ -1044,6 +1076,11 @@ async def update_load_plan(
     `shipment_id` is not on the update schema: a plan moved to another shipment is a
     different plan, not a corrected one.
     """
+
+    # EVERY ID IN THIS BODY, AGAINST THE CALLER'S OWN ORGANISATION (FS-737). `carrier_id`,
+    # `driver_id`, `trailer_id`, `shipment_id` and `route_id` all name tenant-owned rows
+    # and a foreign key is checked BELOW row-level security, so each was accepted verbatim.
+    await verify_refs(db, organization_id, data.model_dump(exclude_unset=True))
     result = await db.execute(
         select(LoadPlan).where(
             LoadPlan.id == load_plan_id,
@@ -1072,6 +1109,11 @@ async def create_freight_charge(
     db: AsyncSession = Depends(get_tenant_db)
 ):
     """Create freight charge"""
+
+    # EVERY ID IN THIS BODY, AGAINST THE CALLER'S OWN ORGANISATION (FS-737). `carrier_id`,
+    # `driver_id`, `trailer_id`, `shipment_id` and `route_id` all name tenant-owned rows
+    # and a foreign key is checked BELOW row-level security, so each was accepted verbatim.
+    await verify_refs(db, organization_id, data.model_dump(exclude_unset=True))
     from app.services.transportation_management import FreightBillingEngine
     billing_engine = FreightBillingEngine()
     
@@ -1135,6 +1177,11 @@ async def update_freight_charge(
     `shipment_id` is not on the update schema: a charge moved to another shipment is a
     different charge.
     """
+
+    # EVERY ID IN THIS BODY, AGAINST THE CALLER'S OWN ORGANISATION (FS-737). `carrier_id`,
+    # `driver_id`, `trailer_id`, `shipment_id` and `route_id` all name tenant-owned rows
+    # and a foreign key is checked BELOW row-level security, so each was accepted verbatim.
+    await verify_refs(db, organization_id, data.model_dump(exclude_unset=True))
     result = await db.execute(
         select(FreightCharge).where(
             FreightCharge.id == charge_id,

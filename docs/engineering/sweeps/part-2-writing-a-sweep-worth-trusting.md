@@ -1672,6 +1672,26 @@ one of its findings. The habit that catches it:
      Ask what else calls the service, and put the invariant where the surface is rather
      than where the report came from.
 
+237. **When the sixth instance of a class arrives, stop fixing instances.** Six
+     handler-local fixes for "a foreign key is checked below RLS" were each correct and
+     none made the seventh route safer, because none left anything a NEW field has to
+     pass. Measuring the population is what settles it: 89 id-shaped fields on 35 request
+     models across 31 live routes is not a number you answer with a seventh check. The
+     deliverable becomes a registry plus a guard that fails on an unaccounted field —
+     `backend/app/core/tenant_refs.py` and
+     `test_every_tenant_reference_is_registered.py` — and the instances close as a side
+     effect. Pair it with a behavioural guard: an accounting can be complete while a
+     handler ignores it.
+
+238. **A heuristic that CLEARS is more dangerous than one that flags.** The triage for
+     rule 237 asked whether an ownership check appeared near each field. Flagging a safe
+     route (`operations:POST /`, whose lookup runs under RLS) cost one probe. Clearing an
+     exploitable one (`yard:POST /trailers/checkin`) would have ended the investigation —
+     and it cleared because `organization_id` appeared three lines away, which is exactly
+     what a handler correctly taking its tenant from the token looks like. Rule 206 says a
+     proximity check can PASS for the wrong reason; this is the same defect pointed the
+     other way. Order the work with a heuristic, never shorten it: drive every candidate.
+
 ---
 
 ## Open observations, not yet tickets

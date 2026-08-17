@@ -65,6 +65,21 @@ DIFFERENT_QUESTIONS: Dict[frozenset, str] = {
         "overlap is three routes that happen to be both mutating and cheap to call."
     ),
     frozenset({
+        "test_a_tenant_reference_is_refused_realdb.py::CROSS_TENANT_WRITES",
+        "test_what_can_be_created_can_be_corrected.py::PAIRS",
+    }): (
+        "Both name driver, shipment and trailer, and neither could be derived from the "
+        "other. PAIRS is a SCHEMA comparison — for every Create/Update pair in the tree, is "
+        "there a field settable once and never correctable — and its members are model "
+        "classes, with no route, method or field among them. CROSS_TENANT_WRITES is a list "
+        "of HTTP calls: a verb, a path template, one field, and which seeded row it must "
+        "not reach. The three shared words are entity names, and the entity is the only "
+        "thing the two have in common: PAIRS would gain nothing from knowing a path, and "
+        "the tenancy walk covers `dock_door` and `carrier` targets that have no "
+        "Create/Update pair to compare. Derived either way, one of them would shrink to the "
+        "other's population and stop asking its own question (FS-737)."
+    ),
+    frozenset({
         "test_every_alert_watches_a_series_something_exports.py::CODE_ROOTS",
         "test_the_session_arc_is_a_real_range.py::SEARCH_ROOTS",
     }): (

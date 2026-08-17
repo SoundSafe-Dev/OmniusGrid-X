@@ -15,6 +15,7 @@ from app.api.auth import get_current_active_user
 from app.core.pagination import MAX_OFFSET, PaginatedResponse, paginate
 from app.db.database import get_db  # noqa: F401  (kept for any non-tenant reads)
 from app.middleware.tenant_isolation import get_tenant_db, get_tenant_org_id
+from app.core.tenant_refs import verify_refs
 from app.db.models import (
     YardTrailer, DockDoor, YardMove, DriverWaitTime,
     DockAppointment, YardCheckPoint, Carrier, Driver
@@ -132,6 +133,12 @@ async def trailer_check_in(
     db: AsyncSession = Depends(get_tenant_db)
 ):
     """Process trailer check-in to yard"""
+
+    # EVERY ID IN THIS BODY, AGAINST THE CALLER'S OWN ORGANISATION (FS-737). A foreign
+    # key is checked BELOW row-level security, so `carrier_id`, `driver_id`,
+    # `shipment_id` and `dock_door_id` were accepted from the request body naming
+    # another tenant's rows — reproduced over HTTP, nine of them in one sitting.
+    await verify_refs(db, organization_id, data.model_dump(exclude_unset=True))
     trailer = await yard_management_service.check_in_trailer(
     # FROM THE TOKEN, NEVER THE REQUEST. This read `data.organization_id`, a field the
     # client supplies, so a caller could file the row under any organisation they named.
@@ -266,9 +273,18 @@ async def get_trailer(
 async def update_trailer(
     trailer_id: UUID,
     data: YardTrailerUpdate,
+    # This handler took no organisation at all — the trailer it loads is protected by RLS,
+    # so it needed none until the ids INSIDE the body had to be checked against something.
+    org_id: UUID = Depends(get_tenant_org_id),
     db: AsyncSession = Depends(get_tenant_db)
 ):
     """Update trailer information"""
+
+    # EVERY ID IN THIS BODY, AGAINST THE CALLER'S OWN ORGANISATION (FS-737). A foreign
+    # key is checked BELOW row-level security, so `carrier_id`, `driver_id`,
+    # `shipment_id` and `dock_door_id` were accepted from the request body naming
+    # another tenant's rows — reproduced over HTTP, nine of them in one sitting.
+    await verify_refs(db, org_id, data.model_dump(exclude_unset=True))
     from sqlalchemy import select
     result = await db.execute(
         select(YardTrailer).where(YardTrailer.id == trailer_id)
@@ -327,6 +343,12 @@ async def update_dock_door(
     `door_number` is not on the update schema: it identifies the bay, and the same argument
     applies as for `shipment_number` and `trailer_number`.
     """
+
+    # EVERY ID IN THIS BODY, AGAINST THE CALLER'S OWN ORGANISATION (FS-737). A foreign
+    # key is checked BELOW row-level security, so `carrier_id`, `driver_id`,
+    # `shipment_id` and `dock_door_id` were accepted from the request body naming
+    # another tenant's rows — reproduced over HTTP, nine of them in one sitting.
+    await verify_refs(db, org_id, data.model_dump(exclude_unset=True))
     result = await db.execute(
         select(DockDoor).where(
             DockDoor.id == door_id,
@@ -416,6 +438,12 @@ async def create_dock_appointment(
     db: AsyncSession = Depends(get_tenant_db)
 ):
     """Schedule dock appointment"""
+
+    # EVERY ID IN THIS BODY, AGAINST THE CALLER'S OWN ORGANISATION (FS-737). A foreign
+    # key is checked BELOW row-level security, so `carrier_id`, `driver_id`,
+    # `shipment_id` and `dock_door_id` were accepted from the request body naming
+    # another tenant's rows — reproduced over HTTP, nine of them in one sitting.
+    await verify_refs(db, organization_id, data.model_dump(exclude_unset=True))
     try:
         appointment = await dock_scheduler.schedule_appointment(
     # FROM THE TOKEN, NEVER THE REQUEST — see the guard in
@@ -470,6 +498,12 @@ async def update_dock_appointment(
     one; without it an appointment being moved conflicts with itself and no reschedule could
     ever succeed.
     """
+
+    # EVERY ID IN THIS BODY, AGAINST THE CALLER'S OWN ORGANISATION (FS-737). A foreign
+    # key is checked BELOW row-level security, so `carrier_id`, `driver_id`,
+    # `shipment_id` and `dock_door_id` were accepted from the request body naming
+    # another tenant's rows — reproduced over HTTP, nine of them in one sitting.
+    await verify_refs(db, organization_id, data.model_dump(exclude_unset=True))
     result = await db.execute(
         select(DockAppointment).where(
             DockAppointment.id == appointment_id,
@@ -601,6 +635,12 @@ async def record_yard_move(
     db: AsyncSession = Depends(get_tenant_db)
 ):
     """Record yard jockey move"""
+
+    # EVERY ID IN THIS BODY, AGAINST THE CALLER'S OWN ORGANISATION (FS-737). A foreign
+    # key is checked BELOW row-level security, so `carrier_id`, `driver_id`,
+    # `shipment_id` and `dock_door_id` were accepted from the request body naming
+    # another tenant's rows — reproduced over HTTP, nine of them in one sitting.
+    await verify_refs(db, organization_id, data.model_dump(exclude_unset=True))
     move = await yard_management_service.record_yard_move(
     # FROM THE TOKEN, NEVER THE REQUEST — see the guard in
     # test_no_handler_takes_its_tenant_from_the_body.py. `data.organization_id` is
@@ -672,6 +712,12 @@ async def create_driver_wait_time(
     db: AsyncSession = Depends(get_tenant_db)
 ):
     """Create driver wait time record"""
+
+    # EVERY ID IN THIS BODY, AGAINST THE CALLER'S OWN ORGANISATION (FS-737). A foreign
+    # key is checked BELOW row-level security, so `carrier_id`, `driver_id`,
+    # `shipment_id` and `dock_door_id` were accepted from the request body naming
+    # another tenant's rows — reproduced over HTTP, nine of them in one sitting.
+    await verify_refs(db, organization_id, data.model_dump(exclude_unset=True))
     wait_time = await yard_management_service.create_driver_wait_time(
     # FROM THE TOKEN, NEVER THE REQUEST — see the guard in
     # test_no_handler_takes_its_tenant_from_the_body.py. `data.organization_id` is
@@ -697,6 +743,12 @@ async def record_checkpoint(
     db: AsyncSession = Depends(get_tenant_db)
 ):
     """Record trailer checkpoint passage"""
+
+    # EVERY ID IN THIS BODY, AGAINST THE CALLER'S OWN ORGANISATION (FS-737). A foreign
+    # key is checked BELOW row-level security, so `carrier_id`, `driver_id`,
+    # `shipment_id` and `dock_door_id` were accepted from the request body naming
+    # another tenant's rows — reproduced over HTTP, nine of them in one sitting.
+    await verify_refs(db, organization_id, data.model_dump(exclude_unset=True))
     checkpoint = await yard_management_service.record_checkpoint(
     # FROM THE TOKEN, NEVER THE REQUEST — see the guard in
     # test_no_handler_takes_its_tenant_from_the_body.py. `data.organization_id` is

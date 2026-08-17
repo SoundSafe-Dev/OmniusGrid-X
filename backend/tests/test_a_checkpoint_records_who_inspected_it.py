@@ -63,8 +63,12 @@ def client():
     from app.middleware.rbac import require_operator_or_admin
     from app.middleware.tenant_isolation import get_tenant_db, get_tenant_org_id
 
+    # `yield None` was enough while these handlers only forwarded the body; FS-737 made
+    # them verify the ids in it against the caller's organisation, which is a real query.
+    from tests.conftest import OwnsEverythingSession
+
     async def _db():
-        yield None
+        yield OwnsEverythingSession()
 
     org = uuid.uuid4()
     bare = FastAPI()

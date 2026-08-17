@@ -43,6 +43,7 @@ from app.services.logistics_correlation_engine import (
     LoadQualityCorrelator
 )
 from app.middleware.rbac import require_operator_or_admin
+from app.core.tenant_refs import verify_refs
 
 # NOTE ON THE DOUBLED PREFIX. main.py mounts this router at /api/v1/logistics
 # and the prefix below adds another, so every path here is served at
@@ -174,6 +175,11 @@ async def log_load_quality_issue(
     db: AsyncSession = Depends(get_tenant_db)
 ):
     """Log shipping defect and correlate to manufacturing root cause"""
+
+    # EVERY ID IN THIS BODY, AGAINST THE CALLER'S OWN ORGANISATION (FS-737). A foreign key
+    # is checked BELOW row-level security, so a body naming another tenant's row is accepted
+    # by the database and only the handler can refuse it.
+    await verify_refs(db, organization_id, data.model_dump(exclude_unset=True))
     correlator = LoadQualityCorrelator()
     log = await correlator.log_quality_issue(
     # FROM THE TOKEN, NEVER THE REQUEST. This read `data.organization_id`, a field the

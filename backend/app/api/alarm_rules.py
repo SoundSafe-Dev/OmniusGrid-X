@@ -33,6 +33,7 @@ from app.models.schemas import (
     AlarmRuleResponse,
     AlarmRuleUpdate,
 )
+from app.core.tenant_refs import verify_refs
 
 router = APIRouter(dependencies=[Depends(get_current_active_user)])
 
@@ -178,6 +179,11 @@ async def update_alarm_rule(
     org_id: UUID = Depends(get_tenant_org_id),
     db: AsyncSession = Depends(get_tenant_db),
 ):
+
+    # EVERY ID IN THIS BODY, AGAINST THE CALLER'S OWN ORGANISATION (FS-737). A foreign key
+    # is checked BELOW row-level security, so a body naming another tenant's row is accepted
+    # by the database and only the handler can refuse it.
+    await verify_refs(db, org_id, payload.model_dump(exclude_unset=True))
     rule = (
         await db.execute(
             select(AlarmRule).where(

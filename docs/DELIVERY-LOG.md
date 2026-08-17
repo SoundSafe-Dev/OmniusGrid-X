@@ -12096,3 +12096,100 @@ RULE 236 — a second entrance to a guarded surface starts with none of its guar
 API's three checks live in its route, so every other path to `submit_command` began at zero.
 Ask what else calls the service, and put the invariant where the surface is, not where the
 report came from.
+
+## FS-737 — the seventh instance, and the first one that leaves something behind
+
+FS-736 closed six task links on one router and ended with the honest question: how many
+fields are there? Measured across `app/models/schemas.py`: **89 id-shaped fields on 35
+request models, reached by 31 live routes.**
+
+At that size a seventh hand-written check is the wrong answer. Six had already been written —
+`operations` (FS-720), four shop-floor writes (FS-724), two notification subscriptions
+(FS-726), insight activation (FS-729), the kanban task links and the command back door
+(FS-736) — every one correct, and not one of them made the next route safer.
+
+**Nine cross-tenant writes reproduced over HTTP in one sitting, all answering 200:**
+
+    yard:PUT  /trailers/{id}            carrier_id, driver_id, shipment_id, dock_door_id
+    yard:PUT  /dock/doors/{id}          current_trailer_id
+    yard:POST /trailers/checkin         carrier_id, driver_id, shipment_id
+    transportation:PUT /shipments/{id}  carrier_id, driver_id, trailer_id
+    transportation:PUT /drivers/{id}    carrier_id
+
+The damage is not a read — RLS still hides the other tenant's rows, so the joined name never
+renders. It is a row in YOUR tenant pointing into somebody else's: a trailer billed to a
+carrier you cannot see, a shipment assigned to a driver who is not yours, a dock door holding
+another company's trailer. Every report grouping on one of those keys then counts across a
+tenant boundary, and the stored id is a durable confirmation that the row exists.
+
+**The static triage was wrong in both directions, which is the methodological finding.** A
+proximity scan — is there an ownership check *near* this field? — marked 33 of the 89
+suspect. It CLEARED `yard:POST /trailers/checkin`, which was exploitable, because
+`organization_id` appears three lines away (taken from the token, correctly, right beside the
+ids that were not checked at all). It FLAGGED `operations:POST /`, which is safe, because its
+asset lookup runs under RLS and returns nothing for another tenant. Rule 206 says a
+proximity check can pass for the wrong reason; this says the same heuristic clears for the
+wrong reason too. It found candidates. It settled nothing, and every row above was driven
+over HTTP before it was touched.
+
+**What was built.** `backend/app/core/tenant_refs.py`: one registry mapping a request-field name to
+the query that proves the caller owns that row — 23 entries — plus `NOT_TENANT_SCOPED`, 8
+fields that are not references, each with the reason (`asset_types` is a global catalogue;
+`eld_device_id` names hardware in the ELD vendor's system; `source_id`/`target_id` are
+polymorphic; `organization_id` is a different, already-guarded class). `verify_refs` is wired
+into **20 handlers across 6 routers**, and kanban's local copy from FS-736 was deleted in
+favour of it.
+
+Keyed by field name, which is the deliberate trade: one entry covers every route that accepts
+`carrier_id`, including routes not written yet. The risk is a name reused for another table,
+so a guard checks the real foreign keys and fails if a registered name points at two.
+
+**The half that outlives the fix.** `test_every_tenant_reference_is_registered.py` asserts
+that every id-shaped field on a request schema is either verified or explained, so a field
+added next year fails the build instead of quietly joining the class.
+`test_a_tenant_reference_is_refused_realdb.py` drives the routes and asserts the refusal,
+because the accounting can be perfect while a handler ignores it. Mutation-verified three
+ways: `verify_refs` neutered (25 failures), the org predicate dropped (2), one field
+unregistered (5 behavioural + the registry guard).
+
+**Two things measured that contradict what I would have assumed.**
+
+*The org predicate is mostly redundant today.* Dropping `organization_id == org` from the
+direct builder failed only 2 of 51 assertions, both `assigned_to`. Every other table is under
+FORCE RLS and `verify_refs` runs on a tenant-bound session, so the policy removes the row
+first. Four of the targets have **no policy at all** — `users`, `tasks`, `task_columns`,
+`operations` — and for those the predicate is the only refusal. It stays for the first group
+too, and not from caution: the redundancy holds only while the session is tenant-bound, and
+handing this an `AsyncSessionLocal()` is how four defects in this codebase were introduced.
+
+*The fix for rule 234 repeated the mistake rule 234 was about.* That rule narrowed the
+`model_dump` exemption from "the handler mentions it" to "the dump is forwarded rather than
+bound and inspected" — and went on treating any call argument as a forward. Wiring
+`verify_refs(db, org, data.model_dump(exclude_unset=True))` into twenty handlers removed
+three more routes from that sweep and staled three register entries: the identical symptom,
+one level down, caught by the identical register. A call argument is a forward only if the
+callee forwards. There is now an explicit `INSPECTORS` set, and the exemption names what it
+trusts.
+
+RULE 237 — when the sixth instance of a class arrives, stop fixing instances. Six correct
+handler-local fixes left the seventh route starting from zero, because none of them left
+anything a NEW field has to pass. The deliverable is a registry plus a guard that fails on an
+unaccounted field; the instances then close as a side effect. Measure the population first —
+"89 fields on 31 routes" is what makes the case, and it is also what tells you the per-handler
+answer is wrong.
+
+**Three existing guards caught the change, each for a different reason, and that is the
+review this size of edit actually gets.** `test_no_two_guards_keep_the_same_list` (FS-492)
+found the new `CROSS_TENANT_WRITES` sharing three entity names with the Create/Update pair
+list and demanded the comparison be written down — they overlap on entities and nothing else,
+one being model classes and the other HTTP calls. Two router tests overrode `get_tenant_db`
+with `yield None`, which was right while those handlers only forwarded a body and is not right
+now that they query; the stub they need is shared from `conftest` rather than copied, and it
+says in its own docstring why answering "owned" to everything is safe here. And the field-drop
+register caught the `INSPECTORS` gap above.
+
+RULE 238 — a heuristic that clears is more dangerous than one that flags. A proximity triage
+that flags a safe route costs one probe. One that clears an exploitable route ends the
+investigation, and the reason it cleared — `organization_id` appearing nearby — is exactly
+what a handler that takes its tenant from the token correctly looks like. Use a heuristic to
+order the work, never to shorten it, and drive every candidate before believing either answer.

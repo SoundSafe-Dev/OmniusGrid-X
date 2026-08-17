@@ -494,6 +494,33 @@ async def seeded_orgs(admin_sync_url) -> dict:
     }
 
 
+
+class OwnsEverythingSession:
+    """A stub session that answers `verify_refs`'s ownership query with "owned" (FS-737).
+
+    Several router tests build a bare FastAPI app, mock the service, and override
+    `get_tenant_db` with `yield None` — correct while the handler only forwarded a body.
+    Those handlers now verify every id in the body against the caller's organisation
+    first, which is a real query, so the override has to answer one.
+
+    IT ANSWERS YES TO EVERYTHING, deliberately, and that is safe only because the refusal
+    is asserted elsewhere: `test_a_tenant_reference_is_refused_realdb.py` drives the same
+    routes against a real database. A stub that could only say yes would be a problem if
+    it were the ONLY thing exercising the check — which is the shape rule 165 is about.
+    """
+
+    class _Result:
+        @staticmethod
+        def first():
+            return (object(),)
+
+        @staticmethod
+        def scalar_one_or_none():
+            return None
+
+    async def execute(self, _query):
+        return self._Result()
+
 @pytest.fixture
 def jwt_for_user(seeded_orgs) -> dict:
     """Return JWT bearer tokens for both seeded users."""
