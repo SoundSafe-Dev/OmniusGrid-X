@@ -3870,3 +3870,69 @@ people to write for the test.
 **And check the direction that rots.** When WAL archiving is switched on, a stale "not
 operational" understates the platform, and nobody re-reads the README on an infra change. Both
 guards written that day fail in both directions — gap-without-caveat, and caveat-without-gap.
+
+## Rule 241 — a check you dismiss in bulk still has to be read once each
+
+The contract gate reported `UnsupportedMethodResponse` on 22 operations, every one with the
+same shape of message:
+
+    Unsupported method PUT returned 422, expected 405 Method Not Allowed
+
+Twenty-one of them are a harmless artefact. A literal path sits beside a parameterised
+sibling — `/yard/trailers/checkin` and `/yard/trailers/{trailer_id}` — and a method the
+literal does not declare falls through to the sibling, which 422s on an unparseable UUID
+rather than 405ing. The behaviour is correct and the status code is imprecise. Making it
+405 would mean stub handlers for every method on every literal path, or a routing converter
+on every path parameter in the API. Not worth it.
+
+That is a completely reasonable analysis, and it is how the twenty-second one survives.
+
+`GET /api/v1/registries/correlations` was **dead**. FastAPI matches in declaration order,
+`@router.get("/{registry_id}")` sits at line 77, and `@router.get("/correlations")` at line
+323 — so the request reached the by-id handler with `registry_id="correlations"`, failed
+UUID parsing and answered 422. For as long as the route had existed.
+
+Nothing else could have told you. `POST /correlations` works, because no `POST
+/{registry_id}` exists to shadow it, so the feature was **write-only**: correlations could
+be created and never listed, and each half looked fine alone. The gate's message did not say
+"this endpoint is unreachable" — it said something about PUT and 405, on a route where the
+interesting fact was about GET.
+
+The economics are what make this a rule. Twenty-two operations, three minutes each, and one
+of them is a feature that has never worked. The instinct at "22 identical messages" is to
+characterise the class and file it — and characterising the class was correct, 21 times out
+of 22. **Triage the class, then open every member of it.**
+
+## Rule 242 — a recorded decision is not overturned by whoever next has an opinion
+
+The other 14 non-conformers are the API accepting query parameters it never declared:
+
+    GET /api/v1/assets/?is_activ=true   ->   200, every asset, active or not
+
+A mistyped filter returns a complete, well-formed, plausible answer to a question nobody
+asked. That is the absence-read-as-success shape this codebase has closed a dozen times, so
+I closed it: a global dependency answering 422. I even measured the blast radius first — 12
+distinct parameter keys across the frontend, all declared, and the one apparent miss turned
+out to be a JavaScript variable name rather than a key.
+
+It broke fifteen tests. Reading them is where the work actually was:
+
+> An unknown query parameter must not error either — a client that has not been redeployed
+> keeps working.
+
+That is not an accident of test-writing. It is a decision, with its reason attached, guarded
+in the place a change would trip over it. A browser holding an open SPA is precisely the
+stale client it protects, and a 422 on a request that has always worked is a breaking API
+change — arriving inside a sweep about something else.
+
+The pull at that moment is real: the diff is written, it is defensible, the measurement
+supports it, and the only thing standing in the way is a test I could edit. **That is the
+earlier decision speaking, and editing the test is how it gets silently reversed.**
+
+So the refusal came out and the silence still went: the parameter is ignored exactly as
+before, and it is now logged at WARNING and returned in `X-Unknown-Query-Parameters`, where
+a developer meets it in the network tab at the moment they make the typo. The 14 operations
+stay non-conforming — a residue with a written reason, which is what a ratchet is for.
+
+Refusing may well be right. It is a deprecation window and an announcement, not a line in a
+defect sweep.

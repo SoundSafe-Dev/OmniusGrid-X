@@ -143,9 +143,10 @@ async def test_yard_trailer_create_then_read(client_a, seeded_orgs):
         f"trailer check-in failed: {created.status_code} {created.text[:200]}"
     )
 
-    inventory = await client_a.get(
-        "/api/v1/yard/trailers", params={"organization_id": org}
-    )
+    # `params={"organization_id": org}` REMOVED (FS-739). The endpoint never declared
+    # that parameter, so it was silently dropped; unknown query parameters are now refused
+    # with a 422. Scope has always come from the token, so the call is unchanged in effect.
+    inventory = await client_a.get("/api/v1/yard/trailers")
     assert inventory.status_code == 200, inventory.text[:200]
     # FS-99: yard inventory returns the {items, meta} pagination envelope now.
     page = inventory.json()

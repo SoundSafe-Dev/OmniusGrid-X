@@ -1710,6 +1710,25 @@ one of its findings. The habit that catches it:
      honest sentence is the one nobody reaches. Check BOTH directions: the stale caveat
      left behind after a gap closes understates the product, and nobody re-reads the docs
      on a dependency bump.
+
+241. **A check you dismiss in bulk still has to be read once each.** The contract gate
+     reported the same `UnsupportedMethodResponse` message on 22 operations, and 21 were
+     a harmless artefact of a literal path beside a parameterised sibling. The
+     twenty-second was `GET /registries/correlations`, unreachable since it was written —
+     a parameterised route declared 246 lines earlier captured it, so the endpoint
+     answered 422 forever while its `POST` twin worked, making the feature write-only.
+     Filing the class and moving on is the natural move at "22, same message, cosmetic".
+     Reading them costs minutes. Triage the class, then open every member.
+
+242. **A recorded decision is not overturned by whoever next has an opinion.** Refusing
+     undeclared query parameters is defensible — a mistyped filter currently returns a
+     confident wrong answer — and the frontend was measured clean. It still contradicted
+     a compatibility guarantee written down with its reason and guarded by fifteen tests:
+     *"an unknown query parameter must not error either — a client that has not been
+     redeployed keeps working."* Ship the non-breaking half (log it, return it in a
+     header) and leave the breaking half as its own announced change. A diff already
+     written is not an argument, and the tests standing in its way are the earlier
+     decision speaking.
 ---
 
 ## Open observations, not yet tickets

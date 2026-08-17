@@ -1,6 +1,6 @@
 """OpsGrid Backend Application"""
 
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from contextlib import asynccontextmanager
@@ -51,6 +51,10 @@ from app.services.oee_calculator import oee_calculator
 from app.core.errors import register_exception_handlers
 from app.core.openapi import custom_generate_unique_id
 from app.middleware.request_context import RequestContextMiddleware
+from app.middleware.unknown_query_params import (
+    HEADER as UNKNOWN_QUERY_PARAMS_HEADER,
+    note_unknown_query_params,
+)
 from app.middleware.unhandled import UnhandledExceptionMiddleware
 from app.middleware.idempotency import IdempotencyMiddleware, make_idempotency_store
 from app.middleware.audit import AuditLoggingMiddleware
@@ -191,6 +195,13 @@ app = FastAPI(
     """,
     version="0.1.0",
     lifespan=lifespan,
+    # A MISTYPED FILTER MUST NOT BE SILENT (FS-739). It is still IGNORED — refusing it
+    # would break the stale-client guarantee `test_yard_tenant_scoping_realdb.py` records
+    # — but it is now logged and returned in `X-Unknown-Query-Parameters`. Applied here
+    # rather than per-route because the failure mode of forgetting one of the 145 routes
+    # that take query parameters is silence, which is the property being fixed. Takes only
+    # `HTTPConnection`, so it contributes nothing to the OpenAPI schema.
+    dependencies=[Depends(note_unknown_query_params)],
     # Clean, stable operationIds -> readable generated SDK method names (task 11).
     generate_unique_id_function=custom_generate_unique_id,
     contact={
@@ -298,6 +309,22 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+@app.middleware("http")
+async def _surface_unknown_query_params(request, call_next):
+    """Copy what the global dependency noted onto the response (FS-739).
+
+    A dependency runs before the response object exists, so it cannot set a header. It
+    leaves the names in the request scope and this puts them on the way out. Purely
+    additive: the status and body are untouched, and a request with no undeclared
+    parameter gets no header.
+    """
+    response = await call_next(request)
+    unknown = (request.scope.get("state") or {}).get("unknown_query_params")
+    if unknown:
+        response.headers[UNKNOWN_QUERY_PARAMS_HEADER] = ", ".join(unknown)
+    return response
+
 
 # Request-ID / correlation + structured access logging (outermost so every
 # request — including error responses — gets an id and one access log line).

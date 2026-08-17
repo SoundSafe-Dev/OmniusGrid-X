@@ -74,6 +74,154 @@ async def get_registries(
     return mark_truncated(response, result.scalars().all(), limit)
 
 
+# ============ Data Correlations ============
+#
+# DECLARED BEFORE `/{registry_id}` ON PURPOSE, AND THAT IS NOT A STYLE CHOICE (FS-739).
+#
+# These routes used to sit 246 lines BELOW `@router.get("/{registry_id}")`, and FastAPI
+# matches in declaration order: `GET /registries/correlations` reached the by-id handler
+# with `registry_id="correlations"`, failed UUID parsing, and answered **422**. The endpoint
+# was unreachable for as long as it had existed.
+#
+# It was invisible from either side. `POST /correlations` works, because no
+# `POST /{registry_id}` exists to shadow it — so correlations could be created and never
+# listed. The API was write-only for this feature and neither half looked broken alone.
+#
+# Found by pulling on a contract-gate check that looked cosmetic: schemathesis reporting
+# "unsupported method PUT returned 422, expected 405" on 22 operations. Twenty-one are a
+# harmless artefact of a literal path sitting beside a parameterised sibling. This one was a
+# dead endpoint.
+#
+# `test_no_route_is_shadowed_by_a_sibling.py` now fails the build on the general case, so
+# nobody has to know this story to avoid repeating it.
+
+
+@router.get("/correlations", response_model=List[DataCorrelationResponse])
+async def get_correlations(
+    response: Response,
+    correlation_type: Optional[str] = None,
+    source_type: Optional[str] = None,
+    target_type: Optional[str] = None,
+    is_active: Optional[bool] = None,
+    skip: int = Query(0, ge=0, le=MAX_OFFSET),
+    limit: int = Query(100, ge=0, le=1000),
+    current_user: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_tenant_db)
+):
+    """Get data correlations for the organization"""
+    # ORDERED so the cap and the offset mean something (FS-429): an unordered paged
+    # list can repeat rows on one page and skip them on the next.
+    query = select(DataCorrelation).order_by(DataCorrelation.created_at.desc()).where(
+        DataCorrelation.organization_id == current_user.organization_id
+    )
+    
+    if correlation_type:
+        query = query.where(DataCorrelation.correlation_type == correlation_type)
+    if source_type:
+        query = query.where(DataCorrelation.source_type == source_type)
+    if target_type:
+        query = query.where(DataCorrelation.target_type == target_type)
+    if is_active is not None:
+        query = query.where(DataCorrelation.is_active == is_active)
+    
+    query = query.offset(skip).limit(limit + 1)
+    result = await db.execute(query)
+    # SAYS WHEN IT CAPPED (FS-455) — see `get_registries` above.
+    return mark_truncated(response, result.scalars().all(), limit)
+
+
+@router.post("/correlations", response_model=DataCorrelationResponse, status_code=201, dependencies=[Depends(require_admin)])
+async def create_correlation(
+    correlation: DataCorrelationCreate,
+    current_user: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_tenant_db)
+):
+    """Create a new data correlation"""
+    new_correlation = DataCorrelation(
+        organization_id=current_user.organization_id,
+        created_by=current_user.id,
+        **correlation.model_dump()
+    )
+    
+    db.add(new_correlation)
+    await db.commit()
+    await db.refresh(new_correlation)
+    
+    return new_correlation
+
+
+@router.put("/correlations/{correlation_id}", response_model=DataCorrelationResponse, dependencies=[Depends(require_admin)])
+async def update_correlation(
+    correlation_id: uuid.UUID,
+    correlation: DataCorrelationUpdate,
+    current_user: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_tenant_db)
+):
+    """Update an existing data correlation
+
+    TAKES A BODY, LIKE ITS THREE NEIGHBOURS (FS-676). This route declared three bare
+    scalars — `correlation_strength`, `confidence_score`, `is_active` — and FastAPI reads a
+    non-Pydantic scalar with no `Body()` marker as a QUERY PARAMETER. So the endpoint
+    required `?correlation_strength=80`, and the obvious `api.put(url, {...})` would have
+    changed nothing while returning 200.
+
+    `DataCorrelationUpdate` already existed in `schemas.py` and no code referenced it: the
+    intended design was written down and never wired. `update_registry`,
+    `update_registry_item` and `create_correlation` in this same file all take their model,
+    so this was the one route that missed it rather than a deliberate contract.
+
+    Safe to change: nothing calls this endpoint. No frontend client, and the only test
+    naming it is the auth walk, which asserts it requires a token and sends no parameters.
+    """
+    result = await db.execute(
+        select(DataCorrelation).where(
+            and_(
+                DataCorrelation.id == correlation_id,
+                DataCorrelation.organization_id == current_user.organization_id
+            )
+        )
+    )
+    existing_correlation = result.scalar_one_or_none()
+
+    if not existing_correlation:
+        raise HTTPException(status_code=404, detail="Correlation not found")
+
+    # `exclude_unset`, so an omitted field is untouched rather than blanked — the same
+    # pattern the two sibling update routes use and `test_partial_updates_do_not_wipe_fields`
+    # enforces.
+    for field, value in correlation.model_dump(exclude_unset=True).items():
+        setattr(existing_correlation, field, value)
+
+    await db.commit()
+    await db.refresh(existing_correlation)
+    
+    return existing_correlation
+
+
+@router.delete("/correlations/{correlation_id}", status_code=204, dependencies=[Depends(require_admin)])
+async def delete_correlation(
+    correlation_id: uuid.UUID,
+    current_user: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_tenant_db)
+):
+    """Delete a data correlation"""
+    result = await db.execute(
+        select(DataCorrelation).where(
+            and_(
+                DataCorrelation.id == correlation_id,
+                DataCorrelation.organization_id == current_user.organization_id
+            )
+        )
+    )
+    correlation = result.scalar_one_or_none()
+    
+    if not correlation:
+        raise HTTPException(status_code=404, detail="Correlation not found")
+    
+    await db.delete(correlation)
+    await db.commit()
+
+
 @router.get("/{registry_id}", response_model=ActionableRegistryResponse)
 async def get_registry(
     registry_id: uuid.UUID,
@@ -315,134 +463,6 @@ async def delete_registry_item(
         raise HTTPException(status_code=404, detail="Registry item not found")
     
     await db.delete(item)
-    await db.commit()
-
-
-# ============ Data Correlations ============
-
-@router.get("/correlations", response_model=List[DataCorrelationResponse])
-async def get_correlations(
-    response: Response,
-    correlation_type: Optional[str] = None,
-    source_type: Optional[str] = None,
-    target_type: Optional[str] = None,
-    is_active: Optional[bool] = None,
-    skip: int = Query(0, ge=0, le=MAX_OFFSET),
-    limit: int = Query(100, ge=0, le=1000),
-    current_user: User = Depends(require_admin),
-    db: AsyncSession = Depends(get_tenant_db)
-):
-    """Get data correlations for the organization"""
-    # ORDERED so the cap and the offset mean something (FS-429): an unordered paged
-    # list can repeat rows on one page and skip them on the next.
-    query = select(DataCorrelation).order_by(DataCorrelation.created_at.desc()).where(
-        DataCorrelation.organization_id == current_user.organization_id
-    )
-    
-    if correlation_type:
-        query = query.where(DataCorrelation.correlation_type == correlation_type)
-    if source_type:
-        query = query.where(DataCorrelation.source_type == source_type)
-    if target_type:
-        query = query.where(DataCorrelation.target_type == target_type)
-    if is_active is not None:
-        query = query.where(DataCorrelation.is_active == is_active)
-    
-    query = query.offset(skip).limit(limit + 1)
-    result = await db.execute(query)
-    # SAYS WHEN IT CAPPED (FS-455) — see `get_registries` above.
-    return mark_truncated(response, result.scalars().all(), limit)
-
-
-@router.post("/correlations", response_model=DataCorrelationResponse, status_code=201, dependencies=[Depends(require_admin)])
-async def create_correlation(
-    correlation: DataCorrelationCreate,
-    current_user: User = Depends(require_admin),
-    db: AsyncSession = Depends(get_tenant_db)
-):
-    """Create a new data correlation"""
-    new_correlation = DataCorrelation(
-        organization_id=current_user.organization_id,
-        created_by=current_user.id,
-        **correlation.model_dump()
-    )
-    
-    db.add(new_correlation)
-    await db.commit()
-    await db.refresh(new_correlation)
-    
-    return new_correlation
-
-
-@router.put("/correlations/{correlation_id}", response_model=DataCorrelationResponse, dependencies=[Depends(require_admin)])
-async def update_correlation(
-    correlation_id: uuid.UUID,
-    correlation: DataCorrelationUpdate,
-    current_user: User = Depends(require_admin),
-    db: AsyncSession = Depends(get_tenant_db)
-):
-    """Update an existing data correlation
-
-    TAKES A BODY, LIKE ITS THREE NEIGHBOURS (FS-676). This route declared three bare
-    scalars — `correlation_strength`, `confidence_score`, `is_active` — and FastAPI reads a
-    non-Pydantic scalar with no `Body()` marker as a QUERY PARAMETER. So the endpoint
-    required `?correlation_strength=80`, and the obvious `api.put(url, {...})` would have
-    changed nothing while returning 200.
-
-    `DataCorrelationUpdate` already existed in `schemas.py` and no code referenced it: the
-    intended design was written down and never wired. `update_registry`,
-    `update_registry_item` and `create_correlation` in this same file all take their model,
-    so this was the one route that missed it rather than a deliberate contract.
-
-    Safe to change: nothing calls this endpoint. No frontend client, and the only test
-    naming it is the auth walk, which asserts it requires a token and sends no parameters.
-    """
-    result = await db.execute(
-        select(DataCorrelation).where(
-            and_(
-                DataCorrelation.id == correlation_id,
-                DataCorrelation.organization_id == current_user.organization_id
-            )
-        )
-    )
-    existing_correlation = result.scalar_one_or_none()
-
-    if not existing_correlation:
-        raise HTTPException(status_code=404, detail="Correlation not found")
-
-    # `exclude_unset`, so an omitted field is untouched rather than blanked — the same
-    # pattern the two sibling update routes use and `test_partial_updates_do_not_wipe_fields`
-    # enforces.
-    for field, value in correlation.model_dump(exclude_unset=True).items():
-        setattr(existing_correlation, field, value)
-
-    await db.commit()
-    await db.refresh(existing_correlation)
-    
-    return existing_correlation
-
-
-@router.delete("/correlations/{correlation_id}", status_code=204, dependencies=[Depends(require_admin)])
-async def delete_correlation(
-    correlation_id: uuid.UUID,
-    current_user: User = Depends(require_admin),
-    db: AsyncSession = Depends(get_tenant_db)
-):
-    """Delete a data correlation"""
-    result = await db.execute(
-        select(DataCorrelation).where(
-            and_(
-                DataCorrelation.id == correlation_id,
-                DataCorrelation.organization_id == current_user.organization_id
-            )
-        )
-    )
-    correlation = result.scalar_one_or_none()
-    
-    if not correlation:
-        raise HTTPException(status_code=404, detail="Correlation not found")
-    
-    await db.delete(correlation)
     await db.commit()
 
 

@@ -12311,3 +12311,88 @@ down accurately, once, in a file nobody reads next to the table that contradicte
 other sites went on presenting it as live. If a claim appears in N places, the caveat has to be
 attached to the claim — enforced by a test that pairs them — or the honest sentence is simply
 the one nobody reaches.
+
+## FS-739 — a dead endpoint behind a check worth dismissing 21 times
+
+FS-738 published the conformance number. This is the work of closing it, and the first
+thing that fell out was not a status code.
+
+### A route nobody could reach
+
+The gate reported `UnsupportedMethodResponse` on 22 operations — *"unsupported method PUT
+returned 422, expected 405"* — which reads like schemathesis pedantry. It is, 21 times: a
+literal path sitting beside a parameterised sibling, where a method the literal does not
+declare falls through to the sibling and 422s on an unparseable id instead of answering 405.
+Not worth contorting the router for.
+
+The twenty-second was `GET /api/v1/registries/correlations`, and it was **dead**:
+
+    @router.get("/{registry_id}")     line  77
+    @router.get("/correlations")      line 323   <-- never reached
+
+FastAPI matches in declaration order, so the request arrived at the by-id handler with
+`registry_id="correlations"`, failed UUID parsing, and answered 422. For as long as the
+route had existed.
+
+**Invisible from either side.** `POST /correlations` works — there is no `POST
+/{registry_id}` to shadow it — so correlations could be created and never listed. The API
+was write-only for a feature the README lists under Compliance, and neither half looked
+broken on its own. A UUID-typed parameter makes this a 422; a `str`-typed one would have
+routed the request to the wrong handler with no error at all.
+
+Fixed by moving the block, and generalised: `test_no_route_is_shadowed_by_a_sibling.py`
+fails on any literal path a same-method parameterised sibling declared earlier would
+capture. Mutation-verified against the real file, not just in-process — reverting the move
+fails it with the route named.
+
+### The other 14, and a decision I did not get to make
+
+`AcceptedNegativeData` on 14 operations is "in query - object with unexpected properties" —
+the API accepts query parameters it never declared:
+
+    GET /api/v1/assets/?is_activ=true   ->  200, every asset, active or not
+
+A mistyped filter returns a complete, plausible answer to a question nobody asked. That is
+the same absence-read-as-success shape this codebase has closed a dozen times, so I fixed
+it: a global dependency answering 422, measured safe against the frontend (12 distinct
+parameter keys, all declared; the one apparent miss was a JS variable name, not a key).
+
+**Then it broke fifteen tests, and they were right.** From
+`test_yard_tenant_scoping_realdb.py`:
+
+> An unknown query parameter must not error either — a client that has not been redeployed
+> keeps working.
+
+A decision, with its reason attached, guarded. A browser holding an open SPA is exactly the
+stale client that sentence protects, and turning a working request into a 422 is a breaking
+API change — not something to smuggle into a defect sweep because the diff was already
+written. So the refusal came out.
+
+What shipped keeps the behaviour and kills the silence: the parameter is still ignored, and
+it is logged at WARNING and returned as `X-Unknown-Query-Parameters`, so the typo is visible
+in a network tab at the moment it is made. The 14 operations remain non-conforming, and
+that is now a residue with a written reason rather than an unexamined failure.
+
+**The first version could not have worked at all**, which is worth recording separately. It
+was written as `BaseHTTPMiddleware`, and `request.scope["route"]` is set by the ROUTER —
+it does not exist yet when middleware dispatches. The check would have found no route,
+returned early on every request, and passed every test that asserted a valid request still
+works. A guard that silently does nothing, inside a module about things that silently do
+nothing. Caught by asserting the refusal fires before believing the mechanism.
+
+And the version after that refused every WebSocket connection: a global dependency is
+applied to websocket routes too, and asking for a `Request` there cannot be satisfied.
+`HTTPConnection` is the base of both. The websocket binding tests caught it in one run.
+
+RULE 241 — a check you dismiss in bulk still has to be read once each. Twenty-one of these
+22 were noise and the twenty-second was a dead endpoint. The temptation at "22 operations,
+same message, cosmetic" is to file the class and move on; the cost of reading them is
+minutes, and the thing it found had been unreachable since it was written. Triage the class,
+then open every member of it.
+
+RULE 242 — a recorded decision is not overturned by whoever next has an opinion. Refusing
+unknown query parameters is defensible and I had the measurement to support it. It still
+contradicted a documented compatibility guarantee, written with its reason and guarded by
+fifteen tests. The right move is the non-breaking half now and the breaking half as its own
+announced change — not to overwrite the older decision because my diff was already written
+and its tests were the only thing in the way.
