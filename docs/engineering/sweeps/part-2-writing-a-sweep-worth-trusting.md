@@ -1745,6 +1745,23 @@ one of its findings. The habit that catches it:
      setup produced it. A number with no configuration beside it invites being compared
      against one from a different setup, which is how a floor gets raised or a regression
      dismissed for the wrong reason.
+
+245. **When a 500 turns into a 200, read what the 200 prints.** An error early in a handler
+     stops everything after it, so fixing it does not merely change a status code — it runs
+     a path that has never executed in that configuration. Repairing the correlation
+     route's response model turned its 500 into a 200, and the 200 logged
+     `InsufficientPrivilegeError: new row violates row-level security policy`: the
+     background integration it schedules had been writing on an unbound session and
+     creating nothing, invisibly, because the request had always died first. Watch the logs
+     on the first successful run of anything you have just un-broken.
+
+246. **An anticipated failure arriving as a 500 means the vocabulary stopped at a layer
+     boundary.** All six 500s fixed in FS-742 had the right words already:
+     `ValueError("Shipment not found")`, a `PermissionError`, an `except` under a comment
+     reading "inference/vector store unavailable", a declared response type. The service is
+     right to raise `ValueError` and right not to know about HTTP; the route is the only
+     place that can turn it into a 404. When you see a 500, look for where the code already
+     said what happened, then ask why nobody was listening.
 ---
 
 ## Open observations, not yet tickets

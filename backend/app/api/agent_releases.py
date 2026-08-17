@@ -36,6 +36,7 @@ from app.middleware.rate_limit import rate_limit
 from app.middleware.rbac import require_admin
 from app.services.agent_artifact import AgentArtifactError, validate_agent_wheel
 from app.services.agent_release_storage import (
+    AgentReleaseStorageError,
     absolute_bundle_path,
     delete_release_artifact,
     issue_release_bundle_url,
@@ -148,6 +149,37 @@ async def _get_release(
     return release
 
 
+def _store_or_declare_the_outage(store, *args):
+    """Run an artifact write, giving its two failure modes the status each deserves.
+
+    `store_release_artifact` does `output_path.parent.mkdir(...)` under the configured
+    release root, which defaults to `/var/lib/omniusgrid`. On a host where that is not
+    writable the `PermissionError` escaped as a **500** — one of the eight operations in
+    the whole API still answering 500 under the contract gate (FS-742).
+
+    A 500 says "this request was wrong in a way we did not anticipate". Neither of these is
+    that:
+
+      * `AgentReleaseStorageError` — an empty bundle. The CALLER sent nothing; 400.
+      * `OSError` — the artifact store is unwritable, full, or gone. Nothing about the
+        request is wrong and retrying later may work; 503, the same answer every other
+        dependency outage in this API gives.
+
+    Both were previously indistinguishable from a genuine bug, which matters most for the
+    second: an operator seeing 500s on release upload has no reason to look at disk
+    permissions.
+    """
+    try:
+        return store(*args)
+    except AgentReleaseStorageError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except OSError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail=f"Release artifact storage is unavailable: {exc.strerror or exc}",
+        ) from exc
+
+
 @router.post(
     "/releases",
     response_model=AgentReleaseResponse,
@@ -180,7 +212,9 @@ async def create_release(
         )
 
     release_id = uuid.uuid4()
-    stored = store_config_bundle(org_id, release_id, _decode_bundle(payload))
+    stored = _store_or_declare_the_outage(
+        store_config_bundle, org_id, release_id, _decode_bundle(payload)
+    )
     release = AgentRelease(
         id=release_id,
         organization_id=org_id,
@@ -285,7 +319,9 @@ async def create_agent_release(
         )
 
     release_id = uuid.uuid4()
-    stored = store_agent_wheel(org_id, release_id, artifact_bytes)
+    stored = _store_or_declare_the_outage(
+        store_agent_wheel, org_id, release_id, artifact_bytes
+    )
     release = AgentRelease(
         id=release_id,
         organization_id=org_id,

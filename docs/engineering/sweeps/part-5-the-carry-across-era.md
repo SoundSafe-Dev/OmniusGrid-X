@@ -3988,3 +3988,65 @@ observed one.
 **Say which configuration produced a number, every time.** It costs a clause, and without it
 the number cannot be compared to the next one — which is the only thing anybody will ever do
 with it.
+
+## Rule 245 — when a 500 turns into a 200, read what the 200 prints
+
+`POST /engines/correlation/integration/analyze` returned 500 because the route violated its
+own response model: `integration_result` is declared `Dict[str, List[str]]` and the
+background branch passed `{"message": "Integration processing in background"}`. FastAPI
+could not serialise its own response, so every well-formed request down that path failed.
+
+Fixing it took four lines. Then the 200 printed this:
+
+    background_integration_failed
+    InsufficientPrivilegeError: new row violates row-level security policy
+    for table "actionable_registries"
+
+The background task the route schedules ran on `AsyncSessionLocal()`, which binds no
+`app.current_org_id`. Every table it writes is under FORCE ROW LEVEL SECURITY, so every
+INSERT was refused — and the route had already returned 200, the `except` logged one line
+and continued. Callers were told their analysis was integrated. Nothing had ever been
+created.
+
+**The 500 was camouflage, and it was load-bearing.** The request died before reaching the
+background task, so the contract gate saw one defect where there were two, and the hidden one
+was worse: a 500 is visible in every dashboard and log, and a silent no-op is not. Nothing
+could have surfaced it while the request kept failing first.
+
+This generalises past this route. An error early in a handler stops the code after it from
+running, so repairing it does not merely change a status — it executes a path that has never
+run in that configuration, sometimes for as long as the endpoint has existed. **The first
+successful run of anything you have just un-broken is the most informative log you will get
+all day.** Read it.
+
+## Rule 246 — an anticipated failure arriving as a 500 means the vocabulary stopped at a boundary
+
+Six operations in this API returned a genuine 500 under generated input. None was an
+unanticipated crash. Every one had the right words somewhere in the code:
+
+    logistics      raise ValueError("Shipment not found")
+    fleet          PermissionError from mkdir under an unwritable release root
+    rag            except RuntimeError  # inference/vector store unavailable
+    correlation    integration_result: Dict[str, List[str]]
+    kanban         board_id: str, compared against a uuid column
+
+The engine that raises `ValueError("Shipment not found")` is doing the right thing twice
+over — it names the condition precisely, and it declines to know about HTTP, which is not a
+service's business. The route above it is the only place that can turn that into a 404, and
+no route was listening. That is the entire defect, repeated in five different vocabularies.
+
+The rag case is the sharpest, because the intent was written down and the clause still
+missed:
+
+    except RuntimeError as exc:  # inference/vector store unavailable
+
+That comment describes exactly the failure that was escaping. `httpx.ConnectError` — the
+commonest form of "the inference host is unavailable" — is not a `RuntimeError`, and is not
+an `OSError` subclass either, so it also escaped the transport tuple this same module had
+already built for its document store. Two correct pieces of thinking, in one file, and the
+exception still went out as a 500.
+
+**When you see a 500, look for where the code already said what happened.** It usually did.
+The bug is in the translation at the edge, and the fix is a clause rather than a redesign —
+which is why six of these took an afternoon and why they had survived for so long: each one
+looks, from the inside, like it was already handled.

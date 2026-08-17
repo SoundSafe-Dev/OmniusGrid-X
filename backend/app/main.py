@@ -477,7 +477,10 @@ app.include_router(error_tracking.router, prefix="/api/v1/admin/errors", tags=["
 app.include_router(fleet_agents.router, prefix="/api/v1/fleet", tags=["Fleet"], responses=common_responses)
 app.include_router(fleet_targeting.router, prefix="/api/v1/fleet", tags=["Fleet"], responses=common_responses)
 app.include_router(maintenance_windows.router, prefix="/api/v1/fleet", tags=["Fleet"], responses=common_responses)
-app.include_router(agent_releases.router, prefix="/api/v1/fleet", tags=["Fleet"], responses=common_responses)
+# `unavailable_responses` (FS-742): release upload writes to the artifact store, and an
+# unwritable or full store is a 503 rather than a 500 — the caller did nothing wrong
+# and a retry may work.
+app.include_router(agent_releases.router, prefix="/api/v1/fleet", tags=["Fleet"], responses=unavailable_responses)
 app.include_router(agent_releases.public_router, prefix="/api/v1/fleet", tags=["Fleet"], responses=common_responses)
 app.include_router(agent_rollouts.router, prefix="/api/v1/fleet", tags=["Fleet"], responses=common_responses)
 app.include_router(model_releases.router, prefix="/api/v1/fleet", tags=["Fleet"], responses=common_responses)

@@ -61,6 +61,16 @@ router = APIRouter()
 #: `UnexpectedResponse` is excluded for the reason `ClientError` is: it means the store
 #: ANSWERED and refused. That is a defect here, not an outage there.
 _TRANSPORT: tuple[type[BaseException], ...] = (OSError,)
+try:  # pragma: no cover - httpx is a hard dependency, guarded for symmetry
+    import httpx
+
+    # `httpx.TransportError` covers connect/read/write/pool failures and NOT
+    # `HTTPStatusError`, which means the service answered — the same distinction the
+    # `UnexpectedResponse` note above makes. Added because `httpx.ConnectError` is not an
+    # `OSError` subclass, so an unreachable generator host escaped this tuple entirely.
+    _TRANSPORT += (httpx.TransportError,)
+except ImportError:  # pragma: no cover
+    pass
 try:  # pragma: no cover - import shape mirrors the services' optional dependencies
     from botocore.exceptions import BotoCoreError
 
@@ -183,6 +193,20 @@ async def query(
         )
     except RuntimeError as exc:  # inference/vector store unavailable
         raise HTTPException(status_code=503, detail=str(exc))
+    except _StoreTransportError as exc:
+        # THE COMMENT ABOVE WAS RIGHT AND THE CLAUSE WAS TOO NARROW (FS-742). "Inference
+        # or vector store unavailable" is exactly the intent, and the commonest way that
+        # happens — the generator host does not resolve — arrives as `httpx.ConnectError`,
+        # which is not a `RuntimeError`. So `POST /rag/query` answered **500** whenever the
+        # inference service was simply absent: one of the eight operations in the API still
+        # returning a 500 under the contract gate, on the most ordinary outage there is.
+        #
+        # `_StoreTransportError` is the tuple this module already built for the document
+        # store, and it is right here for the same reason: `OSError` and the client
+        # libraries' transport errors mean the dependency did not answer. A store that
+        # ANSWERS and refuses is deliberately excluded — that is a defect here, not an
+        # outage there.
+        raise _StoreUnreachable(exc) from exc
 
 
 @router.get("/documents", summary="List this org's documents")

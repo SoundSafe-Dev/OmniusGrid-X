@@ -12469,3 +12469,71 @@ RULE 244 — measure in the configuration that matters, and say which one it was
 runs, a spread analysis, floors moved on the evidence — all in a configuration CI does not
 use, because CI runs a Redis service and my laptop did not. The number was eight low. State
 the configuration beside the number, and pick the one the number will be used to reason about.
+
+## FS-742 — six 500s, none of them a surprise, and the one a 500 was hiding
+
+FS-741 split the gate's 5xx count and left **eight** operations genuinely returning a 500.
+Six are fixed here. Not one was an unanticipated crash — every one was a condition the code
+had already thought about, arriving through a door nobody had wired up.
+
+| operation | what it already knew | where it went |
+|---|---|---|
+| `GET /logistics/truck-asset-readiness` | `raise ValueError("Shipment not found")` | nothing listened → 500 |
+| `POST /logistics/optimize-assignment` | same engine call, same raise | 500 |
+| `POST /fleet/releases` | `mkdir` under a release root that may not be writable | `PermissionError` → 500 |
+| `POST /rag/query` | `except RuntimeError` under a comment reading *"inference/vector store unavailable"* | `httpx.ConnectError` is not a `RuntimeError` → 500 |
+| `POST /engines/correlation/integration/analyze` | its own model declares `Dict[str, List[str]]` | the background branch passed a string; FastAPI could not serialise its own response → 500 |
+| `POST /kanban/tasks` | `board_id` is a bare `str` | `""` compared to a `uuid` column; asyncpg raises → 500 (fixed in FS-741) |
+
+**A 500 is the wrong answer to every one of them.** It tells a caller their request was fine
+and we broke — so a client retries a 404 forever, an operator seeing 500s on release upload
+has no reason to check disk permissions, and a status page cannot tell an outage from a bug.
+The status code is the only channel those distinctions travel on. They now answer 404, 404,
+503, 503, 200 and 404.
+
+Two details worth keeping. The rag fix is a *widening of an existing catch*, not a new one —
+the clause named the right intent and missed the commonest form of it, because
+`httpx.ConnectError` is not an `OSError` subclass and so escaped the transport tuple that
+module had already built for its document store. And the correlation fix refused the easy
+route: widening the response model to `Dict[str, Any]` would have silenced the 500 and cost
+the contract (rule 187), so the declared shape stayed and "queued" — a different fact from
+"produced nothing" — got its own typed field.
+
+### What the 500 was hiding
+
+Fixing the correlation response model turned that route from 500 into 200, and the 200
+printed this underneath it:
+
+    background_integration_failed
+    InsufficientPrivilegeError: new row violates row-level security policy
+    for table "actionable_registries"
+
+`process_integration_background` ran on `AsyncSessionLocal()`, which binds no
+`app.current_org_id`. Every table it writes is under FORCE RLS, so **every INSERT was
+refused** — and the route had already returned, the `except` logged one line and continued.
+The caller was told their analysis was integrated. No registry item, task or correlation had
+ever been created, on the path whose entire purpose is the side effect.
+
+Fifth instance of the shape FS-431 closed four times; `tenant_session` exists because of
+them. It now creates four registry items where it created none, asserted against the row
+count rather than the log line.
+
+**The 500 was load-bearing camouflage.** The route failed before reaching the background
+task on the generated-input path, so the gate saw one defect where there were two, and the
+second was the more serious: a 500 is visible, and a silent no-op is not. Fixing the
+shallower fault is what exposed it.
+
+RULE 245 — when a 500 turns into a 200, read what the 200 prints. An error early in a
+handler stops the code after it from running, so the fix does not just change a status —
+it executes a path that has never run in that configuration. The correlation route's
+background integration had been dead the whole time and nothing could have shown it while
+the request died first. Watch the logs on the first successful run of anything you have
+just un-broken.
+
+RULE 246 — an anticipated failure that reaches the client as a 500 means the vocabulary
+stopped at a layer boundary. Every one of these six had the right words somewhere:
+`ValueError("Shipment not found")`, a `PermissionError`, a comment saying "unavailable", a
+declared response type. What was missing was the translation at the edge — the service is
+right to raise `ValueError` and right not to know about HTTP, and the route is the only
+place that can turn it into 404. When you see a 500, look for where the code already said
+what happened, and find out why nobody was listening.

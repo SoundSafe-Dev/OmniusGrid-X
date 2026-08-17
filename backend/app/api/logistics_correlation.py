@@ -133,6 +133,34 @@ async def sync_dock_appointment(
 
 # ==================== Truck-Asset Readiness Endpoints ====================
 
+async def _optimize_or_404(organization_id, shipment_id, db):
+    """Translate the engine's "not found" into the status a caller can act on (FS-742).
+
+    `optimize_truck_asset_assignment` raises a bare `ValueError("Shipment not found")` for
+    an id that does not resolve, and nothing mapped it — so both routes that call it
+    answered **500** for a shipment that simply is not there. Two of the eight operations
+    in the whole API that still returned a 500 under the contract gate, one cause.
+
+    Translated at the ROUTE rather than in the engine: the engine has no business knowing
+    about HTTP, and `ValueError` is the right thing for it to raise. What was missing is
+    anybody listening.
+
+    Scoped narrowly to the not-found case. A `ValueError` from anywhere else in that call
+    is still a genuine 500, and turning every one of them into a 404 would hide a real
+    defect behind a tidy status code.
+    """
+    try:
+        return await logistics_correlation_engine.optimize_truck_asset_assignment(
+            organization_id=organization_id,
+            shipment_id=shipment_id,
+            db=db,
+        )
+    except ValueError as exc:
+        if "not found" not in str(exc).lower():
+            raise
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
 @router.get("/truck-asset-readiness")
 async def get_truck_asset_readiness(
     shipment_id: Optional[UUID] = None,
@@ -145,12 +173,7 @@ async def get_truck_asset_readiness(
     """Get truck arrival vs asset readiness correlation"""
     if shipment_id:
         # Get specific shipment optimization
-        result = await logistics_correlation_engine.optimize_truck_asset_assignment(
-            organization_id=organization_id,
-            shipment_id=shipment_id,
-            db=db
-        )
-        return result
+        return await _optimize_or_404(organization_id, shipment_id, db)
     else:
         # Get overall readiness metrics for the day
         dashboard = await logistics_correlation_engine.get_correlation_dashboard(
@@ -514,12 +537,7 @@ async def optimize_assignment(
     db: AsyncSession = Depends(get_tenant_db)
 ):
     """Get optimal truck-asset assignment recommendations"""
-    result = await logistics_correlation_engine.optimize_truck_asset_assignment(
-        organization_id=organization_id,
-        shipment_id=shipment_id,
-        db=db
-    )
-    return result
+    return await _optimize_or_404(organization_id, shipment_id, db)
 
 
 # ==================== Liability & Cost Endpoints ====================

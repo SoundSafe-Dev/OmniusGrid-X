@@ -11,7 +11,7 @@ from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
 from sqlalchemy.ext.asyncio import AsyncSession
 from pydantic import BaseModel, Field
 
-from app.core.tenant import get_tenant_db
+from app.core.tenant import get_tenant_db, tenant_session
 from app.api.auth import get_current_active_user
 from app.db.models import User
 from app.services.correlation_registry_integration import correlation_registry_integration
@@ -49,7 +49,24 @@ class CorrelationAnalysisResponse(BaseModel):
     recommended_kanban_tasks: List[Dict[str, Any]]
     recommended_actions: List[Dict[str, Any]]
     compliance_implications: Optional[List[str]]
+    #: The ids created by integration, keyed by kind — `registry_items`, `kanban_tasks`,
+    #: `correlations`, `alerts`. `process_correlation_analysis` returns exactly that shape.
     integration_result: Dict[str, List[str]]
+    #: True when integration was handed to a background task, so the lists above are empty
+    #: because the work has not run yet rather than because it produced nothing (FS-742).
+    #:
+    #: THIS FIELD EXISTS BECAUSE THE ROUTE USED TO LIE IN A WAY THAT 500'd. The background
+    #: branch returned `integration_result={"message": "Integration processing in
+    #: background"}` — a string where the model declares `List[str]` — so FastAPI failed to
+    #: serialise its own response and the endpoint answered **500** for every well-formed
+    #: request that took that path. One of the eight operations in the whole API still
+    #: returning a 500 under the contract gate.
+    #:
+    #: Widening the type to `Dict[str, Any]` would have silenced it and cost the contract:
+    #: rule 187 — a permissive response model is not a contract. The state being described
+    #: is "queued", which is a different fact from "produced nothing", so it gets its own
+    #: field and the shape stays honest.
+    integration_queued: bool = False
 
 
 class RegistryInitializationResponse(BaseModel):
@@ -129,7 +146,12 @@ async def analyze_and_integrate(
     }
     
     # Process integration in background
-    if request.auto_create_tasks or request.auto_create_registry_items or request.auto_create_correlations:
+    queued = bool(
+        request.auto_create_tasks
+        or request.auto_create_registry_items
+        or request.auto_create_correlations
+    )
+    if queued:
         background_tasks.add_task(
             process_integration_background,
             integration_input,
@@ -147,7 +169,14 @@ async def analyze_and_integrate(
         recommended_kanban_tasks=recommended_tasks,
         recommended_actions=recommended_actions,
         compliance_implications=compliance_implications,
-        integration_result={"message": "Integration processing in background"}
+        # The declared shape, empty — the work is queued, which `integration_queued` says.
+        integration_result={
+            "registry_items": [],
+            "kanban_tasks": [],
+            "correlations": [],
+            "alerts": [],
+        },
+        integration_queued=queued,
     )
 
 
@@ -159,13 +188,29 @@ async def process_integration_background(
     create_registry_items: bool,
     create_correlations: bool
 ):
-    """Background task for processing integration"""
-    from app.db.database import AsyncSessionLocal
-    
-    async with AsyncSessionLocal() as db:
+    """Background task for processing integration.
+
+    TENANT-BOUND (FS-742). This ran on `AsyncSessionLocal()`, which binds no
+    `app.current_org_id` — and every table it writes is under FORCE ROW LEVEL SECURITY, so
+    each INSERT was refused:
+
+        InsufficientPrivilegeError: new row violates row-level security policy
+        for table "actionable_registries"
+
+    The route had already returned 200 by then, and the `except` below logged
+    `background_integration_failed` and continued — so the caller was told their analysis
+    was integrated, no registry item, task or correlation was ever created, and the only
+    trace was one log line nobody reads. Absence presented as success, on the path whose
+    entire purpose is the side effect. Fifth instance of this exact shape after FS-431's
+    four; `tenant_session` exists because of them.
+
+    Found by accident: the response-model fix above turned this route's 500 into a 200, and
+    the 200 printed the swallowed RLS error underneath it. The 500 had been hiding it.
+    """
+    async with tenant_session(organization_id) as db:
         try:
             user_uuid = UUID(user_id)
-            
+
             if create_registry_items or create_tasks or create_correlations:
                 result = await correlation_registry_integration.process_correlation_analysis(
                     analysis_result,
@@ -175,7 +220,11 @@ async def process_integration_background(
                 )
                 logger.info("background_integration_complete", result=result)
         except Exception as e:
-            logger.error("background_integration_failed", error=str(e))
+            # STILL SWALLOWED, and now at `exception` with the traceback: a background task
+            # that raises loses its error to the event loop, and this one has no caller to
+            # return to. `error` -> `exception` is the difference between "one line saying
+            # something failed" and "enough to fix it".
+            logger.exception("background_integration_failed", error=str(e))
 
 
 @router.post("/initialize-registries", response_model=RegistryInitializationResponse, dependencies=[Depends(require_admin)])
