@@ -212,6 +212,29 @@ async def authorize_completion_command(
         raise HTTPException(status_code=404, detail="Asset not found")
 
 
+async def _lookup_or_404(session: AsyncSession, query, detail: str):
+    """Run a lookup, treating a malformed id as a miss rather than a crash (FS-741).
+
+    Postgres refuses to compare a non-UUID string to a `uuid` column, and asyncpg raises
+    rather than returning no rows — so an id of `""` produced a 500 on a route whose
+    contract declares 404. The distinction the caller cares about is the same either way:
+    there is no such board.
+
+    `rollback()` first, because the failed statement poisons the transaction and every
+    later query in the request would fail with `InFailedSQLTransaction` — a second, more
+    confusing 500 after the one this exists to prevent.
+    """
+    try:
+        result = await session.execute(query)
+    except (DBAPIError, StatementError):
+        await session.rollback()
+        raise HTTPException(status_code=404, detail=detail)
+    found = result.scalar_one_or_none()
+    if not found:
+        raise HTTPException(status_code=404, detail=detail)
+    return found
+
+
 async def log_task_comment(
     session: AsyncSession,
     task_id: str,
@@ -428,29 +451,34 @@ async def create_task(
     current_user: User = Depends(get_current_active_user)
 ):
     """Create a new task"""
-    # Validate board exists
-    result = await session.execute(
+    # AN UNPARSEABLE ID IS AN ID NOBODY OWNS (FS-741). `board_id` and `column_id` are bare
+    # `str` on `TaskCreate`, so `{"board_id": ""}` reached Postgres as a comparison against
+    # a `uuid` column, which it refuses — `InvalidTextRepresentationError`, surfacing as a
+    # **500** where the contract promises a 4xx. Found by the API contract gate; one of the
+    # seven operations in the whole API that still answered 500 under generated input.
+    #
+    # `_lookup_or_404` gives both queries the treatment `verify_refs` already applies to the
+    # other six ids in this body, so every id on this route now fails the same way.
+    board = await _lookup_or_404(
+        session,
         select(TaskBoard).where(
             TaskBoard.id == task_data.board_id,
             TaskBoard.organization_id == current_user.organization_id,
-        )
+        ),
+        "Board not found",
     )
-    board = result.scalar_one_or_none()
-    if not board:
-        raise HTTPException(status_code=404, detail="Board not found")
-    
+
     # Validate column exists and belongs to board
-    result = await session.execute(
+    column = await _lookup_or_404(
+        session,
         select(TaskColumn).where(
             and_(
                 TaskColumn.id == task_data.column_id,
                 TaskColumn.board_id == task_data.board_id
             )
-        )
+        ),
+        "Column not found",
     )
-    column = result.scalar_one_or_none()
-    if not column:
-        raise HTTPException(status_code=404, detail="Column not found")
 
     # THE OTHER SIX IDS IN THIS BODY (FS-736). `board_id` and `column_id` were checked
     # above and the rest were copied straight onto the row. `update_task` validates

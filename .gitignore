@@ -151,3 +151,21 @@ frontend/src/api/generated/schema.d.ts
 # junit report written by the api-contract job (backend/scripts/contract_ratchet.py
 # reads it); regenerated every run, never committed.
 backend/contract-report.xml
+
+# ARCHIVES DROPPED IN THE WORKING TREE, ignored so they cannot be committed by accident.
+#
+# A 1.3 GB `Omnius-Correlation-AI-Backup-<timestamp>.zip` appeared in the repo root on
+# 2026-08-17 — a lane's own backup, harmless where it sat and one `git add -A` away from
+# entering history permanently, where GitHub would either refuse the push or carry the blob
+# for the life of the repository.
+#
+# The FILE is not deleted: it is not this branch's to remove. Only the hazard is.
+#
+# NOTE ON THIS FILE'S HISTORY, because it is now load-bearing twice over. The 2026-08-15
+# compromise used `.gitignore` for CONCEALMENT — it added `temp_auto_push.bat` and two
+# siblings so the attacker's tooling stayed out of `git status`. So every entry here says
+# what it hides and why, and `test_gitignore_hides_nothing_unexplained.py` fails on one
+# that does not.
+*.zip
+*.tar.gz
+*.tgz

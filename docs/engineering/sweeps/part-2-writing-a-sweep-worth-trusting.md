@@ -1729,6 +1729,22 @@ one of its findings. The habit that catches it:
      header) and leave the breaking half as its own announced change. A diff already
      written is not an argument, and the tests standing in its way are the earlier
      decision speaking.
+
+243. **A check that counts a class counts everything in the class, including the members
+     that are correct.** The contract gate's `ServerError` means "any 5xx", so a 503 that
+     the schema declares and the API returns because the dependency really is down is
+     charged to the API as a defect. Published as "31–35 operations return a 5xx", which
+     was true; split by status code it is **8 real 500s and 24 honest 503s**, and the
+     description attached to the number — unvalidated input reaching Postgres — only ever
+     fitted the eight. Before publishing a count, split it by the thing that would change
+     the reader's mind about it.
+
+244. **Measure in the configuration that matters, and say which one it was.** Four runs, a
+     spread analysis, floors moved on the evidence — all without Redis, which CI runs as a
+     service. The published figure was eight operations low, and nothing in it said which
+     setup produced it. A number with no configuration beside it invites being compared
+     against one from a different setup, which is how a floor gets raised or a regression
+     dismissed for the wrong reason.
 ---
 
 ## Open observations, not yet tickets

@@ -3936,3 +3936,55 @@ stay non-conforming — a residue with a written reason, which is what a ratchet
 
 Refusing may well be right. It is a deprecation window and an announcement, not a line in a
 defect sweep.
+
+## Rule 243 — a check that counts a class counts the correct members too
+
+FS-738 published this, as part of getting ahead of a diligence scanner:
+
+> Of the 88–92 that do not conform, **31–35 return a 5xx** — generated input reaching
+> Postgres unvalidated where the contract promises a 4xx.
+
+Every number is accurate. The sentence attached to them is not, and I wrote it.
+
+Schemathesis's `ServerError` check fires on **any** 5xx. Split by status code:
+
+    no Redis        500: 7     503: 24
+    Redis present   500: 8     503: 14
+
+The 503s are `/health/kafka` reporting a broker it cannot reach, `admin/query-performance`
+needing Redis, `rag/*` needing its document store. Every one is declared in the schema and
+returned because the dependency genuinely was not running — the endpoint behaving exactly as
+designed, counted as a server error because the check's name is broader than its members.
+
+Note which half moves. The 503 count nearly halves when Redis appears; the 500 count goes
+from 7 to 8. **The real defects do not depend on what happens to be running**, and that
+stability is the tell — it was visible in the data before I looked for it.
+
+The corrected story is also the better one: eight operations out of 546 return a 500, each
+diagnosed by name. "Thirty-one endpoints return server errors" and "eight endpoints have a
+bug, and here they are" are the same measurement, and only one of them is worth reading.
+
+**Split the count by the thing that would change the reader's mind.** For a 5xx tally that is
+the status code. For a coverage number it is which files. For "N tests failing" it is how many
+are one root cause.
+
+## Rule 244 — measure in the configuration that matters, and name it
+
+The same disclosure did four contract-gate runs, analysed the spread between them, took two
+more with a broker to settle a question about the floors, and moved both floors on the
+evidence. Careful work, and all of it in a configuration CI does not use: the `api-contract`
+job runs a Redis service, and my laptop had no Redis.
+
+With Redis the score is **466 of 546**, not 454–458. The published figure was eight
+operations low, and nothing in it said which setup produced it — so it could have been
+compared against a CI number and read as a regression, or used to justify a floor that no
+laptop run could meet.
+
+The floors stayed at 445, and that is now a decision with a reason rather than an accident:
+they come from the WEAKER configuration, so a build in which Redis fails to start still has a
+floor it can meet. A ratchet is a promise about the worst acceptable run, not the best
+observed one.
+
+**Say which configuration produced a number, every time.** It costs a clause, and without it
+the number cannot be compared to the next one — which is the only thing anybody will ever do
+with it.

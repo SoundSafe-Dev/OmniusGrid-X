@@ -116,9 +116,39 @@ class — any extension created by `conftest` and by no migration now fails the 
 
 ## Why a ratchet
 
-**456–458 of 546** operations conform with no broker and **454–457** with one (four runs,
-2026-08-17, after FS-736/737). Floors: 445 / 445. Of the 88–92 that do not conform, **31–35
-return a 5xx**. The remainder are dominated by **one behaviour**:
+**466 of 546** operations conform in the configuration CI runs (Redis present, no broker,
+2026-08-17). Floors: 445 / 445, set from the weaker no-Redis runs so a build in which Redis
+fails to start still has a floor it can meet.
+
+**"31–35 return a 5xx" WAS TRUE AND MISLEADING, and it is corrected here (FS-741).** It was
+published one commit earlier, described as *generated input reaching Postgres unvalidated*,
+and that description fits eight of those operations rather than thirty-one. Schemathesis's
+`ServerError` check counts any 5xx — so **a correct, declared 503 is charged to the API**.
+Split by code, in the same run:
+
+| configuration | conforming | 500 (real defects) | 503 (dependency genuinely absent) |
+|---|---|---|---|
+| no Redis | 458 / 546 | 7 | 24 |
+| Redis present (CI) | 466 / 546 | 8 | 14 |
+
+The 503s move with the environment because they are honest: `/health/kafka` reporting a broker
+it cannot reach, `admin/query-performance` needing Redis, `rag/*` needing its store. The
+count of real defects barely moves, because it does not depend on what is running.
+
+**The eight, each diagnosed, so no owner has to reproduce one:**
+
+| operation | cause | owner |
+|---|---|---|
+| `POST /kanban/tasks` | `board_id: ""` compared against a `uuid` column; asyncpg raises `InvalidTextRepresentationError` rather than returning no rows | **fixed** (FS-741) — `_lookup_or_404` |
+| `GET /logistics/truck-asset-readiness` | `optimize_truck_asset_assignment` raises a bare `ValueError("Shipment not found")` for an id that does not exist; nothing maps it, so 500 where 404 belongs | logistics |
+| `POST /logistics/optimize-assignment` | same call, same `ValueError` | logistics |
+| `POST /users/` | a NUL byte (`\u0000`) in a string field reaches Postgres, which cannot store it in `text` | user management |
+| `POST /engines/correlation/integration/analyze` | `{"metrics": {}}` — an empty metrics map is not defended | correlation |
+| `POST /fleet/releases` | minimal valid body still 500s | fleet |
+| `POST /rag/query` | `{"query": "0"}` | rag |
+| `PUT /user/context` | surfaced only with Redis present, so it had never been measured | user |
+
+The remainder are dominated by **one behaviour**:
 generated input reaching Postgres unvalidated and surfacing as a 500 where the contract
 promises a 4xx (`DataError`, `ForeignKeyViolationError`, `CharacterNotInRepertoireError`).
 That is per-endpoint validation work spread across every lane.

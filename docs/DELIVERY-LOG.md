@@ -12396,3 +12396,76 @@ contradicted a documented compatibility guarantee, written with its reason and g
 fifteen tests. The right move is the non-breaking half now and the breaking half as its own
 announced change — not to overwrite the older decision because my diff was already written
 and its tests were the only thing in the way.
+
+## FS-741 — the number I published was true and misleading
+
+FS-738 disclosed "**31–35 return a 5xx**" and described it as *generated input reaching
+Postgres unvalidated where the contract promises a 4xx*. The count is accurate. The
+description fits **eight** of those operations, not thirty-one.
+
+Schemathesis's `ServerError` check counts **any** 5xx, so a correct, declared 503 is charged
+to the API. Splitting by status code, same runs:
+
+    no Redis        458 / 546 conforming     500: 7     503: 24
+    Redis present   466 / 546 conforming     500: 8     503: 14
+
+The 503s move with the environment because they are honest — `/health/kafka` reporting an
+unreachable broker, `admin/query-performance` needing Redis, `rag/*` needing its store. The
+real defect count barely moves, because it does not depend on what happens to be running.
+
+**And the headline number was measured in the wrong configuration.** CI runs a Redis service;
+my four runs had none, so I published 454–458 for a setup CI does not use. With Redis: **466
+of 546**. The floors stay at 445, deliberately, and now with a reason: they are set from the
+weaker configuration so a build in which Redis fails to start still has a floor it can meet.
+
+Correcting a figure published one commit earlier is the point of writing them down. The
+corrected story is also the better one: eight operations return a 500, out of 546.
+
+**All eight are now diagnosed by operation** in `docs/engineering/api-contract-gate.md`, so
+no owner has to reproduce one. The one in this lane is fixed:
+
+    POST /kanban/tasks   {"board_id": ""}   ->  500
+
+`board_id` is a bare `str` on `TaskCreate`, so an empty string reached Postgres as a
+comparison against a `uuid` column — asyncpg raises `InvalidTextRepresentationError` rather
+than returning no rows. `_lookup_or_404` gives the board and column lookups the treatment
+`verify_refs` already applied to the other six ids on that route: a malformed id is an id
+nobody owns, so 404. It rolls back first, because the failed statement poisons the
+transaction and every later query in the request would fail with `InFailedSQLTransaction` — a
+second, more confusing 500 after the one being prevented.
+
+Two of the remaining seven share a cause worth naming: `logistics_correlation_engine.
+optimize_truck_asset_assignment` raises a bare `ValueError("Shipment not found")` for an id
+that does not exist, and nothing maps it — so both routes that call it answer 500 where 404
+belongs. That is a two-line fix in a lane that is not mine, recorded rather than edited.
+
+### A 1.3 GB archive, one `git add -A` from permanent
+
+`Omnius-Correlation-AI-Backup-20260817T170222Z-1-001.zip` appeared in the repo root and was
+**not** ignored. Harmless where it sat; one careless stage away from a blob GitHub would
+either refuse or carry for the life of the repository. The file is not this branch's to
+delete — only the hazard is — so `*.zip`, `*.tar.gz` and `*.tgz` are ignored now.
+
+Which put a second entry in a file that was **an attack surface three days ago**. The
+2026-08-15 compromise changed exactly two files: `postcss.config.js` got the payload, and
+`.gitignore` got three bare lines — `temp_auto_push.bat` and two siblings — so the attacker's
+own tooling stayed out of `git status`. `test_gitignore_hides_nothing_unexplained.py` now
+requires every pattern to sit under a comment saying what it hides. Measured first: 87
+patterns, 87 already explained, so the standard costs nothing and an unexplained addition
+stands out instead of blending in. It also checks for those three filenames directly, so a
+compromised tree merged back announces itself in the words of the incident.
+
+Its own first version failed on the `.gitignore` comment that NAMES those three files while
+explaining the guard — a detector that cannot tell a rule from a sentence about a rule
+reports the documentation as the attack. It reads patterns now, not prose.
+
+RULE 243 — a check that counts a class counts everything in the class, including the members
+that are correct. `ServerError` means 5xx, and a 503 declared in the schema and returned
+because the dependency really is down is not a defect. Thirty-one became eight the moment the
+status codes were separated. Before publishing a count, split it by the thing that would
+change the reader's mind.
+
+RULE 244 — measure in the configuration that matters, and say which one it was. Four careful
+runs, a spread analysis, floors moved on the evidence — all in a configuration CI does not
+use, because CI runs a Redis service and my laptop did not. The number was eight low. State
+the configuration beside the number, and pick the one the number will be used to reason about.
