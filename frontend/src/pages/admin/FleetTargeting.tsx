@@ -1,10 +1,11 @@
-import { FC, FormEvent, useMemo, useState } from 'react';
+import { FC, FormEvent, useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import {
   ArrowLeft,
   Layers3,
   ListFilter,
   MapPin,
+  Pencil,
   Plus,
   RefreshCw,
   Tags,
@@ -15,6 +16,7 @@ import {
   Button,
   Card,
   Input,
+  Modal,
   Select,
   SkeletonTable,
   Table,
@@ -30,19 +32,28 @@ import {
   useDeactivateFleetGroup,
   useDeactivateFleetSite,
   useDeactivateFleetTag,
+  useFleetCohort,
   useFleetCohorts,
   useFleetGroups,
   useFleetInventory,
   useFleetSites,
   useFleetTags,
   useFleetWorkcells,
+  useUpdateFleetCohort,
+  useUpdateFleetGroup,
   useUpdateFleetGroupMembers,
+  useUpdateFleetSite,
+  useUpdateFleetTag,
 } from '../../hooks/useFleet';
 import { handleApiError } from '../../api';
 import {
+  FleetCohort,
   FleetCohortOperator,
   FleetCohortQuery,
+  FleetCohortUpdate,
   FleetNamedResource,
+  FleetNamedUpdate,
+  FleetTagUpdate,
 } from '../../types/fleet';
 import { formatDateTime, formatNumber } from '../../utils';
 
@@ -72,6 +83,24 @@ interface Feedback {
   message: string;
 }
 
+type EditKind = 'site' | 'tag' | 'group' | 'cohort';
+
+interface EditTarget {
+  kind: EditKind;
+  id: string;
+  name: string;
+}
+
+interface ResourceEditForm extends TagForm {
+  query: string;
+}
+
+interface EditOriginal {
+  resourceId: string;
+  form: ResourceEditForm;
+  cohortQuery?: FleetCohortQuery;
+}
+
 const emptyNamedForm: NamedForm = {
   name: '',
   key: '',
@@ -94,19 +123,54 @@ const emptyCohortForm: CohortForm = {
   agent_version: '',
 };
 
+const emptyResourceEditForm: ResourceEditForm = {
+  ...emptyTagForm,
+  color: '',
+  query: '',
+};
+
 const createPayload = (form: NamedForm) => ({
   name: form.name.trim(),
   key: form.key.trim() || undefined,
   description: form.description.trim() || undefined,
 });
 
+function namedUpdatePayload(
+  form: ResourceEditForm,
+  original: ResourceEditForm
+): FleetNamedUpdate {
+  const payload: FleetNamedUpdate = {};
+  const name = form.name.trim();
+  const key = form.key.trim();
+
+  if (name !== original.name) payload.name = name;
+  if (key !== original.key) payload.key = key;
+  if (form.description !== original.description) {
+    payload.description = form.description.trim() || null;
+  }
+  return payload;
+}
+
+function tagUpdatePayload(
+  form: ResourceEditForm,
+  original: ResourceEditForm
+): FleetTagUpdate {
+  const payload: FleetTagUpdate = namedUpdatePayload(form, original);
+  if (form.color !== original.color) {
+    payload.color = form.color.trim() || null;
+  }
+  return payload;
+}
+
 const ResourceList: FC<{
+  kind: 'site' | 'tag' | 'group';
   items: FleetNamedResource[];
   emptyMessage: string;
   busy: boolean;
+  onEdit: (item: FleetNamedResource) => void;
   onDeactivate: (item: FleetNamedResource) => void;
   accent?: (item: FleetNamedResource) => string | null;
-}> = ({ items, emptyMessage, busy, onDeactivate, accent }) => {
+}> = ({ kind, items, emptyMessage, busy, onEdit, onDeactivate, accent }) => {
   if (items.length === 0) {
     return (
       <p className="rounded-lg border border-dashed border-opsgrid-border p-4 text-center text-sm text-opsgrid-text-secondary">
@@ -134,16 +198,30 @@ const ResourceList: FC<{
               <p className="mt-1 text-sm text-opsgrid-text-secondary">{item.description}</p>
             )}
           </div>
-          <Button
-            size="sm"
-            variant="ghost"
-            disabled={busy}
-            tooltip={`Deactivate ${item.name}`}
-            aria-label={`Deactivate ${item.name}`}
-            onClick={() => onDeactivate(item)}
-          >
-            <Trash2 size={15} className="text-status-alarm" />
-          </Button>
+          <div className="flex shrink-0 items-center gap-1">
+            <Button
+              type="button"
+              size="sm"
+              variant="ghost"
+              disabled={busy}
+              tooltip={`Edit ${item.name}`}
+              aria-label={`Edit ${kind} ${item.name}`}
+              onClick={() => onEdit(item)}
+            >
+              <Pencil size={15} />
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              variant="ghost"
+              disabled={busy}
+              tooltip={`Deactivate ${item.name}`}
+              aria-label={`Deactivate ${item.name}`}
+              onClick={() => onDeactivate(item)}
+            >
+              <Trash2 size={15} className="text-status-alarm" />
+            </Button>
+          </div>
         </div>
       ))}
     </div>
@@ -188,15 +266,19 @@ export const FleetTargeting: FC = () => {
   const inventory = useFleetInventory();
 
   const createSite = useCreateFleetSite();
+  const updateSite = useUpdateFleetSite();
   const deactivateSite = useDeactivateFleetSite();
   const assignWorkcellSite = useAssignFleetWorkcellSite();
   const createTag = useCreateFleetTag();
+  const updateTag = useUpdateFleetTag();
   const deactivateTag = useDeactivateFleetTag();
   const bulkTags = useBulkFleetTagAssignments();
   const createGroup = useCreateFleetGroup();
+  const updateGroup = useUpdateFleetGroup();
   const deactivateGroup = useDeactivateFleetGroup();
   const updateGroupMembers = useUpdateFleetGroupMembers();
   const createCohort = useCreateFleetCohort();
+  const updateCohort = useUpdateFleetCohort();
   const deactivateCohort = useDeactivateFleetCohort();
 
   const [siteForm, setSiteForm] = useState<NamedForm>(emptyNamedForm);
@@ -208,6 +290,13 @@ export const FleetTargeting: FC = () => {
   const [selectedGroupId, setSelectedGroupId] = useState('');
   const [search, setSearch] = useState('');
   const [feedback, setFeedback] = useState<Feedback | null>(null);
+  const [editing, setEditing] = useState<EditTarget | null>(null);
+  const [editForm, setEditForm] = useState<ResourceEditForm>(emptyResourceEditForm);
+  const [editOriginal, setEditOriginal] = useState<EditOriginal | null>(null);
+  const [editError, setEditError] = useState<string | null>(null);
+
+  const editingCohortId = editing?.kind === 'cohort' ? editing.id : '';
+  const cohortDetail = useFleetCohort(editingCohortId);
 
   const siteItems = sites.data ?? [];
   const workcellItems = workcells.data ?? [];
@@ -259,8 +348,199 @@ export const FleetTargeting: FC = () => {
     filteredAssets.length > 0 &&
     filteredAssets.every((asset) => selectedAssets.has(asset.id));
 
+  const editPending =
+    editing?.kind === 'site'
+      ? updateSite.isPending
+      : editing?.kind === 'tag'
+        ? updateTag.isPending
+        : editing?.kind === 'group'
+          ? updateGroup.isPending
+          : editing?.kind === 'cohort'
+            ? updateCohort.isPending
+            : false;
+
+  useEffect(() => {
+    const cohort = cohortDetail.data;
+    if (
+      editing?.kind !== 'cohort' ||
+      !cohort ||
+      cohort.id !== editing.id ||
+      cohortDetail.isFetching ||
+      cohortDetail.isError ||
+      editOriginal?.resourceId === editing.id
+    ) {
+      return;
+    }
+
+    const form: ResourceEditForm = {
+      ...emptyResourceEditForm,
+      name: cohort.name,
+      description: cohort.description ?? '',
+      query: JSON.stringify(cohort.query, null, 2),
+    };
+    setEditForm(form);
+    setEditOriginal({
+      resourceId: cohort.id,
+      form,
+      cohortQuery: cohort.query,
+    });
+  }, [
+    cohortDetail.data,
+    cohortDetail.isError,
+    cohortDetail.isFetching,
+    editOriginal?.resourceId,
+    editing,
+  ]);
+
   const reportError = (error: unknown) => {
     setFeedback({ tone: 'error', message: handleApiError(error).message });
+  };
+
+  const resetEditor = () => {
+    setEditing(null);
+    setEditForm(emptyResourceEditForm);
+    setEditOriginal(null);
+    setEditError(null);
+  };
+
+  const closeEditor = () => {
+    if (!editPending) resetEditor();
+  };
+
+  const beginNamedEdit = (
+    kind: 'site' | 'tag' | 'group',
+    resource: FleetNamedResource,
+    color: string | null = null
+  ) => {
+    const form: ResourceEditForm = {
+      ...emptyResourceEditForm,
+      name: resource.name,
+      key: resource.key,
+      description: resource.description ?? '',
+      color: color ?? '',
+    };
+    setEditing({ kind, id: resource.id, name: resource.name });
+    setEditForm(form);
+    setEditOriginal({ resourceId: resource.id, form });
+    setEditError(null);
+    setFeedback(null);
+  };
+
+  const beginCohortEdit = (cohort: FleetCohort) => {
+    setEditing({ kind: 'cohort', id: cohort.id, name: cohort.name });
+    setEditForm({
+      ...emptyResourceEditForm,
+      name: cohort.name,
+      description: cohort.description ?? '',
+    });
+    setEditOriginal(null);
+    setEditError(null);
+    setFeedback(null);
+  };
+
+  const reportEditError = (error: unknown) => {
+    const message = handleApiError(error).message;
+    setEditError(message);
+  };
+
+  const finishEdit = (kind: EditKind, name: string) => {
+    resetEditor();
+    setFeedback({ tone: 'success', message: `Updated ${kind} ${name}.` });
+  };
+
+  const submitEdit = (event: FormEvent) => {
+    event.preventDefault();
+    if (!editing || !editOriginal) return;
+
+    setEditError(null);
+    const name = editForm.name.trim();
+    if (!name) {
+      setEditError('Name is required.');
+      return;
+    }
+
+    if (editing.kind === 'cohort') {
+      let query: FleetCohortQuery;
+      try {
+        query = JSON.parse(editForm.query) as FleetCohortQuery;
+      } catch {
+        setEditError('Cohort query must be valid JSON.');
+        return;
+      }
+
+      const payload: FleetCohortUpdate = {};
+      if (name !== editOriginal.form.name) payload.name = name;
+      if (editForm.description !== editOriginal.form.description) {
+        payload.description = editForm.description.trim() || null;
+      }
+      if (JSON.stringify(query) !== JSON.stringify(editOriginal.cohortQuery)) {
+        payload.query = query;
+      }
+      if (Object.keys(payload).length === 0) {
+        setEditError('No changes to save.');
+        return;
+      }
+
+      updateCohort.mutate(
+        { cohortId: editing.id, payload },
+        {
+          onSuccess: (cohort) => finishEdit('cohort', cohort.name),
+          onError: reportEditError,
+        }
+      );
+      return;
+    }
+
+    const key = editForm.key.trim();
+    if (!key) {
+      setEditError('Key is required.');
+      return;
+    }
+
+    if (editing.kind === 'site') {
+      const payload = namedUpdatePayload(editForm, editOriginal.form);
+      if (Object.keys(payload).length === 0) {
+        setEditError('No changes to save.');
+        return;
+      }
+      updateSite.mutate(
+        { siteId: editing.id, payload },
+        {
+          onSuccess: (site) => finishEdit('site', site.name),
+          onError: reportEditError,
+        }
+      );
+      return;
+    }
+
+    if (editing.kind === 'tag') {
+      const payload = tagUpdatePayload(editForm, editOriginal.form);
+      if (Object.keys(payload).length === 0) {
+        setEditError('No changes to save.');
+        return;
+      }
+      updateTag.mutate(
+        { tagId: editing.id, payload },
+        {
+          onSuccess: (tag) => finishEdit('tag', tag.name),
+          onError: reportEditError,
+        }
+      );
+      return;
+    }
+
+    const payload = namedUpdatePayload(editForm, editOriginal.form);
+    if (Object.keys(payload).length === 0) {
+      setEditError('No changes to save.');
+      return;
+    }
+    updateGroup.mutate(
+      { groupId: editing.id, payload },
+      {
+        onSuccess: (group) => finishEdit('group', group.name),
+        onError: reportEditError,
+      }
+    );
   };
 
   const submitSite = (event: FormEvent) => {
@@ -535,9 +815,11 @@ export const FleetTargeting: FC = () => {
           </form>
           <div className="mt-4">
             <ResourceList
+              kind="site"
               items={siteItems}
               emptyMessage="No sites configured."
-              busy={deactivateSite.isPending}
+              busy={deactivateSite.isPending || updateSite.isPending}
+              onEdit={(site) => beginNamedEdit('site', site)}
               onDeactivate={(site) =>
                 confirmDeactivate('site', site.id, site.name)
               }
@@ -642,11 +924,19 @@ export const FleetTargeting: FC = () => {
           </form>
           <div className="mt-4">
             <ResourceList
+              kind="tag"
               items={tagItems}
               emptyMessage="No tags configured."
-              busy={deactivateTag.isPending}
+              busy={deactivateTag.isPending || updateTag.isPending}
               accent={(item) =>
                 tagItems.find((tag) => tag.id === item.id)?.color || null
+              }
+              onEdit={(tag) =>
+                beginNamedEdit(
+                  'tag',
+                  tag,
+                  tagItems.find((item) => item.id === tag.id)?.color ?? null
+                )
               }
               onDeactivate={(tag) => confirmDeactivate('tag', tag.id, tag.name)}
             />
@@ -689,9 +979,11 @@ export const FleetTargeting: FC = () => {
           </form>
           <div className="mt-4">
             <ResourceList
+              kind="group"
               items={groupItems}
               emptyMessage="No groups configured."
-              busy={deactivateGroup.isPending}
+              busy={deactivateGroup.isPending || updateGroup.isPending}
+              onEdit={(group) => beginNamedEdit('group', group)}
               onDeactivate={(group) =>
                 confirmDeactivate('group', group.id, group.name)
               }
@@ -823,18 +1115,32 @@ export const FleetTargeting: FC = () => {
                       </p>
                     )}
                   </div>
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    disabled={deactivateCohort.isPending}
-                    tooltip={`Deactivate ${cohort.name}`}
-                    aria-label={`Deactivate ${cohort.name}`}
-                    onClick={() =>
-                      confirmDeactivate('cohort', cohort.id, cohort.name)
-                    }
-                  >
-                    <Trash2 size={15} className="text-status-alarm" />
-                  </Button>
+                  <div className="flex shrink-0 items-center gap-1">
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="ghost"
+                      disabled={updateCohort.isPending || deactivateCohort.isPending}
+                      tooltip={`Edit ${cohort.name}`}
+                      aria-label={`Edit cohort ${cohort.name}`}
+                      onClick={() => beginCohortEdit(cohort)}
+                    >
+                      <Pencil size={15} />
+                    </Button>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="ghost"
+                      disabled={updateCohort.isPending || deactivateCohort.isPending}
+                      tooltip={`Deactivate ${cohort.name}`}
+                      aria-label={`Deactivate ${cohort.name}`}
+                      onClick={() =>
+                        confirmDeactivate('cohort', cohort.id, cohort.name)
+                      }
+                    >
+                      <Trash2 size={15} className="text-status-alarm" />
+                    </Button>
+                  </div>
                 </div>
                 <pre className="mt-3 max-h-32 overflow-auto rounded border border-opsgrid-border p-2 text-xs text-opsgrid-text-secondary">
                   {JSON.stringify(cohort.query, null, 2)}
@@ -1037,6 +1343,149 @@ export const FleetTargeting: FC = () => {
           </Table>
         )}
       </Card>
+
+      <Modal
+        isOpen={Boolean(editing)}
+        onClose={closeEditor}
+        closeOnBackdrop={!editPending}
+        closeOnEscape={!editPending}
+        title={editing ? `Edit ${editing.kind}` : 'Edit fleet resource'}
+        description={
+          editing
+            ? `Update ${editing.name}. Only changed fields will be saved.`
+            : undefined
+        }
+        footer={
+          <>
+            <Button
+              type="button"
+              variant="secondary"
+              disabled={editPending}
+              onClick={closeEditor}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="submit"
+              form="fleet-resource-edit-form"
+              loading={editPending}
+              disabled={
+                !editOriginal ||
+                (editing?.kind === 'cohort' && cohortDetail.isError)
+              }
+            >
+              Save changes
+            </Button>
+          </>
+        }
+      >
+        <form id="fleet-resource-edit-form" className="space-y-4" onSubmit={submitEdit}>
+          {editError && (
+            <div
+              role="alert"
+              className="rounded-lg border border-status-alarm/40 bg-status-alarm/10 px-3 py-2 text-sm text-status-alarm"
+            >
+              {editError}
+            </div>
+          )}
+
+          <Input
+            label="Name"
+            required
+            value={editForm.name}
+            disabled={editPending || !editOriginal}
+            onChange={(event) =>
+              setEditForm({ ...editForm, name: event.target.value })
+            }
+          />
+
+          {editing?.kind !== 'cohort' && (
+            <Input
+              label="Key"
+              required
+              value={editForm.key}
+              disabled={editPending}
+              onChange={(event) =>
+                setEditForm({ ...editForm, key: event.target.value })
+              }
+            />
+          )}
+
+          <Input
+            label="Description"
+            value={editForm.description}
+            disabled={editPending || !editOriginal}
+            helperText="Leave blank to clear the description."
+            onChange={(event) =>
+              setEditForm({ ...editForm, description: event.target.value })
+            }
+          />
+
+          {editing?.kind === 'tag' && (
+            <Input
+              label="Color"
+              value={editForm.color}
+              disabled={editPending}
+              helperText="Use a CSS color value, or leave blank to clear it."
+              onChange={(event) =>
+                setEditForm({ ...editForm, color: event.target.value })
+              }
+            />
+          )}
+
+          {editing?.kind === 'cohort' && (
+            <div>
+              {cohortDetail.isError ? (
+                <div
+                  role="alert"
+                  className="rounded-lg border border-status-alarm/40 bg-status-alarm/10 p-3 text-sm text-status-alarm"
+                >
+                  <p>Could not load the canonical cohort query.</p>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    className="mt-2"
+                    onClick={() => cohortDetail.refetch()}
+                  >
+                    Retry
+                  </Button>
+                </div>
+              ) : !editOriginal ? (
+                <p role="status" className="text-sm text-opsgrid-text-secondary">
+                  Loading the canonical cohort query…
+                </p>
+              ) : (
+                <>
+                  <label
+                    htmlFor="fleet-cohort-query"
+                    className="mb-1 block text-sm font-medium text-opsgrid-text"
+                  >
+                    Cohort query (JSON)
+                  </label>
+                  <textarea
+                    id="fleet-cohort-query"
+                    rows={10}
+                    value={editForm.query}
+                    disabled={editPending}
+                    aria-describedby="fleet-cohort-query-help"
+                    onChange={(event) =>
+                      setEditForm({ ...editForm, query: event.target.value })
+                    }
+                    className="w-full rounded-lg border border-opsgrid-border bg-opsgrid-bg px-3 py-2 font-mono text-sm text-opsgrid-text focus:border-transparent focus:outline-none focus:ring-2 focus:ring-opsgrid-primary disabled:cursor-not-allowed disabled:opacity-50"
+                  />
+                  <p
+                    id="fleet-cohort-query-help"
+                    className="mt-1 text-sm text-opsgrid-text-secondary"
+                  >
+                    Nested queries are preserved unless this JSON is changed.
+                  </p>
+                </>
+              )}
+            </div>
+          )}
+        </form>
+      </Modal>
     </div>
   );
 };
