@@ -1,0 +1,196 @@
+# 3.3 Audit and Accountability — 9 practices.
+#
+# Populated first because it is the family this repository has just done real work in
+# (FS-743), and because it shows both directions honestly: a control that is implemented and
+# proved, and controls that are absent with a date on them.
+
+controls:
+  - id: OG-AU-001
+    title: Audit records are created for security-relevant operations and retained
+    satisfies:
+      - 800-171:03.03.01
+      - 800-53r5:AU-2
+      - 800-53r5:AU-3
+      - ISO27001:A.8.15
+      - SOC2:CC7.2
+    status:
+      commercial-cloud: partial
+      gov-cloud: partial
+      on-prem: partial
+      air-gapped: partial
+    implemented_by:
+      - app/middleware/audit.py
+      - app/services/audit.py
+      - app/services/user_audit.py
+      - database/migrations/009_audit_logs.sql
+    proved_by:
+      - tests/test_audit_sensitive_operations.py
+      - tests/test_audit_writers_bind_a_tenant_realdb.py
+    evidence:
+      - junit/backend.xml
+    owner: platform-security
+    remediation:
+      due: "2026-11-30"
+      note: >-
+        PARTIAL for two measured reasons, not as a hedge. The middleware captures 18
+        hardcoded route templates (`SENSITIVE_OPERATIONS`) out of ~546 operations, and
+        request/response bodies are never captured — `_get_request_body` is a documented
+        no-op because reading the stream would consume it. Explicit `record_audit` writers
+        cover ~38 further actions. No retention period is defined for `audit_logs` and
+        nothing purges or archives it.
+
+  - id: OG-AU-002
+    title: Every audit record is attributable to an individual user
+    satisfies:
+      - 800-171:03.03.02
+      - 800-53r5:AU-3
+      - ISO27001:A.8.15
+      - SOC2:CC7.2
+    status:
+      commercial-cloud: implemented
+      gov-cloud: implemented
+      on-prem: implemented
+      air-gapped: implemented
+    implemented_by:
+      - app/services/audit.py
+      - app/db/models.py
+    proved_by:
+      - tests/test_audit_writers_bind_a_tenant_realdb.py
+      - tests/test_audit_and_gdpr_tenant_scoping_realdb.py
+    evidence:
+      - junit/backend.xml
+    owner: platform-security
+
+  - id: OG-AU-003
+    title: An audit write that fails is visible rather than silent
+    satisfies:
+      - 800-171:03.03.04
+      - 800-53r5:AU-5
+      - SOC2:CC7.2
+    status:
+      commercial-cloud: implemented
+      gov-cloud: implemented
+      on-prem: implemented
+      air-gapped: implemented
+    implemented_by:
+      - app/services/audit.py
+      - app/middleware/audit.py
+      - infra/prometheus/alerts.yml
+    proved_by:
+      - tests/test_a_failed_audit_write_is_visible.py
+    evidence:
+      - junit/backend.xml
+      - promtool/audit_alerts_test.yml
+    owner: platform-security
+    notes: >-
+      `AUDIT_WRITE_FAILURES` is a counter with an `AuditWriteFailing` alert rule, and the
+      rule is unit-tested by promtool rather than merely written down.
+
+  - id: OG-AU-004
+    title: Audit records are tamper-evident and the evidence can be verified
+    satisfies:
+      - 800-171:03.03.08
+      - 800-53r5:AU-9
+      - ISO27001:A.8.15
+      - SOC2:CC7.2
+    status:
+      commercial-cloud: partial
+      gov-cloud: partial
+      on-prem: partial
+      air-gapped: partial
+    implemented_by:
+      - database/migrations/069_audit_hash_chain_is_verifiable.sql
+      - app/api/audit.py
+    proved_by:
+      - tests/test_the_audit_chain_actually_verifies_realdb.py
+      - tests/test_the_audit_chain_survives_its_own_schema.py
+    evidence:
+      - junit/backend.xml
+    owner: platform-security
+    remediation:
+      due: "2026-12-31"
+      note: >-
+        The chain verifies and detects mutation, deletion and forgery (FS-743). It is still
+        PARTIAL because tamper-EVIDENCE is not tamper-RESISTANCE: `audit_logs` grants no
+        append-only enforcement, so a role with UPDATE/DELETE can still alter rows — the
+        chain proves it happened, it does not prevent it. Needs `REVOKE UPDATE, DELETE` and
+        a WORM export before this is `implemented`.
+
+  - id: OG-AU-005
+    title: Audit log access is restricted to privileged users and scoped to one tenant
+    satisfies:
+      - 800-171:03.03.09
+      - 800-53r5:AU-9
+      - ISO27001:A.8.15
+      - SOC2:CC6.1
+    status:
+      commercial-cloud: implemented
+      gov-cloud: implemented
+      on-prem: implemented
+      air-gapped: implemented
+    implemented_by:
+      - app/api/audit.py
+      - app/middleware/rbac.py
+    proved_by:
+      - tests/test_audit_and_gdpr_tenant_scoping_realdb.py
+      - tests/test_route_auth_walk.py
+    evidence:
+      - junit/backend.xml
+    owner: platform-security
+    notes: >-
+      All five audit endpoints are `require_admin` on a `get_tenant_db` session. The
+      `organization_id` query parameter was deliberately removed — cross-tenant audit read
+      would need a super-admin role that this system intentionally does not have.
+
+  - id: OG-AU-006
+    title: Audit records carry a synchronised, unambiguous timestamp
+    satisfies:
+      - 800-171:03.03.07
+      - 800-53r5:AU-8
+      - ISO27001:A.8.17
+    status:
+      commercial-cloud: partial
+      gov-cloud: partial
+      on-prem: partial
+      air-gapped: absent
+    implemented_by:
+      - app/db/models.py
+      - edge-agent/opsgrid_agent/timesync.py
+    proved_by:
+      - tests/test_no_naive_utcnow.py
+    evidence:
+      - junit/backend.xml
+    owner: platform-security
+    remediation:
+      due: "2027-01-31"
+      note: >-
+        Backend records are aware-UTC and a repo-wide guard forbids naive `utcnow`. There is
+        no configured authoritative time source, and on the edge the skew estimator
+        calibrates only while the cloud is reachable — so `air-gapped` is `absent` rather
+        than `partial`: the one deployment where clock discipline matters most is the one
+        with no correction at all (see the DDIL workstream, S8).
+
+  - id: OG-AU-007
+    title: Audit review, analysis and reporting
+    satisfies:
+      - 800-171:03.03.03
+      - 800-171:03.03.05
+      - 800-171:03.03.06
+      - 800-53r5:AU-6
+      - 800-53r5:AU-7
+      - ISO27001:A.8.15
+    status:
+      commercial-cloud: absent
+      gov-cloud: absent
+      on-prem: absent
+      air-gapped: absent
+    implemented_by: []
+    owner: security-operations
+    remediation:
+      due: "2027-02-28"
+      note: >-
+        `GET /audit/summary` aggregates by action and period, which is a reporting surface
+        but not a review PROCESS: nothing defines which events are reviewed, by whom, or how
+        often, and no logged-event list is reviewed and updated. Log aggregation is also not
+        deployed to Kubernetes — Loki exists in docker-compose only — so there is no
+        correlation across components to review. Blocked on the SIEM decision.

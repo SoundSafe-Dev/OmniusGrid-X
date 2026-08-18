@@ -4125,3 +4125,75 @@ cannot name the file that implements it and the test that proves it, it is not r
 written down. The replacement `docs/compliance/README.md` states the honest position — no
 framework compliance is claimed today — records what was removed and why, and keeps only the
 two documents that survive the rule.
+
+## Rule 249 — a compliance claim needs a citation a machine can follow
+
+These two sentences read identically to a human:
+
+> Multi-factor authentication is required.
+>
+> Every request is bound to an authenticated tenant principal.
+
+To a build they are completely different. The second one, in the control catalogue, says:
+
+```yaml
+proved_by: [tests/test_a_tenant_reference_is_refused_realdb.py]
+```
+
+Delete that file and the compliance build fails, naming the control that just lost its
+evidence. The first sentence names nothing and therefore fails never — which is how it
+survived in `SOC2_COMPLIANCE.md` for as long as it did while the MFA code sat on this
+repository's own orphaned-definition list.
+
+That difference is the entire value of the catalogue. Not the narrative — narratives are
+prose, and prose is exactly what an author controls. The value is that **`implemented` is a
+status a test can revoke.**
+
+The check is deliberately collection, not file existence. A path check passes for a file
+that exists and is empty, whose tests were renamed, or that raises on import — and the
+import case is the worst, because the catalogue reads as satisfied while the evidence cannot
+run. `pytest --collect-only` is the cheapest signal that a cited test is one pytest will
+actually execute.
+
+It is equally deliberate about what it does **not** check: whether the test passes (the
+suite's job) and whether the test is relevant to the control (only a reader can judge that).
+It closes exactly one gap — between "cites evidence" and "that evidence exists" — which is
+the gap 314 uncited claims lived in.
+
+**And its vacuity check earned its place within the hour.** The first run reported all seven
+controls as having lost their tests. They had not. `pytest.ini` sets `addopts = -v`, ini
+options are prepended, so a trailing `-q` nets back to default verbosity and `--collect-only`
+prints the `<Module>`/`<Function>` tree rather than node ids — no line contains `::`, the id
+set came back empty, and every citation "failed". `test_collection_succeeded` fired first and
+said *collection is broken*, so the diagnosis cost a minute instead of an afternoon auditing
+a catalogue that was correct. A guard that cannot see its subject must say so before it
+starts making accusations.
+
+## Rule 250 — state the status per environment when you ship to more than one
+
+The instinct is one status per control: implemented, or not. That is wrong the moment the
+same code runs in more than one place, because **a control is not a property of code — it is
+a property of code in a place.**
+
+OmniusGrid ships to commercial cloud, gov cloud, on-prem and air-gapped. Three examples from
+the first family populated:
+
+    physical protection      inherited from the provider in cloud
+                             organizational on-prem — nobody inherits anything
+    clock discipline         partial online (skew estimated from the cloud heartbeat)
+                             absent air-gapped — the estimator only calibrates when the
+                             cloud is reachable, i.e. never when it matters
+    identity round-trips     implemented where an IdP is reachable
+                             partial where it is not
+
+A single global status has to pick one of those and be wrong about the rest. Pick the
+optimistic one and the artifact is false; pick the pessimistic one and it understates three
+environments to be accurate about a fourth.
+
+Note which environment loses under a global status: the one least like the others. That is
+usually the air-gapped or on-prem deployment — which is usually the customer with the
+strictest requirements, and the assessor most likely to check.
+
+So the status field is a mapping, the loader requires all four profiles to be named, and an
+unnamed profile is an error rather than a default. An unanswered question should look like
+one.

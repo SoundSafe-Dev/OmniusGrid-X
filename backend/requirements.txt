@@ -22,6 +22,10 @@ structlog==25.4.0
 prometheus-client==0.21.1
 slowapi==0.1.9
 cryptography==48.0.1   # edge_ca needs >=42; keep matched with the agent pin
+PyYAML==6.0.3   # the compliance catalogue loader reads it from app code (FS-746);
+                # it was already present TRANSITIVELY via transformers/schemathesis,
+                # which is not a dependency an application module may rely on --
+                # dropping either one would have broken /compliance at import time.
 packaging==23.2
 python-keycloak==3.9.1
 

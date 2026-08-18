@@ -1,0 +1,37 @@
+# Control owners — a ROUTING field, not a blame field.
+#
+# Every control names an owner so that a POA&M line has somebody to send it to. The names
+# here are lanes and roles, deliberately not individuals: a catalogue keyed to people goes
+# stale the first time somebody changes team, and an assessor reading a stale name learns
+# the document is not maintained.
+#
+# `organizational` and `inherited` controls need an owner most of all — those are precisely
+# the ones no test will ever fail for, so the only thing keeping them honest is a person
+# with a date.
+
+owners:
+  platform-security:
+    description: Tenancy isolation, authentication, authorisation, audit, cryptography
+    lane: hamad
+  platform-infra:
+    description: Kubernetes, network policy, secrets provisioning, TLS, backup and recovery
+    lane: hamad
+  edge:
+    description: Edge agent, store-and-forward, OTA, DDIL behaviour
+    lane: hridyansh
+  data-governance:
+    description: Retention, residency, GDPR obligations, data lifecycle
+    lane: hamad
+  security-operations:
+    description: >-
+      Monitoring, alerting, incident response, vulnerability triage. Currently the same
+      people as platform-infra; named separately because the CMMC IR and RA families are
+      assessed as an operational capability, not as code, and conflating them hides that.
+    lane: unassigned
+  organisation:
+    description: >-
+      Controls no engineering lane can own — personnel screening, training, physical
+      protection, risk assessment, policy approval. Listed so these cannot be quietly
+      attached to an engineer and forgotten; they need an executive owner before an
+      assessment, and that assignment is not this repository's to make.
+    lane: unassigned

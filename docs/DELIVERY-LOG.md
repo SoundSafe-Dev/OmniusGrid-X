@@ -12649,3 +12649,78 @@ evidence as code. 314 assertions, zero citations, and six of them measurably fal
 a repository is not a lower tier of truth than a test; it is the tier an auditor reads first.
 If a claim cannot name the file that implements it and the test that proves it, it is not
 ready to be written down.
+
+## FS-746 — a control catalogue whose claims cannot outlive their evidence
+
+Phase 1 of the compliance plan, and the piece everything else hangs off. FS-745 deleted two
+documents that made 314 control claims with zero citations. This is the replacement, built
+so that the same failure is not available.
+
+**The catalogue.** `backend/compliance/catalog/` — `crosswalk.yaml` lists all 110 NIST SP
+800-171 Rev 2 practices with family counts, `owners.yaml` names routing owners, and one
+family file per practice family holds the controls. YAML, because a C3PAO has to read it
+without executing anything. Narrative is written once on an OmniusGrid control and
+frameworks attach by reference, so `800-171:03.03.02`, `800-53r5:AU-3`, `ISO27001:A.8.15`
+and `SOC2:CC7.2` share a single statement instead of four that drift.
+
+**Status is per deployment profile**, not global. OmniusGrid ships to commercial cloud, gov
+cloud, on-prem and air-gapped; physical protection is `inherited` in cloud and
+`organizational` on-prem, and clock discipline is `partial` online but `absent` air-gapped —
+the one deployment where it matters most. A single status would have to be wrong about at
+least one profile, and being wrong in a compliance artifact is what costs the credibility of
+everything beside it.
+
+**One loader, `backend/app/core/compliance_catalog.py`.** Four things will read this — two guards,
+the renderers, eventually an endpoint — and this repository already has the scar from the
+alternative twice (`tests/_route_tree.py`, `tests/_sweeps_document.py` both exist because
+two consumers hand-copied a walk and drifted). Validation is strict and loud: an unknown key
+is an error, because a typo'd `proved_by:` is silently nothing, which turns an evidenced
+control into an unevidenced one while it still reads as complete.
+
+**The guard that makes `implemented` mean something.**
+`test_a_claimed_control_is_proved.py` requires every control claiming to operate to cite
+tests, and every citation to be a node id `pytest --collect-only` actually produces.
+Mutation-verified by moving a cited guard out of the tree: the compliance build fails and
+names `OG-AU-003` as the control that just lost its evidence. That inverts the usual failure
+— ordinarily a narrative is written once and the code drifts underneath it for two years,
+surfacing when an assessor asks to see it work. Here the narrative cannot outlive its
+evidence by more than one CI run.
+
+Collection is used rather than file existence on purpose: a path check passes for a file
+that exists and contains nothing, or whose tests were renamed, or that fails to import — and
+a file that fails to import is worse than a missing one, because the catalogue looks
+satisfied. What it deliberately does not do is check that the test PASSES (the suite does
+that) or that it is relevant (only a reader can judge that).
+
+**Coverage ratchets, and the first number is 9 of 110.** Family 3.3 (Audit and
+Accountability) is populated; the rest follow. 9/110 is not a coverage claim, it is the
+honest starting point of an incrementally built catalogue — and the ratchet exists because
+coverage falling is otherwise invisible: a deleted control simply stops appearing.
+
+**The first family is populated honestly, including against my own recent work.** `OG-AU-004`
+(tamper-evidence) is `partial` even though FS-743 just made the chain verify, because
+tamper-EVIDENCE is not tamper-RESISTANCE: `audit_logs` has no append-only enforcement, so a
+role with UPDATE/DELETE can still alter rows — the chain proves it happened, it does not
+prevent it. `OG-AU-001` is `partial` because the middleware captures 18 route templates out
+of ~546 and never captures bodies. Writing those as `implemented` would have been the easy
+half-truth this catalogue exists to make impossible.
+
+**A vacuity check earned its place within an hour of being written.** The first run reported
+all seven controls as having lost their tests. They had not: `pytest.ini` sets
+`addopts = -v`, ini options are prepended, so a trailing `-q` nets back to default verbosity
+and `--collect-only` prints the `<Module>`/`<Function>` tree instead of node ids — no line
+contains `::`, and the id set came back empty. `test_collection_succeeded` failed first and
+named the collector, so the diagnosis took a minute instead of an afternoon spent auditing a
+catalogue that was correct. `-o addopts=` clears the ini options.
+
+RULE 249 — a compliance claim needs a citation that a machine can follow. "MFA required" and
+"tenant isolation is enforced" are the same kind of sentence to a reader and completely
+different to a build: one names `tests/test_a_tenant_reference_is_refused_realdb.py` and
+fails when that file goes away, the other names nothing and fails never. The catalogue's
+value is not the narrative — it is that `implemented` is a status a test can revoke.
+
+RULE 250 — state the status per environment when you ship to more than one. A control is not
+a property of the code, it is a property of the code IN A PLACE. `air-gapped` has no IdP
+round-trip and no time source; `on-prem` inherits no physical security from a provider. One
+global status forces a lie about whichever environment is least like the others — and that
+environment is usually the one the customer with the strictest requirements is running.

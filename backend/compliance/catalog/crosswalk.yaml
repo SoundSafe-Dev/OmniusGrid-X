@@ -1,0 +1,204 @@
+# The authority list — every practice a control in this catalogue may claim to satisfy.
+#
+# WHAT THIS FILE IS FOR. It is the DENOMINATOR. `test_every_control_is_registered.py`
+# measures the catalogue against this list, so "we cover 110 of 110" is a checkable
+# statement rather than a claim. Nothing may `satisfies:` an id that is not here, and every
+# id here must be claimed by at least one control — including by a control whose status is
+# `absent`, which is how the POA&M starts out honest instead of empty.
+#
+# THE TITLES ARE WORKING SUMMARIES, NOT QUOTATIONS. The authoritative text is NIST SP
+# 800-171 Rev 2 (and Rev 3 where an assessment specifies it); this file paraphrases each
+# practice so a reader can navigate without the publication open. Do not quote these back to
+# an assessor as the requirement — cite the publication. Recorded here because a paraphrase
+# presented as a quotation is exactly the kind of unevidenced claim that got two compliance
+# documents deleted in FS-745.
+#
+# Family counts are load-bearing: the guard asserts them, so a practice cannot be quietly
+# dropped or invented.
+
+framework: 800-171
+revision: "Rev 2"
+total_practices: 110
+
+families:
+  "03.01":
+    name: Access Control
+    count: 22
+  "03.02":
+    name: Awareness and Training
+    count: 3
+  "03.03":
+    name: Audit and Accountability
+    count: 9
+  "03.04":
+    name: Configuration Management
+    count: 9
+  "03.05":
+    name: Identification and Authentication
+    count: 11
+  "03.06":
+    name: Incident Response
+    count: 3
+  "03.07":
+    name: Maintenance
+    count: 6
+  "03.08":
+    name: Media Protection
+    count: 9
+  "03.09":
+    name: Personnel Security
+    count: 2
+  "03.10":
+    name: Physical Protection
+    count: 6
+  "03.11":
+    name: Risk Assessment
+    count: 3
+  "03.12":
+    name: Security Assessment
+    count: 4
+  "03.13":
+    name: System and Communications Protection
+    count: 16
+  "03.14":
+    name: System and Information Integrity
+    count: 7
+
+practices:
+  # --- 3.1 Access Control (22) ---
+  "03.01.01": Limit system access to authorised users, processes and devices
+  "03.01.02": Limit system access to the transactions and functions authorised users may execute
+  "03.01.03": Control the flow of CUI in accordance with approved authorisations
+  "03.01.04": Separate the duties of individuals to reduce malevolent activity without collusion
+  "03.01.05": Employ least privilege, including for specific security functions and privileged accounts
+  "03.01.06": Use non-privileged accounts when accessing non-security functions
+  "03.01.07": Prevent non-privileged users from executing privileged functions; capture such execution in audit logs
+  "03.01.08": Limit unsuccessful logon attempts
+  "03.01.09": Provide privacy and security notices consistent with applicable CUI rules
+  "03.01.10": Use session lock with pattern-hiding displays after a period of inactivity
+  "03.01.11": Terminate a user session after a defined condition
+  "03.01.12": Monitor and control remote access sessions
+  "03.01.13": Employ cryptographic mechanisms to protect the confidentiality of remote access sessions
+  "03.01.14": Route remote access via managed access control points
+  "03.01.15": Authorise remote execution of privileged commands and remote access to security-relevant information
+  "03.01.16": Authorise wireless access prior to allowing such connections
+  "03.01.17": Protect wireless access using authentication and encryption
+  "03.01.18": Control connection of mobile devices
+  "03.01.19": Encrypt CUI on mobile devices and mobile computing platforms
+  "03.01.20": Verify and control/limit connections to and use of external systems
+  "03.01.21": Limit use of portable storage devices on external systems
+  "03.01.22": Control CUI posted or processed on publicly accessible systems
+
+  # --- 3.2 Awareness and Training (3) ---
+  "03.02.01": Ensure managers and users are aware of the security risks of their activities
+  "03.02.02": Ensure personnel are trained to carry out their assigned security duties
+  "03.02.03": Provide security awareness training on recognising and reporting insider threat
+
+  # --- 3.3 Audit and Accountability (9) ---
+  "03.03.01": Create and retain audit records enabling monitoring, analysis, investigation and reporting
+  "03.03.02": Ensure the actions of individual users can be uniquely traced to those users
+  "03.03.03": Review and update logged events
+  "03.03.04": Alert in the event of an audit logging process failure
+  "03.03.05": Correlate audit review, analysis and reporting for investigation and response
+  "03.03.06": Provide audit record reduction and report generation
+  "03.03.07": Provide a system capability comparing and synchronising internal clocks to an authoritative source
+  "03.03.08": Protect audit information and logging tools from unauthorised access, modification and deletion
+  "03.03.09": Limit management of audit logging functionality to a subset of privileged users
+
+  # --- 3.4 Configuration Management (9) ---
+  "03.04.01": Establish and maintain baseline configurations and inventories
+  "03.04.02": Establish and enforce security configuration settings
+  "03.04.03": Track, review, approve and log changes to systems
+  "03.04.04": Analyse the security impact of changes prior to implementation
+  "03.04.05": Define, document, approve and enforce physical and logical access restrictions associated with changes
+  "03.04.06": Employ least functionality by configuring systems to provide only essential capabilities
+  "03.04.07": Restrict, disable or prevent the use of nonessential programs, functions, ports, protocols and services
+  "03.04.08": Apply deny-by-exception (blacklist) or permit-by-exception (whitelist) policy for software execution
+  "03.04.09": Control and monitor user-installed software
+
+  # --- 3.5 Identification and Authentication (11) ---
+  "03.05.01": Identify system users, processes acting on behalf of users, and devices
+  "03.05.02": Authenticate the identities of users, processes and devices as a prerequisite to access
+  "03.05.03": Use multifactor authentication for local and network access to privileged accounts and network access to non-privileged accounts
+  "03.05.04": Employ replay-resistant authentication mechanisms for network access to privileged and non-privileged accounts
+  "03.05.05": Prevent reuse of identifiers for a defined period
+  "03.05.06": Disable identifiers after a defined period of inactivity
+  "03.05.07": Enforce a minimum password complexity and change of characters when new passwords are created
+  "03.05.08": Prohibit password reuse for a specified number of generations
+  "03.05.09": Allow temporary password use for system logons with an immediate change to a permanent password
+  "03.05.10": Store and transmit only cryptographically protected passwords
+  "03.05.11": Obscure feedback of authentication information
+
+  # --- 3.6 Incident Response (3) ---
+  "03.06.01": Establish an operational incident-handling capability, including preparation, detection, analysis, containment, recovery and user response
+  "03.06.02": Track, document and report incidents to designated officials and authorities
+  "03.06.03": Test the organisational incident response capability
+
+  # --- 3.7 Maintenance (6) ---
+  "03.07.01": Perform maintenance on organisational systems
+  "03.07.02": Provide controls on the tools, techniques, mechanisms and personnel used to conduct maintenance
+  "03.07.03": Ensure equipment removed for off-site maintenance is sanitised of any CUI
+  "03.07.04": Check media containing diagnostic and test programs for malicious code before use
+  "03.07.05": Require multifactor authentication to establish nonlocal maintenance sessions and terminate such connections when complete
+  "03.07.06": Supervise the maintenance activities of maintenance personnel without required access authorisation
+
+  # --- 3.8 Media Protection (9) ---
+  "03.08.01": Protect system media containing CUI, both paper and digital
+  "03.08.02": Limit access to CUI on system media to authorised users
+  "03.08.03": Sanitise or destroy system media containing CUI before disposal or release for reuse
+  "03.08.04": Mark media with necessary CUI markings and distribution limitations
+  "03.08.05": Control access to media containing CUI and maintain accountability during transport outside controlled areas
+  "03.08.06": Implement cryptographic mechanisms to protect the confidentiality of CUI stored on digital media during transport
+  "03.08.07": Control the use of removable media on system components
+  "03.08.08": Prohibit the use of portable storage devices when such devices have no identifiable owner
+  "03.08.09": Protect the confidentiality of backup CUI at storage locations
+
+  # --- 3.9 Personnel Security (2) ---
+  "03.09.01": Screen individuals prior to authorising access to systems containing CUI
+  "03.09.02": Ensure CUI and systems are protected during and after personnel actions such as terminations and transfers
+
+  # --- 3.10 Physical Protection (6) ---
+  "03.10.01": Limit physical access to systems, equipment and operating environments to authorised individuals
+  "03.10.02": Protect and monitor the physical facility and support infrastructure
+  "03.10.03": Escort visitors and monitor visitor activity
+  "03.10.04": Maintain audit logs of physical access
+  "03.10.05": Control and manage physical access devices
+  "03.10.06": Enforce safeguarding measures for CUI at alternate work sites
+
+  # --- 3.11 Risk Assessment (3) ---
+  "03.11.01": Periodically assess the risk to operations, assets and individuals from the operation of systems processing CUI
+  "03.11.02": Scan for vulnerabilities in systems and applications periodically and when new vulnerabilities are identified
+  "03.11.03": Remediate vulnerabilities in accordance with risk assessments
+
+  # --- 3.12 Security Assessment (4) ---
+  "03.12.01": Periodically assess the security controls in systems to determine whether they are effective
+  "03.12.02": Develop and implement plans of action designed to correct deficiencies and reduce or eliminate vulnerabilities
+  "03.12.03": Monitor security controls on an ongoing basis to ensure their continued effectiveness
+  "03.12.04": Develop, document and periodically update system security plans
+
+  # --- 3.13 System and Communications Protection (16) ---
+  "03.13.01": Monitor, control and protect communications at external boundaries and key internal boundaries
+  "03.13.02": Employ architectural designs, software development techniques and systems engineering principles that promote effective information security
+  "03.13.03": Separate user functionality from system management functionality
+  "03.13.04": Prevent unauthorised and unintended information transfer via shared system resources
+  "03.13.05": Implement subnetworks for publicly accessible components that are physically or logically separated from internal networks
+  "03.13.06": Deny network communications traffic by default and allow by exception
+  "03.13.07": Prevent remote devices from simultaneously connecting to the system and to external networks (split tunnelling)
+  "03.13.08": Implement cryptographic mechanisms to prevent unauthorised disclosure of CUI during transmission
+  "03.13.09": Terminate network connections at the end of sessions or after a period of inactivity
+  "03.13.10": Establish and manage cryptographic keys for cryptography employed in the system
+  "03.13.11": Employ FIPS-validated cryptography when used to protect the confidentiality of CUI
+  "03.13.12": Prohibit remote activation of collaborative computing devices and provide indication of use to users present
+  "03.13.13": Control and monitor the use of mobile code
+  "03.13.14": Control and monitor the use of Voice over Internet Protocol technologies
+  "03.13.15": Protect the authenticity of communications sessions
+  "03.13.16": Protect the confidentiality of CUI at rest
+
+  # --- 3.14 System and Information Integrity (7) ---
+  "03.14.01": Identify, report and correct system flaws in a timely manner
+  "03.14.02": Provide protection from malicious code at designated locations
+  "03.14.03": Monitor system security alerts and advisories and take action in response
+  "03.14.04": Update malicious code protection mechanisms when new releases are available
+  "03.14.05": Perform periodic scans of the system and real-time scans of files from external sources
+  "03.14.06": Monitor systems, including inbound and outbound communications traffic, to detect attacks and indicators of potential attacks
+  "03.14.07": Identify unauthorised use of organisational systems

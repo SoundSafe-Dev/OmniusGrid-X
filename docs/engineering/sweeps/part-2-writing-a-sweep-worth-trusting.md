@@ -1779,6 +1779,22 @@ one of its findings. The habit that catches it:
      FIRST, and a false claim there costs the credibility of everything true beside it. If a
      claim cannot name the file that implements it and the test that proves it, it is not
      ready to be written down.
+
+249. **A compliance claim needs a citation a machine can follow.** "MFA required" and
+     "tenant isolation is enforced" read identically to a human and differently to a build:
+     one names a test file and fails when that file is deleted, the other names nothing and
+     fails never. `backend/compliance/catalog/` requires every control claiming to operate
+     to cite node ids that `pytest --collect-only` actually produces — mutation-verified by
+     moving a cited guard out of the tree, which fails the build naming the control that
+     lost its evidence. The value is not the narrative; it is that `implemented` is a status
+     a test can revoke.
+
+250. **State the status per environment when you ship to more than one.** A control is not a
+     property of code, it is a property of code IN A PLACE. Physical protection is inherited
+     from a provider in cloud and organizational on-prem; clock discipline is partial online
+     and absent air-gapped. A single global status forces a lie about whichever environment
+     is least like the others — which is usually the one the customer with the strictest
+     requirements is running.
 ---
 
 ## Open observations, not yet tickets
