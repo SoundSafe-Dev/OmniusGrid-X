@@ -74,6 +74,16 @@ class EdgeAgent:
         )
         self.kafka_producer = None
         self.command_consumer = None
+        # ONE CLOCK ESTIMATOR, CREATED HERE RATHER THAN IN THE CLOUD LINK (FS-752).
+        # It used to be built inside `_start_cloud_link`, which runs after the command
+        # consumer and not at all when CLOUD_URL is unset. The consumer needs it to judge
+        # whether a replayed command is stale — and the offline case is exactly when that
+        # matters, so an estimator that only exists when the cloud does would be absent
+        # precisely when it is needed. Uncalibrated is a meaningful state, not a missing
+        # one: the consumer tightens its freshness window when the clock has never been
+        # set against a trusted source.
+        from opsgrid_agent.timesync import ClockSkewEstimator
+        self._skew = ClockSkewEstimator()
         self.ota_executor = OTAUpdateExecutor(
             buffer=self.buffer,
             signing_public_key=self.config.get('ota_signing_public_key', ''),
@@ -289,6 +299,7 @@ class EdgeAgent:
                 command_topic=self.config['command_topic'],
                 ack_topic=self.config['command_ack_topic'],
                 dlq_topic=self.config['command_dlq_topic'],
+                clock=self._skew,
             )
             self.ota_executor.register(self.command_consumer)
             self.agent_update_executor.register(self.command_consumer)
@@ -873,7 +884,8 @@ class EdgeAgent:
 
             # Heartbeat loop: health snapshot + cert expiry; the ack's server
             # time feeds the clock-skew estimator.
-            self._skew = ClockSkewEstimator()
+            # Reuses the estimator built in __init__ — replacing it here would hand the
+            # command consumer a detached object that never calibrates.
 
             def _health():
                 snapshot = dict(self._health_snapshot() or {})

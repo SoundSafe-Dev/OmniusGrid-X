@@ -212,6 +212,7 @@ Status is stated **per deployment profile**. OmniusGrid ships to commercial clou
 
 **Evidence — automated tests, run on every build.**
 
+- `tests/test_an_expected_failure_is_not_a_500_realdb.py`
 - `tests/test_remote_operations_unit.py`
 - `tests/test_route_auth_walk.py`
 

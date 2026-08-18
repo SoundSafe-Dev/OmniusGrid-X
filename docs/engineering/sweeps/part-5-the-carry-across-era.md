@@ -4405,3 +4405,43 @@ hides which deployment is exposed. Sorted by scheduled completion, the top line 
 incident-response capability, dated for the still-open August compromise. Nobody chose that
 ordering. It fell out of dates that were already in the catalogue, which is what a generated
 artefact is for.
+
+## Rule 256 — a validated field that is never read is a defect in the costume of a control
+
+Here is the whole bug, in the edge agent's command validator:
+
+```python
+timeout = payload.get("timeout_seconds")
+if timeout is not None and (
+    not isinstance(timeout, int) or isinstance(timeout, bool) or timeout <= 0
+):
+    return None, "invalid_timeout_seconds"
+```
+
+That is careful code. It rejects a string, rejects a float, rejects zero and negatives, and
+even rejects `True` — because `bool` is a subclass of `int` in Python and somebody thought
+about it. A reviewer reads this and moves on, because it looks like the field is handled.
+
+`timeout_seconds` is never mentioned again in the file.
+
+So the consumer — running `auto_offset_reset="earliest"` on a per-agent group — reconnected
+after an outage, replayed its backlog, and executed commands days past their own declared
+expiry. On a compressor or a conveyor, that is a machine moving because of an instruction
+nobody currently intends. The backend had marked them TIMEOUT hours earlier; the `completed`
+ack arrived against a terminal row.
+
+**Validation is not enforcement, and the difference is invisible in the worst way.** An
+unvalidated field looks unfinished — no check, no rule, obviously nobody's job yet. A
+validated-and-ignored field looks *finished*. The type check is a decoy: it is the artefact
+that convinces the next reader the constraint is applied.
+
+The tell is cheap to check. When a field is validated, grep for its second use. One
+occurrence means the schema promises something the code does not do — and you then have a
+real choice, enforce it or remove it from the schema, rather than an accident.
+
+This has a sibling worth naming, because the same fixture hid it: the test suite stamped
+every command `"2030-01-01T00:00:00Z"`. That date was chosen so the command would never look
+expired — in a suite that never checked expiry. A placeholder shaped around a check nobody
+had written, sitting in the tests for the exact code that was supposed to do the checking.
+When the gate finally landed, the fixture failed as `issued_in_the_future`, which is correct:
+a command stamped four years out is a clock fault or a forgery.

@@ -1,4 +1,5 @@
 import json
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
@@ -44,7 +45,12 @@ def _command(**overrides):
         "action_id": "set_speed",
         "parameters": {"speed": 42},
         "timeout_seconds": 30,
-        "timestamp": "2030-01-01T00:00:00Z",
+        # A LIVE timestamp, not the fixed "2030-01-01" placeholder this used to carry.
+        # FS-752 made the agent judge command freshness, and a command stamped four years
+        # in the future is rejected as `issued_in_the_future` — correctly: that is either a
+        # clock fault or a forged message, and neither is something to actuate on. Tests
+        # that want a stale or future command now say so explicitly via an override.
+        "timestamp": datetime.now(timezone.utc).isoformat(),
     }
     payload.update(overrides)
     return payload

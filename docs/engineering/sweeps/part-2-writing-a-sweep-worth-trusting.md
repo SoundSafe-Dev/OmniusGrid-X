@@ -1837,6 +1837,15 @@ one of its findings. The habit that catches it:
      That guard is only possible if the output is DETERMINISTIC, which is why no generated
      file here records a timestamp, hostname or run id: a non-deterministic renderer makes
      its own guard flaky, the guard gets deleted, and the documents drift silently.
+
+256. **A validated field that is never read is a defect wearing the costume of a control.**
+     The edge command consumer checked that `timeout_seconds` was a positive integer and
+     then discarded it, so commands days past their own expiry replayed and actuated
+     machinery on reconnect. The type check is what made it look handled — the field
+     appears in the validator, it has a rule, a reviewer's eye stops there. Validation is
+     not enforcement. When a field is validated, grep for its SECOND use; if there is none,
+     either enforce it or take it off the schema, because a constraint that is checked and
+     ignored reads exactly like one that is applied.
 ---
 
 ## Open observations, not yet tickets

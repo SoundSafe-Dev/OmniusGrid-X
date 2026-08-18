@@ -13037,3 +13037,68 @@ goes and it is the only version anybody sees. Rendering closes the loop; a byte-
 currency guard is what keeps the rendering honest — and that guard is only possible if the
 output is deterministic, which makes "no timestamps in generated files" a security property
 rather than a style preference.
+
+## FS-752 — the command that actuates a machine days after anybody meant it
+
+DDIL workstream, item S1 — ranked first because it is the only one on the list that can move
+a physical asset.
+
+**The defect.** `_decode_and_validate` checked that `timeout_seconds` was a positive integer
+and then never used it. Nothing anywhere compared a command's age to anything. The consumer
+runs `auto_offset_reset="earliest"` on a per-agent group, so an agent that had been offline —
+denied link, flat battery, site on generator — reconnected, replayed its backlog, and
+executed every command in it verbatim. A `set_speed` or a `pause_job` issued days earlier,
+which the backend had marked TIMEOUT and an operator had long moved on from, ran on the
+plant floor; its `completed` ack then arrived against a row already in a terminal state.
+
+For a compressor, a valve or a conveyor that is not a stale-data problem. It is a machine
+moving because of an instruction nobody currently intends.
+
+**The backend already sent what was needed.** Every dispatched command carries `timestamp`.
+No schema version bump, no coordinated fleet upgrade — the field was there the whole time and
+the agent threw it away.
+
+**The clock is part of the check, not an assumption behind it.** Freshness is a comparison
+against local time, and the gateway that has been offline for a week is precisely the one
+whose clock is least trustworthy: no NTP on many of these devices, and `timesync` calibrates
+only from cloud responses — never while it matters. So an uncalibrated clock *tightens* the
+window rather than being ignored. For actuation, the safe reading of "I cannot tell how old
+this is" is "do not run it".
+
+That forced a second fix. `ClockSkewEstimator` was constructed inside `_start_cloud_link`,
+which runs after the command consumer and **not at all when `CLOUD_URL` is unset** — so the
+object needed to judge offline replays did not exist in the offline case. It is now built
+once in `__init__` and shared. Uncalibrated is a meaningful state, not a missing one.
+
+**Three decisions worth recording:**
+
+*Rejected, not dead-lettered.* A stale command is well-formed and simply arrived too late;
+dead-lettering it would mix a routine timing outcome into the queue reserved for malformed
+input. It gets an explicit `rejected` ack, because **a command that silently vanishes is
+indistinguishable from one still in flight** — the backend has to be told.
+
+*The idempotency cache comes first.* The check initially sat before the duplicate-ack lookup,
+and the redelivery test caught it: a second delivery was re-decided a moment later, so its
+`age_...s` reason and ack timestamp differed and the backend saw two different answers to one
+command. Decide once, remember, re-emit.
+
+*A missing timestamp still runs*, with a warning. Every backend at or after the dispatch code
+stamps one unconditionally, so absence means a much older sender — and turning a version
+mismatch into a fleet that ignores all commands is a worse failure than the one being fixed.
+`COMMAND_REQUIRE_FRESHNESS=true` makes absence a rejection for deployments wanting the
+stricter posture.
+
+Mutation-verified: disabling the check fails 9 of 13 tests.
+
+**And the existing fixture was hiding the problem.** `test_command_consumer.py` stamped every
+command `"2030-01-01T00:00:00Z"` — a placeholder chosen so it would never look expired, in a
+suite that never checked expiry. The new gate rejects it as `issued_in_the_future`, correctly:
+a command stamped four years out is a clock fault or a forgery. The fixture now uses a live
+timestamp and tests that want staleness say so.
+
+RULE 256 — a validated field that is never read is a defect wearing the costume of a control.
+`timeout_seconds` was type-checked on arrival, which is what made it look handled: it appears
+in the validator, it has a rule, a reviewer's eye stops. Nothing consumed it. **Validation is
+not enforcement**, and the gap between them is invisible in exactly the way that matters —
+the code reads as though the constraint is applied. When a field is validated, grep for its
+second use; if there isn't one, either enforce it or delete it from the schema.

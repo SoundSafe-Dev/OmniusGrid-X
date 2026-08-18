@@ -6,9 +6,10 @@ import asyncio
 import hashlib
 import inspect
 import json
+import os
 from collections import OrderedDict
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Awaitable, Callable, Dict, Iterable, Optional, Set, Union
 from uuid import UUID
 
@@ -58,6 +59,11 @@ class CommandConsumer:
         ack_topic: str = "opsgrid.commands.acks",
         dlq_topic: str = "opsgrid.commands.dlq",
         seen_capacity: int = 1024,
+        clock: Optional[Any] = None,
+        require_freshness: Optional[bool] = None,
+        default_command_ttl_seconds: int = 300,
+        uncalibrated_clock_ttl_seconds: int = 300,
+        max_clock_skew_seconds: int = 120,
     ):
         self.agent_id = str(agent_id)
         self.organization_id = str(organization_id)
@@ -65,6 +71,20 @@ class CommandConsumer:
             str(asset_id) for asset_id in asset_ids if asset_id
         }
         self.redpanda_url = redpanda_url
+        #: `ClockSkewEstimator`, when the agent has one. Used to judge freshness and, more
+        #: importantly, to know when we CANNOT judge it (FS-752).
+        self._clock = clock
+        self.require_freshness = (
+            os.getenv("COMMAND_REQUIRE_FRESHNESS", "false").lower() == "true"
+            if require_freshness is None
+            else require_freshness
+        )
+        #: Applied when the sender named no `timeout_seconds`. Five minutes is well beyond
+        #: any live dispatch round-trip and far short of a reconnect backlog.
+        self.default_command_ttl_seconds = default_command_ttl_seconds
+        #: The ceiling when the clock has never been calibrated — see `_staleness_reason`.
+        self.uncalibrated_clock_ttl_seconds = uncalibrated_clock_ttl_seconds
+        self.max_clock_skew_seconds = max_clock_skew_seconds
         self.command_topic = command_topic
         self.ack_topic = ack_topic
         self.dlq_topic = dlq_topic
@@ -184,6 +204,32 @@ class CommandConsumer:
             await self._emit_ack(cached_ack)
             logger.info("command_duplicate_ack_reemitted", command_id=command_id)
             return cached_ack
+
+        # AFTER the duplicate cache, deliberately (FS-752). A redelivery of a command we
+        # have already judged must re-emit the SAME ack rather than re-deciding: the second
+        # decision is made a moment later, so its `age_...s` reason and ack timestamp
+        # differ, and the backend would see two different answers to one command. Deciding
+        # once and remembering is what makes this idempotent.
+        stale_reason = self._staleness_reason(command)
+        if stale_reason:
+            # NOT a dead letter and NOT silence: an explicit rejection ack, so the backend
+            # learns the command did not run. A stale command that vanishes looks identical
+            # to one still in flight.
+            ack = self._build_ack(
+                command,
+                status="rejected",
+                success=False,
+                result={"error": "command_expired", "reason": stale_reason},
+                error="command_expired",
+            )
+            await self._remember_and_emit(str(command["command_id"]), ack)
+            logger.warning(
+                "command_expired",
+                command_id=str(command["command_id"]),
+                action=str(command.get("action_id")),
+                reason=stale_reason,
+            )
+            return ack
 
         action_id = str(command["action_id"])
         handler = self._handlers.get(action_id)
@@ -435,6 +481,74 @@ class CommandConsumer:
             envelope,
             key=str(summary.get("command_id") or payload_hash),
         )
+
+    def _staleness_reason(self, payload: Dict[str, Any]) -> Optional[str]:
+        """Why this command is too old to execute, or None (FS-752).
+
+        THE DEFECT THIS CLOSES IS SAFETY-RELEVANT. `_decode_and_validate` checked that
+        `timeout_seconds` was a positive integer and then never used it, and the consumer
+        runs with `auto_offset_reset="earliest"` on a per-agent group. So an agent that had
+        been offline for days reconnected, replayed the backlog, and executed every command
+        in it verbatim — including physical actuation — long after the backend had marked
+        them TIMEOUT and an operator had moved on. The ack for a command the backend
+        considers dead then arrives against a terminal row.
+
+        For a compressor, a valve or a conveyor that is not a stale-data problem. It is a
+        machine moving because of an instruction nobody currently intends.
+
+        THE CLOCK IS PART OF THE CHECK, not an assumption behind it. Freshness is a
+        comparison against local time, and an edge gateway that has been offline is exactly
+        the machine whose clock is least trustworthy — no NTP, and `timesync` only
+        calibrates from cloud responses, i.e. never while it matters. So when the clock has
+        never been calibrated this FAILS CLOSED beyond a conservative floor: we cannot tell
+        a fresh command from a week-old one, and for actuation the safe reading of "unknown"
+        is "do not".
+
+        A command with NO timestamp is accepted with a warning rather than rejected. Every
+        backend at or after the dispatch code sends one unconditionally, so absence means a
+        much older backend — and turning a version mismatch into a fleet that ignores all
+        commands is a worse failure than the one being fixed. `COMMAND_REQUIRE_FRESHNESS=true`
+        makes absence a rejection for deployments that want the stricter posture.
+        """
+        raw = payload.get("timestamp")
+        if not raw:
+            if self.require_freshness:
+                return "no_timestamp_and_freshness_required"
+            logger.warning(
+                "command_without_timestamp",
+                command_id=str(payload.get("command_id")),
+                hint="cannot assess staleness; sender predates dispatch timestamps",
+            )
+            return None
+
+        try:
+            issued = datetime.fromisoformat(str(raw))
+        except (TypeError, ValueError):
+            return "unparseable_timestamp"
+        if issued.tzinfo is None:
+            issued = issued.replace(tzinfo=timezone.utc)
+
+        now = datetime.now(timezone.utc)
+        if self._clock is not None and self._clock.calibrated:
+            now = now + timedelta(seconds=self._clock.offset_seconds)
+        age = (now - issued).total_seconds()
+
+        # A command stamped in the future by more than the drift we tolerate is either a
+        # clock problem or a forged message; either way it is not something to actuate on.
+        if age < -self.max_clock_skew_seconds:
+            return "issued_in_the_future"
+
+        uncalibrated = self._clock is not None and not self._clock.calibrated
+        limit = payload.get("timeout_seconds") or self.default_command_ttl_seconds
+        if uncalibrated:
+            limit = min(limit, self.uncalibrated_clock_ttl_seconds)
+
+        if age > limit:
+            return (
+                f"age_{int(age)}s_exceeds_{int(limit)}s"
+                + ("_uncalibrated_clock" if uncalibrated else "")
+            )
+        return None
 
     def _should_process(self, payload: Dict[str, Any]) -> bool:
         if str(payload["organization_id"]) != self.organization_id:
