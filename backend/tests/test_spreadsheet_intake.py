@@ -23,6 +23,11 @@ from app.services.spreadsheet_domain_mapper import (
 from app.services.spreadsheet_scenario_builder import build_scenarios
 
 
+MESSY_FACTORY_UPLOAD = (
+    Path(__file__).resolve().parents[2] / "tests/load/fixtures/messy_factory_upload.csv"
+)
+
+
 def _sample_tabs():
     """Three tabs sharing date/shift/asset_id for cross-tab linkage."""
     production = pd.DataFrame([
@@ -112,6 +117,22 @@ def test_window_mode_normalizes_messy_headers_for_shared_serial_number():
     assert len(scenarios) == 1
     assert len(scenarios[0].active_domains) == 2
     assert [link.interaction_key for link in scenarios[0].domain_links] == ["SN-42"]
+
+
+def test_messy_factory_upload_fixture_parses_expected_headers_and_rows():
+    """Keep the representative factory-upload fixture connected to intake coverage."""
+    upload = pd.read_csv(MESSY_FACTORY_UPLOAD, keep_default_na=False)
+
+    assert list(upload.columns) == [
+        "Serial #", "Machine Name", "Inspection Date", "Quantity",
+        "Plant Location", "Operator Notes",
+    ]
+    assert len(upload) == 10
+    assert upload.loc[1, "Serial #"] == "sn1002"
+    assert upload.loc[1, "Inspection Date"] == "07/02/2026"
+    assert upload.loc[2, "Quantity"] == ""
+    assert upload.loc[6, "Quantity"] == "N/A"
+    assert upload.loc[9, "Operator Notes"] == "Operator forgot signature"
 
 
 def test_tab_mode_single_scenario():
