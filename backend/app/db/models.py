@@ -1342,6 +1342,47 @@ class LoadQualityLog(Base):
     updated_at = Column(DateTime(timezone=True), default=utcnow)
 
 
+class UserMFA(Base):
+    """TOTP second factor for a local account (FS-750, 800-171 3.5.3).
+
+    SEPARATE FROM `users` DELIBERATELY. `users` is one of the tables NOT under row-level
+    security — every query filters `organization_id` inline, which is documented in
+    `app/api/user_management.py` — so putting a second-factor secret on it widens what an
+    unscoped query can leak. This table is RLS-policied from migration 070. `SELECT * FROM
+    users` also appears in this codebase, and a TOTP secret should not arrive in a result
+    set nobody asked to widen.
+    """
+
+    __tablename__ = "user_mfa"
+
+    id = UUIDColumn()
+    user_id = UUIDForeignKey("users.id")
+    organization_id = UUIDForeignKey("organizations.id")
+
+    #: Ordering only (FS-417). SQLAlchemy builds insert ordering from relationships, not
+    #: from ForeignKey columns, so without these a flush can emit this row before the user
+    #: it references — refused by Postgres, accepted silently by SQLite. `lazy="raise"`
+    #: because nothing should traverse them.
+    user = relationship("User", foreign_keys="UserMFA.user_id", lazy="raise")
+    organization = relationship(
+        "Organization", foreign_keys="UserMFA.organization_id", lazy="raise"
+    )
+
+    #: AES-256-GCM envelope from `app/core/mfa.py`, never the raw base32 secret.
+    encrypted_secret = Column(Text, nullable=False)
+    #: Enrolment is two-step: issued, then activated by a verified code. Until this is set
+    #: the user is NOT protected, and must not be counted as if they were.
+    confirmed_at = Column(DateTime(timezone=True))
+    #: SHA-256 digests of 160-bit random recovery codes. Unsalted is correct — these are
+    #: not passwords, so SP 800-132 does not apply.
+    recovery_code_hashes = Column(JSON, default=list)
+    #: RFC 6238 s5.2: a code must not be accepted twice inside its own window.
+    last_used_window = Column(BigInteger)
+    failed_attempts = Column(Integer, default=0)
+    created_at = Column(DateTime(timezone=True), default=utcnow)
+    updated_at = Column(DateTime(timezone=True), default=utcnow)
+
+
 class User(Base):
     """User authentication and authorization"""
     __tablename__ = "users"

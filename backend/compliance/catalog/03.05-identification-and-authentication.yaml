@@ -49,16 +49,39 @@ controls:
       - ISO27001:A.8.5
       - SOC2:CC6.1
     status:
-      commercial-cloud: absent
-      gov-cloud: absent
-      on-prem: absent
-      air-gapped: absent
-    implemented_by: []
+      commercial-cloud: partial
+      gov-cloud: partial
+      on-prem: partial
+      air-gapped: partial
+    implemented_by:
+      - app/core/mfa.py
+      - app/api/mfa.py
+      - app/api/auth.py
+      - database/migrations/070_user_mfa.sql
+    proved_by:
+      - tests/test_mfa_is_required_at_login_realdb.py
+    evidence:
+      - junit/backend.xml
     owner: platform-security
     remediation:
       due: "2026-12-31"
       note: >-
-        THE SINGLE LARGEST NAMED GAP IN THIS CATALOGUE. 3.5.3 requires MFA for local and
+        RAISED absent -> partial (FS-750). TOTP (RFC 6238) is implemented for local
+        accounts and **enforced at login**: a confirmed factor makes the correct password
+        alone a 401. That distinction is the whole control — enrolment endpoints without
+        enforcement would have reproduced exactly the defect they replaced, since
+        `keycloak_service.enable_mfa` already existed and was called by nothing. Secrets are
+        AES-256-GCM envelopes, recovery codes are single-use SHA-256 digests, and a code
+        cannot be replayed inside its own window (RFC 6238 s5.2, the step most
+        implementations skip).
+        PARTIAL, not implemented, for two reasons that need decisions rather than code:
+        MFA is currently OPT-IN per user, and 3.5.3 requires it for privileged accounts —
+        enforcement for the `admin` role needs an enrolment grace period and a lockout
+        story before it can be switched on. And it covers local password login only; SSO
+        deployments inherit MFA from the identity provider, which is the right answer but
+        is evidenced there rather than here.
+        Superseded text follows for the record — this WAS the single largest named gap in
+        this catalogue. 3.5.3 requires MFA for local and
         network access to privileged accounts and for network access to non-privileged
         accounts. Nothing here provides it. `enable_mfa`/`disable_mfa` exist in
         `app/services/keycloak_service.py` and are unreachable — this repository's own

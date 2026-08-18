@@ -58,6 +58,21 @@ NO_USER_CONTEXT = {
 # The number is how many `Depends(get_db)` sites that router has — pinned so a
 # partial fix still moves, and so nothing silently grows.
 KNOWN_GET_DB_ON_RLS: dict[str, int] = {
+    # auth.py — 7 sites, and REGISTERED RATHER THAN FIXED, deliberately (FS-750).
+    #
+    # The login route cannot use `get_tenant_db`: there is no authenticated tenant until
+    # the user row has been loaded, which is the thing login exists to do. So it runs on
+    # `get_db` and binds the GUC by hand once the user is known —
+    # `set_config('app.current_org_id', ..., true)` — exactly as `services/audit.py` does
+    # for its standalone writes.
+    #
+    # This entry exists because that hand-binding is easy to forget and the failure is
+    # silent: the first version of the MFA check read `user_mfa` (FORCE RLS) on this
+    # session, matched zero rows for every user, and **login stopped enforcing the second
+    # factor** while returning a clean 200. Only the "correct password alone is refused"
+    # assertion caught it. A future reader adding another RLS-table read here has the same
+    # trap waiting; the count going UP should prompt that question rather than a shrug.
+    "auth.py": 7,
     # analysis_sessions.py is GONE from this list, and it is the one entry that did
     # NOT fail quietly. `analysis_sessions` is RLS-protected and all 22 handlers ran on
     # get_db, so reads matched nothing (empty list, 404 by id) while CREATE raised

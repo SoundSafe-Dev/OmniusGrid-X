@@ -9,7 +9,7 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, s
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from jwt import PyJWTError as JWTError
 from pydantic import BaseModel, ConfigDict, Field
-from sqlalchemy import func, select
+from sqlalchemy import func, select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -29,9 +29,12 @@ from app.core.security import (
 from app.core.password import hash_password as _hash_password
 from app.core.password import verify_password as _verify_password
 from app.core.password import verify_password_and_migrate
+from app.core.mfa import consume_recovery_code
+from app.core.mfa import decrypt_secret as decrypt_mfa_secret
+from app.core.mfa import verify_code as verify_totp
 from app.core.session import SessionManager
 from app.db.database import get_db
-from app.db.models import Organization, User
+from app.db.models import Organization, User, UserMFA
 from app.middleware.rate_limit import auth_rate_limit
 from app.models.schemas import Token, UserCreate
 
@@ -309,6 +312,68 @@ async def login(
             detail="Incorrect email or password",
             headers={"WWW-Authenticate": "Bearer"},
         )
+
+    # THE SECOND FACTOR, WHICH IS WHAT MAKES 3.5.3 A CONTROL RATHER THAN A FEATURE
+    # (FS-750). Checked after the password and after `is_active`, and BEFORE any token is
+    # minted — a login that returns a usable token and then asks for a code has already
+    # granted access.
+    #
+    # `OAuth2PasswordRequestForm` has no field for this, so the code rides in the standard
+    # `client_secret` slot rather than in a custom body: it keeps the endpoint a valid
+    # OAuth2 password grant, which is what the generated SDK and Swagger both expect.
+    # BIND THE TENANT BEFORE READING `user_mfa` (FS-750). The login route runs on the
+    # UNSCOPED `get_db` session — it has to, since there is no authenticated tenant until
+    # the user is loaded — and `user_mfa` is FORCE ROW LEVEL SECURITY. Without this, the
+    # SELECT returns zero rows for every user, `mfa_row` is None, and **login silently
+    # stops enforcing the second factor**: a 200 with the password alone, no error
+    # anywhere. Caught by the enforcement test, which is the one assertion that could
+    # catch it — the endpoints all worked.
+    #
+    # This is the fifth instance of the shape FS-431 closed four times: an RLS-protected
+    # table read on a session with no `app.current_org_id`, where the failure is an empty
+    # result rather than an exception. Transaction-local (`true`), the same call
+    # `services/audit.py` makes for its standalone writes.
+    await db.execute(
+        text("SELECT set_config('app.current_org_id', :org_id, true)"),
+        {"org_id": str(user.organization_id)},
+    )
+    mfa_row = (
+        await db.execute(select(UserMFA).where(UserMFA.user_id == user.id))
+    ).scalar_one_or_none()
+    if mfa_row is not None and mfa_row.confirmed_at:
+        submitted = (form_data.client_secret or "").strip()
+        if not submitted:
+            record_auth_attempt("failure", "mfa_required")
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="A multifactor code is required",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+        ok, window = verify_totp(
+            decrypt_mfa_secret(mfa_row.encrypted_secret),
+            submitted,
+            last_used_window=mfa_row.last_used_window,
+        )
+        if ok:
+            # Persisted so the same code cannot be replayed inside its own 30-second
+            # window (RFC 6238 s5.2) — the step most implementations skip.
+            mfa_row.last_used_window = window
+            mfa_row.failed_attempts = 0
+        else:
+            consumed, remaining = consume_recovery_code(
+                submitted, mfa_row.recovery_code_hashes or []
+            )
+            if not consumed:
+                mfa_row.failed_attempts = (mfa_row.failed_attempts or 0) + 1
+                await db.commit()
+                record_auth_attempt("failure", "mfa_invalid")
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="Incorrect multifactor code",
+                    headers={"WWW-Authenticate": "Bearer"},
+                )
+            mfa_row.recovery_code_hashes = remaining
+        await db.commit()
 
     record_auth_attempt("success")
 

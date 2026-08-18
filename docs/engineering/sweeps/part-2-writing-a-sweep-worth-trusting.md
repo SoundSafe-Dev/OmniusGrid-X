@@ -1820,6 +1820,14 @@ one of its findings. The habit that catches it:
      sidecar and the main file genuinely held nothing. The paired positive — "without the
      protection, it IS there" — failed, and was the only thing standing between a shipped
      encryption feature and a shipped placebo. Always assert the presence too.
+
+254. **A security feature is not a control until something REFUSES.** MFA enrolment,
+     AES-wrapped secrets, single-use recovery codes and a status endpoint were all correct
+     and all passing while login ignored the second factor completely — `user_mfa` is FORCE
+     RLS and the login route reads it on an unscoped session, so the SELECT returned zero
+     rows for every user and enforcement silently did not apply. The only assertion that
+     could see it was "the correct password ALONE is refused". Write the refusal test
+     first; until a request that should fail does fail, the feature is absent.
 ---
 
 ## Open observations, not yet tickets

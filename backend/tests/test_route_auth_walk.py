@@ -233,6 +233,14 @@ ADMIN_ROUTE_INVENTORY = {
 }
 
 SELF_SERVICE_MUTATIONS = {
+    # MFA enrolment is self-service BY DESIGN (FS-750): a user manages their own second
+    # factor, and every route reads the caller's identity from the token rather than
+    # taking a user id. `DELETE /mfa/` additionally requires a current TOTP or recovery
+    # code, so a stolen session cannot strip the factor — the check that stops
+    # "self-service" meaning "whoever holds the cookie".
+    ("DELETE", "/api/v1/mfa/"),
+    ("POST", "/api/v1/mfa/confirm"),
+    ("POST", "/api/v1/mfa/enroll"),
     ("DELETE", "/api/v1/gdpr/data-delete"),
     ("DELETE", "/api/v1/nlp/sessions/{session_id}"),
     ("DELETE", "/api/v1/nlp/sessions/{session_id}/data/{source_id}"),

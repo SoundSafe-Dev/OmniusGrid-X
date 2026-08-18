@@ -67,6 +67,16 @@ FORBIDDEN_IMPORTS = {
 #: Named exceptions, each with the reason it is allowed. Empty is the goal; an entry here
 #: is a decision somebody made, not a silence.
 DELIBERATELY_ALLOWED: dict[str, str] = {
+    "backend/app/core/mfa.py": (
+        "HMAC-SHA-1, for RFC 6238 TOTP. This is not a SHA-1 exemption in the usual sense: "
+        "SP 800-131A retires SHA-1 for DIGITAL SIGNATURES, where collision resistance is "
+        "the property that matters, and HMAC-SHA-1 remains approved because HMAC's security "
+        "rests on the key and on PRF behaviour rather than on collision resistance. The "
+        "alternative is SHA-256 TOTP, which RFC 6238 permits and authenticator apps support "
+        "unevenly — trading a real usability failure for an apparent compliance win. The "
+        "secret itself is wrapped in AES-256-GCM and recovery codes are SHA-256, so SHA-1 "
+        "appears only inside the OTP construction."
+    ),
     "backend/app/core/password.py": (
         "The one module permitted to import passlib. It configures PBKDF2 as the preferred "
         "scheme and keeps bcrypt as DEPRECATED so existing hashes still verify during the "
@@ -187,6 +197,39 @@ class TestNoUnapprovedAlgorithmIsConstructed:
                     findings.append(f"{_relative(path)}:{node.lineno}: ec.{name}()")
         assert not findings, (
             "unapproved primitives are constructed:\n  " + "\n  ".join(sorted(findings))
+        )
+
+    def test_a_weak_hash_passed_by_reference_is_detected(self):
+        """THE BLIND SPOT THIS CHECK WAS WRITTEN WITHOUT (FS-750). The version below looked
+        only at CALLS, so `hashlib.md5()` was caught and `hmac.new(key, msg, hashlib.sha1)`
+        was not — the algorithm passed as a callable reference, never invoked at this site.
+
+        That is not an exotic form: it is how every HMAC in Python names its hash, so the
+        gap covered exactly the code most likely to contain one. Found when TOTP landed and
+        the guard reported clean over an HMAC-SHA-1 it should have had an opinion about."""
+        findings = []
+        for path in _python_files():
+            relative = _relative(path)
+            if relative in DELIBERATELY_ALLOWED:
+                continue
+            try:
+                tree = ast.parse(path.read_text())
+            except SyntaxError:
+                continue
+            for node in ast.walk(tree):
+                if not isinstance(node, ast.Attribute):
+                    continue
+                if getattr(node.value, "id", "") != "hashlib":
+                    continue
+                if node.attr in {"md5", "sha1"}:
+                    findings.append(f"{relative}:{node.lineno}: hashlib.{node.attr}")
+        assert not findings, (
+            "MD5 or SHA-1 is referenced in application code:\n  "
+            + "\n  ".join(sorted(findings))
+            + "\n\nA reference is a use — `hmac.new(key, msg, hashlib.sha1)` never calls "
+            "it at the call site. If the use is defensible (HMAC-SHA-1 remains approved "
+            "under SP 800-131A, unlike SHA-1 for signatures), add the file to "
+            "DELIBERATELY_ALLOWED with that argument written out."
         )
 
     def test_no_weak_hashlib_constructor(self):

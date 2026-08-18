@@ -46,6 +46,15 @@ MUTATING = {"POST", "PUT", "PATCH", "DELETE"}
 #: Prefixes outside the middleware, each with the reason. **Lane ownership is a reason.**
 #: "Nobody has looked at it" is not, and is why this register exists.
 UNPROTECTED: dict[str, str] = {
+    "/api/v1/mfa": (
+        "Enrolment is already idempotent by construction and a replay is harmless or "
+        "refused (FS-750). `POST /enroll` on an unconfirmed row replaces a secret that "
+        "protects nothing, and 409s once a factor is confirmed; `POST /confirm` 409s after "
+        "the first success; `DELETE /` is a delete. The one operation a replay could "
+        "matter for is confirm, and there the TOTP code itself is single-use — "
+        "`last_used_window` refuses the same code twice inside its window, which is a "
+        "stronger guarantee than an idempotency key and is the RFC's own requirement."
+    ),
     # --- other lanes: whether a retried mutation dedupes is the owner's decision ----------
     "/api/v1/kanban": "Harsh's lane — a retried task transition is his call, not this middleware's",
     "/api/v1/engines": "Harsh's lane (tactical/strategic engines)",

@@ -14,6 +14,7 @@ from app.api import alarm_rules
 # either during a merge is how a fortnight's work disappears quietly.
 from app.api import user_management
 from app.api import users
+from app.api import mfa
 from app.api import dashboard_analytics
 from app.api import yard
 from app.api import insight_activation
@@ -469,6 +470,8 @@ app.include_router(workcells.organizations_router, prefix="/api/v1/organizations
 app.include_router(fleet_health.router, prefix="/api/v1/fleet", tags=["Fleet Health"], responses=common_responses)
 app.include_router(feature_flags.router, prefix="/api/v1/feature-flags", tags=["Feature Flags"], responses=unavailable_responses)
 app.include_router(sso.router, prefix="/api/v1/sso", tags=["SSO"], responses=unavailable_responses)
+# 800-171 3.5.3, the named L2 practice that had no local implementation (FS-750).
+app.include_router(mfa.router, prefix="/api/v1/mfa", tags=["Authentication"], responses=common_responses)
 app.include_router(bulk_operations.router, prefix="/api/v1/bulk", tags=["Bulk Operations"], responses=unavailable_responses)
 app.include_router(exports.router, prefix="/api/v1/exports", tags=["Exports"], responses=unavailable_responses)
 # Signature-authorized export downloads (no bearer; used by delivery email links).

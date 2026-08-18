@@ -4317,3 +4317,48 @@ test fixed the claim as well.
 Then mutation-test the pair. Making `encrypt()` return its input failed four tests including
 the headline, which is what says the assertion now depends on the encryption rather than on
 where SQLite happened to put the bytes.
+
+## Rule 254 — a security feature is not a control until something refuses
+
+MFA landed with all of this working:
+
+    POST /mfa/enroll     issues a secret, returns a provisioning URI
+    POST /mfa/confirm    verifies a code, activates the factor, issues recovery codes
+    GET  /mfa/status     reports enrolled / confirmed / codes remaining
+    DELETE /mfa/         requires a code to disable
+
+Secrets wrapped in AES-256-GCM. Recovery codes single-use. Replay refused inside the window.
+Every test green.
+
+And `POST /auth/login` returned **200 for the correct password alone**, for an account with a
+confirmed second factor.
+
+`user_mfa` is FORCE ROW LEVEL SECURITY, and the login route runs on the unscoped session — it
+has to, because there is no authenticated tenant until the user has been loaded. So the
+`SELECT` matched zero rows for every user in the system, `mfa_row` was `None`, and the branch
+that demands a code never ran. No exception. No log line. A clean, fast 200.
+
+Nothing in the feature was wrong. Everything in the feature was pointless.
+
+**The tests that passed were all about capability**: can a user enrol, is the secret
+encrypted, does a recovery code work once. Capability tests are the natural thing to write —
+they follow the code you just wrote, function by function. Not one of them could distinguish
+"MFA is enforced" from "MFA is a database row nobody reads", because none of them asked
+anything to be **refused**.
+
+That is the whole rule, and it generalises past MFA. A rate limiter that never returns 429,
+an authorisation check that never returns 403, a validator that never returns 422, a tenant
+boundary that never returns 404 — each can be fully implemented, fully unit-tested, and
+completely inert. The refusal is the control; the rest is machinery for producing it.
+
+So write the refusal assertion first, and keep it primary:
+
+```python
+assert response.status_code == 401, (
+    "the correct password alone returned 200 for an account with MFA enabled"
+)
+```
+
+Then mutation-test it. Disabling the enforcement branch failed four tests here — if it had
+failed none, the feature would have shipped as decoration, which is what the unreachable
+`keycloak_service.enable_mfa` it replaced had already been for months.

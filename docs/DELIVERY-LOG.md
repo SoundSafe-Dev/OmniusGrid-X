@@ -12910,3 +12910,67 @@ an empty file, and by the data not having been written yet — every one of whic
 success. The paired positive ("without the protection, it IS there") is the only thing that
 distinguishes a working control from a broken search, and here it was the difference between
 a shipped encryption feature and a shipped placebo.
+
+## FS-750 — MFA, and the enforcement that makes it a control
+
+`OG-IA-002` (800-171 **3.5.3**) moves `absent` → `partial`. It was the largest named gap in
+the catalogue: a CMMC Level 2 practice with no partial credit.
+
+**What existed before is the whole lesson.** `enable_mfa`/`disable_mfa` sat in
+`keycloak_service.py` on this repository's own orphaned-definition list — present, untested,
+called by nothing — and even wired they would have served only deployments running Keycloak,
+which is disabled by default. A practice covering *local* access needs a local
+implementation, and a feature nobody can reach is not a control.
+
+Which is why the assertion that matters here is not "you can enrol". It is **login refuses
+the correct password alone once a factor is confirmed.** Enrolment endpoints without
+enforcement would have reproduced precisely the defect they replaced, in newer code.
+
+RFC 6238 implemented on stdlib `hmac`/`hashlib` rather than taking `pyotp`: TOTP is an HMAC,
+a counter and a truncation, and the authentication path is the last place to add a
+dependency for twenty lines — the same reasoning that dropped `python-jose` for `PyJWT`.
+Secrets are AES-256-GCM envelopes (a second factor an attacker can read from a backup is
+theatre), recovery codes are single-use SHA-256 digests, and `last_used_window` is persisted
+so a code cannot be replayed inside its own 30 seconds — RFC 6238 §5.2, the step most
+implementations skip and the one that makes a shoulder-surfed code useless.
+
+Enrolment is deliberately two-step. `confirmed_at` separates "issued a secret" from "proved
+a working code", and only the second gates login. **An account that believes it has MFA and
+does not is worse than one that knows it has none** — the user relaxes about their password
+and the control is absent exactly where it is being counted. The unconfirmed state is
+asserted not to gate login, because a half-configured factor that locks you out is a lockout
+you cannot finish enrolling your way out of.
+
+### The bug the enforcement test caught, and nothing else could have
+
+With every endpoint working and all the primitives verified, login still returned **200 for
+the correct password alone**.
+
+`user_mfa` is FORCE ROW LEVEL SECURITY. The login route runs on the *unscoped* session — it
+has to, because there is no authenticated tenant until the user is loaded — so the `SELECT`
+returned **zero rows for every user**, `mfa_row` was None, and login silently stopped
+enforcing the second factor. No error, no log line, a clean 200.
+
+Fifth instance of the shape FS-431 closed four times: an RLS-protected table read on a
+session with no `app.current_org_id`, where the failure mode is an empty result rather than
+an exception. The fix is one `set_config(..., true)` after the user is loaded, which is what
+`services/audit.py` already does for its standalone writes.
+
+Every endpoint test passed while this was broken. Only the assertion about *refusal* could
+see it.
+
+**And it exposed a blind spot in the crypto guard I wrote two commits ago.** The guard checked
+Call nodes, so it caught `hashlib.md5()` and missed `hmac.new(key, msg, hashlib.sha1)` — the
+algorithm passed as a callable reference, never invoked at that site. That is not an exotic
+form; it is how every HMAC in Python names its hash, so the gap covered exactly the code most
+likely to contain one. The guard now sees references too, and `backend/app/core/mfa.py` carries a
+written exemption: SP 800-131A retires SHA-1 for *digital signatures*, where collision
+resistance matters, while HMAC-SHA-1 remains approved because HMAC rests on the key and PRF
+behaviour. The alternative — SHA-256 TOTP — is permitted by the RFC and unevenly supported by
+authenticator apps, trading a real usability failure for an apparent compliance win.
+
+RULE 254 — a security feature is not a control until something REFUSES. Enrolment, secrets,
+recovery codes and status endpoints can all be correct while the factor changes nothing about
+who gets in; every one of those tests passed against a login that ignored MFA entirely. Write
+the refusal assertion first, and treat the feature as absent until it fails a request that
+should not succeed.
