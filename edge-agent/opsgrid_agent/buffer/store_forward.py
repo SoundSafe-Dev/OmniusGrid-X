@@ -55,6 +55,17 @@ class StoreForwardBuffer:
         # its constructor raises instead of quietly writing cleartext to a disk that may
         # walk out of the building.
         self.cipher = cipher if cipher is not None else BufferCipher()
+        # A PER-BUFFER LOSS LEDGER (FS-753). Losses were counted only into global
+        # Prometheus counters, which cannot be reconciled against a single buffer — so
+        # `get_stats()` had no `dropped` key at all, and `main.py`'s
+        # `stats.get('dropped', 0)` meant the heartbeat reported **zero dropped, always**,
+        # for as long as the field had existed.
+        #
+        # It is also what makes a conservation law checkable:
+        #     produced == sent + still_buffered + dead_lettered + dropped + expired
+        # Without a per-instance count there is no way to assert that a DDIL scenario lost
+        # nothing, only that some global counter moved.
+        self.losses = {"dropped": 0, "expired": 0, "dead_lettered": 0}
         
         # Ensure directory exists
         self.buffer_path.parent.mkdir(parents=True, exist_ok=True)
@@ -248,6 +259,7 @@ class StoreForwardBuffer:
             from .. import metrics
 
             metrics.record_dropped(pruned)
+            self.losses['dropped'] += pruned
             logger.warning(
                 "buffer_pruned_for_space",
                 pruned=pruned,
@@ -402,6 +414,7 @@ class StoreForwardBuffer:
                     )
                     conn.commit()
                     deleted = cursor.rowcount
+                    self.losses['expired'] += deleted
                 
                 if deleted > 0:
                     # WARNING, not info (FS-458). Rows in `messages` are UNDELIVERED —
@@ -442,6 +455,7 @@ class StoreForwardBuffer:
                         (max_retry,),
                     )
                     moved = cursor.rowcount
+                    self.losses['dead_lettered'] += moved
                     conn.execute(
                         "DELETE FROM messages WHERE retry_count >= ?", (max_retry,)
                     )
@@ -485,6 +499,7 @@ class StoreForwardBuffer:
                     if pruned == 0:
                         break  # nothing left to prune
                     total_pruned += pruned
+                    self.losses['dropped'] += pruned
                     # VACUUM to actually reclaim disk so the next size check is real
                     # (DELETE alone does not shrink the SQLite file).
                     with sqlite3.connect(self.buffer_path) as conn:
@@ -530,7 +545,13 @@ class StoreForwardBuffer:
                     "newest_message": newest,
                     "backfill_lag_seconds": self._age_seconds(oldest),
                     "size_mb": round(size_bytes / (1024 * 1024), 2),
-                    "retention_hours": self.retention_hours
+                    "retention_hours": self.retention_hours,
+                    # FS-753. `main.py` has always read `stats.get('dropped', 0)` for the
+                    # heartbeat, and this dict has never had the key — so every heartbeat
+                    # since the field was added reported zero dropped regardless of how
+                    # many rows the size limiter had pruned. The default made it silent.
+                    "dropped": self.losses["dropped"],
+                    "expired": self.losses["expired"],
                 }
 
     @staticmethod

@@ -97,3 +97,37 @@ jobs:
       - name: API logs on failure
         if: failure()
         run: tail -50 /tmp/api.log
+
+  # DDIL fault-injection scenarios (FS-753). Nightly rather than per-PR because they are
+  # the SLOW-but-cheap kind: each represents hours of link outage in compressed time, and
+  # the whole set runs in seconds — the reason they are not on the PR path is that their
+  # value is regression detection over time, not gating a diff.
+  #
+  # Every scenario ends by asserting the conservation law
+  #   produced == sent + still_buffered + dead_lettered + dropped + expired
+  # so a message that is neither delivered, held, nor deliberately discarded AND counted
+  # fails the build. Silent buffer loss is the failure DDIL exists to prevent.
+  ddil:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: |
+            /*
+            !/backend/dataset/
+          sparse-checkout-cone-mode: false
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install edge-agent deps
+        working-directory: ./edge-agent
+        run: pip install -r requirements.txt pytest pytest-asyncio
+
+      - name: Run DDIL scenarios
+        working-directory: ./edge-agent
+        run: pytest -m ddil -v
+

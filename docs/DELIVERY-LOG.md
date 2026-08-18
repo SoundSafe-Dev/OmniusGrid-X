@@ -13102,3 +13102,72 @@ in the validator, it has a rule, a reviewer's eye stops. Nothing consumed it. **
 not enforcement**, and the gap between them is invisible in exactly the way that matters —
 the code reads as though the constraint is applied. When a field is validated, grep for its
 second use; if there isn't one, either enforce it or delete it from the schema.
+
+## FS-753 — the DDIL harness, and the two things it found before it was finished
+
+DDIL item S9, built second on purpose. Everything after it — edge priority tiers, adaptive
+backfill, resumable OTA — has acceptance criteria of the form *"survives N hours denied and
+drains without loss at X msg/s"*, and none of those can be settled by reading code. Building
+the measurement first is what stops the next three items being marked done on inspection,
+which is how "the buffer handles outages" became a belief nobody had tested.
+
+**The conservation law is the whole design:**
+
+    produced == sent + still_buffered + dead_lettered + dropped + expired
+
+A message that is neither delivered, nor held, nor deliberately discarded **and counted**,
+has vanished. No single counter catches that; only the balance does.
+
+**Which required fixing the ledger first.** Losses went only to global Prometheus counters,
+which cannot be reconciled against one buffer — and the consequence was already live:
+`get_stats()` had no `dropped` key at all, while `main.py` read `stats.get('dropped', 0)`, so
+**every heartbeat since that field was added reported zero dropped**, regardless of how much
+the size limiter had pruned. The default made it silent. The buffer now keeps a per-instance
+ledger, which fixes the heartbeat and makes the law checkable.
+
+Time is compressed — a 72-hour outage is a timestamp, not three days of waiting — so nine
+scenarios representing days of link failure run in under three seconds and can live in CI.
+
+**What it is not**, stated in the module so a green run is not over-read: there is no TCP.
+Half-open connections, DNS failure, TLS renegotiation and kernel buffer exhaustion are
+invisible to it and need toxiproxy or `tc netem` in front of a real broker. The deliberate
+trade is that this version is deterministic, fast and dependency-free, so it will actually
+be run.
+
+### Finding 1 — retry exhaustion strands the backlog
+
+`get_pending_messages` filters `retry_count < max_retry` (5). A row that fails five delivery
+attempts stops appearing in any drain, forever. It is not sent, not dead-lettered, not
+expired — just invisible, until `move_exhausted_to_dead_letter` discards it.
+
+**The conservation law still balances**, which is exactly why this needed its own test: the
+rows count as `still_buffered`, so nothing looks wrong. The problem is not loss, it is that a
+buffer built to survive outages **destroys its backlog when the link returns degraded rather
+than down** — five failed attempts against a broker that is reachable but rejecting is an
+utterly ordinary reconnect. Recorded and measured rather than fixed here: whether retry
+should be a count at all, or a backoff with no cap, is S5's decision.
+
+### Finding 2 — the harness had a hole, and a mutation found it
+
+With eight scenarios passing, deleting the loss counter from `enforce_size_limit` changed
+nothing. Every scenario left the buffer comfortably under its size cap, so the ring-buffer
+prune never ran; the law was correct and simply never pointed at that path.
+
+That is the failure mode a harness is most prone to — coverage of the interesting scenarios,
+silence on the boring one where the disk fills, which is a bounded buffer's entire contract.
+A buffer-full scenario now exists, and the same mutation fails it.
+
+Getting that scenario to fire needed a second correction: 4,000 scalar rows do not reach 1 MB.
+Padding to 512 bytes reflects what actually fills these buffers — a vibration or audio frame
+is kilobytes, not the dozen bytes a scalar reading takes.
+
+One more test of my own was wrong: retention keys off `created_at`, not `timestamp_edge`, so
+ageing the reading time removed nothing. That is the correct basis — a backfilled historical
+reading should not expire on arrival — and the test now ages the insert time.
+
+RULE 257 — a conservation law needs a scenario per sink, not one per interesting story. The
+books balancing proves nothing about a path no scenario walks: eight scenarios asserted
+`produced == sent + buffered + dead + dropped + expired` and none of them ever pruned, so the
+`dropped` term was structurally untested while looking covered. Enumerate the ways data can
+LEAVE the system and write a scenario for each, including the dull one where the disk fills —
+then mutate each counter in turn and check something fails.

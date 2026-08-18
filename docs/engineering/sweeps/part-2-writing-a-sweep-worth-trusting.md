@@ -1846,6 +1846,14 @@ one of its findings. The habit that catches it:
      not enforcement. When a field is validated, grep for its SECOND use; if there is none,
      either enforce it or take it off the schema, because a constraint that is checked and
      ignored reads exactly like one that is applied.
+
+257. **A conservation law needs a scenario per sink, not one per interesting story.** The
+     DDIL harness asserts `produced == sent + buffered + dead_lettered + dropped + expired`
+     after every scenario. Eight scenarios passed, and deleting the counter from the
+     size-limit prune changed nothing — none of them ever filled the buffer, so the
+     `dropped` term was structurally untested while appearing covered. Enumerate the ways
+     data can LEAVE the system and write a scenario for each, including the dull one where
+     the disk fills, then mutate each counter in turn and confirm something fails.
 ---
 
 ## Open observations, not yet tickets

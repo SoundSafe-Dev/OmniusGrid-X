@@ -4445,3 +4445,44 @@ expired — in a suite that never checked expiry. A placeholder shaped around a 
 had written, sitting in the tests for the exact code that was supposed to do the checking.
 When the gate finally landed, the fixture failed as `issued_in_the_future`, which is correct:
 a command stamped four years out is a clock fault or a forgery.
+
+## Rule 257 — a conservation law needs a scenario per sink, not one per interesting story
+
+The DDIL harness ends every scenario with the same assertion:
+
+    produced == sent + still_buffered + dead_lettered + dropped + expired
+
+That is a good law. A message that is neither delivered, nor held, nor deliberately discarded
+**and counted**, has vanished — and silent buffer loss is the failure the whole workstream
+exists to prevent. No individual counter catches it; only the balance does.
+
+Eight scenarios passed: denied for 72 hours, 15% packet loss, a link flapping three down two
+up, a bandwidth ceiling, retention expiry, a negative control.
+
+Then, out of habit, I deleted the loss counter from `enforce_size_limit`.
+
+Nothing failed.
+
+Every one of those eight scenarios left the buffer comfortably under its size cap, so the
+ring-buffer prune never executed. The `dropped` term in the law was structurally untested
+while looking thoroughly covered — because the *law* mentioned it, and the law was passing.
+
+**A conservation law is only as good as the sinks your scenarios actually reach.** The
+temptation when writing one is to enumerate interesting *situations* — outage, loss, flap,
+recovery — because those are the stories the feature is about. The law needs the opposite
+enumeration: every way data can LEAVE the system, one scenario each, including the dull ones.
+For this buffer that is five sinks (delivered, retained, dead-lettered, pruned for size,
+expired by age), and the boring one — the disk fills — is a bounded buffer's entire contract.
+
+Two smaller corrections came out of making that scenario fire, both worth keeping:
+
+- 4,000 scalar rows do not reach 1 MB. A size scenario built from scalar readings needs
+  implausible counts to reach the boundary, so the payload is padded to 512 bytes — which is
+  also what actually fills these buffers, since a vibration or audio frame is kilobytes.
+- My retention test aged `timestamp_edge` and removed nothing, because `cleanup_old_messages`
+  keys off `created_at` — when the row was BUFFERED, not when the reading was taken. That is
+  the correct basis (a backfilled historical reading should not expire on arrival), and the
+  test was wrong rather than the code.
+
+The procedure that follows: after the law passes, mutate each counter in turn. If deleting a
+term changes no result, that term has no scenario behind it.
