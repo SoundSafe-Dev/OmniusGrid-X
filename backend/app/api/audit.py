@@ -7,7 +7,7 @@ from typing import Any, Dict, List, Optional
 from datetime import datetime
 from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import select, and_, or_
+from sqlalchemy import select, and_, or_, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.pagination import MAX_OFFSET
@@ -218,59 +218,76 @@ async def verify_hash_chain(
     current_user: User = Depends(require_admin),
     db: AsyncSession = Depends(get_tenant_db)
 ):
-    """Verify audit log hash chain integrity"""
-    result = await db.execute(
-        select(AuditLog).order_by(AuditLog.timestamp.asc(), AuditLog.id.asc())
-    )
-    logs = result.scalars().all()
-    
-    if not logs:
+    """Verify audit log hash chain integrity.
+
+    THIS RECOMPUTED THE DIGEST IN PYTHON AND COULD NEVER AGREE WITH THE WRITER (FS-743).
+    The trigger hashed `to_jsonb(NEW)` -- the whole row, including `hash_chain` itself, a
+    value the stored row no longer carries -- while this function hashed a sorted 10-field
+    subset. Two implementations of one hash, guaranteed to differ, so the endpoint reported
+    every row as tampered on any non-empty table. No test asserted it passed, which is how
+    an integrity control shipped inverted.
+
+    Verification is now one SQL function (`verify_audit_hash_chain`, migration 069) calling
+    the SAME `calculate_audit_hash` the trigger calls. There is no second implementation to
+    drift, which is the only durable fix for this class.
+
+    Rows written before that migration carry `hash_version = 1` and were hashed by the old,
+    unverifiable algorithm. They are counted and reported as such rather than folded into
+    the violation count: nothing altered them, so calling them tampered would be a false
+    accusation, and calling them verified would be a false assurance.
+
+    Scope is the caller's own organisation, by RLS -- and the chain is built per
+    organisation, so a tenant verifies their own chain end to end without needing to see
+    anybody else's rows.
+    """
+    verified_total = (
+        await db.execute(
+            text("SELECT count(*) FROM audit_logs WHERE hash_version = 2")
+        )
+    ).scalar_one()
+    legacy_total = (
+        await db.execute(
+            text("SELECT count(*) FROM audit_logs WHERE hash_version <> 2")
+        )
+    ).scalar_one()
+
+    if verified_total == 0 and legacy_total == 0:
         return {
             "verified": True,
+            "total_logs": 0,
             "message": "No audit logs to verify",
-            "total_logs": 0
         }
-    
-    # Verify hash chain
-    previous_hash = None
-    verification_errors = []
-    
-    for log in logs:
-        # Calculate expected hash
-        import hashlib
-        import json
-        
-        log_data = {
-            "id": str(log.id),
-            "timestamp": log.timestamp.isoformat(),
-            "user_id": log.user_id,
-            "organization_id": log.organization_id,
-            "action": log.action,
-            "resource_type": log.resource_type,
-            "resource_id": log.resource_id,
-            "details": log.details,
-            "ip_address": _ip_str(log.ip_address),
-            "user_agent": log.user_agent,
+
+    rows = (
+        await db.execute(text("SELECT * FROM verify_audit_hash_chain()"))
+    ).mappings().all()
+    errors = [
+        {
+            "log_id": str(row["log_id"]),
+            "timestamp": row["log_timestamp"].isoformat(),
+            "expected_hash": row["expected_hash"],
+            "actual_hash": row["actual_hash"],
         }
-        
-        combined = (previous_hash or "") + json.dumps(log_data, sort_keys=True)
-        expected_hash = hashlib.sha256(combined.encode()).hexdigest()
-        
-        if expected_hash != log.hash_chain:
-            verification_errors.append({
-                "log_id": str(log.id),
-                "timestamp": log.timestamp.isoformat(),
-                "expected_hash": expected_hash,
-                "actual_hash": log.hash_chain
-            })
-        
-        previous_hash = log.hash_chain
-    
+        for row in rows
+    ]
+
+    legacy_note = (
+        f" {legacy_total} legacy record(s) predate the verifiable chain "
+        f"(hash_version 1) and were not checked."
+        if legacy_total
+        else ""
+    )
+    message = (
+        f"Hash chain verified across {verified_total} record(s).{legacy_note}"
+        if not errors
+        else f"Found {len(errors)} hash chain violation(s).{legacy_note}"
+    )
+
     return {
-        "verified": len(verification_errors) == 0,
-        "total_logs": len(logs),
-        "errors": verification_errors,
-        "message": "Hash chain verified successfully" if len(verification_errors) == 0 else f"Found {len(verification_errors)} hash chain violations"
+        "verified": not errors,
+        "total_logs": verified_total,
+        "errors": errors or None,
+        "message": message,
     }
 
 

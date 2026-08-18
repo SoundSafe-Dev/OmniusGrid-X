@@ -4050,3 +4050,78 @@ exception still went out as a 500.
 The bug is in the translation at the edge, and the fix is a clause rather than a redesign —
 which is why six of these took an afternoon and why they had survived for so long: each one
 looks, from the inside, like it was already handled.
+
+## Rule 247 — a control that always fires and a control that never fires are worth the same
+
+`audit_logs` has had a hash chain since migration 009. `GET /api/v1/audit/verify` has
+existed just as long. They were never able to agree, and the reason is worth seeing:
+
+```sql
+NEW.hash_chain = calculate_audit_hash(previous_hash, to_jsonb(NEW));
+```
+
+`to_jsonb(NEW)` is the whole row, and the whole row includes `hash_chain` — the column being
+assigned. At BEFORE INSERT it holds whatever the writer set (`'pending'`); afterwards it
+holds the digest. So the hashed input contains a value the stored row no longer has, and
+**nothing can reproduce it**: not the API, not another SQL query, not a forensic tool with
+the whole database. Meanwhile the endpoint hashed a sorted 10-field subset in Python — a
+second algorithm, guaranteed to differ from the first.
+
+The endpoint therefore reported every row as tampered, on any non-empty table, for the life
+of the feature.
+
+The test that existed asserted:
+
+```python
+assert len(hash_chain) == 64
+```
+
+True of any SHA-256 output, including one computed from an algorithm nobody can reproduce.
+The control looked tested. It was inverted.
+
+**A detector that cannot pass is as broken as one that cannot fail**, and for the same
+practical reason: an integrity alert that fires on every row is noise, gets filtered, and is
+gone within a week — so the first real tampering arrives in a report nobody reads. The
+failure mode is identical to a detector that finds nothing; only the direction differs.
+
+So assert the clean case as hard as the dirty one, and mutation-test both. The new file does
+exactly that: restoring the original self-referential hash fails the clean-chain tests, and
+replacing the verifier's predicate with `WHERE false` fails the tampering tests. Neither
+mutation is caught by the other, which is what says there are two properties here rather
+than one.
+
+The structural fix was not to align the two implementations. It was to **delete one**:
+verification now calls the same `calculate_audit_hash` the trigger calls, from SQL, so there
+is no second implementation left to drift.
+
+## Rule 248 — documentation that claims a control is a control claim
+
+Two files, 968 lines, 314 control assertions, and not one citing an implementation file or a
+test. Six of them measurably false:
+
+> "Multi-factor authentication required" — MFA does not exist. The TOTP helpers are on this
+> repository's own orphaned-definition list.
+>
+> "Quarterly access reviews" — no access review exists in any form.
+>
+> "Intrusion detection system (IDS)" — there is none.
+
+They also asserted things a code repository has no standing to attest to at all: board
+oversight, personnel training, a disciplinary process.
+
+The instinct is to treat this as untidy rather than dangerous — it is only documentation, and
+documentation drifts. That instinct is wrong here, and the asymmetry is worth internalising:
+**prose is the tier an auditor reads first.** An assessor who reads "MFA required", asks for
+the evidence, and is told the feature is unreachable does not simply strike that control.
+They have learned that this organisation writes down controls it has not checked, and every
+other claim in the package now needs independent verification — including the ones that are
+true, of which there are many here.
+
+So the false documentation was not merely worthless. It was a liability priced against the
+5,000 tests that make the rest of the repository credible.
+
+**The rule, and it is the same one this codebase already applies to numbers:** if a claim
+cannot name the file that implements it and the test that proves it, it is not ready to be
+written down. The replacement `docs/compliance/README.md` states the honest position — no
+framework compliance is claimed today — records what was removed and why, and keeps only the
+two documents that survive the rule.

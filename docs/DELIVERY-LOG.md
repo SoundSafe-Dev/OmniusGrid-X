@@ -12537,3 +12537,115 @@ declared response type. What was missing was the translation at the edge — the
 right to raise `ValueError` and right not to know about HTTP, and the route is the only
 place that can turn it into 404. When you see a 500, look for where the code already said
 what happened, and find out why nobody was listening.
+
+## FS-743 — the tamper-evidence control was inverted, and nothing said so
+
+Compliance pre-certification, Phase 0. `audit_logs` has carried a hash chain since migration
+009 and `GET /api/v1/audit/verify` has existed just as long. They could never agree:
+
+    trigger   calculate_audit_hash(prev, to_jsonb(NEW))        -- the WHOLE row,
+                                                               -- including hash_chain
+    endpoint  sha256(prev + json.dumps({10 named fields}))     -- different subset,
+                                                               -- different encoding
+
+`hash_chain` is part of the trigger's input and is overwritten by the trigger's output, so
+**the stored row cannot reproduce its own digest — by any verifier, in any language.** The
+endpoint reported every row as tampered on any non-empty table.
+
+The existing test asserted `len(hash_chain) == 64`. True of any SHA-256 output, including
+one computed by an algorithm nobody can reproduce — so the control looked tested and was
+inverted. An integrity check that always fires is worth what one that never fires is worth:
+both are ignored, and the first real tampering arrives in a report nobody reads.
+
+**Fixed by removing the second implementation, not by aligning the two.** Migration 069
+excludes the digest from its own input (`to_jsonb(NEW) - 'hash_chain'`) and adds
+`verify_audit_hash_chain()`, a SQL function calling the SAME `calculate_audit_hash` the
+trigger calls. The endpoint queries it. There is no longer a second implementation to drift,
+which is the only durable fix for this class.
+
+Two design choices worth recording:
+
+**Per-organisation chains, made explicit.** The old trigger's previous-hash `SELECT` ran
+under the caller's RLS, so it already chained over a per-tenant visible set — by accident,
+and unverifiably, because the visible set at verify time need not match the one at insert
+time. It now says `WHERE organization_id IS NOT DISTINCT FROM NEW.organization_id`. The
+alternative — one global chain via `SECURITY DEFINER` — would be unverifiable by any
+tenant-scoped reader, which is every reader this API has.
+
+**A version column, because the old rows are not tampered.** Rows written before 069 used
+the unverifiable algorithm. Calling them tampered is a false accusation; calling them
+verified is a false assurance. `hash_version = 1` rows are excluded and named in the
+response.
+
+Mutation-verified in both directions: restoring the original self-referential hash fails 3
+tests (so the new file would have caught the original defect), and a verifier that finds
+nothing fails the 3 tamper tests (so the control is not a rubber stamp).
+
+**And the fix has a fragility, stated rather than left to be discovered.** Hashing
+`to_jsonb(row)` covers every column — a column added tomorrow is integrity-protected the day
+it exists, with no field list to remember. The cost is that adding a column changes the
+payload of rows already written, so their digests stop reproducing and `/audit/verify` starts
+reporting the whole history as tampered — from a migration whose author had no reason to
+think about hashing. `test_the_audit_chain_survives_its_own_schema.py` pins the column set
+and fails with the remedy in the message: bump `hash_version` in the same migration.
+
+## FS-744 — the only brute-force control, ungated in production
+
+`RATE_LIMIT_ENABLED` defaults to `False`. Every other insecure default in this codebase is
+checked by `validate_settings()`, which hard-fails at startup in production — `DEBUG`,
+`ALLOW_DEV_TOKEN`, `ALLOW_OPEN_REGISTRATION`, wildcard CORS, an empty webhook secret, an
+unset ERP key. This one was not, so **production could run with rate limiting entirely off
+and nothing anywhere would say so.**
+
+It matters more than the default does, because there is no second line. There is no account
+lockout, no failed-login counter and no progressive delay — `app/api/auth.py` relies on the
+limiter alone and says so in a comment. Off, `/auth/login` accepts unmetered credential
+stuffing. That is NIST SP 800-171 **3.1.8** (limit unsuccessful logon attempts) failing open
+with no signal, and it would be found by the first assessor who greps the settings.
+
+The gate is now in `validate_settings()`. Adding it immediately failed
+`test_production_with_secure_config_passes` — a config this repository called *secure
+production* that left the control off. That test now sets it, and a matching assertion was
+added to the insecure-config test so the gate is proven in both directions rather than
+satisfiable by rejecting everything.
+
+## FS-745 — deleting two compliance documents that asserted controls we do not have
+
+`docs/compliance/SOC2_COMPLIANCE.md` (392 lines) and `ISO27001_COMPLIANCE.md` (576 lines),
+removed. Between them 314 control claims, and **not one cited an implementation file or a
+test.** Verbatim claims against measured reality:
+
+    "Multi-factor authentication required"          MFA does not exist; the TOTP helpers
+                                                    are on the orphaned-definition list
+    "Quarterly access reviews"                      no access review exists
+    "Intrusion detection system (IDS)"              there is none
+    "Password Policy: ... complexity requirements"  length only, and not applied on the
+                                                    register or admin-create paths
+    "Quarterly incident response drills"            no evidence
+    "Quarterly internal audits"                     no evidence
+
+They also asserted organizational facts — board oversight, personnel training, a
+disciplinary process — that a code repository has no standing to attest to.
+
+This is worse than having no documentation. An assessor who reads "MFA required", asks for
+evidence, and is told the feature is unreachable does not merely strike that control — they
+lose their reason to believe the rest of the package. Everything else here is unusually well
+evidenced, and these two files put that at risk to say things nobody had checked.
+
+Replaced by `docs/compliance/README.md`, which states the honest position (no framework
+compliance is claimed today), records what was removed and why, and keeps the two documents
+that ARE accurate — `ACCESS_CONTROL.md`, which matches `app/core/roles.py` and is enforced by
+three test files, and `GDPR_COMPLIANCE.md`, which names endpoints that exist and carries its
+own caveats about the limits of its erasure and export.
+
+RULE 247 — a control that always fires and a control that never fires are worth the same.
+The audit chain reported every row as tampered, which is indistinguishable in practice from
+reporting nothing: either way the output is noise and gets filtered. When you build a
+detector, assert the CLEAN case as hard as the dirty one — `len(digest) == 64` passed for
+years over an algorithm nobody could reproduce.
+
+RULE 248 — documentation that claims a control is a control claim, and needs the same
+evidence as code. 314 assertions, zero citations, and six of them measurably false. Prose in
+a repository is not a lower tier of truth than a test; it is the tier an auditor reads first.
+If a claim cannot name the file that implements it and the test that proves it, it is not
+ready to be written down.

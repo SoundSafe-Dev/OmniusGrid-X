@@ -1762,6 +1762,23 @@ one of its findings. The habit that catches it:
      right to raise `ValueError` and right not to know about HTTP; the route is the only
      place that can turn it into a 404. When you see a 500, look for where the code already
      said what happened, then ask why nobody was listening.
+
+247. **A control that always fires and a control that never fires are worth the same.**
+     The audit hash chain reported every row as tampered — the trigger hashed the digest
+     column into its own input, so no verifier could ever reproduce it. In practice that is
+     indistinguishable from detecting nothing: the output is noise and gets filtered within
+     a week. The test that existed asserted `len(hash_chain) == 64`, which is true of any
+     SHA-256 output including one from an unreproducible algorithm. **Assert the clean case
+     as hard as the dirty one**, and mutation-test both directions — a detector that cannot
+     pass is as broken as one that cannot fail.
+
+248. **Documentation that claims a control is a control claim, and needs the same evidence
+     as code.** Two compliance documents made 314 control assertions with zero citations,
+     six of them measurably false ("MFA required" — the feature is unreachable). Prose in a
+     repository is not a lower tier of truth than a test; it is the tier an auditor reads
+     FIRST, and a false claim there costs the credibility of everything true beside it. If a
+     claim cannot name the file that implements it and the test that proves it, it is not
+     ready to be written down.
 ---
 
 ## Open observations, not yet tickets

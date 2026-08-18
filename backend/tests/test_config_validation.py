@@ -28,6 +28,12 @@ def test_production_flags_insecure_defaults():
     assert any("ERP_ENCRYPTION_KEY" in p for p in problems)
     assert any("GEOTAB_SIMULATED" in p for p in problems)
     assert any("EDGE_REQUIRE_PROOF_OF_POSSESSION" in p for p in problems)
+    # FS-744. `RATE_LIMIT_ENABLED` defaults False like the rest of this list, and was the
+    # one default nothing here checked — so production could ship with the only
+    # brute-force control on /auth/login switched off. Asserted in BOTH directions: this
+    # rejects it, and `test_production_with_secure_config_passes` proves a config that
+    # sets it is accepted, so the check cannot be satisfied by rejecting everything.
+    assert any("RATE_LIMIT_ENABLED" in p for p in problems)
 
 
 def test_production_with_secure_config_passes():
@@ -43,5 +49,10 @@ def test_production_with_secure_config_passes():
         ERP_ENCRYPTION_KEY="a-stable-erp-master-key",
         GEOTAB_SIMULATED=False,
         EDGE_REQUIRE_PROOF_OF_POSSESSION=True,
+        # ADDED BY FS-744, and its absence here was the point. This config was the
+        # repository's definition of "secure production" and it left the only
+        # brute-force control on /auth/login switched off — the gate was missing, so
+        # nothing rejected it.
+        RATE_LIMIT_ENABLED=True,
     )
     assert validate_settings(s) == []

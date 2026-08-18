@@ -498,4 +498,20 @@ def validate_settings(s: "Settings" = None) -> list[str]:
             problems.append("GEOTAB_SIMULATED must be false in production (random demo telematics would be served as real data)")
         if not s.EDGE_REQUIRE_PROOF_OF_POSSESSION:
             problems.append("EDGE_REQUIRE_PROOF_OF_POSSESSION should be true in production (unsigned edge requests are replayable)")
+        # THE ONLY BRUTE-FORCE CONTROL THIS API HAS, AND IT WAS UNGATED (FS-744).
+        #
+        # `RATE_LIMIT_ENABLED` defaults to False and every other insecure default in this
+        # function is checked here — this one was not, so production could run with rate
+        # limiting entirely off and nothing anywhere would say so.
+        #
+        # It matters more than the default does, because there is no second line: there is
+        # no account lockout, no failed-login counter and no progressive delay
+        # (`app/api/auth.py` relies on the limiter alone, and says so). Off, `/auth/login`
+        # accepts unmetered credential stuffing. That is NIST SP 800-171 3.1.8
+        # (limit unsuccessful logon attempts) failing open with no signal.
+        if not s.RATE_LIMIT_ENABLED:
+            problems.append(
+                "RATE_LIMIT_ENABLED must be true in production; it is the only "
+                "brute-force control on /auth/login (there is no account lockout)"
+            )
     return problems
