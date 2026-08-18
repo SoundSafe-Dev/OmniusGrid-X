@@ -115,10 +115,18 @@ def _row_to_payload(row: Dict[str, Any], max_fields: int = 60) -> Dict[str, Any]
 
 def _find_key_column(columns: List[str], candidates: List[str]) -> Optional[str]:
     """Return the first column whose normalized name matches a candidate key."""
-    normalized_columns = {normalize_column_header(c): c for c in columns}
+    normalized_columns: Dict[str, List[str]] = {}
+    for column in columns:
+        normalized_columns.setdefault(normalize_column_header(column), []).append(column)
+
     for cand in candidates:
         if cand in normalized_columns:
-            return normalized_columns[cand]
+            matches = normalized_columns[cand]
+            if len(matches) > 1:
+                raise ValueError(
+                    f"Ambiguous normalized header '{cand}': {', '.join(map(str, matches))}"
+                )
+            return matches[0]
     # substring match
     for col in columns:
         cl = normalize_column_header(col)

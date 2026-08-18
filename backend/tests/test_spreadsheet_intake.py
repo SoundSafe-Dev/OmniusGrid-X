@@ -14,6 +14,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import pandas as pd
+import pytest
 
 from app.models.domain_interaction import DomainType, CorrelationScenario
 from app.services.spreadsheet_domain_mapper import (
@@ -133,6 +134,19 @@ def test_messy_factory_upload_fixture_parses_expected_headers_and_rows():
     assert upload.loc[2, "Quantity"] == ""
     assert upload.loc[6, "Quantity"] == "N/A"
     assert upload.loc[9, "Operator Notes"] == "Operator forgot signature"
+
+
+def test_window_mode_rejects_duplicate_normalized_headers():
+    """Never silently choose between source headers that normalize to one key."""
+    tabs = {
+        "Production": pd.DataFrame([{
+            "Inspection Date": "2015-01-01", "Serial #": "SN-42",
+            "Serial Number": "SN-43", "Planned Units": 100,
+        }]),
+    }
+
+    with pytest.raises(ValueError, match="Ambiguous normalized header 'serial_number'"):
+        list(build_scenarios(tabs, mode="window", source_id="collision"))
 
 
 def test_tab_mode_single_scenario():
