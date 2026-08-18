@@ -94,6 +94,26 @@ def test_window_mode_cross_tab_links():
     assert max(sev_by_window.values()) >= 0.7  # critical mapped high
 
 
+def test_window_mode_normalizes_messy_headers_for_shared_serial_number():
+    """Real uploaded headers still produce a cross-tab link on the serial number."""
+    tabs = {
+        "Production": pd.DataFrame([{
+            "Inspection Date": "2015-01-01", "Shift": "Day", "Serial #": "SN-42",
+            "Planned Units": 100, "Actual Units": 95,
+        }]),
+        "Maintenance": pd.DataFrame([{
+            "Inspection Date": "2015-01-01", "Shift": "Day", "Serial #": "SN-42",
+            "Maintenance Status": "ok",
+        }]),
+    }
+
+    scenarios = list(build_scenarios(tabs, mode="window", source_id="messy"))
+
+    assert len(scenarios) == 1
+    assert len(scenarios[0].active_domains) == 2
+    assert [link.interaction_key for link in scenarios[0].domain_links] == ["SN-42"]
+
+
 def test_tab_mode_single_scenario():
     tabs = _sample_tabs()
     scenarios = list(build_scenarios(tabs, mode="tab", source_id="t"))

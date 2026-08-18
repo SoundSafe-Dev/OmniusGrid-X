@@ -29,12 +29,14 @@ from app.services.spreadsheet_domain_mapper import (
     map_workbook_domains,
     WorkbookDomainMapping,
 )
+from app.services.shared_key_detector import normalize_column_header
 
 
 # Candidate column names used to build the window grouping key.
 DATE_KEYS = ["date", "time", "timestamp", "posting_date", "order_date"]
 SHIFT_KEYS = ["shift"]
-ASSET_KEYS = ["asset_id", "asset", "trailer_id", "equipment_id", "machine_id"]
+ASSET_KEYS = ["asset_id", "asset", "trailer_id", "equipment_id", "machine_id",
+              "serial_number"]
 STATUS_KEYS = ["status", "maintenance_status", "incident_severity", "risk_level",
                "stockout_risk", "detention_risk", "priority"]
 
@@ -113,13 +115,13 @@ def _row_to_payload(row: Dict[str, Any], max_fields: int = 60) -> Dict[str, Any]
 
 def _find_key_column(columns: List[str], candidates: List[str]) -> Optional[str]:
     """Return the first column whose normalized name matches a candidate key."""
-    lowered = {c.lower(): c for c in columns}
+    normalized_columns = {normalize_column_header(c): c for c in columns}
     for cand in candidates:
-        if cand in lowered:
-            return lowered[cand]
+        if cand in normalized_columns:
+            return normalized_columns[cand]
     # substring match
     for col in columns:
-        cl = col.lower()
+        cl = normalize_column_header(col)
         if any(cand in cl for cand in candidates):
             return col
     return None
