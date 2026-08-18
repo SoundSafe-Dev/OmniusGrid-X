@@ -8,6 +8,8 @@ or standalone:
 """
 
 import sys
+import io
+from datetime import datetime
 from pathlib import Path
 
 # Ensure backend root is importable
@@ -177,6 +179,47 @@ def test_xlsx_roundtrip_multisheet():
     assert len(sheets) == 3
     scenarios = list(build_scenarios(sheets, mode="window", source_id="t"))
     assert len(scenarios) == 2
+
+
+def test_xlsx_messy_header_corpus_preserves_intake_structure():
+    """Exercise title rows, merged cells, units, Unicode, and native Excel dates."""
+    buf = io.BytesIO()
+    rows = {
+        "Production": pd.DataFrame([{
+            "Inspection Date (UTC)": datetime(2026, 7, 1),
+            "Serial #": "SN-2001",
+            "Quantity (units)": 15,
+            "Mächine Name": "Mixer 101",
+        }]),
+        "Maintenance": pd.DataFrame([{
+            "Inspection Date (UTC)": datetime(2026, 7, 1),
+            "Serial #": "SN-2001",
+            "Downtime (min)": 30,
+            "Mächine Name": "Mixer 101",
+        }]),
+    }
+    with pd.ExcelWriter(buf, engine="openpyxl") as writer:
+        for sheet_name, frame in rows.items():
+            frame.to_excel(writer, sheet_name=sheet_name, index=False, startrow=1)
+            sheet = writer.book[sheet_name]
+            sheet.merge_cells("A1:D1")
+            sheet["A1"] = "Factory operations export — July 2026"
+
+    buf.seek(0)
+    sheets = pd.read_excel(buf, sheet_name=None, header=1)
+
+    expected_headers = [
+        "Inspection Date (UTC)", "Serial #", "Quantity (units)", "Mächine Name",
+    ]
+    assert list(sheets["Production"].columns) == expected_headers
+    assert list(sheets["Maintenance"].columns) == [
+        "Inspection Date (UTC)", "Serial #", "Downtime (min)", "Mächine Name",
+    ]
+    assert isinstance(sheets["Production"].loc[0, "Inspection Date (UTC)"], pd.Timestamp)
+
+    scenarios = list(build_scenarios(sheets, mode="window", source_id="corpus"))
+    assert len(scenarios) == 1
+    assert [link.interaction_key for link in scenarios[0].domain_links] == ["SN-2001"]
 
 
 if __name__ == "__main__":
