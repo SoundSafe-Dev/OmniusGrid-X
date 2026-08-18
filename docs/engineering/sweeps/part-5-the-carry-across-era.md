@@ -4703,3 +4703,72 @@ And I expected a raising sink to propagate out of `_on_collector_message`. It do
 there is a catch-all there — so the test failed with `DID NOT RAISE`. The real contract is
 the one written in the sink's own docstring: `record` never raises, it returns `None`. That
 is now what is asserted, which is both true and the thing worth holding.
+
+---
+
+## Rule 261 — a guard scoped to where a defect was found does not cover where the same defect can live
+
+`test_every_reconnect_loop_backs_off.py` is a good guard. It came out of a real defect —
+five collectors that slept for `poll_interval` after a failed read, so a PLC that was
+switched off got dialled roughly 17,000 times a day — and it asserts that every collector
+with a reconnect loop owns a backoff and a breaker and consults them. It has caught things.
+
+It reads `opsgrid_agent/collectors/`.
+
+The agent's most important connection is not in that directory. It is the uplink to the
+broker, in `main.py`, and it had no reconnect loop at all. `_init_kafka_producer` was called
+once from `start()`; on failure it logged, set the producer to `None`, and returned. The
+backfill worker then spent the life of the process evaluating `if self.kafka_producer:`,
+which was false and would never become true again.
+
+So an agent that booted while the broker was unreachable collected perfectly, buffered
+perfectly, retained perfectly, and delivered nothing — for as long as the process lived,
+long after the link came back. Only a restart fixed it. And the guard specifically written
+to catch "this connection does not recover properly" could not see the file.
+
+**The scope was not a mistake when it was written.** The defect was in collectors; scanning
+collectors is the honest scope for it. The failure is that the scope was never revisited
+against the property rather than against the incident. "Every collector that reconnects
+backs off" and "every reconnect loop in this agent backs off" read almost identically and
+are not the same claim, and the gap between them is exactly one connection: the one that
+matters most, which is not a collector.
+
+The question to ask of any enumerating guard — a directory glob, a filename suffix, a
+naming convention, a decorator scan — is what else has the property being guarded and is
+simply filed somewhere else. Usually the answer is nothing. When it is not nothing, it is
+the thing nobody thought of, which is why it was filed somewhere else in the first place.
+
+### Two of my own tests were passing for the wrong reason
+
+The mutation pass caught ten of twelve. Both survivors were tests, not code.
+
+The first: replacing `backoff.next_delay()` with a constant survived a test called *the
+retries back off instead of hammering*. After five failures the breaker opens and the loop
+sleeps its 30-second cooldown, so the list of recorded delays contained growing values — the
+breaker's, not the backoff's. **Two instruments writing into one list means an assertion
+about growth cannot say which one grew.** The scenario now raises `failure_threshold` high
+enough that the breaker never opens, so every delay in the list has one possible source, and
+asserts the delays roughly double rather than merely differ.
+
+The second: `self._uplink_failure_streak = 0` appears three times in `main.py` — in the
+constructor, in the recycle path, and in the backfill loop. A test that grepped for the
+string passed while the occurrence that mattered was disabled. Grepping for a line that
+exists three times cannot tell you the one you care about still runs. It is now driven
+through the real `_backfill_worker` with a stand-in buffer and producer, which took about
+thirty lines and is the difference between checking a string and checking a behaviour.
+
+### The mutant that wedged the run
+
+One mutation hung the test process, which took a moment to diagnose and was worth more than
+the mutation itself. Disabling the healthy-producer check turned the successful-reconnect
+branch into a hot loop: that branch did its logging and then `continue`d without awaiting,
+relying on the *next* iteration's healthy check to provide the sleep.
+
+As written it was correct. It was also one edit away from spinning a CPU in a background
+task on a field gateway, and the thing standing between those two states was a conditional
+in a different branch. Every branch of that loop now awaits before it loops — not because
+the mutant proved a bug, but because it showed how thin the arrangement was.
+
+That is a use of mutation testing worth naming separately from finding coverage holes: a
+mutant that produces a *pathology* rather than a wrong answer is telling you about the
+structure of the code, not about the tests.

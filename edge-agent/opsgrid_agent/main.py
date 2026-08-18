@@ -6,7 +6,7 @@ import os
 import time
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 import structlog
 
 from opsgrid_agent.analytics.alert_sink import LocalAlertSink
@@ -15,6 +15,7 @@ from opsgrid_agent.commands import CommandConsumer
 from opsgrid_agent.config_bundle import collectors_from_bundle
 from opsgrid_agent.collectors.coordinator import UnifiedCollectorCoordinator, CollectorConfig
 from opsgrid_agent.packml import PackMLStateMapper
+from opsgrid_agent.resilience import ReconnectPolicy
 from opsgrid_agent.ota import AgentSelfUpdateExecutor, OTAUpdateExecutor
 from opsgrid_agent.remote_ops import (
     AgentRemoteOperations,
@@ -52,6 +53,35 @@ structlog.configure(
 logger = structlog.get_logger()
 
 
+#: Consecutive backfill batches with zero successful sends before the uplink producer is
+#: treated as dead and rebuilt (FS-756). Three rather than one because a single failed batch
+#: is an ordinary transient — a leader election, a brief partition — and rebuilding on every
+#: one would churn the connection at exactly the moment the broker is under stress.
+UPLINK_DEAD_AFTER_BATCHES = 3
+
+
+def _uplink_reconnect_settings() -> Optional[dict]:
+    """Parse `UPLINK_RECONNECT` (JSON) into a `reconnect:` settings mapping (FS-756).
+
+    Unset is the common case and means "use the shared defaults". A malformed value is a
+    hard error rather than a fallback: an operator who set it meant to change something, and
+    an agent that quietly ignores the setting they typed is how the uplink ends up retrying
+    at a cadence nobody chose.
+    """
+    raw = os.getenv('UPLINK_RECONNECT')
+    if not raw:
+        return None
+    try:
+        settings = json.loads(raw)
+    except json.JSONDecodeError as e:
+        raise ValueError(f"UPLINK_RECONNECT is not valid JSON: {e}") from e
+    if not isinstance(settings, dict):
+        raise ValueError(
+            f"UPLINK_RECONNECT must be a JSON object, got {type(settings).__name__}"
+        )
+    return settings
+
+
 class EdgeAgent:
     """
     Main Edge Agent coordinating collectors, buffering, and upstream communication.
@@ -74,6 +104,10 @@ class EdgeAgent:
             retention_hours=self.config.get('buffer_retention_hours', 24)
         )
         self.kafka_producer = None
+        #: Consecutive backfill batches in which not one message landed (FS-756). Reset by
+        #: any success; at `UPLINK_DEAD_AFTER_BATCHES` the producer is torn down so the
+        #: supervisor can build a new one.
+        self._uplink_failure_streak = 0
         self.command_consumer = None
         # ONE CLOCK ESTIMATOR, CREATED HERE RATHER THAN IN THE CLOUD LINK (FS-752).
         # It used to be built inside `_start_cloud_link`, which runs after the command
@@ -229,6 +263,16 @@ class EdgeAgent:
             'state_path': os.getenv('AGENT_STATE_PATH'),
             'buffer_retention_hours': int(os.getenv('BUFFER_RETENTION_HOURS', '24')),
             'alert_retention_days': int(os.getenv('ALERT_RETENTION_DAYS', '30')),
+            # FS-756. A JSON `reconnect:` block for the uplink supervisor, in the same shape
+            # a collector takes. ONE variable rather than seven, so a site tunes the uplink
+            # the way it tunes a collector, and `ReconnectPolicy.from_config` rejects an
+            # unknown key rather than silently keeping the default — which is the failure
+            # mode every config defect in this repository has had.
+            #
+            # Read here rather than in the supervisor so a malformed value fails at load,
+            # where an operator is watching, instead of inside a background task where the
+            # only symptom is an uplink that never reconnects.
+            'uplink': {'reconnect': _uplink_reconnect_settings()},
             'collectors': self._load_collectors(),
         }
         self._load_active_config_bundle(config)
@@ -411,6 +455,104 @@ class EdgeAgent:
             self.kafka_producer = None
             return False
     
+    async def _uplink_supervisor(self):
+        """Keep trying to build the uplink producer while there is none (FS-756).
+
+        THE DEFECT. `_init_kafka_producer` is called exactly once, from `start()`. When the
+        broker is unreachable at that moment it logs, sets `self.kafka_producer = None` and
+        returns False — and nothing ever calls it again. `_backfill_worker` then runs its
+        whole life around `if self.kafka_producer:`, which is permanently false, so the
+        buffer fills and drains nothing until somebody restarts the process.
+
+        That is precisely the DDIL case inverted. An edge gateway powering up during an
+        outage — a site coming back after a power cut, a van rolling out of coverage before
+        it rolls back in — is the ordinary way for this to happen, not an edge case. The
+        agent collected data correctly, buffered it correctly, and then held it forever
+        after the link returned, because the one attempt it was allowed had already failed.
+
+        REUSES `ReconnectPolicy` rather than a fresh `sleep(30)`, for the reason FS-473
+        wrote it: eight collectors had already grown their own copies of the same constants.
+        The uplink is the ninth reconnect loop in this agent and the only one that was not a
+        collector, which is exactly why the existing guard did not cover it.
+
+        FAILS OPEN HERE, unlike boot. `_init_kafka_producer` re-raises when `EDGE_REQUIRE_TLS`
+        is set and TLS is unavailable, so that a required-TLS agent refuses to START with a
+        broken secure uplink. Post-boot the agent is already running and already buffering;
+        killing this task on that exception would silently restore the exact
+        never-reconnects behaviour being fixed. So it is caught, counted as a failure, and
+        retried — the data stays in the buffer either way, which is the fail-closed property
+        that actually matters.
+        """
+        policy = ReconnectPolicy.from_config(self.config.get('uplink'))
+        backoff, breaker = policy.instruments("uplink")
+
+        while self._running:
+            if self.kafka_producer is not None:
+                backoff.reset()
+                breaker.record_success()
+                # Poll at the backoff CEILING while healthy, not at its floor. A supervisor
+                # that wakes every second for the life of the agent to observe that nothing
+                # is wrong is a cost with no benefit; a producer torn down by the backfill
+                # worker is picked up within one ceiling and then retried from 1s.
+                await asyncio.sleep(policy.max_delay)
+                continue
+
+            if not breaker.allow():
+                await asyncio.sleep(max(breaker.time_until_retry(), policy.initial_delay))
+                continue
+
+            try:
+                connected = await self._init_kafka_producer()
+            except Exception as e:
+                # Includes the require-TLS re-raise; see the docstring.
+                logger.error("uplink_reconnect_attempt_failed", error=str(e))
+                connected = False
+
+            if connected:
+                backoff.reset()
+                breaker.record_success()
+                logger.info(
+                    "uplink_reconnected",
+                    note="buffered readings will drain on the next backfill cycle",
+                )
+                # EVERY BRANCH AWAITS BEFORE LOOPING. This one used to `continue` straight
+                # to the healthy check, which sleeps — correct, but it made the loop's only
+                # protection against spinning live in a different branch. A mutation that
+                # disabled the healthy check turned this into a hot loop that wedged the
+                # test run, which is a fair demonstration of how thin that arrangement was.
+                await asyncio.sleep(policy.max_delay)
+                continue
+
+            breaker.record_failure()
+            delay = backoff.next_delay()
+            logger.warning(
+                "uplink_reconnect_pending",
+                retry_in_seconds=round(delay, 1),
+                breaker=breaker.state.value,
+            )
+            await asyncio.sleep(delay)
+
+    async def _recycle_uplink(self) -> None:
+        """Discard a producer that is no longer delivering, so the supervisor rebuilds it.
+
+        Stopping it is best-effort by design: the reason we are here is that the broker is
+        unreachable, and `stop()` talks to the broker. An exception must not prevent the
+        one step that matters — setting the reference to None — or the recycle silently
+        does nothing and the zombie producer stays installed.
+        """
+        logger.error(
+            "uplink_declared_dead",
+            consecutive_failed_batches=self._uplink_failure_streak,
+            note="tearing the producer down; the supervisor will rebuild it with backoff",
+        )
+        try:
+            await self._stop_kafka_producer()
+        except Exception as e:
+            logger.warning("uplink_stop_failed_during_recycle", error=str(e))
+        self.kafka_producer = None
+        self.coordinator.kafka_producer = None
+        self._uplink_failure_streak = 0
+
     async def _stop_kafka_producer(self):
         """Stop Kafka producer"""
         if self.kafka_producer:
@@ -481,6 +623,30 @@ class EdgeAgent:
                         # Increment retry for failed
                         if failed_ids:
                             await self.buffer.increment_retry(failed_ids)
+
+                        # A PRODUCER OBJECT IS NOT A WORKING UPLINK (FS-756). The
+                        # supervisor rebuilds a producer that is None; nothing sets it to
+                        # None once it exists. So a broker that dies AFTER a successful
+                        # boot leaves an object here that fails every send forever, and
+                        # `if self.kafka_producer:` above stays true the whole time — the
+                        # never-reconnects defect with an extra step.
+                        #
+                        # Whole batches, not individual sends: one failure is an ordinary
+                        # transient, three consecutive batches where NOTHING landed is a
+                        # dead link. Tearing the producer down hands it to the supervisor,
+                        # which retries with backoff instead of this loop's fixed 5s.
+                        #
+                        # This also bounds the damage from the retry counter: every failed
+                        # send increments `retry_count`, and a row that reaches 5 stops
+                        # appearing in any drain (recorded under FS-753). Recycling a dead
+                        # producer after 3 batches rather than never is the difference
+                        # between losing a backlog and delaying it.
+                        if sent_ids:
+                            self._uplink_failure_streak = 0
+                        else:
+                            self._uplink_failure_streak += 1
+                            if self._uplink_failure_streak >= UPLINK_DEAD_AFTER_BATCHES:
+                                await self._recycle_uplink()
                 
                 # Wait before next batch
                 await asyncio.sleep(5)
@@ -849,6 +1015,10 @@ class EdgeAgent:
 
             if self.command_consumer and self.command_consumer.is_running:
                 self.command_consumer.start_consuming()
+            # FS-756. Started even when the boot connect succeeded: a producer can be
+            # lost later, and a supervisor that only runs after a failed boot would not be
+            # there when it is.
+            self._tasks.append(asyncio.create_task(self._uplink_supervisor()))
             self._tasks.append(asyncio.create_task(self._backfill_worker()))
             self._tasks.append(asyncio.create_task(self._cleanup_worker()))
             self._tasks.append(asyncio.create_task(self._stats_reporter()))

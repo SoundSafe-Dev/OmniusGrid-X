@@ -203,3 +203,63 @@ class TestTheBehaviourNotJustTheWiring:
         assert max(slept) > 5, (
             f"no delay exceeded the 5s poll interval ({slept}), so nothing backed off"
         )
+
+
+class TestTheUplinkIsAReconnectLoopToo:
+    """The ninth one, and the only one that is not a collector (FS-756).
+
+    Everything above scans `opsgrid_agent/collectors/`, which was the right scope when it
+    was written — the defect was five collectors dialling dead PLCs. It meant the guard
+    could never see `main.py`, where the agent holds the connection that matters most: the
+    uplink to the broker.
+
+    And that connection had no reconnect loop at all. `_init_kafka_producer` ran once from
+    `start()`, and on failure set the producer to None and returned. `_backfill_worker`
+    checks `if self.kafka_producer:` every cycle for the life of the process, so an agent
+    that booted while the broker was unreachable buffered forever and drained nothing after
+    the link came back. A collector that hammers a dead device is noisy; this one is
+    silent, and it is the failure mode DDIL is entirely about.
+
+    **A guard scoped to where a defect was found does not cover where the same defect can
+    live.** These assertions read `main.py` for the same properties the collectors are held
+    to, so the uplink cannot quietly go back to a bare `sleep()` or to no loop at all.
+    """
+
+    MAIN = Path(__file__).resolve().parent.parent / "opsgrid_agent" / "main.py"
+
+    def test_the_file_is_where_this_thinks_it_is(self):
+        assert self.MAIN.exists(), f"main.py moved: {self.MAIN}"
+        assert "_init_kafka_producer" in self.MAIN.read_text(), (
+            "main.py no longer initialises the uplink producer; this class is now "
+            "measuring a file that does not do the thing it asserts about"
+        )
+
+    def test_the_uplink_has_a_supervising_reconnect_loop(self):
+        source = self.MAIN.read_text()
+        assert "_uplink_supervisor" in source, (
+            "no uplink supervisor. `_init_kafka_producer` called once from start() means a "
+            "broker that is down at boot is never retried, and the buffer never drains."
+        )
+        assert "while self._running" in source
+
+    def test_it_uses_the_shared_policy_rather_than_its_own_numbers(self):
+        source = self.MAIN.read_text()
+        assert "ReconnectPolicy" in source, (
+            "the uplink supervisor does not take its tuning from ReconnectPolicy. That "
+            "class exists because the same four constants had been copied into eight "
+            "collectors; a ninth copy in main.py is the same defect continuing."
+        )
+        hardcoded = [
+            literal
+            for literal in ("failure_threshold=", "cooldown_cap=", "initial_cooldown=")
+            if literal in source
+        ]
+        assert not hardcoded, f"main.py sets {hardcoded} inline instead of via the policy"
+
+    def test_the_supervisor_is_actually_started(self):
+        """A loop nobody schedules is a loop that does not run — and would pass every
+        source-level assertion above."""
+        source = self.MAIN.read_text()
+        assert "create_task(self._uplink_supervisor())" in source, (
+            "the supervisor is defined and never scheduled"
+        )

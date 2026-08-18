@@ -1880,6 +1880,16 @@ one of its findings. The habit that catches it:
      the uplink buffer. When something is described as a *local* capability, follow each of
      its outputs to where it is READ. If every path crosses the link, it is detection
      without action.
+
+261. **A guard scoped to where a defect was found does not cover where the same defect can
+     live.** `test_every_reconnect_loop_backs_off.py` enumerated
+     `opsgrid_agent/collectors/`, which was the right scope for the defect that produced it:
+     five collectors dialling dead PLCs once per poll interval. It could therefore never see
+     the agent's most important connection — the uplink in `main.py`, which had no reconnect
+     loop at all, so an agent that booted while the broker was down buffered forever and
+     drained nothing after the link returned. When a guard enumerates a directory, a suffix
+     or a naming convention, ask what else has the property being guarded and is simply
+     filed somewhere else.
 ---
 
 ## Open observations, not yet tickets

@@ -13424,3 +13424,94 @@ every channel it used to say so — a scraped counter, a shipped log line, an in
 needed either the link or the process to survive. When something is described as a *local*
 capability, follow each of its outputs to where it is READ, and if every path crosses the
 link that is down, the capability is detection without action.
+
+---
+
+## FS-756 — the uplink that got one chance
+
+DDIL item S4. `_init_kafka_producer` is called exactly once, from `start()`. When the broker
+is unreachable at that instant it logs `kafka_producer_failed`, sets `self.kafka_producer =
+None`, and returns False. **Nothing calls it again.** `_backfill_worker` then spends the rest
+of the process's life evaluating `if self.kafka_producer:` — permanently false — so the agent
+collects correctly, buffers correctly, retains correctly, and delivers nothing, indefinitely,
+after the link has come back. Only a restart fixes it.
+
+That is the DDIL case inverted. An edge gateway powering up *during* an outage is the
+ordinary way to hit it, not an exotic one: a site restoring after a power cut, a vehicle that
+left coverage before it returned, a pod rescheduled while the broker was rolling. Every one
+of those ends with an agent whose data can never leave.
+
+**A supervisor task**, started unconditionally — including when the boot connect succeeded,
+because a producer can be lost later and a supervisor that only runs after a failed boot is
+not there when it is needed. It takes its tuning from `ReconnectPolicy`, which exists because
+FS-473 found the same four constants copied into eight collectors. The uplink is this agent's
+**ninth reconnect loop and the only one that was never a collector**, which is exactly why
+`test_every_reconnect_loop_backs_off.py` — scoped to `opsgrid_agent/collectors/` — could
+never see it. That guard now reads `main.py` too.
+
+**It fails open here, unlike at boot.** `_init_kafka_producer` re-raises when
+`EDGE_REQUIRE_TLS` is set and TLS material is unavailable, so a required-TLS agent refuses to
+*start* with a broken secure uplink. Letting that exception kill the supervisor post-boot
+would silently restore the never-reconnects behaviour on precisely the deployments that care
+most, so it is caught, counted as a failure, and retried. The data stays in the buffer
+either way, which is the fail-closed property that actually matters.
+
+### A producer object is not a working uplink
+
+The supervisor rebuilds a producer that is `None`. Nothing set it to `None` once it existed —
+so a broker that dies *after* a successful boot leaves an object behind that fails every
+send, while `if self.kafka_producer:` stays true forever. The same never-drains outcome,
+reached by a different route, and invisible to every assertion about the supervisor.
+
+The backfill worker now counts consecutive batches in which **not one** message landed, and
+at three tears the producer down for the supervisor to rebuild. Three rather than one because
+a single failed batch is a leader election or a brief partition, and rebuilding on every
+transient churns the connection exactly when the broker is under stress. Stopping the old
+producer is best-effort: `stop()` talks to the broker, and the reason we are here is that the
+broker is unreachable, so its exception must not skip the one step that matters.
+
+This also bounds a known loss. Every failed send increments `retry_count`, and a row that
+reaches five stops appearing in any drain (recorded under FS-753, decision deferred to S5).
+Recycling a dead producer after three batches rather than never is the difference between
+losing a backlog and delaying it.
+
+### Tuning that can actually be tuned
+
+`ReconnectPolicy.from_config(self.config.get('uplink'))` would have read a key nothing could
+ever set — a parameter that exists to look configurable. `UPLINK_RECONNECT` is one JSON
+variable in the same shape a collector's `reconnect:` block takes, parsed at config load so a
+malformed value fails where an operator is watching rather than inside a background task
+whose only symptom is an uplink that never returns. Unknown keys are rejected by the existing
+policy validation, because a typo that silently keeps the default is the shape of every
+config defect in this repository.
+
+### The mutation pass found two tests that were passing for the wrong reason
+
+Twelve mutations, and the first run caught ten.
+
+**The backoff was never actually guarded.** Replacing `backoff.next_delay()` with a constant
+survived, while a test named "the retries back off instead of hammering" passed. After five
+failures the breaker opens and the loop sleeps its 30-second cooldown, so the list of delays
+contained growing values that the *backoff* had nothing to do with. Two instruments writing
+into one list means an assertion about growth cannot say which one grew. The scenario now
+raises `failure_threshold` so the breaker never opens, and asserts the delays double rather
+than merely differ.
+
+**The streak reset was checked by grep.** `self._uplink_failure_streak = 0` appears three
+times — in `__init__`, in `_recycle_uplink`, and in the backfill loop — so a source-level
+assertion that the string is present passed while the one that matters was disabled. It is
+now driven through the real `_backfill_worker` with a stand-in buffer and producer.
+
+**And a mutant wedged the run**, which was worth more than the mutation it was testing.
+Disabling the healthy-producer check turned the successful-reconnect branch into a hot loop,
+because that branch `continue`d without awaiting and relied on a *different* branch to
+provide the sleep. Correct as written, one edit away from spinning. Every branch now awaits
+before looping.
+
+RULE 261 — a guard scoped to where a defect was found does not cover where the same defect
+can live. `test_every_reconnect_loop_backs_off.py` scanned `opsgrid_agent/collectors/`,
+which was the right scope for the defect that produced it — five collectors dialling dead
+PLCs. It therefore could not see the agent's most important connection, the uplink, which had
+no reconnect loop at all and never triggered anything. When a guard enumerates a directory,
+a suffix or a naming convention, ask what else has the property being guarded and is simply
+kept somewhere else.
