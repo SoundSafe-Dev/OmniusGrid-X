@@ -16,6 +16,7 @@ import sys
 sys.path.insert(0, '/app')
 
 from app.core.config import settings
+from app.services.wire_codec import decode_frame
 from app.workers.health_server import (
     INGESTION_DEAD_LETTERED,
     INGESTION_DEAD_LETTER_FAILED,
@@ -65,6 +66,22 @@ def _health_port():
     return int(raw) if raw else None
 
 
+def _deserialize_uplink(raw: bytes):
+    """Decode one uplink message, framed or not (FS-759).
+
+    Was `json.loads(m.decode('utf-8'))`, which is exactly right for every agent that has
+    ever run and cannot read a compressed batch. `decode_frame` strips a codec marker when
+    one is present and returns the bytes untouched when it is not — a JSON object starts
+    with `{` (0x7B) and the markers are 0x00/0x01, so the two are disjoint and no version
+    flag is needed to tell them apart.
+
+    A frame that names a codec we cannot decode raises rather than returning None. The
+    caller's error path dead-letters with a reason, which is a far better outcome than a
+    JSON parse error complaining about bytes that were never JSON.
+    """
+    return json.loads(decode_frame(raw).decode("utf-8"))
+
+
 class IngestionWorker:
     """
     Consumes messages from Redpanda/Kafka and writes to TimescaleDB.
@@ -102,7 +119,7 @@ class IngestionWorker:
         
         self.consumer = AIOKafkaConsumer(
             bootstrap_servers=self.broker_url,
-            value_deserializer=lambda m: json.loads(m.decode('utf-8')),
+            value_deserializer=_deserialize_uplink,
             group_id='opsgrid-ingestion-workers',
             auto_offset_reset='earliest',
             enable_auto_commit=True,

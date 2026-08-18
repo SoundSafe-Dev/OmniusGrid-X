@@ -4959,3 +4959,77 @@ early" are different events and only one of them was represented.
 
 That is the same shape as the memory finding, one level up: what the test *named* and what
 the test *did* had drifted apart, and only a mutation asked whether they still agreed.
+
+---
+
+## Rule 264 — when a feature spans two deployables, the tests cluster on the side you are standing on
+
+The uplink compression item was unusual in that the hard part was already written. `compress()`
+had existed for a year, correct, tested, and called by nothing — because the receiver did not
+exist. The agent's orphan register said so in as many words: *"needs a backend decision first
+— this is half a protocol, not unfinished wiring."*
+
+So the work was: make the decision, write the other half, and connect them. Which I did, and
+then ran fifteen mutations across both sides.
+
+Nine caught. Six survived. And the six were not scattered:
+
+- the heartbeat ack could advertise nothing at all
+- the agent could ignore the advertisement entirely
+- the negotiation could narrow on a malformed response
+- the serialiser could stop framing altogether
+- the serialiser could ignore the negotiated set and compress unconditionally
+- the agent could emit a codec the backend has no decoder for
+
+Every one of them is on the agent. Every mutation to the backend decoder was caught
+immediately, several by more than one assertion.
+
+**That distribution is not a series of oversights, it is one bias with six symptoms.** The
+decision I had been asked to make was a backend decision; the file I created was a backend
+file; the test harness I already had loaded was the backend suite. Testing the backend
+decoder was the path of least resistance from where I was standing, and I took it thoroughly
+— thoroughly enough that the coverage *felt* complete, because the part I was looking at was
+completely covered.
+
+The far side had a working implementation and a subset guard, and I had unconsciously
+credited both as evidence that it was tested. Neither is. A working implementation is not a
+guard, and a guard on the *vocabulary* says nothing about whether the vocabulary is ever
+consulted.
+
+The practical form of the rule is a count. After a cross-deployable change, count assertions
+per side before believing anything about coverage. Mine were roughly 19 to 0. And when the
+mutation budget is finite, spend it on the far side first — the near side is the side whose
+gaps you would have found anyway.
+
+### Two survivors that were sharper than the pattern
+
+**My AST extractor silently dropped the interesting entry.** The parity guard reads
+`EMITTABLE = {"gzip": _CODEC_GZIP}` out of the agent's source, and handled `ast.Name` values
+only. The mutation that added a codec wrote it as a literal — `"brotli": b"\x07"` — an
+`ast.Constant`, which the extractor skipped. So the mutation added a codec the backend cannot
+decode, and the subset assertion passed over a set that did not contain it.
+
+The file has a vacuity check. It asserts at least two codecs were parsed, and two were: the
+two legitimate ones. **A vacuity check on the size of a result does not detect a filter that
+drops the one element you care about** — it catches a parser that stopped matching entirely,
+which is a different failure. Size is a proxy for "the extractor is alive", never for "the
+extractor is complete".
+
+**And `assert not is_framed(payload)` passes against an `is_framed` that always returns
+False.** One line, no positive counterpart, and it is exactly the absence-assertion trap this
+repository already has a rule about — arriving in a predicate small enough that it did not
+look like an assertion about an absence at all.
+
+### The design gap the tests found before the mutations did
+
+The first decoder treated any unrecognised leading byte as "not framed" and passed it through
+to `json.loads`. Correct for bare JSON from an older agent, and wrong for everything else: a
+codec deployed to the fleet ahead of its decoder would surface as `Expecting value: line 1
+column 1 (char 0)`.
+
+That error message is worse than unhelpful — it is actively misleading, because it names the
+JSON layer for a problem in the framing layer, and whoever reads it at 3am goes looking at
+serialisation. The set of bytes that can legitimately begin a JSON document is small and
+knowable, so the decoder can tell "an agent that predates the framing" from "a codec I do not
+have" and say which. A rollout mistake now appears in the dead-letter topic within seconds,
+naming the byte.

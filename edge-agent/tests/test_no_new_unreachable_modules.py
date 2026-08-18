@@ -4,7 +4,15 @@ The backend has had this guard since its 7,726-line inventory
 (`backend/tests/test_no_new_unreachable_modules.py`). The agent never did, and it has the same
 problem in miniature — with one twist that makes it *harder* to see rather than easier.
 
-**Three of the four are tested.** `aggregation.py` and `compression.py` are exercised by
+**RESOLVED AND REMOVED (FS-759): `compression.py`.** Its entry said the missing half was the
+receiver — "needs a backend decision first — this is half a protocol, not unfinished wiring".
+The decision was made: `backend/app/services/wire_codec.py` decodes the framing, the heartbeat
+ack advertises which codecs it can read, and `main.py`'s uplink serialiser compresses only
+what the backend said it can decode. The entry is deleted rather than reworded, which is the
+outcome this register exists to produce — an entry leaving the list because the decision got
+made, not because somebody got tired of it.
+
+**Three of the four were tested.** `aggregation.py` and `compression.py` are exercised by
 `test_dataplane_robustness.py`; `config_reload.py` has a file of its own. Coverage reports them
 green, the suite counts them, and a reader browsing the tree finds a documented feature with
 passing tests. Nothing distinguishes that from a feature that runs. **A test is evidence the
@@ -51,11 +59,6 @@ ENTRYPOINTS = {"opsgrid_agent/main.py"}
 
 #: Every module no production code imports, with what is specifically missing.
 UNREACHABLE: dict[str, str] = {
-    "opsgrid_agent/compression.py":
-        "43 lines, tested by test_dataplane_robustness.py. MISSING: the receiver. It frames "
-        "output as `codec_marker + body` and nothing in backend/app decodes it, so enabling "
-        "it would make every uplink batch unreadable rather than smaller. Needs a backend "
-        "decision first — this is half a protocol, not unfinished wiring.",
     "opsgrid_agent/aggregation.py":
         "83 lines, tested by test_dataplane_robustness.py. MISSING: an opt-in config key and "
         "a flush loop calling `WindowAggregator.collect_due`. The key would be the fifth "

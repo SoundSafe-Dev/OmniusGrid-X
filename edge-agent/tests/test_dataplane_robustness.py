@@ -53,11 +53,26 @@ def test_small_payload_left_raw():
 
 
 def test_large_repetitive_payload_compresses_and_roundtrips():
+    # `allowed` is what the BACKEND advertised it can decode (FS-759). Omitting it now means
+    # raw only, deliberately: an agent must not compress toward a backend that never said it
+    # could decompress, because the buffer marks a row sent the moment the broker accepts it
+    # and the loss would be silent and permanent rather than retried.
     data = json.dumps([{"asset_id": "a", "v": 1} for _ in range(500)]).encode()
-    framed, compressed = compress(data, min_size=512)
+    framed, compressed = compress(data, min_size=512, allowed=["raw", "gzip"])
     assert compressed is True
     assert len(framed) < len(data)
     assert decompress(framed) == data
+
+
+def test_it_will_not_compress_until_the_backend_says_it_can_decode():
+    """The fail-closed default (FS-759). This is the whole reason the negotiation exists."""
+    data = json.dumps([{"asset_id": "a", "v": 1} for _ in range(500)]).encode()
+    framed, compressed = compress(data, min_size=512)
+    assert compressed is False
+    assert decompress(framed) == data
+    framed_explicit, compressed_explicit = compress(data, min_size=512, allowed=["raw"])
+    assert compressed_explicit is False
+    assert decompress(framed_explicit) == data
 
 
 def test_decompress_rejects_unknown_codec():

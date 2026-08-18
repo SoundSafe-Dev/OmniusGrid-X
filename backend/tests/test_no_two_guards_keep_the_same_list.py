@@ -51,6 +51,23 @@ OVERLAP_THRESHOLD = 3
 #: compared them and found the overlap meaningful rather than accidental.
 DIFFERENT_QUESTIONS: Dict[frozenset, str] = {
     frozenset({
+        "test_edge_ingest_quarantine_retention.py::GOOD",
+        "test_the_uplink_framing_survives_a_mixed_fleet.py::READING",
+    }): (
+        "Neither is a list of things being guarded. Both are a single well-formed uplink "
+        "message written as a dict literal, and the four 'shared members' this sweep found "
+        "are the field NAMES of the telemetry envelope — `asset_id`, `timestamp_edge`, "
+        "`payload`, `sequence_num` — which any valid message must carry. The detector is "
+        "keying on dict keys, and for a sample message the keys are the schema rather than "
+        "an inventory somebody curated. GOOD exists to be contrasted with MALFORMED by the "
+        "quarantine gateway, which never sees bytes; READING exists to be serialised, "
+        "framed, compressed and decoded, and its shape matters only in that it is realistic "
+        "enough for the 5x shrink assertion to mean something. Deriving either from the "
+        "other would couple a framing test to a quarantine fixture so that changing one "
+        "test's sample breaks an unrelated one — the opposite of what this register is for "
+        "(FS-759)."
+    ),
+    frozenset({
         "test_correlation_routes_serialize_their_models.py::ROUTES",
         "test_route_auth_walk.py::AUTHENTICATED_OPERATIONAL_MUTATIONS",
     }): (

@@ -39,6 +39,11 @@ class HeartbeatReporter:
         self._health_fn = health_fn
         self._post = post_fn
         self._skew = skew_estimator
+        #: What the BACKEND said it can decode on the uplink (FS-759). Starts at raw only
+        #: and is widened by an ack — never narrowed by a failed heartbeat, because a
+        #: single missed heartbeat is not evidence the backend was downgraded, and
+        #: oscillating the wire format on a flaky link is its own defect.
+        self.wire_codecs: Tuple[str, ...] = ("raw",)
 
     def build_payload(self) -> Dict:
         """Snapshot current health into a heartbeat payload."""
@@ -73,11 +78,34 @@ class HeartbeatReporter:
         # stale-signature 401, whose detail embeds server_time precisely so a
         # drifted clock can calibrate back inside the freshness window.
         self._observe_server_time(resp)
+        self._observe_wire_codecs(resp)
 
         if status != 200:
             logger.warning("heartbeat_rejected", status=status)
             return False
         return True
+
+    def _observe_wire_codecs(self, resp) -> None:
+        """Record what the backend advertised it can decode (FS-759).
+
+        Only ever widens, and only from a well-formed list of strings. An older backend
+        omits the field entirely, which correctly leaves this at raw — the agent must not
+        compress toward something that cannot read it, since the buffer marks a message sent
+        the moment the broker accepts it and the loss would be silent and permanent.
+        """
+        if not isinstance(resp, dict):
+            return
+        advertised = resp.get("wire_codecs")
+        if not isinstance(advertised, (list, tuple)):
+            return
+        names = tuple(sorted({c for c in advertised if isinstance(c, str)}))
+        if not names or "raw" not in names:
+            # A backend that cannot decode `raw` cannot decode anything this agent frames.
+            # Treating that as an advertisement would be worse than ignoring it.
+            return
+        if names != self.wire_codecs:
+            logger.info("wire_codecs_negotiated", codecs=list(names))
+        self.wire_codecs = names
 
     def _observe_server_time(self, resp) -> None:
         if self._skew is None or not isinstance(resp, dict):

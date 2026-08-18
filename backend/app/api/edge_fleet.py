@@ -13,7 +13,7 @@ from datetime import datetime, timezone
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 
@@ -24,6 +24,7 @@ from app.core.tenant import tenant_session
 from app.db.models import User
 from app.middleware.rbac import require_admin
 from app.db.edge_fleet_models import EdgeAgentStatus
+from app.services.wire_codec import ADVERTISED_CODECS
 from app.services.edge_ca import AgentPrincipal
 from app.services import edge_fleet
 
@@ -44,6 +45,14 @@ class HeartbeatPayload(BaseModel):
 class HeartbeatAck(BaseModel):
     ok: bool
     server_time: str
+    #: FS-759. What THIS backend can decode on the uplink, so an agent knows whether it may
+    #: compress. Negotiation is required in this direction and only this direction: a new
+    #: backend reads an old agent's bare JSON unaided, but a new agent talking to an OLD
+    #: backend would send bytes that backend cannot parse — and the buffer would mark them
+    #: sent, turning a delay into permanent loss. An agent that sees no advertisement emits
+    #: `raw`, so the absent field on an older deployment means "do not compress" rather than
+    #: an unhandled case.
+    wire_codecs: List[str] = Field(default_factory=lambda: list(ADVERTISED_CODECS))
 
 
 class AgentStatusOut(BaseModel):

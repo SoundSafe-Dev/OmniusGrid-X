@@ -1909,6 +1909,15 @@ one of its findings. The habit that catches it:
      harness quietly becomes most of the reading. Also prefer `tracemalloc` to `ru_maxrss` —
      the latter is a process-wide high-water mark that never decreases, so after any earlier
      allocation the delta reads zero and the assertion passes measuring nothing.
+
+264. **When a feature spans two deployables, the tests cluster on the side you are standing
+     on.** Fifteen mutations against a new edge-to-backend uplink protocol caught every
+     defect in the backend decoder and missed six consecutively on the agent's
+     negotiate-and-emit path: the heartbeat could stop advertising, the agent could stop
+     reading the advertisement, the serialiser could stop framing entirely, all green. The
+     bias is structural rather than careless — one side is where the work began and its
+     harness already exists. Count the assertions on each side before believing the
+     coverage, and mutate the FAR side first.
 ---
 
 ## Open observations, not yet tickets

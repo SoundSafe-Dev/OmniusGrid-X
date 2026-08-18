@@ -13710,3 +13710,100 @@ assertions have this hazard and correctness assertions do not: a correctness har
 misbehaves usually makes the test fail loudly, while a resource harness that misbehaves
 quietly becomes the majority of the reading. Before believing a resource number, measure the
 harness doing nothing and check the floor is near zero.
+
+---
+
+## FS-759 — half a protocol, and which half shipped
+
+DDIL item S7. `edge-agent/opsgrid_agent/compression.py` has been correct and tested since
+task 22. It frames an uplink message as `codec_marker + body` and shrinks a repetitive JSON
+telemetry batch by 5-10x, which on a metered or narrowband link is the difference between a
+backlog that drains and one that does not.
+
+**Nothing had ever called it.** The agent's orphan register was precise about why, and the
+wording is worth quoting because it is what made this item tractable:
+
+> MISSING: the receiver. It frames output as `codec_marker + body` and nothing in
+> `backend/app` decodes it, so enabling it would make every uplink batch unreadable rather
+> than smaller. **Needs a backend decision first — this is half a protocol, not unfinished
+> wiring.**
+
+That entry is now deleted rather than reworded, which is the outcome the register exists to
+produce: an entry leaves because the decision got made, not because somebody got tired of it.
+
+### The compatibility risk only runs one way
+
+A **new backend reading an old agent** needs nothing at all. A codec marker is `0x00`/`0x01`
+and a JSON document starts with `{` (`0x7B`) — disjoint by construction, so the receiver
+simply tells them apart and every agent in the field keeps working with no version flag.
+
+A **new agent talking to an old backend** is the dangerous direction, and it is dangerous out
+of proportion to the feature. Those bytes are unparseable there, and the store-and-forward
+buffer marks a row sent the moment the broker accepts it. The readings are **gone rather than
+delayed** — the single outcome the entire buffer exists to prevent, produced by an
+optimisation.
+
+So the agent emits `raw` until a heartbeat ack tells it what this backend can decode, and the
+default with no advertisement is raw. That default is load-bearing rather than cautious: a
+fleet is never upgraded all at once, and a gateway on a boat may be months behind.
+
+Three pieces: `backend/app/services/wire_codec.py` decodes the framing and is the authority
+for what can be read; `HeartbeatAck.wire_codecs` advertises it; `main.py`'s uplink serialiser
+compresses only what was advertised. `backend/tests/test_the_agent_emits_no_codec_the_backend_cannot_read.py`
+holds the two vocabularies together as a **subset** — this backend may learn a codec before
+the fleet does, and the reverse may never happen.
+
+### A design gap the tests found
+
+The first decoder treated any unrecognised leading byte as "not framed" and passed it
+through. That is right for bare JSON and wrong for everything else: a codec deployed to the
+fleet ahead of its decoder here would surface as `Expecting value: line 1 column 1`, which
+sends whoever reads it looking at the wrong layer entirely. The decoder now distinguishes the
+two — a leading byte that is neither a known codec nor a legal JSON opener raises
+`UndecodableFrame` naming the byte, so a rollout mistake appears in the dead-letter topic
+within seconds and says what it is.
+
+### The mutation pass, and testing the half that was easy
+
+Fifteen mutations. The first run caught nine and **six survived**, and the six clustered
+perfectly: everything about the backend decoder and the codec-parity guard was covered, and
+the agent's entire negotiate-and-emit path was covered by nothing. The ack could stop
+advertising, the agent could stop reading the advertisement, the serialiser could stop
+framing altogether — all green.
+
+That is not six unrelated gaps. It is one: I had tested the half that was easy to test from
+where I was standing, and the mutation pass is what made the asymmetry visible rather than
+invisible.
+
+Two of the survivors were sharper than that:
+
+**My AST extractor silently dropped entries.** `_agent_emittable()` handled `"gzip":
+_CODEC_GZIP` (a `Name`) and not `"brotli": b"\x07"` (a `Constant`), so the mutation adding
+exactly that entry never appeared in the extracted set and the subset assertion passed over a
+codec the backend cannot decode. The vacuity check — "at least two codecs parsed" — did not
+catch it, because the two legitimate entries still parsed. **A vacuity check on the size of a
+result does not detect a filter that drops the interesting element.**
+
+**`assert not is_framed(payload)` passes against an `is_framed` that always returns False.**
+The positive half was missing, which is the same absence-assertion trap this repository has a
+rule about, in a one-line predicate.
+
+### A register fired, correctly, on something it was not built for
+
+The duplicate-list guard flagged my new `READING` fixture against `GOOD` in the
+quarantine-retention test — four shared members. Both are a single well-formed uplink message
+written as a dict literal, and the four "shared members" are the field names of the telemetry
+envelope: `asset_id`, `timestamp_edge`, `payload`, `sequence_num`. The detector keys on dict
+keys, and for a sample message the keys are the schema rather than a list somebody curated.
+
+Recorded in `DIFFERENT_QUESTIONS` with that reasoning rather than worked around. Deriving
+either fixture from the other would couple a framing test to a quarantine fixture, so changing
+one test's sample breaks an unrelated one — the opposite of what the register exists for.
+
+RULE 264 — when a feature spans two deployables, the tests cluster on the side you are
+standing on. Fifteen mutations against a new uplink protocol caught every defect in the
+backend decoder and missed six in a row on the agent's negotiate-and-emit path — the ack not
+advertising, the agent not reading it, the serialiser not framing at all. The bias is
+structural, not careless: one side is where the work started and its harness is already
+built. After finishing a cross-deployable change, count the assertions on each side before
+believing the coverage, and mutate the *far* side first.

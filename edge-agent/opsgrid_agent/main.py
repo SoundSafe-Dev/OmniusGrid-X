@@ -10,6 +10,7 @@ from typing import Dict, Any, List, Optional
 import structlog
 
 from opsgrid_agent.analytics.alert_sink import LocalAlertSink
+from opsgrid_agent.compression import compress
 from opsgrid_agent.buffer.store_forward import StoreForwardBuffer
 from opsgrid_agent.commands import CommandConsumer
 from opsgrid_agent.config_bundle import collectors_from_bundle
@@ -162,6 +163,10 @@ class EdgeAgent:
         #: cleanup worker, which suspends AGE-based expiry while it is set — retention
         #: deleting rows a drain has not reached yet is the loss this item is about.
         self._draining = False
+        #: Set when the cloud link starts (FS-759). Declared here so `_serialize_uplink` has
+        #: a defined answer before the first heartbeat, and on an agent with no cloud URL at
+        #: all — both of which mean "raw only".
+        self.heartbeat_reporter = None
         #: The batch size the backfill loop is currently using. Grows while there is more
         #: to send, falls back to idle when caught up.
         self._backfill_batch = BACKFILL_IDLE_BATCH
@@ -482,7 +487,7 @@ class EdgeAgent:
             ssl_context = self._uplink_ssl_context()
             kwargs = dict(
                 bootstrap_servers=self.config['redpanda_url'],
-                value_serializer=lambda v: json.dumps(v).encode('utf-8'),
+                value_serializer=self._serialize_uplink,
                 key_serializer=lambda k: k.encode('utf-8') if k else None,
             )
             if ssl_context is not None:
@@ -512,6 +517,28 @@ class EdgeAgent:
             self.kafka_producer = None
             return False
     
+    def _serialize_uplink(self, value) -> bytes:
+        """JSON, then framed and compressed if the backend said it can decode it (FS-759).
+
+        `compression.py` has been correct and tested since task 22 and had never been called
+        by anything, because the receiving half did not exist — the agent's orphan register
+        recorded it as "half a protocol, not unfinished wiring". The backend decoder now
+        exists (`backend/app/services/wire_codec.py`), so this is the wiring.
+
+        `_negotiated_codecs()` is raw-only until a heartbeat ack advertises otherwise. That
+        default is load-bearing rather than cautious: a new agent pointed at an older backend
+        would emit bytes it cannot parse, and the buffer marks a row sent the moment the
+        broker accepts it — so the readings would be gone, not delayed, which is the one
+        outcome store-and-forward exists to prevent.
+        """
+        body = json.dumps(value).encode("utf-8")
+        framed, _ = compress(body, allowed=self._negotiated_codecs())
+        return framed
+
+    def _negotiated_codecs(self) -> tuple:
+        reporter = getattr(self, "heartbeat_reporter", None)
+        return getattr(reporter, "wire_codecs", ("raw",))
+
     async def _uplink_supervisor(self):
         """Keep trying to build the uplink producer while there is none (FS-756).
 
@@ -1239,6 +1266,12 @@ class EdgeAgent:
                 cloud_url, os.getenv('AGENT_VERSION', 'dev'),
                 _health, post_fn=_post, skew_estimator=self._skew,
             )
+            # HELD ON THE AGENT (FS-759). `_serialize_uplink` reads `wire_codecs` off this
+            # reporter to decide whether it may compress. A local `reporter` variable would
+            # leave the serialiser reading the default forever and the negotiation would be
+            # a feature that runs and changes nothing — precisely how `compression.py` spent
+            # its first year.
+            self.heartbeat_reporter = reporter
             interval = float(os.getenv('HEARTBEAT_INTERVAL', '30'))
 
             async def _heartbeat_loop():
