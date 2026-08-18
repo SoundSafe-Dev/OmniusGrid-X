@@ -43,6 +43,23 @@ these two files put all of it at risk to say things nobody had checked.
   `app/api/gdpr.py`. Read its own caveats: erasure is pseudonymisation of the `users` row,
   and export covers the user record and consents only.
 
+## The generated package
+
+`docs/compliance/generated/` — rendered from the catalogue by `make compliance`, never
+hand-edited, and held byte-for-byte against their source by
+`test_generated_compliance_docs_are_current.py`:
+
+| File | What it is |
+|---|---|
+| `system-security-plan.md` | Control implementation narrative, per deployment profile |
+| `statement-of-applicability.md` | ISO 27001 Annex A mapping — **partial, and says so** |
+| `poam.csv` | 158 dated lines with owners, sorted by scheduled completion |
+
+The current position, from the catalogue rather than from anybody's summary: **59 controls
+covering all 110 practices — 9 implemented, 36 partial, 4 absent, 9 organizational, 1
+inherited** (commercial-cloud profile). Covered means every practice has an honest answer.
+It does not mean a good one.
+
 ## What replaces the documents that were removed
 
 A machine-readable control catalogue under `backend/compliance/catalog/`, from which the
@@ -50,7 +67,12 @@ SSP, Statement of Applicability and POA&M are **generated** — so a control can
 claimed without naming the test that proves it, and deleting that test fails the build.
 Generated output lands in `docs/compliance/generated/` and is never hand-edited.
 
-Until that lands, the honest statement of position is: **no framework compliance is claimed
-here.** Specific controls are implemented and tested — tenant isolation, RBAC, audit
-logging with a verifiable hash chain, session management, supply-chain scanning — and they
-are described where they live, next to the tests that hold them.
+**The honest statement of position: no framework compliance is claimed here.** No
+assessment has been performed, no C3PAO engaged, no ATO sought. What exists is a set of
+technical controls, each named, each with an owner, and each either evidenced by a test that
+runs on every build or recorded as a dated POA&M line.
+
+That distinction is the point of this directory. A repository can honestly say "these
+controls operate and here is what proves it". It cannot say "we are compliant" — that word
+belongs to an assessor, and claiming it early is what made the two removed documents a
+liability rather than an asset.

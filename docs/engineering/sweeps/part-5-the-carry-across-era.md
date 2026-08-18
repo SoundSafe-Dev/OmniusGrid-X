@@ -4362,3 +4362,46 @@ assert response.status_code == 401, (
 Then mutation-test it. Disabling the enforcement branch failed four tests here — if it had
 failed none, the feature would have shipped as decoration, which is what the unreachable
 `keycloak_service.enable_mfa` it replaced had already been for months.
+
+## Rule 255 — generate the document from the checked data
+
+The control catalogue solved a real problem: a claim cannot say `implemented` without naming
+a test, and deleting that test fails the build. Genuinely strong.
+
+And it would have been worth very little, because the file an assessor actually reads is not
+the catalogue. It is a System Security Plan — and if a human transcribes 59 controls out of
+YAML and into prose, the transcription is where the drift goes. Worse, it is the only version
+anybody outside the team ever sees, so the drift is invisible from inside.
+
+So the SSP, the Statement of Applicability and the POA&M are rendered from the catalogue by
+`make compliance`, and `test_generated_compliance_docs_are_current.py` re-renders them in
+memory and compares **byte for byte**. Change a control title without regenerating and two of
+the three documents fail by name.
+
+**That guard is only possible because the output is deterministic**, and this is the part
+worth carrying elsewhere. The renderers record no wall-clock time, no hostname, no run id.
+The temptation to stamp "Generated 2026-08-18 09:14 UTC" at the top of a compliance document
+is strong — it looks more official — and it would make the currency guard fail on every
+single run. A guard that fails constantly gets labelled flaky and deleted, and then the
+documents drift with nothing watching. **"No timestamps in generated files" is therefore a
+security property here, not a style preference.** Provenance comes from git, where the commit
+that changed the catalogue changed the documents in the same diff.
+
+Byte equality rather than something softer, for the same reason: any weaker comparison has to
+decide in advance which differences matter, and the differences that matter are the ones
+nobody anticipated.
+
+Three assertions stop the generated documents overclaiming, because a generated file always
+*looks* authoritative:
+
+- the SSP must carry "Covered is not implemented" — 110 of 110 read alone is a score;
+- the SoA must admit it is partial, since a complete one states applicability for every
+  Annex A control including exclusions, which needs an ISMS scope this repository cannot set;
+- every POA&M row must have an owner and a date.
+
+The POA&M came out at 158 lines, one per *(control, deployment profile)* — because a control
+absent only air-gapped is different work from one absent everywhere, and collapsing them
+hides which deployment is exposed. Sorted by scheduled completion, the top line is the
+incident-response capability, dated for the still-open August compromise. Nobody chose that
+ordering. It fell out of dates that were already in the catalogue, which is what a generated
+artefact is for.

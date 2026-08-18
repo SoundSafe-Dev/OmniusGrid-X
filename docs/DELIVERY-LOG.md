@@ -12974,3 +12974,66 @@ recovery codes and status endpoints can all be correct while the factor changes 
 who gets in; every one of those tests passed against a login that ignored MFA entirely. Write
 the refusal assertion first, and treat the feature as absent until it fails a request that
 should not succeed.
+
+## FS-751 — the SSP, SoA and POA&M, generated rather than written
+
+Phase 5. The documents an assessor reads are now **derived** from the catalogue the guards
+check, so a narrative cannot drift from its evidence — there is nowhere for it to drift to.
+
+    docs/compliance/generated/system-security-plan.md        62 KB
+    docs/compliance/generated/statement-of-applicability.md   7 KB
+    docs/compliance/generated/poam.csv                      158 dated lines
+
+`make compliance` regenerates all three from `backend/compliance/catalog/`.
+
+**One module, three renderers, not three scripts.** They share the loader, the status
+vocabulary, the profile ordering and the header; three scripts would become three ideas of
+what `partial` means. This repository has the scar three times over — `_route_tree.py`,
+`_sweeps_document.py` and `compliance_catalog.py` all exist because two consumers hand-copied
+a traversal and drifted.
+
+**Determinism is a design constraint, not a nicety.** Nothing recorded is a wall-clock time,
+a hostname or a run id. The currency guard re-renders in memory and compares **byte for
+byte**, so a timestamp would fail it on every run, get it labelled flaky, and get it deleted
+— after which the documents drift silently, which is the failure the guard exists to prevent.
+Provenance comes from git: the commit that changes the catalogue changes these files in the
+same diff. Everything is sorted, because a spurious diff teaches people to regenerate without
+reading.
+
+Byte equality rather than a softer check for the same reason: any weaker comparison has to
+decide which differences matter, and the differences that matter are the ones nobody
+anticipated. Mutation-verified — editing one control title in the catalogue without
+regenerating fails two of the three documents by name.
+
+**Three assertions stop a generated document quietly overclaiming**, because generated files
+always look authoritative:
+
+* the SSP must carry "Covered is not implemented" — 110 of 110 read alone is a score, and it
+  is the number an assessor quotes back;
+* the SoA must admit it is **partial**. A complete Statement of Applicability states
+  applicability for every Annex A control *including exclusions with justification*, which
+  needs the ISMS scope — an organizational decision, not a repository one. Generating a
+  full-looking SoA from partial data would be the FS-745 failure with better formatting;
+* every POA&M row must have an owner and a date.
+
+**The POA&M is the artefact that turned out to matter most**, and it needed one design
+decision: a row per *(control, profile)* rather than per control. A control absent only on
+air-gapped is different work from one absent everywhere, and collapsing them hides which
+deployment is exposed. 158 lines, sorted by scheduled completion:
+
+    2026-11-30   8      2027-01-31  52      2027-03-31  24
+    2026-12-31  20      2027-02-28  54
+
+    platform-security 80   security-operations 36   platform-infra 34   organisation 8
+
+The earliest line is `OG-IR-001` — the incident response capability, dated for the open
+2026-08-15 compromise. That is the right thing to be at the top of a POA&M, and nobody chose
+it: it fell out of the dates already in the catalogue.
+
+RULE 255 — generate the document from the checked data, or the check stops mattering at the
+last step. A catalogue whose claims are tied to tests is worth little if a human then
+transcribes it into the file an assessor reads, because the transcription is where the drift
+goes and it is the only version anybody sees. Rendering closes the loop; a byte-for-byte
+currency guard is what keeps the rendering honest — and that guard is only possible if the
+output is deterministic, which makes "no timestamps in generated files" a security property
+rather than a style preference.

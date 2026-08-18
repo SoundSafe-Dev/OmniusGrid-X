@@ -57,6 +57,9 @@ reap-test-containers: ## Remove testcontainers left behind by killed test runs (
 
 test: test-backend test-edge test-frontend ## Run all test suites
 
+compliance: ## Regenerate the SSP, Statement of Applicability and POA&M from the control catalogue
+	cd backend && venv/bin/python scripts/compliance/render.py
+
 smoke: ## Deployment-free end-to-end smoke (in-process app + SQLite)
 	cd backend && python scripts/smoke_e2e.py
 

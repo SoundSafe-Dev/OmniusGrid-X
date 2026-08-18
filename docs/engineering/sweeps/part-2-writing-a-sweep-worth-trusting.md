@@ -1828,6 +1828,15 @@ one of its findings. The habit that catches it:
      rows for every user and enforcement silently did not apply. The only assertion that
      could see it was "the correct password ALONE is refused". Write the refusal test
      first; until a request that should fail does fail, the feature is absent.
+
+255. **Generate the document from the checked data, or the check stops mattering at the last
+     step.** A control catalogue whose claims are tied to tests is worth little if a human
+     transcribes it into the file an assessor reads — the transcription is where drift goes,
+     and it is the only version anybody sees. `make compliance` renders the SSP, SoA and
+     POA&M from the catalogue, and a byte-for-byte currency guard fails when they diverge.
+     That guard is only possible if the output is DETERMINISTIC, which is why no generated
+     file here records a timestamp, hostname or run id: a non-deterministic renderer makes
+     its own guard flaky, the guard gets deleted, and the documents drift silently.
 ---
 
 ## Open observations, not yet tickets
