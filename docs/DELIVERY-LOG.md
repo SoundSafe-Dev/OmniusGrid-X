@@ -13605,3 +13605,108 @@ cleaner on any outage past a day, and sat below the agent's own ingest rate at 5
 backlog could never shrink at all. Whenever a queue has both a drain rate and an expiry, do the
 division: if `backlog / drain_rate` can exceed the expiry window, the limit is not throttling
 throughput, it is choosing which data to destroy.
+
+---
+
+## FS-758 — three ways to download an artifact, none of them survivable
+
+DDIL item S6. The acceptance criterion was *a 64 MB artifact completes across 5 forced
+disconnects, RSS under 128 MB, resumed download byte-identical and signature-valid.*
+
+There were three download implementations. Each failed differently.
+
+`executor.py` (runtime bundle) and `model_executor.py` (ML model), identically:
+
+```python
+response = await client.get(bundle_url)
+return response.content
+```
+
+The whole artifact in memory in one call, **with no size limit of any kind**. A release
+record pointing at an oversized file exhausts the gateway's memory — a denial of service
+reachable by anyone who can influence a release URL — and it sits *in front of* the signature
+check, so the bytes are resident before anything has decided they are legitimate. Model
+artifacts are the largest thing this agent downloads, so the missing cap was worst where the
+consequences were biggest.
+
+`agent_executor.py` streamed and enforced a cap, which is better, and then accumulated into a
+`bytearray` and copied it with `bytes(content)` — two full copies resident at once, so a
+64 MB wheel peaked at 128 MB on a device that may have 512 MB in total.
+
+**And none of the three could resume.** On a link that drops every few minutes — which is
+exactly when remote update matters most, because nobody can drive to the site — a large
+artifact does not arrive slowly. It never arrives, because no single attempt lives long
+enough to finish and every attempt begins again at nothing.
+
+### One downloader, streamed to disk, resumed by range
+
+`ResumableDownload` streams to a `.part` file beside the destination and, on retry, asks for
+`Range: bytes=<already-have>-` and appends. Memory is one chunk rather than one artifact, so
+the size of a release stops being a memory question. Progress survives the **process** dying,
+not just the connection, because the partial file is on disk and the next attempt reads its
+length — an agent killed by a restart or a power cut mid-update does not start over.
+
+**The range response is checked, not assumed**, and this is the part that matters most:
+
+- A server or proxy that ignores `Range` answers **200** with the whole body from byte zero.
+  Appending that to a partial file splices two overlapping copies together and produces a
+  corrupt artifact whose only symptom is a checksum failure minutes later. A 200 to a ranged
+  request therefore truncates and starts over.
+- A **206** must carry a `Content-Range` whose start actually equals what we have. One that
+  does not is refused rather than appended.
+- A **416** means what we hold is at least as long as the resource — which happens when a
+  `.part` file is left over from a *different* release. Treating that as "already complete"
+  would install the wrong artifact, so the partial is discarded and the download restarts.
+- A stream that ends **cleanly** short of its declared length is an interruption, not a
+  success. A truncated artifact that passes for complete is caught by the checksum far too
+  late — after the download has reported success and the retry budget is spent.
+
+Retries use the shared `ReconnectPolicy`, and giving up **keeps** the partial file: deleting
+it would mean a link that never stays up long enough for one whole artifact never delivers
+one, no matter how many times it is tried.
+
+### What is still resident once, and why it is not fixed here
+
+Checksum verification streams the file. Ed25519 signature verification cannot: `cryptography`
+exposes no incremental API, so the artifact is read into memory once for that step. Peak is
+now one copy instead of two, and the download itself is bounded by a chunk.
+
+Removing even that copy means **signing the digest rather than the artifact**, which changes
+the release-signing contract on both sides. Registered for the OTA lane rather than changed
+here — this is a defect fix, not a protocol change, and the lane that owns the signer should
+own that decision.
+
+### The mutation pass, and two tests measuring themselves
+
+Twelve mutations, ten caught first time.
+
+**"A truncated stream counts as complete" survived**, while a test named
+`test_a_truncated_stream_is_not_mistaken_for_a_complete_one` passed. The fake server always
+*raised* on a cut, so the exception path handled it and the completion check was never
+reached. The scenario named the behaviour and exercised a different one. The server can now
+end a body cleanly short of its declared length, and the mutation fails.
+
+**"The whole file is read to hash it" survived**, and it is nearly an equivalent mutant —
+`handle.read()` produces an identical digest, so no assertion about the *result* can tell the
+difference. It is not equivalent in the way that matters: reading a 512 MB model whole to
+hash it undoes the streaming the rest of the file exists to establish. It needed a memory
+assertion, which exposed a second problem.
+
+**Both memory assertions were written with `ru_maxrss` and both were unreliable.** That is a
+process-wide high-water mark that never decreases, so once any earlier test in the run has
+allocated 64 MB the delta reads zero and the assertion passes while measuring nothing — the
+vacuity failure this repository keeps finding, inside a test written to prevent one.
+`tracemalloc` reports the peak since a reset and sees exactly the Python `bytes` objects that
+are the defect.
+
+Which then failed at 47 MB — and the 47 MB was **the test server's own** `payload[start:]`
+slice, a 44 MB copy of the remaining body allocated inside the window being measured. The
+instrument was measuring the instrument. A `memoryview` fixed it, and both mutations now fail.
+
+RULE 263 — when a test measures resource use, check that the harness is not the thing
+consuming it. A memory assertion failed at 47 MB for a streamed download, and the allocation
+was the fake server copying its own payload inside the measurement window. Timing and memory
+assertions have this hazard and correctness assertions do not: a correctness harness that
+misbehaves usually makes the test fail loudly, while a resource harness that misbehaves
+quietly becomes the majority of the reading. Before believing a resource number, measure the
+harness doing nothing and check the floor is near zero.

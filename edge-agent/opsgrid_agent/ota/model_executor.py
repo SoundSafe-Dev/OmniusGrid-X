@@ -20,6 +20,8 @@ from pathlib import Path
 from typing import Any, Awaitable, Callable, Dict, Optional
 
 import httpx
+
+from .download import DownloadFailed, ResumableDownload
 import structlog
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives import serialization
@@ -55,6 +57,7 @@ class ModelUpdateExecutor:
         active_model_path: str,
         staging_dir: str,
         swap_callback: Optional[SwapCallback] = None,
+        max_artifact_bytes: int = 512 * 1024 * 1024,
     ):
         self.signing_public_key = signing_public_key
         self.active_model_path = Path(active_model_path)
@@ -62,6 +65,13 @@ class ModelUpdateExecutor:
             self.active_model_path.suffix + ".previous"
         )
         self.staging_dir = Path(staging_dir)
+        #: FS-758. This path had NO size limit of any kind — `response.content` on an
+        #: unbounded body, so a release record pointing at an oversized file exhausts the
+        #: gateway's memory. It is a denial of service reachable by anyone who can influence
+        #: a release URL, and it sat in FRONT of the signature check, which only runs once
+        #: the bytes are already resident. The default is larger here because a few-hundred-megabyte `.pt` is an
+        #: ordinary model rather than an attack.
+        self.max_artifact_bytes = max(1, int(max_artifact_bytes))
         self.swap_callback = swap_callback
         self._lock = asyncio.Lock()
 
@@ -122,13 +132,27 @@ class ModelUpdateExecutor:
         return str(value)
 
     async def _download(self, bundle_url: str) -> bytes:
+        """Resumable, streamed to disk, and size-capped (FS-758).
+
+        Model artifacts are the largest thing this agent downloads, so the unbounded
+        in-memory `get()` this replaces was worst here: a `.pt` of a few hundred megabytes
+        is an ordinary model, not an attack.
+        """
+        destination = self.staging_dir / "download.model.bin"
+        self.staging_dir.mkdir(parents=True, exist_ok=True)
+        download = ResumableDownload(
+            bundle_url, destination, max_bytes=self.max_artifact_bytes
+        )
         try:
-            async with httpx.AsyncClient(timeout=30.0) as client:
-                response = await client.get(bundle_url)
-                response.raise_for_status()
-                return response.content
-        except httpx.HTTPError as exc:
+            path = await download.fetch()
+        except DownloadFailed as exc:
             raise ModelUpdateError("download", str(exc)) from exc
+        except (httpx.HTTPError, OSError, ValueError) as exc:
+            raise ModelUpdateError("download", str(exc)) from exc
+        try:
+            return path.read_bytes()
+        finally:
+            path.unlink(missing_ok=True)
 
     @staticmethod
     def _verify_checksum(artifact: bytes, expected_sha256: str) -> None:

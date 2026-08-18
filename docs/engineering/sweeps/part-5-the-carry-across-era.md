@@ -4887,3 +4887,75 @@ assertion was about the wrong phase of the run rather than about a defect. The o
 that `enforce_size_limit` appeared *after* the `_draining` check by comparing string offsets
 in the source, and failed because the phrase also appears in the comment explaining the
 design. A test that greps for a word cannot tell code from prose. Both are behavioural now.
+
+---
+
+## Rule 263 — when a test measures resource use, check the harness is not the thing consuming it
+
+The resumable-download item came with a numeric acceptance criterion, which is unusual and
+welcome: *64 MB artifact, 5 forced disconnects, RSS under 128 MB, byte-identical*. Three of
+those four are ordinary assertions. The memory one turned out to be the interesting part, and
+not for a reason I expected.
+
+First attempt used `resource.getrusage(...).ru_maxrss`, sampled before and after:
+
+    before = getrusage(RUSAGE_SELF).ru_maxrss
+    ...download 64 MB...
+    after = getrusage(RUSAGE_SELF).ru_maxrss
+    assert (after - before) < threshold
+
+It passed. It also passed when I deliberately broke the downloader to accumulate the whole
+artifact in a `bytearray` — which is the exact defect the assertion exists to prevent.
+
+`ru_maxrss` is a **high-water mark for the process** and never decreases. By the time this
+test ran, an earlier test in the same file had already downloaded 64 MB, so the peak was
+already high and the delta was zero. The assertion was arithmetic on two identical numbers.
+
+This is the vacuity failure that this repository has a rule about, inside a test written
+specifically to catch a vacuity failure. The lesson is not "ru_maxrss is bad" — it is that a
+measurement whose floor is not zero needs a control case as much as any absence assertion.
+
+`tracemalloc` is the right instrument here: it reports peak traced allocation since a reset,
+and it sees precisely what the defect is made of, which is Python `bytes` objects.
+
+### And then it failed at 47 MB
+
+Good — except the downloader was streaming correctly and 47 MB was not its.
+
+    body = self.payload[start:]
+
+That is the fake server, slicing its own payload to serve a range request. For the resumed
+leg of a 64 MB download, `start` is around 20 MB, so the slice copies 44 MB — inside the
+window `tracemalloc` was measuring. **The instrument was measuring the instrument**, and it
+was producing the majority of the reading.
+
+`memoryview(self.payload)[start:]` does not copy, and the number dropped to where it should
+have been.
+
+What makes this worth a rule rather than a footnote is the asymmetry between resource
+assertions and correctness assertions. If a test harness misbehaves while checking
+correctness, it almost always fails loudly — a fake that returns the wrong bytes produces a
+mismatch you cannot miss. If a test harness misbehaves while checking *resource use*, it
+silently contributes to the number being asserted, and the failure mode is a test that either
+passes when it should not, or fails in a way that sends you looking in the wrong file. I spent
+a few minutes reading the downloader for an allocation that was never there.
+
+So: before believing a resource number, run the harness doing nothing and check that the
+floor is near zero. That is a two-line experiment and it distinguishes "the subject uses 47
+MB" from "the scaffolding uses 44 MB and the subject uses 3".
+
+### The other thing the mutation pass found
+
+`return written >= total` replaced with `return True` — a truncated download reported as
+complete — survived, while a test named
+`test_a_truncated_stream_is_not_mistaken_for_a_complete_one` passed.
+
+The fake server always ended a short body by *raising*, so the exception path caught it and
+the completion check was never reached. The test named the behaviour and exercised a
+different one. A body that simply stops — a clean end of stream short of `Content-Length`,
+which is what a proxy timing out mid-response actually looks like — needed a separate
+mechanism in the server, because "the connection broke" and "the connection closed politely
+early" are different events and only one of them was represented.
+
+That is the same shape as the memory finding, one level up: what the test *named* and what
+the test *did* had drifted apart, and only a mutation asked whether they still agreed.

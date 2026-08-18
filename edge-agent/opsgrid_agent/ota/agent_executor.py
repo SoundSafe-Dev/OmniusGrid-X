@@ -28,6 +28,7 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 from packaging.utils import InvalidWheelFilename, parse_wheel_filename
 
 from opsgrid_agent import __version__
+from opsgrid_agent.ota.download import DownloadFailed, ResumableDownload
 from opsgrid_agent.commands import DeferredCommandAck
 
 
@@ -313,29 +314,34 @@ class AgentSelfUpdateExecutor:
             await result
 
     async def _download_artifact(self, url: str) -> bytes:
+        """Resumable, streamed to disk (FS-758).
+
+        This used to accumulate into a `bytearray` and then copy it with `bytes(content)` —
+        two full copies of the wheel resident at once, so a 64 MB artifact peaked at 128 MB
+        on a device that may have 512 MB in total. And any interruption restarted from byte
+        zero, which on a link that drops every few minutes means a large artifact does not
+        arrive slowly, it never arrives at all.
+
+        Still returns bytes because the verification chain below needs them — Ed25519 has no
+        incremental API, and the wheel validator opens a zip. Peak is now one copy rather
+        than two, and the DOWNLOAD itself is bounded by a chunk. Removing the last copy
+        means signing the digest instead of the artifact, which changes the release-signing
+        contract and belongs to the OTA lane.
+        """
+        destination = self.staging_dir / f"download-{abs(hash(url)) & 0xFFFFFFFF:08x}.bin"
+        download = ResumableDownload(
+            url, destination, max_bytes=self.max_artifact_bytes
+        )
         try:
-            async with httpx.AsyncClient(timeout=60.0) as client:
-                async with client.stream("GET", url) as response:
-                    response.raise_for_status()
-                    declared = response.headers.get("content-length")
-                    if declared and int(declared) > self.max_artifact_bytes:
-                        raise AgentSelfUpdateError(
-                            "download",
-                            "Agent wheel exceeds the configured size limit",
-                        )
-                    content = bytearray()
-                    async for chunk in response.aiter_bytes():
-                        content.extend(chunk)
-                        if len(content) > self.max_artifact_bytes:
-                            raise AgentSelfUpdateError(
-                                "download",
-                                "Agent wheel exceeds the configured size limit",
-                            )
-                    return bytes(content)
-        except AgentSelfUpdateError:
-            raise
-        except (httpx.HTTPError, ValueError) as exc:
+            path = await download.fetch()
+        except DownloadFailed as exc:
             raise AgentSelfUpdateError("download", str(exc)) from exc
+        except (httpx.HTTPError, OSError, ValueError) as exc:
+            raise AgentSelfUpdateError("download", str(exc)) from exc
+        try:
+            return path.read_bytes()
+        finally:
+            path.unlink(missing_ok=True)
 
     @staticmethod
     def _verify_checksum(artifact: bytes, expected: str) -> None:

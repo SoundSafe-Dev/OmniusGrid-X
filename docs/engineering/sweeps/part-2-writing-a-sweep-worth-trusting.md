@@ -1900,6 +1900,15 @@ one of its findings. The habit that catches it:
      forever on a healthy link. Whenever a queue has both a drain rate and an expiry, do the
      division: if `backlog / drain_rate` can exceed the expiry window, the limit is not
      throttling throughput, it is choosing which data to destroy.
+
+263. **When a test measures resource use, check the harness is not the thing consuming it.**
+     A memory assertion on a streamed 64 MB download failed at 47 MB, and the 47 MB was the
+     fake server copying its own payload with `payload[start:]` inside the measurement
+     window. Resource assertions have a hazard correctness assertions do not: a misbehaving
+     correctness harness usually makes the test fail loudly, while a misbehaving resource
+     harness quietly becomes most of the reading. Also prefer `tracemalloc` to `ru_maxrss` —
+     the latter is a process-wide high-water mark that never decreases, so after any earlier
+     allocation the delta reads zero and the assertion passes measuring nothing.
 ---
 
 ## Open observations, not yet tickets
