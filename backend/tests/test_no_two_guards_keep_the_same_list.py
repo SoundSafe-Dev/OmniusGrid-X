@@ -80,6 +80,26 @@ DIFFERENT_QUESTIONS: Dict[frozenset, str] = {
         "other's population and stop asking its own question (FS-737)."
     ),
     frozenset({
+        "test_no_unapproved_primitive_is_reachable.py::ROOTS",
+        "test_every_alert_watches_a_series_something_exports.py::CODE_ROOTS",
+    }): (
+        "Both name source trees to walk, and the overlap is path components rather than "
+        "subject matter — one sweeps for exported metric series, the other for "
+        "cryptographic primitives. Critically the POPULATIONS differ: the crypto guard "
+        "walks only `backend/app` and `edge-agent/opsgrid_agent`, because an unapproved "
+        "primitive in a test fixture or a script is not a shipped one, while the metrics "
+        "guard must read everything that could export a series. Deriving either from the "
+        "other would silently widen or narrow a security sweep to suit a monitoring one."
+    ),
+    frozenset({
+        "test_no_unapproved_primitive_is_reachable.py::ROOTS",
+        "test_the_session_arc_is_a_real_range.py::SEARCH_ROOTS",
+    }): (
+        "Same reasoning as the pair above: shared path components, unrelated questions. "
+        "The session-arc guard searches documentation ranges; this one asks which "
+        "algorithms application code can reach."
+    ),
+    frozenset({
         "test_every_alert_watches_a_series_something_exports.py::CODE_ROOTS",
         "test_the_session_arc_is_a_real_range.py::SEARCH_ROOTS",
     }): (

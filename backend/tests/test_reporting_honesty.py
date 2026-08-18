@@ -61,8 +61,10 @@ PERSISTENCE_CALLS = {
     "merge_all", "bulk_save_objects", "save",
     # Brokers / HTTP / notifications
     "send", "send_and_wait", "publish", "post", "put", "patch", "request",
-    # Filesystem — app/core/secrets.py persists to an encrypted file, which is
-    # every bit as much "doing the work" as a database write.
+    # Filesystem — a write to disk is every bit as much "doing the work" as a database
+    # write. (The original example here, `app/core/secrets.py`, was deleted in FS-748: it
+    # was unreachable code whose Fernet cipher is not FIPS-approved, and dead code with
+    # weak crypto is a trap for whoever wires it up next. The rule it illustrated stands.)
     "write", "writelines", "dump", "chmod",
     # The shared audit writer.
     "record_audit",

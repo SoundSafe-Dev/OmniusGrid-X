@@ -82,6 +82,7 @@ controls:
       on-prem: partial
       air-gapped: partial
     implemented_by:
+      - app/core/password.py
       - app/api/auth.py
       - app/core/sso.py
       - app/core/session.py
@@ -89,20 +90,25 @@ controls:
     proved_by:
       - tests/test_auth_sessions.py
       - tests/test_user_invitation_unit.py
+      - tests/test_passwords_use_an_approved_kdf.py
+      - tests/test_no_unapproved_primitive_is_reachable.py
     evidence:
       - junit/backend.xml
     owner: platform-security
     remediation:
       due: "2027-01-31"
       note: >-
-        Passwords are bcrypt (12 rounds); refresh tokens, API keys and invitation tokens are
-        stored as SHA-256 digests of high-entropy random secrets, which is correct — SP
-        800-132 governs passwords, not 128-bit random values. PARTIAL for one reason:
-        **bcrypt is not FIPS-approved**, so this cannot be `implemented` in a CUI
-        environment. The migration to PBKDF2-HMAC-SHA256 with dual-read and rehash-on-login
-        is the FIPS workstream's first phase, and its legacy-verify window must close before
-        the FIPS base image lands, because in enforcing mode bcrypt verify may be
-        unavailable rather than merely deprecated.
+        New passwords are PBKDF2-HMAC-SHA256 at 600k iterations (FS-748) — the SP
+        800-132-approved KDF — and refresh tokens, API keys and invitation tokens are
+        SHA-256 digests of high-entropy random secrets, which is correct: 800-132 governs
+        passwords, not 128-bit random values. Login rehashes legacy hashes in place, so
+        users migrate as they arrive with no reset.
+        PARTIAL until the migration window CLOSES: bcrypt remains registered as a
+        deprecated scheme so existing hashes still verify, and while it is registered the
+        application can still read a non-approved format. `auth_password_hash_scheme_total`
+        makes the remaining population a dashboard number. The window must close before the
+        FIPS base image lands — in enforcing mode the bcrypt verify path may raise rather
+        than return False, which would lock out every user who had not logged in since.
 
   - id: OG-IA-004
     title: Authentication feedback does not disclose which factor failed

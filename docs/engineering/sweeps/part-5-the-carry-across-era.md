@@ -4234,3 +4234,44 @@ That sentence cannot be quoted into a lie. The short version can.
 The same discipline applies to every headline this codebase produces: test counts (5,047
 passing, 109 skipped), conformance (466 of 546, of which 8 are real 500s), coverage floors.
 A number that travels alone will be read as a score, and scores are read as good.
+
+## Rule 252 — measure a compliance gap before planning it
+
+The inventory said: *FIPS — absent entirely. A case-insensitive grep for `fips` across the
+whole repository returns no matches.*
+
+That sentence reads like a rewrite. Every hash, every cipher, every key exchange, an OpenSSL
+provider decision, a base-image migration, and a sweep for `usedforsecurity=False` across a
+codebase of 700 Python files. Weeks of work, and a workstream that would have been planned
+before anybody counted.
+
+Counted, it was three things.
+
+    Ed25519 OTA signing              already approved (FIPS 186-5)
+    EC P-256 + SHA-256 X.509         already approved
+    HS256 JWTs                       already approved — HMAC-SHA-256
+    SHA-256 of random tokens         not password hashing; 800-132 does not apply
+    MD5 / SHA-1                      none, anywhere
+
+    bcrypt                           REAL — the most-used primitive, not approved
+    Fernet                           REAL — AES-128-CBC, and in two modules with
+                                     zero and dead call sites respectively
+    base image                       REAL — no FIPS OpenSSL in Debian slim
+
+Two of the three real deltas were in code nobody calls. The expensive-sounding part — the
+MD5/SHA-1 sweep — did not exist to do.
+
+**And one item on the intuitive fix list needed no change at all.** HS256 looks wrong to
+anyone who has been told "use asymmetric signatures", and moving JWTs to ES256 was on my
+first plan as a FIPS item. HMAC-SHA-256 is approved. Doing it and calling it FIPS
+remediation would have been churn wearing a compliance badge — the work is still worth doing
+for key rotation, which is a different justification with a different priority.
+
+That is the general shape and the reason for the rule. A compliance gap stated as a *category*
+("no FIPS posture", "no access control", "audit logging is incomplete") always sounds like the
+whole category needs building. Stated as an *inventory* it becomes a short list, usually with
+surprises in both directions: things already fine that you would have rewritten, and things
+you would not have thought to check.
+
+Inventory first. The measurement is what converts a workstream into a task list, and it is
+also what stops you reporting motion as progress.

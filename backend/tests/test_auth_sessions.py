@@ -101,7 +101,15 @@ async def test_refresh_rotation_and_logout_are_database_durable(
     monkeypatch,
     auth_memory_limiter,
 ):
-    monkeypatch.setattr(auth_api, "verify_password", lambda *_: True)
+    # `verify_password_and_migrate`, not `verify_password` (FS-748): the login path now
+    # verifies and returns a PBKDF2 replacement when the stored hash is legacy bcrypt.
+    # `conftest._hash_password` seeds a synthetic `$2b$12$xxx...` string rather than a
+    # real hash, so verification cannot succeed for real — this patch is the fixture
+    # saying "assume the password matched" so the test can get to session rotation.
+    # `(True, None)` = verified, nothing to migrate.
+    monkeypatch.setattr(
+        auth_api, "verify_password_and_migrate", lambda *_: (True, None)
+    )
     transport = ASGITransport(app=auth_app, client=("198.51.100.20", 4000))
     async with AsyncClient(transport=transport, base_url="http://test") as client:
         login = await _login(client, seeded_orgs)
@@ -233,7 +241,15 @@ async def test_concurrent_refresh_allows_exactly_one_rotation(
     monkeypatch,
     auth_memory_limiter,
 ):
-    monkeypatch.setattr(auth_api, "verify_password", lambda *_: True)
+    # `verify_password_and_migrate`, not `verify_password` (FS-748): the login path now
+    # verifies and returns a PBKDF2 replacement when the stored hash is legacy bcrypt.
+    # `conftest._hash_password` seeds a synthetic `$2b$12$xxx...` string rather than a
+    # real hash, so verification cannot succeed for real — this patch is the fixture
+    # saying "assume the password matched" so the test can get to session rotation.
+    # `(True, None)` = verified, nothing to migrate.
+    monkeypatch.setattr(
+        auth_api, "verify_password_and_migrate", lambda *_: (True, None)
+    )
     login_transport = ASGITransport(
         app=auth_app,
         client=("198.51.100.21", 4001),

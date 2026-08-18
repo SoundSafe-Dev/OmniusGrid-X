@@ -1803,6 +1803,14 @@ one of its findings. The habit that catches it:
      supports a truthful claim and a false one depending on what sits next to it. Put the
      breakdown in the same SENTENCE, not merely the same document — a reader who has to turn
      a page to find the qualifier will quote the headline.
+
+252. **Measure a compliance gap before planning it — the honest scope is smaller and
+     always different.** "Zero FIPS references anywhere in the repository" reads as a total
+     crypto rewrite. Measured, it was three primitives: bcrypt, Fernet (both in code with
+     zero or dead call sites) and the base image — in a system whose Ed25519 signing, EC
+     P-256 PKI and SHA-256 token digests were already approved. One item on the intuitive
+     fix list, HS256, required no change at all: HMAC-SHA-256 is approved, so changing it
+     would have been churn presented as remediation. Inventory first, then plan.
 ---
 
 ## Open observations, not yet tickets

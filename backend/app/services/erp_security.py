@@ -15,7 +15,9 @@ import json
 import structlog
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
-from cryptography.fernet import Fernet
+from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 import base64
 import hashlib
 import os
@@ -67,7 +69,6 @@ class ERPSecurityManager:
         self.organization_id = organization_id
         self.integration_id = integration_id
         self._encryption_key = self._get_or_create_encryption_key()
-        self._cipher = Fernet(self._encryption_key)
         
         logger.info(
             "security_manager_initialized",
@@ -99,8 +100,24 @@ class ERPSecurityManager:
                 organization_id=self.organization_id,
                 message="ERP_ENCRYPTION_KEY unset; using an insecure dev-only derived key",
             )
-        digest = hashlib.sha256(f"{master}:{self.organization_id}".encode()).digest()
-        return base64.urlsafe_b64encode(digest)
+        # HKDF-SHA256, NOT A BARE HASH (FS-748). This was
+        # `base64(sha256(f"{master}:{org}"))` — a single unsalted hash used directly as a
+        # key. That is not a key-derivation function: it has no salt, no info binding and
+        # no iteration, so it offers nothing against an offline attack on the master and
+        # is not the SP 800-56C construction an assessor expects to see.
+        #
+        # `info` binds the derived key to the organisation, which is what the old string
+        # concatenation was reaching for. The salt is deliberately fixed and non-secret:
+        # the key must be DETERMINISTIC or previously encrypted credentials become
+        # unreadable across restarts, which is the defect the concatenation replaced. HKDF
+        # is defined to be safe with a non-secret salt; the security here rests on the
+        # entropy of `ERP_ENCRYPTION_KEY`, which `validate_settings` requires in production.
+        return HKDF(
+            algorithm=hashes.SHA256(),
+            length=32,  # AES-256
+            salt=b"omniusgrid.erp.field-encryption.v2",
+            info=self.organization_id.encode(),
+        ).derive(master.encode())
     
     def encrypt_field(self, value: str) -> str:
         """
@@ -114,9 +131,19 @@ class ERPSecurityManager:
         """
         if not value:
             return value
-        
-        encrypted = self._cipher.encrypt(value.encode())
-        return encrypted.decode()
+
+        # AES-256-GCM, versioned envelope `v2:<nonce>:<ciphertext>` (FS-748). Replaces
+        # Fernet, which is AES-128-CBC + HMAC — sound, but not among the primitives a
+        # FIPS-validated module exposes, and 128-bit where the rest of this system is 256.
+        #
+        # The `v2:` prefix exists so a future algorithm change can be detected rather than
+        # guessed at: `decrypt_field` refuses anything it does not recognise instead of
+        # returning plaintext-looking garbage. There is nothing to migrate — this class had
+        # zero call sites when it was rewritten, so no ciphertext of the old form exists.
+        nonce = os.urandom(12)
+        ciphertext = AESGCM(self._encryption_key).encrypt(nonce, value.encode(), None)
+        return "v2:" + base64.urlsafe_b64encode(nonce).decode() + ":" + \
+            base64.urlsafe_b64encode(ciphertext).decode()
     
     def decrypt_field(self, encrypted_value: str) -> str:
         """
@@ -131,14 +158,29 @@ class ERPSecurityManager:
         if not encrypted_value:
             return encrypted_value
         
-        try:
-            decrypted = self._cipher.decrypt(encrypted_value.encode())
-            return decrypted.decode()
-        except Exception as e:
+        if not encrypted_value.startswith("v2:"):
+            # Not an envelope this version can read. Returning the input unchanged is what
+            # the previous implementation did on any failure, and it is worth naming as a
+            # deliberate choice rather than an accident: the caller gets back exactly what
+            # it stored, so a misconfigured key degrades to "cannot read" rather than to a
+            # confident wrong answer.
             logger.error(
-                "decryption_failed",
-                error=str(e)
+                "erp_decrypt_unknown_envelope",
+                organization_id=self.organization_id,
+                hint="expected the v2 AES-256-GCM envelope",
             )
+            return encrypted_value
+        try:
+            _version, nonce_b64, ciphertext_b64 = encrypted_value.split(":", 2)
+            plaintext = AESGCM(self._encryption_key).decrypt(
+                base64.urlsafe_b64decode(nonce_b64),
+                base64.urlsafe_b64decode(ciphertext_b64),
+                None,
+            )
+            return plaintext.decode()
+        except Exception as e:
+            # GCM authenticates, so this also fires on tampering — which is the point.
+            logger.error("decryption_failed", error=str(e))
             return encrypted_value
     
     def encrypt_sensitive_data(self, data: Dict[str, Any]) -> Dict[str, Any]:

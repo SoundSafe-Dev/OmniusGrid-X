@@ -8,7 +8,6 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, status
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from jwt import PyJWTError as JWTError
-from passlib.context import CryptContext
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
@@ -27,6 +26,9 @@ from app.core.security import (
     get_current_user_ws,
     token_expiry,
 )
+from app.core.password import hash_password as _hash_password
+from app.core.password import verify_password as _verify_password
+from app.core.password import verify_password_and_migrate
 from app.core.session import SessionManager
 from app.db.database import get_db
 from app.db.models import Organization, User
@@ -35,7 +37,6 @@ from app.models.schemas import Token, UserCreate
 
 router = APIRouter()
 
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 oauth2_scheme = OAuth2PasswordBearer(
     tokenUrl="api/v1/auth/login",
     auto_error=False,
@@ -71,11 +72,19 @@ async def get_token_from_header(
 
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
-    return pwd_context.verify(plain_password, hashed_password)
+    """Kept as a name because callers and tests import it; the implementation moved.
+
+    THERE WERE TWO PASSWORD CONTEXTS (FS-748) — this one and a second in `core/sso.py`,
+    configured identically and independently, so a migration would have had to change both
+    and a forgotten one is an unapproved algorithm still in service. Both now route through
+    `app/core/password.py`.
+    """
+    return _verify_password(plain_password, hashed_password)
 
 
 def get_password_hash(password: str) -> str:
-    return pwd_context.hash(password)
+    """PBKDF2-HMAC-SHA256 now; bcrypt is not FIPS-approved (FS-748)."""
+    return _hash_password(password)
 
 
 async def _load_local_user(
@@ -269,7 +278,16 @@ async def login(
     """Login and create the authoritative refresh session."""
     result = await db.execute(select(User).where(User.email == form_data.username))
     user = result.scalar_one_or_none()
-    if not user or not verify_password(form_data.password, user.hashed_password):
+    # REHASH-ON-LOGIN (FS-748). `verify_password_and_migrate` returns a PBKDF2 replacement
+    # whenever the stored hash is on the deprecated bcrypt scheme, so users move off a
+    # non-FIPS-approved KDF as they arrive — no reset, no bulk rewrite, and no window where
+    # the plaintext is available anywhere else to do it with.
+    password_ok, upgraded_hash = (False, None)
+    if user:
+        password_ok, upgraded_hash = verify_password_and_migrate(
+            form_data.password, user.hashed_password
+        )
+    if not user or not password_ok:
         # Counted so brute-force is detectable (FS-229). Previously failures were
         # only a log line, which Prometheus never sees — an AuthBruteForce alert
         # would have been unfirable. Deliberately NOT labelled by email or IP:
@@ -293,6 +311,13 @@ async def login(
         )
 
     record_auth_attempt("success")
+
+    # Persist the upgraded hash only after every other check has passed. Writing it beside
+    # the verify would migrate the password of an account that is then refused for being
+    # inactive — a write on a rejected login, which is both surprising and a timing signal.
+    if upgraded_hash:
+        user.hashed_password = upgraded_hash
+        await db.commit()
 
     access_token, _, refresh_token, refresh_payload = _create_token_pair(user)
     await SessionManager.create_session(

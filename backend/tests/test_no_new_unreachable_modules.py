@@ -95,9 +95,6 @@ UNREACHABLE: dict[str, str] = {
     "app/services/feature_extraction.py":
         "MLOps lane. Feature extraction for training; the training pipeline that ships is "
         "`model_training_pipeline`.",
-    "app/core/secrets.py":
-        "A secrets-resolution helper. `core/config.py` reads env directly and the k8s path uses "
-        "Sealed Secrets / ESO, so this sits between two working mechanisms.",
     "app/workers/export_delivery.py":
         "A worker with no entry point. `services/export_delivery.py` (different file, same "
         "name) IS wired and tested — which is precisely why this one is easy to miss.",

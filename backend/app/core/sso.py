@@ -15,7 +15,6 @@ from typing import Any, Optional
 
 import structlog
 from jwt import PyJWTError as JWTError
-from passlib.context import CryptContext
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -26,14 +25,13 @@ from app.services.keycloak_service import _is_keycloak_configured, get_keycloak_
 
 logger = structlog.get_logger()
 
-# Local password login is disabled for SSO users: their stored password hash is a
-# bcrypt hash of a fresh random secret that is discarded, so verify_password can
-# never succeed. Generated lazily so importing this module has no bcrypt cost.
-_pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
-
-
-def _disabled_login_hash() -> str:
-    return _pwd_context.hash(secrets.token_urlsafe(32))
+# Local password login is disabled for SSO users: their stored hash is a hash of a fresh
+# random secret that is discarded, so verify_password can never succeed.
+#
+# THIS BUILT ITS OWN `CryptContext` (FS-748) — a second, independent configuration of the
+# same thing, which is how a password-algorithm migration leaves an unapproved scheme in
+# service on a path nobody remembered. It now shares `app/core/password.py`.
+from app.core.password import disabled_login_hash as _disabled_login_hash  # noqa: E402
 
 # The role vocabulary lives in app/core/roles.py. This used to be a second,
 # independent frozenset — one of the three copies that had already drifted.

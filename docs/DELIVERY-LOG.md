@@ -12790,3 +12790,65 @@ as a score. "110 of 110" is true and, alone, actively misleading — it means ev
 has an answer, and nine of those answers are "implemented" while forty are POA&M lines. The
 same figure supports a truthful claim and a false one depending on what sits next to it, so
 publish the breakdown in the same sentence, not the same document.
+
+## FS-748 — two of the three FIPS deltas, closed
+
+`OG-SC-002` (FIPS-validated cryptography, 800-171 3.13.11) moves `absent` → `partial`.
+
+**The scope was measured before anything was planned, and that measurement did most of the
+work.** The instinct on finding zero FIPS references was "everything must change". What is
+actually already approved and needed no work: Ed25519 OTA signing (FIPS 186-5), EC
+P-256/SHA-256 X.509 in the edge CA, **HS256 JWTs — HMAC-SHA-256 is approved**, and unsalted
+SHA-256 digests of high-entropy random tokens (SP 800-132 governs passwords, not 256-bit
+random values). There is no MD5 or SHA-1 anywhere, which removes the `usedforsecurity=False`
+sweep that normally dominates this work. Three deltas remained; two are now closed.
+
+**1. Passwords: bcrypt → PBKDF2-HMAC-SHA256.** bcrypt is not approved, and a validated
+module does not provide it at all — in enforcing mode the verify path may *raise* rather
+than return False. New hashes are PBKDF2 at 600k iterations; login rehashes legacy hashes in
+place through `verify_and_update`, so users migrate as they arrive with no reset and no bulk
+rewrite (a bcrypt hash cannot be converted without the plaintext, and the plaintext exists
+only for that instant).
+
+There were **two `CryptContext` objects** — `app/api/auth.py` and `app/core/sso.py` —
+configured identically and independently. That is not tidiness: a migration has to change
+every context, and a forgotten one is an unapproved algorithm still in service on the path
+nobody remembered. The same shape as the audit hash chain, where two implementations of one
+digest drifted until neither could verify the other. Both now route through
+`backend/app/core/password.py`, and a test fails the build if a third appears.
+
+The upgraded hash is persisted **after** the `is_active` check, not beside the verify —
+writing it earlier would migrate the password of an account that is then refused, which is a
+write on a rejected login and a timing signal.
+
+**2. ERP field encryption: Fernet → AES-256-GCM.** The headline was Fernet being
+AES-128-CBC, but the real defect was the key: `base64(sha256(f"{master}:{org}"))` — a single
+unsalted hash used directly as a key, with no salt, no info binding and no iteration. Now
+HKDF-SHA256 with `info=organization_id`, AES-256-GCM, and a versioned `v2:<nonce>:<ct>`
+envelope so a future change is detected rather than guessed at. Zero call sites meant zero
+migration. Verified: round-trips, and another organisation's manager cannot read the
+ciphertext.
+
+**3. The dead `SecretsManager` module deleted rather than ported.** Unreachable code whose cipher is
+not approved is a trap for whoever wires it up next — and this one sits between two working
+mechanisms (env config and Kubernetes secret provisioning), so it would have been wired up
+by someone looking for exactly that. Its register entry went with it. (The path is deliberately not cited here — the file no longer exists, and a citation a reader cannot follow is the thing `test_documented_files_exist.py` is for.)
+
+**The guard is the durable half.** `test_no_unapproved_primitive_is_reachable.py` AST-walks
+both application trees and fails if code imports passlib, bcrypt or Fernet, or constructs an
+unapproved hash, cipher or curve — with a `DELIBERATELY_ALLOWED` register carrying one
+entry: `backend/app/core/password.py`, the module permitted to import passlib, **and that exemption
+has an end condition written into it** (it ends when the bcrypt migration window closes,
+which must be before the FIPS base image lands).
+
+The third delta — the base image — is not closed. `python:3.11-slim` has no FIPS-validated
+OpenSSL and no path to one, so backend, frontend and nginx images must move to UBI9. It is
+deliberately separate: a UBI image with FIPS mode **off** looks identical to one with it on,
+so proving it needs a runtime assertion rather than a static check.
+
+RULE 252 — measure a compliance gap before planning it, because the honest scope is usually
+smaller and always different. "Zero FIPS references in the repository" reads as a total
+rewrite. Measured, it was three primitives, two of which are dead code, in a codebase whose
+signing, PKI and token digests were already approved — and one of the things I would have
+"fixed" (HS256) needed no change at all, so doing it would have been churn presented as
+remediation. The measurement is what turns a workstream into a task list.

@@ -51,27 +51,38 @@ controls:
       - 800-53r5:SC-13
       - ISO27001:A.8.24
     status:
-      commercial-cloud: absent
-      gov-cloud: absent
-      on-prem: absent
-      air-gapped: absent
-    implemented_by: []
+      commercial-cloud: partial
+      gov-cloud: partial
+      on-prem: partial
+      air-gapped: partial
+    implemented_by:
+      - app/core/password.py
+      - app/services/erp_security.py
+    proved_by:
+      - tests/test_no_unapproved_primitive_is_reachable.py
+      - tests/test_passwords_use_an_approved_kdf.py
+    evidence:
+      - junit/backend.xml
     owner: platform-security
     remediation:
       due: "2027-03-31"
       note: >-
-        Unmet everywhere, and the scope is smaller than it first appears — measured rather
-        than assumed. Already approved and needing no change: Ed25519 OTA signing (FIPS
-        186-5), EC P-256/SHA-256 X.509 in the edge CA, HS256 JWTs (HMAC-SHA-256 IS approved),
-        and SHA-256 digests of high-entropy random tokens. There is no MD5 or SHA-1 anywhere,
-        which removes the usually-expensive sweep. The real deltas are three: **bcrypt**
-        (not approved — see OG-IA-003), **Fernet** in `erp_security.py` (AES-128-CBC, and
-        keyed by a bare `sha256("master:org_id")` rather than a KDF, which is the actual
-        defect), and the **base image** — `python:3.11-slim` has no FIPS-validated OpenSSL
-        and no path to one, so backend, frontend and nginx images all move to UBI9. A guard
-        asserting no unapproved primitive is reachable lands with that work; it is
-        deliberately not cited here yet, because citing a test that does not exist is the
-        failure this catalogue is built to prevent.
+        RAISED absent -> partial (FS-748). Two of the three deltas are closed: passwords
+        moved to PBKDF2-HMAC-SHA256 with dual-read migration, and ERP field encryption moved
+        from Fernet (AES-128-CBC, keyed by a bare unsalted SHA-256 — the actual defect) to
+        AES-256-GCM with an HKDF-SHA256-derived per-organisation key. `app/core/secrets.py`
+        was deleted rather than ported: unreachable code whose cipher is not approved is a
+        trap for whoever wires it up next. A guard now fails the build if application code
+        imports passlib, bcrypt or Fernet, or constructs an unapproved hash, cipher or
+        curve. Still PARTIAL for the third delta — the base image. `python:3.11-slim` has no
+        FIPS-validated OpenSSL, so backend, frontend and nginx images must move to UBI9, and
+        a UBI image with FIPS mode OFF looks identical to one with it on, which needs a
+        runtime assertion rather than a static check.
+        The scope was measured before any of it was planned, and most of the inventory was
+        already fine: Ed25519 OTA signing, EC P-256/SHA-256 X.509, HS256 JWTs (HMAC-SHA-256
+        IS approved — the JWT work is key rotation, a different concern), SHA-256 digests of
+        high-entropy random tokens, and no MD5 or SHA-1 anywhere. Measuring first is what
+        turned "FIPS is absent, everything must change" into three specific deltas.
 
   - id: OG-SC-003
     title: Confidentiality of CUI in transit
