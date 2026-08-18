@@ -4598,3 +4598,108 @@ can see it. `EXPLAIN QUERY PLAN` is asserted directly now.
 Nine mutations, eight caught, one survivor closed, three holes found. The pass keeps earning
 its cost — not by catching the bug being fixed, which the scenarios do, but by finding the
 parts of the fix that nothing was watching.
+
+---
+
+## Rule 260 — an action taken during an outage must not require the network to have an effect
+
+The edge agent evaluates threshold rules on the device. That is the right architecture and
+somebody built it deliberately: when the link is down, the edge is the only thing in the
+system that can notice a bearing is overheating.
+
+I went looking for what happens when one fires, expecting to find the local action and to be
+grading its quality. What I found was three consequences, and a fourth that had been quietly
+deleted.
+
+The counter increments. `edge_alert_triggered_total`, with labels for asset, rule and
+severity — a good metric, exported on `/metrics`, scraped by Prometheus. Over the network.
+The one that is down.
+
+The warning is logged. Structured, with the rule id. To stdout, which in Kubernetes is
+collected by a shipper over the same network, and on a bare gateway is a ring buffer that
+wraps.
+
+The alert is appended to `self.alerts`, an in-memory list, truncated to the last 1,000. Gone
+on restart — and a restart during the conditions that produced an alarm is not exotic.
+
+Then the fourth. `alerting_tracker.record` returns the alerts it fired, and
+`analytics/pipeline.py` called it like this:
+
+    alerting_tracker.record(message)
+
+No assignment. The alarms were never queued for uplink, so when the link came back the alert
+did not travel *late* — it did not travel. The backend received the raw temperature reading
+and, if it happened to hold a matching rule, re-derived the breach itself, never learning
+that the edge had already decided. An entire edge-analytics result was being computed and
+discarded, and nothing looked wrong, because the counter went up.
+
+**Local detection with remote-only consequences.** Every channel the alarm had needed either
+the link or the process to survive, and the alarm exists precisely for the case where neither
+is guaranteed. The feature was fully built, wired end to end, and unit-tested. What it was
+missing was not code so much as a question: *where is this read?*
+
+That question is now the rule. When something is described as a local capability, follow each
+of its outputs to the place a human or a machine actually consumes it. A counter is consumed
+by a scraper. A log line is consumed by a shipper. An in-memory list is consumed by nothing
+at all after a restart. If every consumer sits on the far side of the failure the capability
+is for, you have detection without action, and it will pass every test you write about
+detection.
+
+### What it cost to fix, which was less than finding it
+
+A SQLite file next to the buffer with `synchronous=FULL`, written before anything is
+attempted over the network. A second copy queued into the store-and-forward buffer under
+`topic="alarm"` — which, thanks to the previous item, is tier 1, so it leaves ahead of the
+whole backlog the outage produced. A flag recording whether that queueing succeeded, because
+"waiting for the link" and "never left this box" are different problems and only the device
+knows which one happened. And `/alerts` on the agent's own HTTP server, so an operator
+standing in front of the machine can read them without a network at all.
+
+`synchronous=FULL` is the one choice worth defending, because the buffer sitting beside it
+deliberately does not use it. The buffer handles millions of readings, and losing the last
+few milliseconds of vibration to a power cut costs nothing. The alarm table handles events at
+human rates where losing the last commit is the entire failure. Same technology, opposite
+durability answer, because the question is not "how safe should SQLite be" but "what does
+losing the most recent write cost here". A power cut is also an extremely ordinary way for
+the situation that raised an alarm to end, which makes the difference between *survives a
+restart* and *survives the thing that caused the restart* the whole point rather than a
+detail.
+
+### Three survivors, and only two of them were holes
+
+Twelve mutations. Nine failed a named scenario at once.
+
+Removing the line that stamps the asset id onto the alert survived. The row was still
+written, still readable, still had the rule and the value and the timestamp — and no longer
+said which machine. A technician reading `/alerts` in front of a line of eight presses gets a
+critical bearing alarm with no press attached to it. That is not a small omission dressed up;
+it is most of what the record is for.
+
+Renaming `/alerts` away from its route also survived, which is the more embarrassing one. The
+endpoint exists *specifically* because it is the only alarm surface that does not cross the
+link, and I had written no test that crossed anything to reach it. The sink was recording,
+the scenarios were reading the sink directly, and the HTTP layer between them was unmeasured.
+Both now have a scenario, and both mutations fail.
+
+The third survivor is not a hole. Deleting `conn.commit()` from the insert changes nothing,
+because `with sqlite3.connect(...)` commits on clean exit — checked directly rather than
+assumed. No test can tell the two versions apart because there is nothing to tell apart.
+
+**That distinction is worth making explicitly, because the reflex when a mutant survives is
+to go write a test, and here that would have produced a test asserting a tautology.** A
+surviving mutant asks a question — *what would be different?* — and "nothing" is a legitimate
+answer. The honest response is to say so, leave the redundant line for consistency, and not
+claim a guard that does not exist. Writing a passing test around it would have looked like
+coverage and been noise.
+
+### Two scenarios that were wrong before the code was
+
+Patching `buffer.store` to fail so I could prove the local record survives a broken uplink:
+it failed the *reading's* store too, which aborted the message before analytics ran, so no
+alarm was raised and the assertion "the local record is still there" was measuring a case
+where nothing had happened. Now only the alarm's store fails.
+
+And I expected a raising sink to propagate out of `_on_collector_message`. It does not —
+there is a catch-all there — so the test failed with `DID NOT RAISE`. The real contract is
+the one written in the sink's own docstring: `record` never raises, it returns `None`. That
+is now what is asserted, which is both true and the thing worth holding.

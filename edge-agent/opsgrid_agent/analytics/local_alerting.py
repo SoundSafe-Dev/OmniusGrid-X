@@ -151,6 +151,10 @@ class LocalAlertingEngine:
             
             if rule.evaluate(value) and rule.can_trigger():
                 alert = rule.trigger(value)
+                # The rule does not know which asset it was evaluated for; the engine does.
+                # Without this the durable sink and the uplink message both have to be told
+                # separately, and one of them eventually is not (FS-755).
+                alert["asset_id"] = self.asset_id
                 self.alerts.append(alert)
                 generated_alerts.append(alert)
                 

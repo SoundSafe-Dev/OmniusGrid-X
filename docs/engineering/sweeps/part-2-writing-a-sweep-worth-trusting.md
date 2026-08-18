@@ -1871,6 +1871,15 @@ one of its findings. The habit that catches it:
      journal sidecars, rotated logs, multipart objects, a table plus its indexes. If one
      part of the module already handles the sidecars, that is evidence the others forgot,
      not evidence they did not need to.
+
+260. **An action taken during an outage must not require the network to have an effect.**
+     The edge agent evaluated threshold rules locally — correct architecture — and every
+     consequence of a firing rule crossed the link that was down: a Prometheus counter the
+     scraper could not reach, a log line the shipper could not send, an in-memory list that
+     died with the process, and a fired alert the pipeline discarded before it ever reached
+     the uplink buffer. When something is described as a *local* capability, follow each of
+     its outputs to where it is READ. If every path crosses the link, it is detection
+     without action.
 ---
 
 ## Open observations, not yet tickets

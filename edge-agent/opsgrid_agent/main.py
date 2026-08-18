@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Dict, Any, List
 import structlog
 
+from opsgrid_agent.analytics.alert_sink import LocalAlertSink
 from opsgrid_agent.buffer.store_forward import StoreForwardBuffer
 from opsgrid_agent.commands import CommandConsumer
 from opsgrid_agent.config_bundle import collectors_from_bundle
@@ -150,10 +151,18 @@ class EdgeAgent:
             Path(self.config['buffer_path']).with_name('agent_state.json')
         )
         
+        # Durable local alarm storage (FS-755), beside the buffer but in its own file so
+        # the buffer's size cap can never shed an alarm to make room for telemetry.
+        self.alert_sink = LocalAlertSink(
+            Path(self.config['buffer_path']).with_name('local_alerts.db'),
+            retention_days=int(self.config.get('alert_retention_days', 30)),
+        )
+
         # Initialize collector coordinator
         self.coordinator = UnifiedCollectorCoordinator(
             buffer=self.buffer,
-            kafka_producer=None  # Will be set after Kafka init
+            kafka_producer=None,  # Will be set after Kafka init
+            alert_sink=self.alert_sink,
         )
         self.remote_operations = AgentRemoteOperations(
             agent_id=self.config['agent_id'],
@@ -219,6 +228,7 @@ class EdgeAgent:
             'buffer_path': os.getenv('BUFFER_PATH', '/var/lib/opsgrid-agent/buffer.db'),
             'state_path': os.getenv('AGENT_STATE_PATH'),
             'buffer_retention_hours': int(os.getenv('BUFFER_RETENTION_HOURS', '24')),
+            'alert_retention_days': int(os.getenv('ALERT_RETENTION_DAYS', '30')),
             'collectors': self._load_collectors(),
         }
         self._load_active_config_bundle(config)
@@ -803,6 +813,8 @@ class EdgeAgent:
             start_metrics_server(
                 int(os.getenv('METRICS_PORT', '9108')),
                 health_provider=self._health_snapshot,
+                # FS-755. The only alarm surface that does not cross the link.
+                alerts_provider=lambda: self.alert_sink.recent(hours=24, limit=200),
             )
 
         try:

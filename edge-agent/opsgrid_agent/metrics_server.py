@@ -1,8 +1,15 @@
-"""HTTP server for the edge agent: Prometheus /metrics + /healthz.
+"""HTTP server for the edge agent: Prometheus /metrics, /healthz and /alerts.
 
 prometheus_client.start_http_server only serves /metrics, so we run a small
 threaded stdlib HTTP server that also exposes /healthz (collector/agent health)
 for Kubernetes probes. Started from EdgeAgent.start() when METRICS_PORT is set.
+
+`/alerts` exists for the DDIL case (FS-755). Every other way an operator learns that this
+device raised an alarm crosses the network: the Prometheus counter is scraped, the log line
+is shipped, the telemetry is uplinked. This endpoint is served by the agent itself, from a
+SQLite file on the same box, so somebody standing in front of the machine with a laptop can
+still answer "what tripped?" while the link is down — which is precisely when local
+alerting is supposed to be earning its place.
 """
 
 import json
@@ -18,7 +25,10 @@ logger = structlog.get_logger()
 _started = False
 
 
-def _make_handler(health_provider: Optional[Callable[[], dict]]):
+def _make_handler(
+    health_provider: Optional[Callable[[], dict]],
+    alerts_provider: Optional[Callable[[], list]] = None,
+):
     class Handler(BaseHTTPRequestHandler):
         def _write(self, code: int, content_type: str, body: bytes) -> None:
             self.send_response(code)
@@ -30,6 +40,16 @@ def _make_handler(health_provider: Optional[Callable[[], dict]]):
         def do_GET(self):  # noqa: N802 (stdlib API)
             if self.path.startswith("/metrics"):
                 self._write(200, CONTENT_TYPE_LATEST, generate_latest())
+            elif self.path.startswith("/alerts"):
+                try:
+                    alerts = alerts_provider() if alerts_provider else []
+                except Exception as e:  # pragma: no cover - defensive
+                    self._write(503, "application/json",
+                                json.dumps({"error": str(e)}).encode())
+                    return
+                body = json.dumps({"count": len(alerts), "alerts": alerts},
+                                  default=str).encode()
+                self._write(200, "application/json", body)
             elif self.path.startswith("/healthz"):
                 try:
                     health = health_provider() if health_provider else {"status": "ok"}
@@ -46,18 +66,28 @@ def _make_handler(health_provider: Optional[Callable[[], dict]]):
     return Handler
 
 
-def create_server(port: int, health_provider: Optional[Callable[[], dict]] = None) -> ThreadingHTTPServer:
-    """Build (but do not start) the metrics/health HTTP server."""
-    return ThreadingHTTPServer(("0.0.0.0", port), _make_handler(health_provider))
+def create_server(
+    port: int,
+    health_provider: Optional[Callable[[], dict]] = None,
+    alerts_provider: Optional[Callable[[], list]] = None,
+) -> ThreadingHTTPServer:
+    """Build (but do not start) the metrics/health/alerts HTTP server."""
+    return ThreadingHTTPServer(
+        ("0.0.0.0", port), _make_handler(health_provider, alerts_provider)
+    )
 
 
-def start_metrics_server(port: int, health_provider: Optional[Callable[[], dict]] = None) -> bool:
-    """Serve /metrics and /healthz on ``0.0.0.0:<port>`` in a daemon thread. Idempotent."""
+def start_metrics_server(
+    port: int,
+    health_provider: Optional[Callable[[], dict]] = None,
+    alerts_provider: Optional[Callable[[], list]] = None,
+) -> bool:
+    """Serve /metrics, /healthz and /alerts on ``0.0.0.0:<port>``. Idempotent."""
     global _started
     if _started:
         return True
     try:
-        server = create_server(port, health_provider)
+        server = create_server(port, health_provider, alerts_provider)
     except OSError as e:
         logger.error("metrics_server_failed", port=port, error=str(e))
         return False

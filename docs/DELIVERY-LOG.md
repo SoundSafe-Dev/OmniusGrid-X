@@ -13292,3 +13292,135 @@ so the bound was unenforced and the reported disk use was near zero. Applies whe
 spans artifacts — WAL and journal sidecars, rotated logs, multipart objects, a table plus its
 indexes and TOAST. If one part of the module already handles the sidecars, that is evidence
 the other parts forgot, not evidence that they did not need to.
+
+---
+
+## FS-755 — the alarm that only ever told the cloud
+
+DDIL item S3. `LocalAlertingEngine` evaluates threshold rules on the device, which is the
+right architecture: when the link is down, the edge is the only thing that can notice a
+bearing is overheating. It fires, and the complete set of consequences was:
+
+- a Prometheus counter increments — scraped over the network that is down;
+- a warning is logged — shipped over the same network, or a ring buffer on a bare gateway;
+- the alert is appended to an in-memory list capped at 1,000 entries — gone on restart, and
+  a restart is an entirely ordinary thing to happen during the conditions that raised it.
+
+**A counter is not an action when the thing that reads it is on the far side of the outage.**
+
+There was a fourth consequence that also did not happen. `analytics/pipeline.py` called
+`alerting_tracker.record(message)` and discarded its return value — the list of alerts just
+raised. So the alarm never reached the store-and-forward buffer either. It did not merely
+fail to arrive during the outage; **it never travelled at all.** When the link came back the
+backend received the raw reading and had to re-derive the breach from its own copy of the
+rule, with no idea the edge had already decided anything. A whole edge-analytics result was
+being computed and thrown away, and nothing looked broken because the counter went up.
+
+### What it does now
+
+The durable local write happens **first**, before anything is attempted over the network,
+because it is the only step that works under the condition local alerting exists for.
+`LocalAlertSink` is SQLite at `local_alerts.db`, beside the buffer but deliberately not
+inside it: the buffer is a bounded ring that sheds rows to stay under its size cap, and an
+alarm record must never be shed to make room for telemetry.
+
+`PRAGMA synchronous=FULL`, which the store-and-forward buffer does not use and should not.
+The buffer handles millions of readings and losing the last few milliseconds of vibration
+data to a power cut costs nothing. This table handles alarms at human rates, where losing the
+last commit is the entire failure being prevented — and a power cut is an ordinary way for
+the situation that raised an alarm to end. The pragma is the difference between surviving a
+restart and surviving *the thing that caused the restart*, and it is asserted, not assumed.
+
+Second, the alarm is queued for uplink as a `topic="alarm"` message. That makes it **tier 1**
+under FS-754, so when the link returns it leaves ahead of the entire backlog the outage
+produced rather than behind it. The two items compose: S2 decided what goes first, S3 gave it
+something that has to.
+
+The sink records **whether** each alarm was queued. That distinction is the difference
+between "the link is down and this is waiting" and "this never left the box at all", and
+nothing else in the system can tell you which happened.
+
+Third, `/alerts` on the agent's own HTTP server. Every other way an operator learns this
+device raised an alarm crosses the network — the scrape, the log shipper, the uplink. This
+one is served by the agent from a file on the same machine, so somebody standing in front of
+the press with a laptop can answer "what tripped?" while the link is down.
+
+### What the uplink half does and does not claim
+
+The backfill loop ignores the buffered row's `topic` column and always publishes to
+`telemetry.{org}.{asset}` (`edge-agent/opsgrid_agent/main.py:441`). So the alarm does reach
+the cloud, ahead of the backlog, as a telemetry message whose payload carries `alarm`,
+`rule_id`, `threshold` and the breaching value. **It does not become a backend alert record.**
+Nothing on the ingestion side reads an `alarm` payload key and creates one; that is backend
+lane work and is not claimed here. What is claimed is that the alarm now leaves the device at
+all, and leaves first.
+
+Registered while confirming that path, not fixed: the same `topic`-ignoring backfill means a
+row buffered under `quarantine` — data the quality pipeline judged invalid — is republished as
+ordinary telemetry on the backfill route. The live route honours the distinction; the backfill
+route does not, and backfill is the only route that has ever run in production (FS-499).
+
+### Failure paths, chosen deliberately
+
+`record` never raises. It is called from the collector message path, and an alarm sink that
+can take down data collection is a worse failure than the one it prevents — so a write error
+is logged, returns `None`, and the reading still lands. Documented is not enforced, so a
+scenario patches the connection into failing and asserts the promise.
+
+A coordinator with no sink configured logs `local_alert_not_durable` **per alarm** rather
+than staying quiet. A non-durable alarm path that looks identical to a durable one is the
+exact shape of the defect this work removes; it should not be possible to reintroduce it
+silently.
+
+### The mutation pass
+
+Twelve mutations: the pipeline swallowing the alerts again, the coordinator ignoring them,
+the durable write skipped, the uplink copy retopiced out of tier 1, durability dropped to
+`NORMAL`, the commit removed, the queued flag never set, the warning renamed, the alert
+losing its asset id, `record` raising instead of returning `None`, retention pruning nothing,
+and `/alerts` no longer routing.
+
+Nine were caught immediately. Three survived, and they were not the same kind of survivor.
+
+**Two were real holes.** Removing `alert["asset_id"] = self.asset_id` changed nothing — the
+row was still written, still readable, and no longer said which machine it came from, which
+is most of its value to a technician standing in front of a line of presses. And renaming
+`/alerts` away from its route left every scenario green: the sink was recording, nothing was
+reading. The endpoint that exists *because* it does not cross the link had no test that
+crossed anything to reach it. Both now have one, and both mutations fail.
+
+**One is an equivalent mutant, and it is worth saying so rather than quietly writing a
+test.** Deleting `conn.commit()` from the insert changes no behaviour: `with
+sqlite3.connect(...)` commits on clean exit, verified directly rather than assumed. No test
+can distinguish the two versions because there is nothing to distinguish. The explicit commit
+stays for consistency with the rest of the buffer code, but it is not load-bearing and this
+entry does not claim a guard it does not have.
+
+Two of the scenarios were also wrong before the code was. Patching `buffer.store` to fail
+everywhere aborted the message before analytics ran, so no alarm was raised and the test
+proved nothing was recorded because nothing had happened — it now fails only the alarm's
+store. And the sink-failure scenario expected an exception to propagate through
+`_on_collector_message`, which has a catch-all; the real contract is that `record` returns
+`None`, so that is what is asserted now.
+
+### One red that was not a regression, recorded rather than dropped
+
+The first full backend run after this work reported
+`test_compliance_reports_e2e.py::test_duplicate_delivery_does_not_create_second_report_or_email`
+failed — 5,094 passed, 1 failed, in **18:00**. The identical command had passed 5,095 forty
+minutes earlier, the test passes in isolation, and a clean re-run with nothing else on the
+machine passed the whole suite in **8:52**. The run that failed was sharing the machine with
+a twelve-iteration mutation sweep; the wall-clock doubling is the tell.
+
+So: a timing flake under contention, in a testcontainers-backed e2e test, in an area none of
+this work touches. Not quarantined — one failure under a load this suite is not meant to run
+under is not evidence of a flaky test, and quarantining on that basis is how a real defect
+gets filed away as noise. It is written down so that if it recurs on an idle machine, this is
+the second data point rather than the first.
+
+RULE 260 — an action taken during an outage must not require the network to have an effect.
+Local detection with remote-only consequences is the whole defect: the edge noticed, and
+every channel it used to say so — a scraped counter, a shipped log line, an in-memory list —
+needed either the link or the process to survive. When something is described as a *local*
+capability, follow each of its outputs to where it is READ, and if every path crosses the
+link that is down, the capability is detection without action.

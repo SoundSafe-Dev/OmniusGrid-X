@@ -37,7 +37,7 @@
 | [Documentation](#documentation) | The rest of `docs/` |
 
 **Engineering method.** The sweeps and guards in this repository follow a set of numbered
-rules, each written after a defect that a weaker check had missed. Rules 21–259 are recorded in
+rules, each written after a defect that a weaker check had missed. Rules 21–260 are recorded in
 `docs/engineering/defect-class-sweeps.md`, with the reasoning for each; the short list at the
 top of that file is what most people read.
 
@@ -1867,6 +1867,7 @@ inventory reaches; it is now generated from `App.tsx` and held there by two guar
 - **PROFINET**: Siemens S7 data-block reads with typed field decoding (via `python-snap7`)
 - **BACnet**: Building automation / HVAC object reads (via `BAC0`/`bacpypes`)
 - **CAN bus**: Vehicle and machine controller frame capture with ID filtering (via `python-can`)
+- **Local alarms that survive the outage**: threshold rules evaluate on the device, and a breach is written to durable local SQLite (`synchronous=FULL`) before anything is attempted over the network, queued for uplink at the highest priority tier, and readable at `/alerts` on the agent's own HTTP server while the link is down (`edge-agent/opsgrid_agent/analytics/alert_sink.py`)
 - **Store-and-Forward**: 24-hour local SQLite buffering for offline resilience, encrypted at rest and **drained by priority** — an emergency stop is the first message off the edge when the link returns, and a full buffer sheds diagnostics before it sheds alarms (`edge-agent/opsgrid_agent/buffer/priority.py`)
 
 > The four industrial-fieldbus collectors (EtherNet/IP, PROFINET, BACnet, CAN bus) run their

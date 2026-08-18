@@ -103,11 +103,17 @@ class UnifiedCollectorCoordinator:
         self,
         buffer: StoreForwardBuffer,
         kafka_producer: Optional[Any] = None,
-        max_concurrent: int = 20
+        max_concurrent: int = 20,
+        alert_sink: Optional[Any] = None,
     ):
         self.buffer = buffer
         self.kafka_producer = kafka_producer
         self.max_concurrent = max_concurrent
+        #: Durable local storage for alarms raised on this device (FS-755). Optional so a
+        #: coordinator can be constructed in a test without a filesystem; when it is None
+        #: the alarm still reaches the uplink buffer, it just does not survive a restart,
+        #: and `local_alert_not_durable` says so once per alarm rather than silently.
+        self.alert_sink = alert_sink
         
         # Collector instances
         self.collectors: Dict[str, Any] = {}
@@ -377,7 +383,9 @@ class UnifiedCollectorCoordinator:
             # Quarantined (invalid) readings are excluded so bad data does not
             # skew OEE/anomaly baselines.
             if quality_action != QualityAction.QUARANTINE:
-                analytics_pipeline.record(message)
+                fired = analytics_pipeline.record(message)
+                for alert in fired or ():
+                    await self._raise_local_alert(alert, asset_id, timestamp_edge)
 
             # THE IMMEDIATE FORWARD IS OFF, DELIBERATELY (FS-499).
             #
@@ -455,6 +463,70 @@ class UnifiedCollectorCoordinator:
                 message_preview=str(message)[:200]
             )
     
+    async def _raise_local_alert(
+        self,
+        alert: Dict[str, Any],
+        asset_id: str,
+        timestamp_edge: datetime,
+    ) -> None:
+        """Make a locally-raised alarm outlive the outage that produced it (FS-755).
+
+        ORDER MATTERS AND IS THE POINT. The durable local write happens FIRST, because it
+        is the only step that works when the link is down — which is the only condition
+        under which local alerting exists at all. Queueing for uplink happens second, and
+        its failure does not undo the first.
+
+        Before this, a fired alert incremented a Prometheus counter (scraped across the
+        link that is down), wrote a log line (shipped across the same link), and appended
+        to an in-memory list capped at 1,000 that died with the process. Nothing on the
+        device knew an alarm had happened five minutes after a restart.
+        """
+        alert_id = None
+        if self.alert_sink is not None:
+            alert_id = self.alert_sink.record(alert)
+        else:
+            logger.warning(
+                "local_alert_not_durable",
+                asset_id=asset_id,
+                rule_id=alert.get("rule_id"),
+                note="no alert sink configured; this alarm will not survive a restart",
+            )
+
+        # Then the uplink copy. `alarm` is a tier-1 metric name
+        # (`opsgrid_agent/buffer/priority.py`), so this leaves the edge ahead of every
+        # buffered telemetry reading when the link returns rather than behind the backlog
+        # the outage produced — which is FS-754's entire reason for existing.
+        try:
+            await self.buffer.store(
+                timestamp_edge=timestamp_edge,
+                asset_id=asset_id,
+                topic="alarm",
+                payload={
+                    "alarm": alert.get("severity", "warning"),
+                    "rule_id": alert.get("rule_id"),
+                    "metric_name": alert.get("metric_name"),
+                    "value": alert.get("value"),
+                    "threshold": alert.get("threshold"),
+                    "condition": alert.get("condition"),
+                    "message": alert.get("message"),
+                    "triggered_at": alert.get("timestamp"),
+                    "raised_by": "edge",
+                },
+                sequence_num=0,
+            )
+        except Exception as e:  # the local record is already safe; do not lose it to this
+            logger.error(
+                "local_alert_uplink_queue_failed",
+                asset_id=asset_id,
+                rule_id=alert.get("rule_id"),
+                error=str(e),
+                note="the alarm is recorded locally and readable at /alerts",
+            )
+            return
+
+        if alert_id is not None and self.alert_sink is not None:
+            self.alert_sink.mark_uplink_queued(alert_id)
+
     async def _forward_to_kafka(self, message: Dict):
         """Forward a message to Kafka.
 
