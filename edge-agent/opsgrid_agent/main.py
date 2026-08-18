@@ -53,11 +53,61 @@ structlog.configure(
 logger = structlog.get_logger()
 
 
+#: Backfill pacing (FS-757). The old loop was `batch_size=100` then `sleep(5)`,
+#: unconditionally — a hard ceiling of **20 messages per second** whether one row was
+#: pending or four hundred thousand. That is not a throttle, it is the recovery rate, and it
+#: is below the rate at which this agent's own collectors produce: at 50 msg/s ingest the
+#: backlog grows forever with a perfectly healthy link.
+#:
+#: Measured against the 24-hour retention window, the ceiling is a data-loss mechanism
+#: rather than a slowness: a 72-hour outage at 10 msg/s buffers 2.59M rows, which take 36
+#: hours to drain, while retention deletes anything older than 24. The drain loses the race
+#: to the cleaner, and the oldest readings — the ones the buffer exists to protect — go
+#: first.
+BACKFILL_IDLE_BATCH = 100
+BACKFILL_MAX_BATCH = 5_000
+BACKFILL_IDLE_SLEEP = 5.0
+#: Not zero. A backlog drain must not starve the collector tasks sharing this event loop —
+#: the readings still arriving are the ones with the best chance of being useful.
+BACKFILL_DRAIN_SLEEP = 0.05
+
 #: Consecutive backfill batches with zero successful sends before the uplink producer is
 #: treated as dead and rebuilt (FS-756). Three rather than one because a single failed batch
 #: is an ordinary transient — a leader election, a brief partition — and rebuilding on every
 #: one would churn the connection at exactly the moment the broker is under stress.
 UPLINK_DEAD_AFTER_BATCHES = 3
+
+
+#: Exception type names that mean "the link failed", not "this message is bad" (FS-757).
+#: Matched by name across the class hierarchy so aiokafka does not have to be importable
+#: here — this module is loaded in environments where it is not, and an import guard that
+#: silently classified everything as a message fault would be worse than no classifier.
+_TRANSPORT_ERROR_NAMES = frozenset({
+    "KafkaConnectionError", "ConnectionError", "ConnectionResetError",
+    "ConnectionRefusedError", "BrokerNotAvailableError", "NodeNotReadyError",
+    "RequestTimedOutError", "TimeoutError", "KafkaTimeoutError",
+    "NotLeaderForPartitionError", "LeaderNotAvailableError",
+    "CoordinatorNotAvailableError", "OSError", "SSLError",
+})
+
+
+def _is_transport_failure(exc: BaseException) -> bool:
+    """Did the LINK fail, or did the broker reject this particular message? (FS-757)
+
+    The distinction decides whether `retry_count` is incremented, and `retry_count` decides
+    whether a row is ever drained again — five failures and `get_pending_messages` stops
+    returning it. Counting a broker outage against individual messages means an outage
+    silently condemns the backlog it created, which is the exact opposite of a
+    store-and-forward buffer's purpose.
+
+    A message-level rejection — too large, unserialisable, a topic the broker refuses — IS
+    the message's fault, will fail identically forever, and should reach the dead-letter
+    table. That is what the counter is for, and it keeps working.
+    """
+    for klass in type(exc).__mro__:
+        if klass.__name__ in _TRANSPORT_ERROR_NAMES:
+            return True
+    return False
 
 
 def _uplink_reconnect_settings() -> Optional[dict]:
@@ -108,6 +158,13 @@ class EdgeAgent:
         #: any success; at `UPLINK_DEAD_AFTER_BATCHES` the producer is torn down so the
         #: supervisor can build a new one.
         self._uplink_failure_streak = 0
+        #: True while the backfill worker is clearing a backlog (FS-757). Read by the
+        #: cleanup worker, which suspends AGE-based expiry while it is set — retention
+        #: deleting rows a drain has not reached yet is the loss this item is about.
+        self._draining = False
+        #: The batch size the backfill loop is currently using. Grows while there is more
+        #: to send, falls back to idle when caught up.
+        self._backfill_batch = BACKFILL_IDLE_BATCH
         self.command_consumer = None
         # ONE CLOCK ESTIMATOR, CREATED HERE RATHER THAN IN THE CLOUD LINK (FS-752).
         # It used to be built inside `_start_cloud_link`, which runs after the command
@@ -511,8 +568,14 @@ class EdgeAgent:
             if connected:
                 backoff.reset()
                 breaker.record_success()
+                # FS-757. The counts were failures against a producer that no longer
+                # exists; carrying them over means the new link inherits the old one's
+                # verdict and the first drain skips rows that failed five times against a
+                # broker that has since come back.
+                cleared = await self.buffer.reset_retry_counts()
                 logger.info(
                     "uplink_reconnected",
+                    retry_counts_cleared=cleared,
                     note="buffered readings will drain on the next backfill cycle",
                 )
                 # EVERY BRANCH AWAITS BEFORE LOOPING. This one used to `continue` straight
@@ -566,8 +629,14 @@ class EdgeAgent:
         while self._running:
             try:
                 if self.kafka_producer:
-                    # Get pending messages
-                    messages = await self.buffer.get_pending_messages(batch_size=100)
+                    # ADAPTIVE (FS-757). A fixed batch of 100 followed by a fixed 5-second
+                    # sleep is a 20 msg/s ceiling regardless of how much is pending, which
+                    # is below this agent's own ingest rate at 50 msg/s — the backlog grows
+                    # forever on a healthy link — and loses the race to the 24-hour
+                    # retention cleaner on any outage longer than about a day.
+                    messages = await self.buffer.get_pending_messages(
+                        batch_size=self._backfill_batch
+                    )
                     
                     if messages:
                         logger.info(
@@ -577,7 +646,9 @@ class EdgeAgent:
                         
                         sent_ids = []
                         failed_ids = []
-                        
+                        message_fault_ids = []
+                        transport_failed = 0
+
                         for msg in messages:
                             try:
                                 topic = f"telemetry.{self.config['organization_id']}.{msg.asset_id}"
@@ -614,15 +685,33 @@ class EdgeAgent:
                                     error=str(e)
                                 )
                                 failed_ids.append(msg.id)
+                                if _is_transport_failure(e):
+                                    transport_failed += 1
+                                else:
+                                    message_fault_ids.append(msg.id)
                                 metrics.record_kafka_error()
                         
                         # Mark sent messages as complete
                         if sent_ids:
                             await self.buffer.mark_sent(sent_ids)
                         
-                        # Increment retry for failed
-                        if failed_ids:
-                            await self.buffer.increment_retry(failed_ids)
+                        # RETRY IS COUNTED AGAINST THE MESSAGE, NOT THE LINK (FS-757).
+                        # `get_pending_messages` filters `retry_count < 5`, so a row that
+                        # fails five times stops being drained at all. Counting a broker
+                        # outage against individual rows means an outage condemns the
+                        # backlog it created — five failures against a broker that is
+                        # reachable but rejecting is an ordinary degraded reconnect. A
+                        # message the broker refuses on its own merits still counts, still
+                        # dead-letters, and is why the counter continues to exist.
+                        if message_fault_ids:
+                            await self.buffer.increment_retry(message_fault_ids)
+                        if transport_failed:
+                            logger.warning(
+                                "backfill_transport_failures_not_counted",
+                                count=transport_failed,
+                                note="the link failed, not these messages; "
+                                     "retry_count is unchanged so they stay drainable",
+                            )
 
                         # A PRODUCER OBJECT IS NOT A WORKING UPLINK (FS-756). The
                         # supervisor rebuilds a producer that is None; nothing sets it to
@@ -647,10 +736,44 @@ class EdgeAgent:
                             self._uplink_failure_streak += 1
                             if self._uplink_failure_streak >= UPLINK_DEAD_AFTER_BATCHES:
                                 await self._recycle_uplink()
-                
-                # Wait before next batch
-                await asyncio.sleep(5)
-            
+
+                    # PACE FROM THE BACKLOG, NOT FROM A CONSTANT (FS-757).
+                    #
+                    # A full batch means `get_pending_messages` had at least as many rows
+                    # as we asked for, so there is more waiting: grow the batch and take
+                    # the short sleep. A short batch means we have caught up: fall back to
+                    # the idle size and cadence so a quiet agent is not spinning.
+                    #
+                    # The short sleep is 0.05s rather than 0, deliberately. A drain that
+                    # never yields starves the collector tasks on this event loop, and the
+                    # readings still arriving are the ones most likely to matter.
+                    caught_up = len(messages) < self._backfill_batch
+                    if caught_up:
+                        self._backfill_batch = BACKFILL_IDLE_BATCH
+                        if self._draining:
+                            self._draining = False
+                            logger.info(
+                                "backfill_drained",
+                                note="retention resumes; the backlog is cleared",
+                            )
+                        await asyncio.sleep(BACKFILL_IDLE_SLEEP)
+                    else:
+                        if not self._draining:
+                            self._draining = True
+                            logger.warning(
+                                "backfill_draining",
+                                batch=self._backfill_batch,
+                                note="age-based retention is suspended until this clears",
+                            )
+                        self._backfill_batch = min(
+                            self._backfill_batch * 2, BACKFILL_MAX_BATCH
+                        )
+                        await asyncio.sleep(BACKFILL_DRAIN_SLEEP)
+                else:
+                    # No producer. The supervisor is working on it; do not spin.
+                    self._draining = False
+                    await asyncio.sleep(BACKFILL_IDLE_SLEEP)
+
             except Exception as e:
                 logger.error("backfill_worker_error", error=str(e))
                 await asyncio.sleep(10)
@@ -659,11 +782,30 @@ class EdgeAgent:
         """Background task for periodic cleanup"""
         while self._running:
             try:
-                # Clean old messages past the retention window.
-                deleted = await self.buffer.cleanup_old_messages()
-                metrics.record_expired(deleted)
-                if deleted > 0:
-                    logger.info("cleanup_completed", deleted_messages=deleted)
+                # AGE-BASED EXPIRY IS SUSPENDED DURING A DRAIN (FS-757).
+                #
+                # Retention deletes rows older than `retention_hours`. A backlog being
+                # drained is, by definition, made of the oldest rows in the buffer — so
+                # while a recovery is in progress the cleaner and the drain are racing for
+                # the same rows, and at the old 20 msg/s ceiling the cleaner won: a 72-hour
+                # outage at 10 msg/s needs 36 hours to drain against a 24-hour window.
+                #
+                # The bound is not removed, it is CHANGED. `enforce_size_limit` below still
+                # runs every cycle, and since FS-754 it sheds by priority — so a buffer that
+                # cannot drain still gives up debug and bulk telemetry to stay within its
+                # disk cap, and still keeps its alarms. Shedding the cheapest data is a
+                # better answer than shedding the oldest, which is all age can express.
+                if self._draining:
+                    logger.info(
+                        "retention_suspended_during_drain",
+                        note="the size cap still applies and sheds by priority",
+                    )
+                    deleted = 0
+                else:
+                    deleted = await self.buffer.cleanup_old_messages()
+                    metrics.record_expired(deleted)
+                    if deleted > 0:
+                        logger.info("cleanup_completed", deleted_messages=deleted)
 
                 # Dead-letter retry-exhausted messages so they stop accumulating.
                 dead = await self.buffer.move_exhausted_to_dead_letter(max_retry=5)

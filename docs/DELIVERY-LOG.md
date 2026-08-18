@@ -13515,3 +13515,93 @@ PLCs. It therefore could not see the agent's most important connection, the upli
 no reconnect loop at all and never triggered anything. When a guard enumerates a directory,
 a suffix or a naming convention, ask what else has the property being guarded and is simply
 kept somewhere else.
+
+---
+
+## FS-757 — the recovery rate was the data-loss mechanism
+
+DDIL item S5, and the deferred decision from FS-753. Measured first, from the two constants
+that were in `_backfill_worker`:
+
+    batch_size=100, then sleep(5), unconditionally  ->  20 messages/second, always
+
+| Scenario | Rows buffered | Time to drain at 20 msg/s | 24h retention |
+|---|---|---|---|
+| 72h outage @ 10 msg/s | 2,592,000 | 36.0 h | **deletes the oldest first** |
+| 24h outage @ 50 msg/s | 4,320,000 | 60.0 h | **deletes the oldest first** |
+| 72h outage @ 50 msg/s | 12,960,000 | 180.0 h | **deletes the oldest first** |
+
+And the line that reframes the item entirely:
+
+    steady 50 msg/s ingest:  drain 20 - ingest 50 = -30 msg/s  ->  NEVER CATCHES UP
+
+This is not "recovery is slow after an outage". **The agent could not keep up with its own
+collectors at 50 readings per second on a perfectly healthy link.** The buffer grows without
+bound, the hourly cleaner deletes the oldest end of it, and the system converts a throughput
+shortfall into permanent, silent data loss while reporting nothing wrong. The pacing was
+never a throttle; it was the recovery rate, written as though it were one.
+
+The second effect is the race. A backlog is by definition the oldest data in the buffer,
+which is exactly what age-based expiry deletes first — so during any recovery long enough to
+matter, the drain and the cleaner are competing for the same rows, and at 20 msg/s the
+cleaner wins.
+
+### Three changes
+
+**Pace from the backlog.** A full batch means there is more waiting: double it, up to 5,000,
+and take a short breath. A short batch means caught up: back to 100 and the 5-second cadence.
+The breath is 0.05s and not zero, deliberately — a drain that never yields starves the
+collector tasks sharing the event loop, and the readings still arriving are the ones most
+likely to matter.
+
+**Suspend age-based expiry while draining.** The bound is *changed*, not removed:
+`enforce_size_limit` still runs every cycle, and since FS-754 it sheds by priority. So a
+buffer that cannot drain still gives up debug and bulk telemetry to stay inside its disk cap,
+and still keeps its alarms. Shedding the cheapest data is a better answer than shedding the
+oldest, which is all that age can express. The suspension lifts the moment the backlog
+clears, and a scenario asserts that — a suspension that never lifts is an unbounded buffer
+wearing a feature's name.
+
+**Stop counting link failures against individual messages.** `get_pending_messages` filters
+`retry_count < 5`, so five failures hide a row from every future drain. Counting a broker
+outage against individual rows means an outage condemns the backlog it created — and five
+failures against a broker that is reachable but rejecting is an utterly ordinary degraded
+reconnect. That is FS-753's stranded-backlog finding, and this is its decision:
+
+- **Transport failure** (connection, timeout, broker unavailable, TLS) — the LINK failed, not
+  the message. `retry_count` is untouched and the row stays drainable.
+- **Message-level rejection** (too large, unserialisable, refused topic) — this message will
+  fail identically forever, still counts, still dead-letters. The counter keeps the job it
+  was actually for.
+- **On reconnect**, the counts are cleared. They were failures against a producer that no
+  longer exists; carrying them over means a new link inherits the dead one's verdict and its
+  very first drain skips rows condemned by a broker that has since come back.
+
+The classifier matches exception type names across the MRO rather than importing
+`aiokafka.errors`, because this module loads in environments where aiokafka is absent — and
+an import guard that silently classified everything as a message fault would be worse than
+having no classifier at all.
+
+### Fourteen mutations, fourteen caught — and one caught for the wrong reason
+
+Every mutation failed a named scenario. One of them, removing `self._draining = True`, failed
+through an `AttributeError` raised inside an unrelated test harness that had not defined the
+attribute. That is a coincidence, not a guard: the flag the cleanup worker keys retention off
+had nothing asserting it was ever set. A scenario now asserts it directly, and the harness
+was given the attribute so it mirrors the object it stands in for — a stand-in that drifts
+from the real thing turns the next real change into a failure that looks like a regression.
+
+Two of the scenarios were wrong before the code was. One asserted that no wait in the whole
+run reached the idle sleep, which fails the moment the buffer empties inside the run — the
+assertion was about the wrong phase. The other checked that `enforce_size_limit` appeared
+after the `_draining` check by comparing string offsets, and failed because the phrase also
+appears in the comment explaining the design. **A test that greps for a word cannot tell code
+from prose**; it is a behavioural test now.
+
+RULE 262 — a rate limit on a recovery path is a data-retention policy, so compare it against
+the retention window before calling it a throttle. The backfill loop's fixed 100-per-5-seconds
+read like polite pacing and was in fact a hard 20 msg/s ceiling that lost a race to a 24-hour
+cleaner on any outage past a day, and sat below the agent's own ingest rate at 50 msg/s so the
+backlog could never shrink at all. Whenever a queue has both a drain rate and an expiry, do the
+division: if `backlog / drain_rate` can exceed the expiry window, the limit is not throttling
+throughput, it is choosing which data to destroy.

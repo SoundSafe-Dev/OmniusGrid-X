@@ -1890,6 +1890,16 @@ one of its findings. The habit that catches it:
      drained nothing after the link returned. When a guard enumerates a directory, a suffix
      or a naming convention, ask what else has the property being guarded and is simply
      filed somewhere else.
+
+262. **A rate limit on a recovery path is a data-retention policy.** The edge backfill loop
+     sent 100 messages then slept 5 seconds, unconditionally — a hard 20 msg/s ceiling that
+     read like polite pacing. Measured against a 24-hour retention window it was a
+     destruction schedule: a 72-hour outage at 10 msg/s buffers 2.59M rows needing 36 hours
+     to drain, so the cleaner deleted the oldest end while the drain crawled. At 50 msg/s
+     ingest the ceiling sat *below* the agent's own production rate, so the backlog grew
+     forever on a healthy link. Whenever a queue has both a drain rate and an expiry, do the
+     division: if `backlog / drain_rate` can exceed the expiry window, the limit is not
+     throttling throughput, it is choosing which data to destroy.
 ---
 
 ## Open observations, not yet tickets

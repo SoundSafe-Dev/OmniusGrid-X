@@ -46,9 +46,19 @@ class _Agent:
         self.kafka_producer = None
         self.config = config or {}
         self.attempts = 0
+        #: FS-757 gave the supervisor a buffer call — clearing the retry counts a dead link
+        #: left behind — so the stand-in grows a buffer. Recorded rather than silently
+        #: patched: a stand-in that drifts from the object it stands in for turns a real
+        #: change into a test failure that looks like a regression.
+        self.retry_resets = 0
+        self.buffer = self
         self._connects_after = connects_after
         # The method under test, bound to this stand-in.
         self._uplink_supervisor = EdgeAgent._uplink_supervisor.__get__(self)
+
+    async def reset_retry_counts(self) -> int:
+        self.retry_resets += 1
+        return 0
 
     async def _init_kafka_producer(self) -> bool:
         self.attempts += 1
@@ -82,6 +92,10 @@ class TestABrokerThatIsDownAtBoot:
         assert agent.kafka_producer is not None, (
             "the supervisor gave up. Before FS-756 the single boot attempt was the only "
             "one there was, and a buffer that never drains is the result."
+        )
+        assert agent.retry_resets == 1, (
+            "the reconnect did not clear the retry counts (FS-757). The rows that failed "
+            "against the dead producer stay hidden from the first drain the new one does."
         )
 
     def test_the_retries_back_off_instead_of_hammering(self):
@@ -301,6 +315,11 @@ class _BackfillHarness:
         self.kafka_producer = self
         self.config = {'organization_id': 'org-1'}
         self._uplink_failure_streak = 0
+        #: Mirrors the real agent (FS-757). Without it the harness raises AttributeError
+        #: inside `_backfill_worker`'s catch-all, which made an S5 mutation "fail" here for
+        #: a reason that had nothing to do with what it was testing.
+        self._draining = False
+        self._backfill_batch = 100
         self.recycled = 0
         self._batch = 0
         self._fail_batches = fail_batches

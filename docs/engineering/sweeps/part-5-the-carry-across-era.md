@@ -4772,3 +4772,118 @@ the mutant proved a bug, but because it showed how thin the arrangement was.
 That is a use of mutation testing worth naming separately from finding coverage holes: a
 mutant that produces a *pathology* rather than a wrong answer is telling you about the
 structure of the code, not about the tests.
+
+---
+
+## Rule 262 — a rate limit on a recovery path is a data-retention policy
+
+The edge backfill loop:
+
+    messages = await self.buffer.get_pending_messages(batch_size=100)
+    ...
+    await asyncio.sleep(5)
+
+That reads like considerate pacing. Somebody did not want the recovery path to monopolise a
+gateway's CPU or flood a broker that had just come back, which is a reasonable thing to want.
+
+It is 20 messages per second. Always. Whether one row is pending or four hundred thousand.
+
+I did the arithmetic before writing any code, because the item was described as "adaptive
+backfill" and I wanted to know what the current behaviour actually cost:
+
+| | rows buffered | drain time at 20/s | retention |
+|---|---|---|---|
+| 72h outage @ 10 msg/s | 2,592,000 | 36 hours | 24 hours |
+| 24h outage @ 50 msg/s | 4,320,000 | 60 hours | 24 hours |
+| 72h outage @ 50 msg/s | 12,960,000 | 180 hours | 24 hours |
+
+A backlog is, by definition, the oldest data in the buffer. Age-based expiry deletes the
+oldest data first. So for the whole of that 36 hours the drain and the cleaner are pulling on
+the same rows from opposite ends, and the cleaner is not rate limited.
+
+Then the line that changed what the item was about:
+
+    steady 50 msg/s ingest:  drain 20 - ingest 50 = -30 msg/s
+
+The agent could not keep up with **its own collectors** at 50 readings a second, with a
+perfectly healthy link and no outage at all. The buffer grows forever, the hourly cleaner
+eats the oldest end, and nothing anywhere reports a problem: every reading is collected, every
+reading is buffered, the counters all move, and data is being destroyed continuously at a rate
+set by a `sleep(5)`.
+
+**That is the shape worth naming.** A rate limit on an ingress path throttles throughput and
+the caller waits. A rate limit on a *recovery* path, in front of a store with an expiry, does
+not throttle anything — the data is already collected and it is already ageing. It decides how
+much of it survives. The arithmetic is one division, `backlog / drain_rate` against the
+expiry window, and it converts "this seems a bit slow" into "this is a destruction schedule".
+
+Nobody wrote a destruction schedule. Somebody wrote a `sleep(5)` and somebody else, probably
+much later, wrote a 24-hour retention default, and neither number is wrong on its own. The
+defect lives in the relationship between them, which is not visible from either file.
+
+### What suspending retention is, and is not
+
+The obvious fix — stop deleting rows while a drain is in progress — has an obvious objection:
+now nothing bounds the buffer, and a permanently degraded link fills the disk.
+
+Except something does, and it got better two items ago. `enforce_size_limit` still runs every
+cycle, and since the priority work it sheds tier-5 diagnostics before tier-4 telemetry before
+anything else. So the bound is not removed; it is **changed from age to value**. A buffer that
+cannot drain gives up debug lines and vibration samples and keeps its alarms, which is a
+better answer to "something has to go" than "whatever arrived first", which is the only thing
+age can express.
+
+Worth being precise that this is a trade and not a free win: a buffer stuck draining for a
+week will hold week-old readings that retention would have removed. That is the intended
+behaviour — they are readings nobody has received yet — but it is a change in what
+`retention_hours` means, and a scenario asserts the suspension lifts the moment the backlog
+clears. A suspension that never lifts is an unbounded buffer wearing a feature's name.
+
+### The retry counter, and the difference between two failures
+
+The deferred question from the harness item was what to do about rows stranded at
+`retry_count >= 5`, which `get_pending_messages` stops returning entirely.
+
+The answer turned out to be that the counter was measuring the wrong thing. It counted
+failures **per message**, and the overwhelming majority of failures are not the message's
+fault — the broker is down, the connection reset, the request timed out. Five of those and the
+row is invisible forever, so *an outage condemns the backlog the outage created*. The buffer's
+entire purpose, inverted by a counter.
+
+But the counter is not useless. A message that is too large, or unserialisable, or destined
+for a topic the broker refuses, will fail identically on every attempt for the rest of time,
+and that row genuinely should stop being retried and reach the dead-letter table. Same
+counter, two completely different populations, and no way to tell them apart because nothing
+looked at the exception.
+
+So: classify. Transport failure leaves `retry_count` alone; message-level rejection
+increments it. And a reconnect clears the counts outright, because they were accumulated
+against a producer that no longer exists — a new link inheriting the dead one's verdict is
+its own small absurdity.
+
+The classifier matches exception type names across the MRO rather than importing
+`aiokafka.errors`. This module loads in environments where aiokafka is not installed, and the
+alternative — a `try: import ... except ImportError: pass` that then classifies everything as
+a message fault — would have failed silently in exactly the direction that destroys data.
+
+### Fourteen mutations, and the one that was caught by accident
+
+All fourteen failed something. One of them was luck.
+
+Removing `self._draining = True` broke the suite via an `AttributeError` raised inside an
+unrelated test harness that had never defined the attribute. The suite went red, the mutation
+looked caught, and **nothing anywhere asserted that the flag the cleanup worker keys retention
+off is ever actually set.**
+
+That is a failure mode of mutation testing worth writing down, because the method's whole
+value is that a red suite means something noticed. A red suite caused by a stand-in object
+diverging from the real one means nothing noticed; it means the scaffolding broke. The
+distinction is invisible unless you read *which* test failed and ask whether that test is
+about the thing you changed.
+
+Two more of my own scenarios were wrong before the code was. One asserted no wait in the run
+reached the idle sleep — which fails as soon as the buffer empties mid-run, because the
+assertion was about the wrong phase of the run rather than about a defect. The other checked
+that `enforce_size_limit` appeared *after* the `_draining` check by comparing string offsets
+in the source, and failed because the phrase also appears in the comment explaining the
+design. A test that greps for a word cannot tell code from prose. Both are behavioural now.

@@ -422,6 +422,41 @@ class StoreForwardBuffer:
                 logger.error("increment_retry_failed", error=str(e))
                 return False
     
+    async def reset_retry_counts(self) -> int:
+        """Clear every row's retry counter, and return how many were cleared (FS-757).
+
+        CALLED WHEN THE UPLINK IS REBUILT, not on a schedule. `retry_count` records failures
+        against a producer that no longer exists — a broker that was rejecting, a connection
+        that was half-open, a certificate that had expired. Carrying those counts across a
+        reconnect means the new link inherits the old one's verdict, and rows that failed
+        five times against the dead producer are excluded from the very first drain the new
+        one performs.
+
+        That was the mechanism behind FS-753's stranded-backlog finding: five failures
+        against a broker that is reachable but rejecting is an utterly ordinary degraded
+        reconnect, and it permanently hid rows from `get_pending_messages`. Resetting on a
+        genuine link-level event is the narrowest fix that removes it — the counter still
+        does its job WITHIN one link's lifetime, which is where a poison message shows up.
+        """
+        async with self._lock:
+            try:
+                with sqlite3.connect(self.buffer_path) as conn:
+                    cursor = conn.execute(
+                        "UPDATE messages SET retry_count = 0 WHERE retry_count > 0"
+                    )
+                    cleared = cursor.rowcount or 0
+                    conn.commit()
+                if cleared:
+                    logger.info(
+                        "retry_counts_reset",
+                        rows=cleared,
+                        note="a new uplink does not inherit the old one's failures",
+                    )
+                return cleared
+            except sqlite3.Error as e:
+                logger.error("retry_reset_failed", error=str(e))
+                return 0
+
     async def cleanup_old_messages(self) -> int:
         """Remove messages older than retention policy"""
         cutoff = datetime.now(timezone.utc) - timedelta(hours=self.retention_hours)
