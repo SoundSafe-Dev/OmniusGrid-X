@@ -4275,3 +4275,45 @@ you would not have thought to check.
 
 Inventory first. The measurement is what converts a workstream into a task list, and it is
 also what stops you reporting motion as progress.
+
+## Rule 253 — a negative control is not optional when the assertion is an absence
+
+The test that mattered read:
+
+```python
+self.assertNotIn(SECRET_READING.encode(), raw,
+                 "the reading is recoverable from the database file")
+```
+
+It passed on the first run, before the cipher was wired into the buffer at all.
+
+Sitting beside it was the control case — the same scenario with encryption off, asserting
+the reading **is** findable. That one failed. Which is how the first one got caught, because
+on its own it was indistinguishable from working.
+
+The cause: the buffer runs `PRAGMA journal_mode=WAL`, so a freshly written row lives in the
+`-wal` sidecar until a checkpoint. `buffer.db` genuinely did not contain the plaintext —
+encrypted or not. The assertion was true and measured nothing.
+
+**Absence assertions have an unusually large space of accidental passes.** "The secret is not
+in this file" also passes when:
+
+- you read the wrong file (this case),
+- the needle has a typo, or the data is stored with different casing or encoding,
+- the file is empty because setup silently failed,
+- the write is buffered and has not landed yet,
+- the search runs before the code that writes.
+
+Every one of those looks exactly like a working control, and none of them involves the
+protection you are testing. Compare that to a presence assertion — "the value IS here" —
+which fails loudly for almost all of the same reasons. The asymmetry is the point: negative
+assertions fail *open*.
+
+So pair them. The positive control is not extra coverage of the happy path; it is the only
+thing that establishes your search would have found the secret had it been there. Here it was
+also the correct threat model — a thief takes the directory, not one file — so fixing the
+test fixed the claim as well.
+
+Then mutation-test the pair. Making `encrypt()` return its input failed four tests including
+the headline, which is what says the assertion now depends on the encryption rather than on
+where SQLite happened to put the bytes.

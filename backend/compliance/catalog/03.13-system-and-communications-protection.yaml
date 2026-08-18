@@ -129,16 +129,36 @@ controls:
       - SOC2:CC6.7
       - GDPR:Art32.1a
     status:
-      commercial-cloud: absent
-      gov-cloud: absent
-      on-prem: absent
-      air-gapped: absent
-    implemented_by: []
+      commercial-cloud: partial
+      gov-cloud: partial
+      on-prem: partial
+      air-gapped: partial
+    implemented_by:
+      - edge-agent/opsgrid_agent/buffer/encryption.py
+      - edge-agent/opsgrid_agent/buffer/store_forward.py
+      - app/services/erp_security.py
+    proved_by:
+      - tests/test_no_unapproved_primitive_is_reachable.py
+    evidence:
+      - junit/backend.xml
+      - junit/edge-agent.xml
     owner: platform-infra
     remediation:
       due: "2027-02-28"
       note: >-
-        Nothing encrypts data at rest. The database storage class carries no encryption
+        RAISED absent -> partial (FS-749). The sharpest instance is closed: the edge
+        store-and-forward buffer now encrypts payloads with AES-256-GCM under an
+        HKDF-derived device key, so a gateway that is stolen, captured or returned as an RMA
+        unit does not surrender up to 24 hours of readings to `strings buffer.db`.
+        `BUFFER_ENCRYPTION_REQUIRED=true` refuses to start without a key rather than
+        buffering CUI in the clear. Application-layer rather than SQLCipher on purpose —
+        `cryptography` is already an agent dependency and cannot fail to build on an ARM
+        gateway in the field, where a native extension can.
+        The stated limits, which are asserted in tests rather than left implied: it defends
+        the DISK, not a running process (an attacker with code execution reads the key file
+        as the agent does), and metadata columns stay in the clear because the buffer orders
+        and prunes by them.
+        Still PARTIAL for the cloud side: nothing encrypts data at rest. The database storage class carries no encryption
         annotation and no KMS reference; there is no TDE and no column encryption outside the
         audit hash. Field-level encryption exists as a class (`ERPSecurityManager`) with
         **zero call sites**, so it protects nothing today. The finding that matters most is

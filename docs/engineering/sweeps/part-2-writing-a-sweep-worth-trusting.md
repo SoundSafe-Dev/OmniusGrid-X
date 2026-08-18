@@ -1811,6 +1811,15 @@ one of its findings. The habit that catches it:
      P-256 PKI and SHA-256 token digests were already approved. One item on the intuitive
      fix list, HS256, required no change at all: HMAC-SHA-256 is approved, so changing it
      would have been churn presented as remediation. Inventory first, then plan.
+
+253. **A negative control is not optional when the assertion is an ABSENCE.** "The secret is
+     not in this file" passes if you read the wrong file, mistype the needle, the file is
+     empty, or the data has not been flushed yet — all of which look like success. Testing
+     that a stolen edge buffer does not contain its telemetry passed on the first run,
+     before encryption was wired in: SQLite was in WAL mode, so the row was in the `-wal`
+     sidecar and the main file genuinely held nothing. The paired positive — "without the
+     protection, it IS there" — failed, and was the only thing standing between a shipped
+     encryption feature and a shipped placebo. Always assert the presence too.
 ---
 
 ## Open observations, not yet tickets

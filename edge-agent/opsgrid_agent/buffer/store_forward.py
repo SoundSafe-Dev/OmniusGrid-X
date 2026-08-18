@@ -5,6 +5,8 @@ import json
 import sqlite3
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+
+from .encryption import BufferCipher
 from typing import List, Dict, Any, Optional
 from dataclasses import dataclass, asdict
 import structlog
@@ -40,12 +42,19 @@ class StoreForwardBuffer:
         self,
         buffer_path: str = "/var/lib/opsgrid-agent/buffer.db",
         retention_hours: int = 24,
-        max_size_mb: int = 1000
+        max_size_mb: int = 1000,
+        cipher: Optional["BufferCipher"] = None,
     ):
         self.buffer_path = Path(buffer_path)
         self.retention_hours = retention_hours
         self.max_size_mb = max_size_mb
         self._lock = asyncio.Lock()
+        # PAYLOADS ARE ENCRYPTED AT REST WHEN A KEY IS CONFIGURED (FS-749). Constructed
+        # here rather than passed in by every caller so a buffer cannot be created without
+        # one; with no key it is a pass-through, and with BUFFER_ENCRYPTION_REQUIRED=true
+        # its constructor raises instead of quietly writing cleartext to a disk that may
+        # walk out of the building.
+        self.cipher = cipher if cipher is not None else BufferCipher()
         
         # Ensure directory exists
         self.buffer_path.parent.mkdir(parents=True, exist_ok=True)
@@ -200,7 +209,7 @@ class StoreForwardBuffer:
                 VALUES (?, ?, ?, ?, ?)
                 """,
                 (timestamp_edge.isoformat(), asset_id, topic,
-                 json.dumps(payload), sequence_num),
+                 self.cipher.encrypt(json.dumps(payload)), sequence_num),
             )
             conn.commit()
 
@@ -311,7 +320,7 @@ class StoreForwardBuffer:
                         timestamp_edge=row['timestamp_edge'],
                         asset_id=row['asset_id'],
                         topic=row['topic'],
-                        payload=row['payload'],
+                        payload=self.cipher.decrypt(row['payload']),
                         sequence_num=row['sequence_num'],
                         retry_count=row['retry_count'],
                         created_at=row['created_at']

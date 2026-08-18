@@ -12852,3 +12852,61 @@ rewrite. Measured, it was three primitives, two of which are dead code, in a cod
 signing, PKI and token digests were already approved — and one of the things I would have
 "fixed" (HS256) needed no change at all, so doing it would have been churn presented as
 remediation. The measurement is what turns a workstream into a task list.
+
+## FS-749 — the buffer a stolen gateway carries out of the building
+
+`OG-SC-004` (CUI at rest, 800-171 3.13.16 / 3.8.1) moves `absent` → `partial`. The sharpest
+instance is closed, and it was never the database.
+
+**The scenario, because "encryption at rest" means nothing without one.** An edge gateway
+holds up to 24 hours of readings in a local SQLite buffer — by design, and during a genuine
+DDIL outage that backlog is the entire operational picture of the site. The device sits on a
+plant floor, in a vehicle, or at a remote site. It can be stolen, decommissioned without
+sanitisation, returned as an RMA unit, or captured. It was plaintext: `strings buffer.db`
+returned the telemetry.
+
+That is what makes media protection concrete here rather than theoretical. A cloud database
+with no encryption at rest is a real finding; a gateway you can put in a bag is a different
+kind of one.
+
+**AES-256-GCM over the payload column**, keyed by HKDF-SHA256 from device key material, with
+a versioned `encv1:` envelope. `BUFFER_ENCRYPTION_REQUIRED=true` refuses to start without a
+key rather than quietly buffering CUI in the clear — the agent's existing `EDGE_REQUIRE_*`
+fail-closed idiom, and the right default for a control whose failure is silent by nature.
+
+**Application-layer rather than SQLCipher, deliberately.** SQLCipher encrypts the whole file,
+which is strictly better coverage, and needs a compiled native extension on every platform
+the agent ships to — including ARM gateways with no toolchain. `cryptography` is already a
+dependency (the mTLS enrollment chain uses it), so this adds nothing to the install and
+cannot fail to build on a device in the field. The trade is visible and asserted: metadata
+columns stay in the clear because the buffer ORDERS and PRUNES by them, and encrypting those
+would mean decrypting every row to sort it.
+
+**Mixed content is the normal state, not an edge case.** Every deployed device already has a
+buffer of plaintext rows and they must keep draining across the upgrade, so `decrypt` passes
+through anything that is not a recognised envelope. Refusing them would turn a security
+improvement into data loss for data already written. An encrypted row with no key raises
+loudly instead — the operator must learn the backlog is *unreadable*, not that it is empty.
+
+### The control case caught the headline test passing for the wrong reason
+
+The primary assertion is "the stolen database does not contain the reading". It passed
+immediately. It should not have — the encryption was not wired in yet on the first run.
+
+`test_without_encryption_it_plainly_is_readable` — the control, asserting the UNencrypted
+reading IS findable — failed, and that is what exposed it. The buffer runs
+`PRAGMA journal_mode=WAL`, so a freshly written row lives in the `-wal` sidecar until a
+checkpoint. Reading only `buffer.db` found no plaintext **whether or not anything was
+encrypted**.
+
+A thief takes the directory, not one file. The helper now concatenates `.db`, `-wal` and
+`-shm`, which is both the correct threat model and the thing that makes the assertion mean
+something. Mutation-verified afterwards: making `encrypt()` return its input fails four
+tests including the headline.
+
+RULE 253 — a negative control is not optional when the assertion is an ABSENCE. "The secret
+is not in this file" is satisfied by looking in the wrong file, by a typo in the needle, by
+an empty file, and by the data not having been written yet — every one of which reads as
+success. The paired positive ("without the protection, it IS there") is the only thing that
+distinguishes a working control from a broken search, and here it was the difference between
+a shipped encryption feature and a shipped placebo.
