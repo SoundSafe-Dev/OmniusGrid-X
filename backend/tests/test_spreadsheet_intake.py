@@ -8,12 +8,15 @@ or standalone:
 """
 
 import sys
+import io
+from datetime import datetime
 from pathlib import Path
 
 # Ensure backend root is importable
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import pandas as pd
+import pytest
 
 from app.models.domain_interaction import DomainType, CorrelationScenario
 from app.services.spreadsheet_domain_mapper import (
@@ -21,6 +24,11 @@ from app.services.spreadsheet_domain_mapper import (
     map_workbook_domains,
 )
 from app.services.spreadsheet_scenario_builder import build_scenarios
+
+
+MESSY_FACTORY_UPLOAD = (
+    Path(__file__).resolve().parents[2] / "tests/load/fixtures/messy_factory_upload.csv"
+)
 
 
 def _sample_tabs():
@@ -94,6 +102,55 @@ def test_window_mode_cross_tab_links():
     assert max(sev_by_window.values()) >= 0.7  # critical mapped high
 
 
+def test_window_mode_normalizes_messy_headers_for_shared_serial_number():
+    """Real uploaded headers still produce a cross-tab link on the serial number."""
+    tabs = {
+        "Production": pd.DataFrame([{
+            "Inspection Date": "2015-01-01", "Shift": "Day", "Serial #": "SN-42",
+            "Planned Units": 100, "Actual Units": 95,
+        }]),
+        "Maintenance": pd.DataFrame([{
+            "Inspection Date": "2015-01-01", "Shift": "Day", "Serial #": "SN-42",
+            "Maintenance Status": "ok",
+        }]),
+    }
+
+    scenarios = list(build_scenarios(tabs, mode="window", source_id="messy"))
+
+    assert len(scenarios) == 1
+    assert len(scenarios[0].active_domains) == 2
+    assert [link.interaction_key for link in scenarios[0].domain_links] == ["SN-42"]
+
+
+def test_messy_factory_upload_fixture_parses_expected_headers_and_rows():
+    """Keep the representative factory-upload fixture connected to intake coverage."""
+    upload = pd.read_csv(MESSY_FACTORY_UPLOAD, keep_default_na=False)
+
+    assert list(upload.columns) == [
+        "Serial #", "Machine Name", "Inspection Date", "Quantity",
+        "Plant Location", "Operator Notes",
+    ]
+    assert len(upload) == 10
+    assert upload.loc[1, "Serial #"] == "sn1002"
+    assert upload.loc[1, "Inspection Date"] == "07/02/2026"
+    assert upload.loc[2, "Quantity"] == ""
+    assert upload.loc[6, "Quantity"] == "N/A"
+    assert upload.loc[9, "Operator Notes"] == "Operator forgot signature"
+
+
+def test_window_mode_rejects_duplicate_normalized_headers():
+    """Never silently choose between source headers that normalize to one key."""
+    tabs = {
+        "Production": pd.DataFrame([{
+            "Inspection Date": "2015-01-01", "Serial #": "SN-42",
+            "Serial Number": "SN-43", "Planned Units": 100,
+        }]),
+    }
+
+    with pytest.raises(ValueError, match="Ambiguous normalized header 'serial_number'"):
+        list(build_scenarios(tabs, mode="window", source_id="collision"))
+
+
 def test_tab_mode_single_scenario():
     tabs = _sample_tabs()
     scenarios = list(build_scenarios(tabs, mode="tab", source_id="t"))
@@ -122,6 +179,47 @@ def test_xlsx_roundtrip_multisheet():
     assert len(sheets) == 3
     scenarios = list(build_scenarios(sheets, mode="window", source_id="t"))
     assert len(scenarios) == 2
+
+
+def test_xlsx_messy_header_corpus_preserves_intake_structure():
+    """Exercise title rows, merged cells, units, Unicode, and native Excel dates."""
+    buf = io.BytesIO()
+    rows = {
+        "Production": pd.DataFrame([{
+            "Inspection Date (UTC)": datetime(2026, 7, 1),
+            "Serial #": "SN-2001",
+            "Quantity (units)": 15,
+            "Mächine Name": "Mixer 101",
+        }]),
+        "Maintenance": pd.DataFrame([{
+            "Inspection Date (UTC)": datetime(2026, 7, 1),
+            "Serial #": "SN-2001",
+            "Downtime (min)": 30,
+            "Mächine Name": "Mixer 101",
+        }]),
+    }
+    with pd.ExcelWriter(buf, engine="openpyxl") as writer:
+        for sheet_name, frame in rows.items():
+            frame.to_excel(writer, sheet_name=sheet_name, index=False, startrow=1)
+            sheet = writer.book[sheet_name]
+            sheet.merge_cells("A1:D1")
+            sheet["A1"] = "Factory operations export — July 2026"
+
+    buf.seek(0)
+    sheets = pd.read_excel(buf, sheet_name=None, header=1)
+
+    expected_headers = [
+        "Inspection Date (UTC)", "Serial #", "Quantity (units)", "Mächine Name",
+    ]
+    assert list(sheets["Production"].columns) == expected_headers
+    assert list(sheets["Maintenance"].columns) == [
+        "Inspection Date (UTC)", "Serial #", "Downtime (min)", "Mächine Name",
+    ]
+    assert isinstance(sheets["Production"].loc[0, "Inspection Date (UTC)"], pd.Timestamp)
+
+    scenarios = list(build_scenarios(sheets, mode="window", source_id="corpus"))
+    assert len(scenarios) == 1
+    assert [link.interaction_key for link in scenarios[0].domain_links] == ["SN-2001"]
 
 
 if __name__ == "__main__":
