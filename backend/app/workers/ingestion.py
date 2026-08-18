@@ -66,6 +66,27 @@ def _health_port():
     return int(raw) if raw else None
 
 
+#: What an agent may assert about its own clock (FS-760). Anything else — including a
+#: value invented by a future agent this backend does not know about — is recorded as
+#: `unknown` rather than stored verbatim, because an unrecognised label in a column an
+#: assessor filters on is worse than an honest absence.
+TIME_QUALITIES = frozenset({"synced", "holdover", "unsynced", "unknown"})
+
+
+def _time_quality_of(data: dict) -> str:
+    """Read the agent's own verdict on its clock, defaulting to `unknown`.
+
+    `unknown` and not `unsynced` for a message that omits the field. Every agent predating
+    FS-760 omits it, which is the entire fleet on the day this ships, and calling their rows
+    `unsynced` would assert something about clocks nobody measured. `unknown` says only what
+    is true: the row predates the field.
+    """
+    claimed = data.get("time_quality")
+    if isinstance(claimed, str) and claimed in TIME_QUALITIES:
+        return claimed
+    return "unknown"
+
+
 def _deserialize_uplink(raw: bytes):
     """Decode one uplink message, framed or not (FS-759).
 
@@ -330,7 +351,8 @@ class IngestionWorker:
                         unit=self._infer_unit(metric_name),
                         packml_state=packml_state,
                         meta_data=payload,
-                        sequence_num=data.get('sequence_num', 0)
+                        sequence_num=data.get('sequence_num', 0),
+                        time_quality=_time_quality_of(data),
                     )
                     session.add(telemetry)
                     # Only genuinely numeric readings are worth thresholding; a

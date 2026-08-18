@@ -52,6 +52,8 @@ from opsgrid_agent.main import (
     BACKFILL_MAX_BATCH,
     _is_transport_failure,
 )
+from opsgrid_agent.main import EdgeAgent
+from opsgrid_agent.timesync import ClockSkewEstimator
 
 pytestmark = pytest.mark.ddil
 
@@ -73,6 +75,10 @@ class _Drainer:
         self._uplink_failure_streak = 0
         self._draining = False
         self._backfill_batch = BACKFILL_IDLE_BATCH
+        #: See FS-760. The real loop stamps clock quality onto every message, so the
+        #: harness carries the real estimator and the real method.
+        self._skew = ClockSkewEstimator()
+        self._time_fields = EdgeAgent._time_fields.__get__(self)
         self.sent = 0
         self.batches = []
         self.waits = []

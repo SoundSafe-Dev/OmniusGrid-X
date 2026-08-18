@@ -420,7 +420,7 @@ Status is stated **per deployment profile**. OmniusGrid ships to commercial clou
 
 ### OG-AU-006 — Audit records carry a synchronised, unambiguous timestamp
 
-**Status.** commercial-cloud: Partially implemented; gov-cloud: Partially implemented; on-prem: Partially implemented; air-gapped: Not implemented
+**Status.** Partially implemented
 
 **Practices.** 03.03.07
 
@@ -428,18 +428,21 @@ Status is stated **per deployment profile**. OmniusGrid ships to commercial clou
 
 **Owner.** platform-security
 
-**Assessment.** Backend records are aware-UTC and a repo-wide guard forbids naive `utcnow`. There is no configured authoritative time source, and on the edge the skew estimator calibrates only while the cloud is reachable — so `air-gapped` is `absent` rather than `partial`: the one deployment where clock discipline matters most is the one with no correction at all (see the DDIL workstream, S8).
+**Assessment.** Backend records are aware-UTC and a repo-wide guard forbids naive `utcnow`. Still PARTIAL everywhere: there is no configured authoritative time source, and the edge skew estimator can only sample while the cloud is reachable. `air-gapped` moved from `absent` to `partial` on 2026-08-18 (FS-760, DDIL S8) and the reason is narrow enough to state exactly. An air-gapped device still cannot synchronise and still has no correction available. What changed is that the correction the estimator DID compute was never applied to a reading — `ClockSkewEstimator.correct()` had no callers — and every row now carries `time_quality` (synced | holdover | unsynced | unknown) saying what its timestamp is worth. The data no longer claims a precision it does not have, and an assessor can query for the readings that cannot be trusted for ordering. That is honest labelling, not synchronisation, which is why nothing moved to `implemented`.
 
 **Planned completion.** 2027-01-31
 
 **Implemented by.**
 
 - `app/db/models.py`
+- `app/workers/ingestion.py`
+- `database/migrations/071_telemetry_carries_its_time_quality.sql`
 - `edge-agent/opsgrid_agent/timesync.py`
 
 **Evidence — automated tests, run on every build.**
 
 - `tests/test_no_naive_utcnow.py`
+- `tests/test_telemetry_records_what_its_clock_was_worth.py`
 
 
 ### OG-AU-007 — Audit review, analysis and reporting

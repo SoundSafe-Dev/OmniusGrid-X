@@ -4,7 +4,7 @@ import asyncio
 import json
 import os
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Dict, Any, List, Optional
 import structlog
@@ -517,6 +517,50 @@ class EdgeAgent:
             self.kafka_producer = None
             return False
     
+    def _time_fields(self, timestamp_edge: str) -> Dict[str, Any]:
+        """Correct an edge timestamp and say what the correction is worth (FS-760).
+
+        `ClockSkewEstimator.correct()` had NO CALLERS. The offset was sampled, smoothed and
+        used to judge request freshness and command staleness, and never applied to a single
+        reading — so every telemetry point this system holds carries the raw clock of a
+        device that may have no NTP at all. The module docstring claimed otherwise, which is
+        how it survived: a reader checking whether time was handled found a paragraph saying
+        it was.
+
+        BOTH TIMES ARE SENT, and the raw one is what the buffer keeps. The buffered row is
+        never rewritten, because the offset that was current when a reading was TAKEN is not
+        the offset that is current when it is finally sent — during a three-day outage the
+        estimator has no samples at all. Correcting at send uses the best estimate available
+        and preserves the ground truth beside it, so a backfilled point can be re-derived if
+        the estimate is later found to be wrong. Rewriting the row in place would destroy
+        the only unambiguous value in the record.
+
+        `time_quality` is what stops this being a lie of a different kind. A corrected
+        timestamp from an `unsynced` device is not more accurate than an uncorrected one —
+        the correction is zero — and a `holdover` correction is the last known offset with
+        an unknown amount of drift on top. Sending the label makes the difference queryable
+        instead of invisible.
+        """
+        quality = self._skew.quality() if self._skew else "unsynced"
+        offset = self._skew.offset_seconds if self._skew else 0.0
+
+        corrected = timestamp_edge
+        if offset and quality != "unsynced":
+            try:
+                raw = datetime.fromisoformat(str(timestamp_edge).replace("Z", "+00:00"))
+                corrected = (raw + timedelta(seconds=offset)).isoformat()
+            except (ValueError, TypeError):
+                # An unparseable stored timestamp is a separate defect; do not compound it
+                # by inventing a corrected value for something we could not read.
+                corrected = timestamp_edge
+
+        return {
+            'timestamp_edge': corrected,
+            'timestamp_edge_raw': timestamp_edge,
+            'clock_offset_seconds': round(offset, 3),
+            'time_quality': quality,
+        }
+
     def _serialize_uplink(self, value) -> bytes:
         """JSON, then framed and compressed if the backend said it can decode it (FS-759).
 
@@ -688,6 +732,7 @@ class EdgeAgent:
                                     'sequence_num': msg.sequence_num,
                                     'backfilled': True
                                 }
+                                value.update(self._time_fields(msg.timestamp_edge))
                                 # Preserve PackML state through backfill: the
                                 # backend ingestion reads packml_state at the top
                                 # level, and collectors persist it inside payload.

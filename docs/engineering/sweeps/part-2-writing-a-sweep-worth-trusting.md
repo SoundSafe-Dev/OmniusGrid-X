@@ -1918,6 +1918,16 @@ one of its findings. The habit that catches it:
      bias is structural rather than careless — one side is where the work began and its
      harness already exists. Count the assertions on each side before believing the
      coverage, and mutate the FAR side first.
+
+265. **A docstring that describes behaviour the code does not have terminates the search
+     that would have found the gap.** The edge clock-skew estimator's opening paragraph said
+     "timestamps are corrected by that offset before forward, and the raw edge time is
+     preserved alongside for audit". `correct()` had no callers anywhere in the agent and
+     neither clause was true — for four years, in the one file anybody auditing time
+     handling would open first. An absent comment leaves a reader suspicious; a confident
+     wrong one sends them away satisfied. When a docstring asserts that something is
+     applied, wired, enforced or preserved, grep for the second use of the thing it names,
+     and when you fix the code fix the sentence that hid it.
 ---
 
 ## Open observations, not yet tickets

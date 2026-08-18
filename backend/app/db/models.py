@@ -242,6 +242,22 @@ class Telemetry(Base):
     packml_state = Column(String(50))
     meta_data = Column("metadata", JSON, default={})
     sequence_num = Column(BigInteger)
+    #: What this row's timestamp is worth (FS-760): synced | holdover | unsynced | unknown.
+    #: The edge clock-skew estimator computed an offset for years and never applied it to a
+    #: reading, so every historical row carries an uncorrected device clock. Correcting it
+    #: without saying whether the correction was current would replace a known unknown with
+    #: an unknown unknown, which is why the label ships with the value.
+    #: BOTH DEFAULTS, and the Python one is not redundant (FS-760). With `server_default`
+    #: alone, SQLAlchemy has to learn the value the database chose, so it switches the bulk
+    #: insert to a RETURNING form and matches rows back by sentinel — which fails on this
+    #: table, because the primary key is `(time, asset_id, metric_name)` and a DateTime does
+    #: not round-trip through the DBAPI identically. The demo seeder died with "Can't match
+    #: sentinel values in result set to parameter sets". A Python-side default puts the
+    #: value in the INSERT, so nothing needs fetching back; the server default stays for
+    #: rows this ORM does not write and for the migration's backfill.
+    time_quality = Column(
+        String(16), nullable=False, default="unknown", server_default="unknown"
+    )
 
 
 class HistorianRetentionPolicy(Base):

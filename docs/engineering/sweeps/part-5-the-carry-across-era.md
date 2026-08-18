@@ -5033,3 +5033,85 @@ serialisation. The set of bytes that can legitimately begin a JSON document is s
 knowable, so the decoder can tell "an agent that predates the framing" from "a codec I do not
 have" and say which. A rollout mistake now appears in the dead-letter topic within seconds,
 naming the byte.
+
+---
+
+## Rule 265 — a docstring that describes behaviour the code does not have terminates the search
+
+`opsgrid_agent/timesync.py`, first paragraph, unchanged since task 21:
+
+> Edge devices frequently lack NTP and drift; a wrong edge clock corrupts time-series
+> ordering and every downstream time-window calc. Rather than trust the edge clock blindly,
+> the agent samples the server's clock and maintains an EWMA of the offset `server - edge`.
+> **Timestamps are corrected by that offset before forward, and the raw edge time is
+> preserved alongside for audit.**
+
+The first two sentences are true and well reasoned. The third describes a thing that does not
+happen. `correct()` had **no callers anywhere in the agent** — not in the coordinator, not in
+the buffer, not in the backfill loop. The offset was sampled, smoothed, logged when it
+exceeded five seconds, and used for two real purposes: request-signature freshness, and
+deciding whether a replayed command had expired. It was never applied to a telemetry
+timestamp. And the raw edge time was not preserved alongside anything, because there was
+nothing to preserve it alongside.
+
+So every reading this system has ever ingested carries the raw clock of a device that
+frequently has no NTP, in a product whose entire value proposition is time-series analysis.
+
+**What makes this worth a rule is the four years.** This is not an obscure file. It is the
+file anyone auditing time handling opens first — the module is called `timesync`, the class
+is called `ClockSkewEstimator`, and the docstring is unusually good: it explains the problem,
+justifies the approach, and describes the solution. A reader arriving with the question *"does
+this thing correct for clock drift?"* gets a confident, well-written yes in the first
+paragraph and stops.
+
+An absent comment leaves a reader suspicious and they go and check. A **wrong** comment does
+not merely fail to inform — it ends the investigation. It is the difference between a missing
+signpost and a signpost pointing the wrong way, and only one of those makes you walk
+confidently in the wrong direction.
+
+The mechanical version of the rule is the same as rule 256's ("a validated field that is
+never read"), which came out of the command consumer checking `timeout_seconds` and then
+discarding it. When a docstring says something is *applied*, *wired*, *enforced* or
+*preserved*, grep for the second use of the thing it names. One use is a definition. Two is a
+feature.
+
+And fix the sentence. The code change is worthless if the paragraph that hid it for four
+years stays, because the next person to arrive with the next question will stop in exactly
+the same place.
+
+### The half that mattered more than the correction
+
+Applying `correct()` is a two-line change. The reason S8 is not a two-line item is that
+correcting silently would have been the wrong fix.
+
+The estimator can only sample while the cloud is reachable. During an outage it carries the
+last offset forward while the device keeps drifting; an air-gapped deployment never samples
+at all. A timestamp corrected by a three-day-old offset *looks* exactly like one corrected by
+a fresh one, and it is now wrong in a way that is harder to detect than before, because it
+carries the appearance of having been handled.
+
+That is the general trap with any best-effort correction: it converts a known unknown into an
+unknown one. The reading was previously wrong and obviously uncorrected; now it is wrong and
+looks corrected. So each reading carries `synced`, `holdover`, `unsynced` or `unknown`, and
+the compliance control it feeds moved from `absent` to `partial` on exactly that basis —
+honest labelling, not synchronisation. An air-gapped device still cannot sync. Its data now
+says so.
+
+`unknown` is the default for rows that predate the field, and the distinction from `unsynced`
+is deliberate: `unsynced` is an agent reporting a measured fact about itself, `unknown` is
+this backend admitting nobody told it. Collapsing them would have made the migration tidier
+and the data a lie.
+
+### Two harnesses drifted, for the second time in three items
+
+Adding the clock stamp to the backfill loop broke three scenarios in two earlier files,
+because their stand-in agents did not define `_time_fields` or `_skew`. The `AttributeError`
+was swallowed by the loop's catch-all and surfaced as *"the uplink was recycled after two
+failed batches"* — which reads precisely like a regression in recycling logic, in a file
+about recycling logic.
+
+Same thing happened three items ago and I wrote it down then. Writing it down was not enough,
+so here is the mechanical form: **bind the real method from the real class onto the stand-in**
+rather than writing an equivalent one. `self._time_fields = EdgeAgent._time_fields.__get__(self)`
+cannot drift. A stub with the same behaviour is a second implementation, and second
+implementations are the thing this entire document is about.

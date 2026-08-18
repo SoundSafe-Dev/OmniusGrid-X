@@ -13807,3 +13807,124 @@ advertising, the agent not reading it, the serialiser not framing at all. The bi
 structural, not careless: one side is where the work started and its harness is already
 built. After finishing a cross-deployable change, count the assertions on each side before
 believing the coverage, and mutate the *far* side first.
+
+---
+
+## FS-760 — the clock correction that was computed and thrown away
+
+DDIL item S8, the last of the workstream. `ClockSkewEstimator` has sampled the server clock
+and maintained an EWMA of the offset since task 21. **`correct()` had no callers anywhere in
+the agent.** The offset was used to judge request-signature freshness and whether a replayed
+command had expired — and never applied to a single telemetry timestamp. Every reading this
+system holds carries the raw clock of a device that frequently has no NTP.
+
+The module docstring said the opposite, verbatim:
+
+> Timestamps are corrected by that offset before forward, and the raw edge time is preserved
+> alongside for audit.
+
+Neither clause was true. **That is how it survived four years**: a reader checking whether
+time was handled found a paragraph asserting it was, and no reason to look further. A wrong
+comment is worse than no comment for exactly this reason — it does not merely fail to
+inform, it actively terminates the search.
+
+### Correcting it is half the fix, and the smaller half
+
+The estimator can only sample while the cloud is reachable. During an outage it carries the
+last offset forward while the device keeps drifting, uncorrected and unmeasured. An
+air-gapped deployment never samples at all. Silently applying a correction in those states is
+worse than not correcting, because a corrected-looking timestamp invites trust it has not
+earned — it replaces a known unknown with an unknown one.
+
+So every reading now says what its time is actually worth:
+
+| | meaning |
+|---|---|
+| `synced` | a clock sample within the freshness window; the offset is current |
+| `holdover` | calibrated once, sample now stale. The offset is still the best estimate and the device has been drifting by an unknowable amount since |
+| `unsynced` | never calibrated. The correction is zero. The honest answer for air-gapped |
+| `unknown` | the agent did not say — every agent predating this release, which is the whole fleet on the day it ships |
+
+`unknown` is the default on the backend column, deliberately. Backfilling existing rows to
+`unsynced` would assert something about clocks nobody measured; `unknown` says only what is
+true, which is that the row predates the field.
+
+**Both times are sent and the raw one stays in the buffer.** Correction happens at send, not
+at store: the offset current when a reading was taken is not the offset current when it is
+finally delivered — during a three-day outage there are no samples at all — so correcting at
+send uses the best estimate available while preserving the ground truth beside it. Rewriting
+the buffered row in place would destroy the only unambiguous value in the record.
+
+### What this does and does not do for the control
+
+`OG-AU-006` (SP 800-171 03.03.07, synchronised timestamps) moves from `absent` to `partial`
+on the air-gapped profile, and the reason is narrow enough to state exactly. An air-gapped
+device still cannot synchronise and still has no correction available. What changed is that
+its data no longer claims a precision it does not have, and an assessor can query for the
+readings that cannot be trusted for ordering. **That is honest labelling, not
+synchronisation**, which is why nothing moved to `implemented` and the remediation date did
+not move either.
+
+The index is partial — `WHERE time_quality <> 'synced'` — because on a healthy fleet almost
+every row is `synced`, and the question worth asking is the opposite one.
+
+### The mutation pass, with rule 264 applied
+
+Fourteen mutations, far side first this time. Twelve caught immediately, and the two
+survivors were both on the agent — which is the near side by the previous item's reasoning,
+and a reminder that "near" is about where your attention is, not where the code lives.
+
+**One is an equivalent mutant, reported as such.** Removing `quality != "unsynced"` from the
+correction guard changes nothing, because `ClockSkewEstimator` reports `unsynced` exactly
+when its offset is `None` and `offset_seconds` is then `0.0` — the first clause covers the
+second. That is true of today's estimator and is not the invariant: `_skew` is a duck-typed
+slot, and any clock source that retained a last-known offset across a reset would report
+`unsynced` with a non-zero offset and silently resume correcting. The contract is asserted
+against a stand-in that does exactly that, rather than against the one implementation that
+makes the clause redundant.
+
+**The other is FS-759's lesson recurring one item later.** Deleting
+`value.update(self._time_fields(...))` from the backfill loop left every assertion green:
+`_time_fields` was thoroughly tested and nothing checked that anything called it. That is
+precisely the shape `compression.py` had for a year, and the shape this whole entry is about
+— `correct()` was also a correct, tested function with no caller.
+
+### And two test harnesses drifted, again
+
+Adding the clock stamp to `_backfill_worker` broke three scenarios in the S4 and S5 files,
+because their stand-in agents did not define `_time_fields` or `_skew`. The `AttributeError`
+was swallowed by the loop's catch-all and surfaced as "the uplink was recycled after two
+failed batches", which reads exactly like a regression in the recycling logic.
+
+This is the second time in three items. The fix both times is the same and it is worth
+stating as the rule rather than the incident: **bind the real method from the real class into
+the stand-in** rather than stubbing an equivalent. A stand-in that reimplements is a second
+implementation that drifts; one that borrows cannot.
+
+### A column default that changed how every insert works
+
+The full suite then failed the offline demo seeder with:
+
+    Can't match sentinel values in result set to parameter sets
+
+Adding `time_quality` with a `server_default` and no Python-side default changed SQLAlchemy's
+bulk-insert strategy for the whole `telemetry` table. When the database chooses a value, the
+ORM has to learn what it chose, so it switches to a RETURNING form and matches returned rows
+back to parameter sets by sentinel — and this table's primary key is
+`(time, asset_id, metric_name)`, where the `DateTime` does not round-trip through the DBAPI
+identically. Every bulk telemetry insert broke, from one added column with a default.
+
+The fix is both defaults: `default="unknown"` puts the value in the INSERT so nothing needs
+fetching back, and `server_default="unknown"` stays for the migration's backfill and for rows
+this ORM does not write. Worth recording because the failure is nowhere near its cause — the
+error names sentinels and datatypes, and the change was a string column with a default on an
+unrelated-looking line.
+
+RULE 265 — a docstring that describes behaviour the code does not have terminates the search
+that would have found the gap. `ClockSkewEstimator` said "timestamps are corrected by that
+offset before forward, and the raw edge time is preserved alongside" and `correct()` had no
+callers in the entire agent — neither clause true, for four years, in a file anyone auditing
+time handling would open first. An absent comment leaves a reader suspicious; a confident
+wrong one sends them away satisfied. When a docstring asserts that something is applied,
+wired, enforced or preserved, grep for the second use of the thing it names before believing
+it — and when you fix the code, fix the sentence that hid it.

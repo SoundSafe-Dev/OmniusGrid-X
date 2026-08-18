@@ -26,7 +26,9 @@ from unittest.mock import patch
 
 import pytest
 
+from opsgrid_agent.main import EdgeAgent
 from opsgrid_agent.resilience import ReconnectPolicy
+from opsgrid_agent.timesync import ClockSkewEstimator
 
 pytestmark = pytest.mark.ddil
 
@@ -320,6 +322,12 @@ class _BackfillHarness:
         #: a reason that had nothing to do with what it was testing.
         self._draining = False
         self._backfill_batch = 100
+        #: FS-760 gave the backfill loop a clock-quality stamp, which reads `self._skew` and
+        #: `self._time_fields`. Bound from the real class rather than stubbed: a stand-in
+        #: that diverges from the object it stands in for turns the NEXT real change into a
+        #: failure that looks like a regression — which is what happened here, twice.
+        self._skew = ClockSkewEstimator()
+        self._time_fields = EdgeAgent._time_fields.__get__(self)
         self.recycled = 0
         self._batch = 0
         self._fail_batches = fail_batches
