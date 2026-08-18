@@ -4,6 +4,40 @@
 
 This document describes the data flow across the OmniusGrid system, from edge data collection to cloud processing and user visualization.
 
+## File Intake and Correlation Flow
+
+Uploaded CSV, Excel, PDF, DOCX, and image files follow a separate intake path before
+they contribute to cross-domain analysis.
+
+```text
+Upload
+  ↓
+Intake item and metadata
+  ↓
+Parser
+  ↓
+Domain and shared-key detection
+  ↓
+Correlation scenario builder
+  ↓
+Correlation engine
+  ↓
+Analysis session
+```
+
+1. **Upload and intake** — The intake API records the file name, type, owner,
+   metadata, and processed data for the uploaded item.
+2. **Parse** — The file-type parser produces structured spreadsheet rows, tables,
+   document text, and metadata as applicable.
+3. **Detect domains and shared keys** — The system identifies operational domains
+   (for example Production, Maintenance, Quality, and Logistics) and keys such as
+   asset IDs, serial numbers, work orders, purchase orders, and dates.
+4. **Build correlation scenarios** — Sources sharing keys form scenarios containing
+   active domains, operational metrics, interaction keys, and cross-domain links.
+5. **Run correlation and present results** — The correlation engine produces findings,
+   risk scores, and detected relationships, which are collected in an analysis session
+   with the contributing source files.
+
 ## Telemetry Data Flow
 
 ### End-to-End Flow
