@@ -7,6 +7,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from .encryption import BufferCipher
+from .priority import DEFAULT_PRIORITY, NEVER_SHED_ABOVE, priority_for
 from typing import List, Dict, Any, Optional
 from dataclasses import dataclass, asdict
 import structlog
@@ -25,6 +26,7 @@ class BufferedMessage:
     sequence_num: int = 0
     retry_count: int = 0
     created_at: Optional[str] = None
+    priority: int = DEFAULT_PRIORITY
 
 
 class StoreForwardBuffer:
@@ -126,13 +128,34 @@ class StoreForwardBuffer:
                     payload TEXT NOT NULL,
                     sequence_num INTEGER NOT NULL,
                     retry_count INTEGER DEFAULT 0,
-                    created_at TEXT DEFAULT CURRENT_TIMESTAMP
+                    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                    priority INTEGER NOT NULL DEFAULT 3
                 )
             """)
-            
+
+            # A buffer written by an agent from before FS-754 has no `priority`
+            # column, and an agent in the field is routinely older than the release
+            # that adds one. ADD COLUMN with a default backfills every existing row to
+            # tier 3 in place, which is the right answer: those rows were classified by
+            # nothing, so they are process data until a new reading says otherwise.
+            existing = {r[1] for r in conn.execute("PRAGMA table_info(messages)")}
+            if "priority" not in existing:
+                conn.execute(
+                    "ALTER TABLE messages ADD COLUMN priority INTEGER NOT NULL DEFAULT 3"
+                )
+
             conn.execute("""
                 CREATE INDEX IF NOT EXISTS idx_messages_created_at 
                 ON messages(created_at)
+            """)
+
+            # The drain order (FS-754). Without this index every batch fetch sorts the
+            # whole table, and the backlog this runs against is measured in hundreds of
+            # thousands of rows — the ordering would be correct and unusably slow, which
+            # for an emergency stop is the same defect wearing a different hat.
+            conn.execute("""
+                CREATE INDEX IF NOT EXISTS idx_messages_priority
+                ON messages(priority ASC, timestamp_edge ASC)
             """)
             
             conn.execute("""
@@ -216,16 +239,22 @@ class StoreForwardBuffer:
             conn.execute(
                 """
                 INSERT INTO messages
-                (timestamp_edge, asset_id, topic, payload, sequence_num)
-                VALUES (?, ?, ?, ?, ?)
+                (timestamp_edge, asset_id, topic, payload, sequence_num, priority)
+                VALUES (?, ?, ?, ?, ?, ?)
                 """,
                 (timestamp_edge.isoformat(), asset_id, topic,
-                 self.cipher.encrypt(json.dumps(payload)), sequence_num),
+                 self.cipher.encrypt(json.dumps(payload)), sequence_num,
+                 priority_for(topic, payload)),
             )
             conn.commit()
 
     def _prune_oldest_sync(self, rows: int) -> int:
         """Delete the N oldest buffered rows, and return how many went.
+
+        Cheapest-first (FS-754): `ORDER BY priority DESC, created_at ASC`, so tier-5
+        debug is discarded before a tier-1 emergency stop that has been waiting longer.
+        The old ordering was age alone, which on a disk-full event threw away exactly
+        the readings the buffer exists to preserve.
 
         No VACUUM here: freeing internal pages is enough for the retry INSERT
         to succeed, while VACUUM needs the database's size in FREE disk space —
@@ -247,7 +276,8 @@ class StoreForwardBuffer:
         with sqlite3.connect(self.buffer_path) as conn:
             cursor = conn.execute(
                 "DELETE FROM messages WHERE id IN "
-                "(SELECT id FROM messages ORDER BY created_at ASC LIMIT ?)",
+                "(SELECT id FROM messages ORDER BY priority DESC, created_at ASC "
+                " LIMIT ?)",
                 (rows,),
             )
             pruned = cursor.rowcount or 0
@@ -317,7 +347,7 @@ class StoreForwardBuffer:
                     """
                     SELECT * FROM messages 
                     WHERE retry_count < ?
-                    ORDER BY timestamp_edge ASC
+                    ORDER BY priority ASC, timestamp_edge ASC
                     LIMIT ?
                     """,
                     (max_retry, batch_size)
@@ -335,7 +365,8 @@ class StoreForwardBuffer:
                         payload=self.cipher.decrypt(row['payload']),
                         sequence_num=row['sequence_num'],
                         retry_count=row['retry_count'],
-                        created_at=row['created_at']
+                        created_at=row['created_at'],
+                        priority=row['priority'],
                     ))
                 
                 return messages
@@ -470,11 +501,56 @@ class StoreForwardBuffer:
                 logger.error("dead_letter_move_failed", error=str(e))
                 return 0
 
+    def _on_disk_bytes(self, *, checkpoint: bool = False) -> int:
+        """Everything this buffer occupies on disk, not just the main database file.
+
+        FOUND BY THE FS-754 SHED SCENARIO. Both size measurements read
+        `buffer_path.stat().st_size` alone. In WAL mode — which this buffer enables at
+        init — freshly written rows live in `buffer.db-wal` until a checkpoint folds them
+        in, so the main file stayed at 4 KB while 2 MB of readings sat beside it. The
+        consequences were both directions of wrong: `enforce_size_limit` never fired until
+        SQLite happened to auto-checkpoint, so the buffer could exceed its configured cap,
+        and `get_stats()["size_mb"]` under-reported the disk a field device was actually
+        using — the number an operator sizes a partition from.
+
+        This is the same blind spot that let the buffer-encryption test pass for the wrong
+        reason (FS-749): reading only `buffer.db` and finding nothing proves nothing when
+        the content is in the sidecar.
+
+        `checkpoint=True` truncates the WAL first, so the caller that is about to act on
+        the number gets one that is both accurate and stable. Read-only callers pass False
+        rather than mutate files on a metrics path.
+        """
+        if checkpoint:
+            try:
+                with sqlite3.connect(self.buffer_path) as conn:
+                    conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+            except sqlite3.Error as e:
+                # Not fatal: the sum below is still closer to the truth than the main
+                # file alone, it is just measured against an un-truncated WAL.
+                logger.warning("buffer_checkpoint_failed", error=str(e))
+
+        total = 0
+        for suffix in ("", "-wal", "-shm"):
+            candidate = Path(f"{self.buffer_path}{suffix}")
+            if candidate.exists():
+                total += candidate.stat().st_size
+        return total
+
     async def enforce_size_limit(self, max_size_mb: Optional[int] = None) -> int:
         """Prune the oldest messages until the DB is under the size limit.
 
-        The buffer is a bounded ring: when the on-disk size exceeds the cap we
-        drop the oldest messages (by ``created_at``) so newest data survives.
+        The buffer is a bounded ring. It sheds by PRIORITY first and age second
+        (FS-754): tier-5 diagnostics die before tier-4 vibration, which dies before an
+        alarm. It used to shed strictly by ``created_at``, which meant a full buffer
+        discarded the oldest emergency stop to keep the newest debug line.
+
+        It does NOT refuse to shed tiers 1-3 once the cheap rows are gone. Refusing
+        would mean the buffer stays over its cap and the next *incoming* reading fails
+        to store — trading a stale safety record for a live one, which is the worse
+        trade. Instead it logs `buffer_shed_protected_tier` at WARNING, so the one case
+        that should never be routine is visible rather than silent.
+
         Returns the number pruned. Followed by a VACUUM to reclaim the space.
         """
         limit_mb = max_size_mb if max_size_mb is not None else self.max_size_mb
@@ -484,22 +560,38 @@ class StoreForwardBuffer:
         total_pruned = 0
         async with self._lock:
             try:
-                while (self.buffer_path.stat().st_size / (1024 * 1024)) > limit_mb:
+                while (self._on_disk_bytes(checkpoint=True)
+                       / (1024 * 1024)) > limit_mb:
                     with sqlite3.connect(self.buffer_path) as conn:
-                        cursor = conn.execute(
+                        # Selected before deleting rather than DELETE..RETURNING so the
+                        # protected-tier count is available on every SQLite this agent
+                        # runs on, including the 3.34 shipped by older distributions.
+                        victims = conn.execute(
                             """
-                            DELETE FROM messages WHERE id IN (
-                                SELECT id FROM messages
-                                ORDER BY created_at ASC, id ASC LIMIT 500
-                            )
+                            SELECT id, priority FROM messages
+                            ORDER BY priority DESC, created_at ASC, id ASC
+                            LIMIT 500
                             """
+                        ).fetchall()
+                        if not victims:
+                            break  # nothing left to prune
+                        conn.executemany(
+                            "DELETE FROM messages WHERE id = ?",
+                            [(row[0],) for row in victims],
                         )
-                        pruned = cursor.rowcount
+                        pruned = len(victims)
                         conn.commit()
-                    if pruned == 0:
-                        break  # nothing left to prune
                     total_pruned += pruned
                     self.losses['dropped'] += pruned
+                    protected = sum(1 for row in victims
+                                    if row[1] <= NEVER_SHED_ABOVE)
+                    if protected:
+                        logger.warning(
+                            "buffer_shed_protected_tier",
+                            count=protected,
+                            note="safety/operational data discarded for space; "
+                                 "the cheap tiers were already gone",
+                        )
                     # VACUUM to actually reclaim disk so the next size check is real
                     # (DELETE alone does not shrink the SQLite file).
                     with sqlite3.connect(self.buffer_path) as conn:
@@ -535,7 +627,7 @@ class StoreForwardBuffer:
                 dead_lettered = cursor.fetchone()[0]
 
                 # Get file size
-                size_bytes = self.buffer_path.stat().st_size if self.buffer_path.exists() else 0
+                size_bytes = self._on_disk_bytes()
 
                 return {
                     "total_messages": total,

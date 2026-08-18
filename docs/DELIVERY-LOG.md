@@ -13171,3 +13171,124 @@ books balancing proves nothing about a path no scenario walks: eight scenarios a
 `dropped` term was structurally untested while looking covered. Enumerate the ways data can
 LEAVE the system and write a scenario for each, including the dull one where the disk fills —
 then mutate each counter in turn and check something fails.
+
+---
+
+## FS-754 — the emergency stop was row 400,001
+
+DDIL item S2. A press buffers vibration at 10 Hz through a shift-long outage. Somebody hits
+the emergency stop. The link comes back.
+
+`get_pending_messages` drained `ORDER BY timestamp_edge ASC`, so the E-stop was the newest
+row of 400,001 — **batch 4,001 of 4,001** at the production batch size of 100, and at the
+backfill loop's pacing of one batch every five seconds that is over five and a half hours
+behind vibration samples nobody will ever read. The two prune paths had the mirror-image
+defect: both discarded strictly oldest-first, so a full buffer threw away the alarm to keep
+the newest debug line.
+
+**The tiers already existed.** `backend/app/services/data_shedding.py` has had five priority
+tiers since long before this — `emergency_stop`, `alarm` and `packml_state` at tier 1 and
+never dropped; vibration, current and voltage at tier 4 sampled to 10%. Correct tiers,
+deciding what the BACKEND sheds under load. By the time a reading is there it has already
+crossed the only scarce resource in the system. Nothing was wrong with the classification and
+nothing was missing from it; it was on the wrong side of the link.
+
+So the table is now also in `edge-agent/opsgrid_agent/buffer/priority.py`, the buffer carries
+`priority INTEGER NOT NULL DEFAULT 3` with an index on `(priority ASC, timestamp_edge ASC)`,
+drains cheapest-last and sheds cheapest-first. Measured with the FS-753 harness rather than
+by inspection — 400,000 tier-4 rows, one E-stop, and the assertion is that it is the *first*
+message off the edge, not merely an early one.
+
+**Three details that decide whether this works or only looks like it does:**
+
+*Classification reads the payload, not just the topic.* This agent publishes
+`topic="telemetry.<asset>"` with metric names as payload keys. Classifying on topic alone
+would put every reading in the default tier — a mechanism that is fully implemented, fully
+tested against its own unit behaviour, and does nothing. The strongest tier in a batch wins,
+so a batch containing an alarm drains as an alarm rather than letting a caller bury a safety
+event under padding.
+
+*The default is tier 3, deliberately.* Tier 1 would make everything un-sheddable and the
+scheme meaningless; tier 5 would silently discard a metric whose name simply had not been
+classified yet. An unrecognised metric is process data until somebody says otherwise.
+
+*Priority is the first sort key, not the only one.* Within a tier it is still oldest-first.
+A change that quietly replaced ordered delivery with tier ordering would pass the headline
+scenario and break every consumer that assumes per-asset sequence.
+
+**The table is duplicated, on purpose, with a parity guard.** The agent cannot import the
+backend — an edge gateway does not install it, and an agent in the field is routinely older
+than the cloud it talks to. `test_priority_tiers_match_the_backend.py` AST-parses
+`data_shedding.py` and fails on any disagreement in either direction, including a metric the
+edge classifies that the backend has never heard of, because that shape is a misspelling and
+a misspelled metric silently falls back to the default tier. Same idea as
+`test_role_vocabulary_parity.py`, same failure mode it was written for. Reading by AST rather
+than importing keeps SQLAlchemy and a database URL out of an edge-agent test run.
+
+**A buffer written before this release migrates in place.** `ALTER TABLE ADD COLUMN` with a
+default backfills every existing row to tier 3, which is the right answer — those rows were
+classified by nothing.
+
+### Finding — the size limit was measuring the wrong file
+
+The shed scenario would not fire. A buffer holding 2 MB of readings reported `0.00 MB`.
+
+Both size measurements read `buffer_path.stat().st_size` — the main SQLite file only. This
+buffer runs in WAL mode, which it enables itself at init, so freshly written rows live in
+`buffer.db-wal` until a checkpoint folds them in. The consequences ran in both directions:
+`enforce_size_limit` never fired until SQLite happened to auto-checkpoint, so **a buffer with
+a 1000 MB cap could exceed it**, and `get_stats()["size_mb"]` under-reported the disk a field
+device was actually using — the number an operator sizes a partition from and a dashboard
+alerts on.
+
+The sharp part is that the same file already knew. The corruption-quarantine path moves
+`-wal` and `-shm` alongside the main file, with a comment explaining exactly why a leftover
+WAL matters. One place in the module understood that the content is not all in `buffer.db`;
+the two places that measured it did not.
+
+This is also the third appearance of this blind spot. FS-749's buffer-encryption test passed
+for the wrong reason on the same mechanism — reading only `buffer.db`, finding no plaintext,
+and concluding encryption worked when the row was in the sidecar. That was caught by a
+control case. This one was caught by a scenario that refused to set up.
+
+`_on_disk_bytes()` now sums the sidecars, and truncates the WAL first when the caller is
+about to act on the number. `get_stats` deliberately does not checkpoint — it runs on a
+metrics interval and should not mutate files.
+
+### The mutation pass, and the one that survived
+
+Nine mutations, one at a time: each ORDER BY reverted, the index renamed away, the insert
+stopped classifying, the migration disabled, an edge tier drifted from the backend, the
+payload no longer inspected. Eight failed a named scenario immediately.
+
+The ninth survived. Removing the `-wal`/`-shm` sum from `_on_disk_bytes` changed nothing,
+because `enforce_size_limit` truncates the WAL before measuring — so on that path the main
+file genuinely does hold everything. The sum is only load-bearing on the read-only path, and
+that path had no scenario. `get_stats` now has one, and the mutation fails it.
+
+**Two coverage holes found the same way, before claiming the work was done.** There are two
+prune paths — the hourly size limiter and the emergency `_prune_oldest_sync` called when an
+INSERT hits `SQLITE_FULL` — and reverting the ORDER BY on the emergency one alone left every
+other scenario green. That is FS-753's lesson (rule 257) recurring one item later: a path
+with no scenario is untested no matter how thoroughly its neighbours are covered.
+
+The other hole was performance. Correct-and-unusably-slow is the same defect in different
+clothes: without the index, `ORDER BY priority, timestamp_edge` sorts 400,000 rows into a
+temporary b-tree on every one of 4,001 batch fetches, and the E-stop still comes out first —
+eventually. No assertion about ordering can catch that, so `EXPLAIN QUERY PLAN` is asserted
+directly.
+
+RULE 258 — apply a priority or shedding scheme at the point of scarcity, not after it. The
+tiers that decide what an emergency stop outranks lived in the backend, which sees a reading
+only once it has already crossed the constrained link — so they were correct, tested, and
+incapable of helping. A scheme placed downstream of the bottleneck is decoration. When you
+find one, check what resource it is actually protecting and whether the thing it is supposed
+to protect ever reaches it; the fix is usually to move the table, not to write a new one.
+
+RULE 259 — measure the whole store, not the file you named. A size check that reads one
+artifact of a multi-artifact store under-reports, and an under-reported limit never fires:
+the edge buffer's cap was computed from `buffer.db` while its content sat in `buffer.db-wal`,
+so the bound was unenforced and the reported disk use was near zero. Applies wherever content
+spans artifacts — WAL and journal sidecars, rotated logs, multipart objects, a table plus its
+indexes and TOAST. If one part of the module already handles the sidecars, that is evidence
+the other parts forgot, not evidence that they did not need to.

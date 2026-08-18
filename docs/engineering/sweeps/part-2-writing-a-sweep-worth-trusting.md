@@ -1854,6 +1854,23 @@ one of its findings. The habit that catches it:
      `dropped` term was structurally untested while appearing covered. Enumerate the ways
      data can LEAVE the system and write a scenario for each, including the dull one where
      the disk fills, then mutate each counter in turn and confirm something fails.
+
+258. **Apply a priority or shedding scheme at the point of scarcity, not after it.** Five
+     priority tiers deciding what an emergency stop outranks lived in the backend, which
+     sees a reading only once it has crossed the constrained link — correct, tested, and
+     incapable of helping, while the edge buffer drained strictly first-in-first-out and put
+     the E-stop in batch 4,001. A scheme placed downstream of the bottleneck is decoration.
+     When you find one, ask what resource it protects and whether the thing it is meant to
+     protect ever reaches it; the fix is usually to move the table, not to write a new one.
+
+259. **Measure the whole store, not the file you named.** A size check that reads one
+     artifact of a multi-artifact store under-reports, and an under-reported limit never
+     fires: the edge buffer's cap was computed from `buffer.db` while its content sat in
+     `buffer.db-wal`, so the bound went unenforced and the reported disk use was near zero
+     for a device that was filling up. Applies wherever content spans artifacts — WAL and
+     journal sidecars, rotated logs, multipart objects, a table plus its indexes. If one
+     part of the module already handles the sidecars, that is evidence the others forgot,
+     not evidence they did not need to.
 ---
 
 ## Open observations, not yet tickets

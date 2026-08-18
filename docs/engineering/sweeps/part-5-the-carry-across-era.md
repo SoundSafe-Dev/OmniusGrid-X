@@ -4486,3 +4486,115 @@ Two smaller corrections came out of making that scenario fire, both worth keepin
 
 The procedure that follows: after the law passes, mutate each counter in turn. If deleting a
 term changes no result, that term has no scenario behind it.
+
+---
+
+## Rule 258 — apply a priority or shedding scheme at the point of scarcity, not after it
+
+The next DDIL item was edge priority tiers, and the first thing I did was go looking for
+where to define them.
+
+They were already defined. `backend/app/services/data_shedding.py`, five tiers, written by
+someone who had thought about it properly: `emergency_stop`, `alarm` and `packml_state` at
+tier 1 and never dropped; job status and operator actions at 2; temperatures and positions at
+3; vibration, current and voltage at 4 with a 10% sample rate; debug and verbose at 5. The
+comment block at the top explains the reasoning. There is nothing wrong with it.
+
+It runs when the *backend* is overloaded — deciding what to discard from readings that have
+already arrived. Which means it decides what to shed *after* the data has crossed the only
+scarce resource in the entire system. The link is the bottleneck. Everything downstream of it
+is comparatively infinite.
+
+So the E-stop was row 400,001 in an edge buffer that drained in timestamp order, batch 4,001
+of 4,001, five and a half hours behind vibration samples nobody was ever going to look at.
+And in the backend, a tier table stood ready to protect it.
+
+**This is a shape worth naming, because a priority scheme in the wrong place looks exactly
+like a priority scheme.** It has the tiers. It has the reasoning. It has tests. A reviewer
+sees "emergency_stop: priority 1, never drop" and moves on satisfied, and the question that
+would have caught it — *what resource does this protect, and does the thing it protects ever
+reach it?* — never gets asked, because the code answers a different question so convincingly.
+The fix was moving a table, not writing one.
+
+Three details decided whether the move worked or only looked like it had. Classification has
+to read the payload and not just the topic, because this agent publishes
+`topic="telemetry.<asset>"` with the metric names as payload keys — classify on topic alone
+and every reading lands in the default tier, giving you a mechanism that is fully
+implemented, passes its unit tests, and does nothing. The default has to be the middle tier:
+tier 1 makes everything un-sheddable and the scheme meaningless, tier 5 silently discards a
+metric whose name simply had not been classified yet. And priority has to be the *first* sort
+key rather than the only one, or ordered delivery within a tier disappears and every consumer
+that assumes per-asset sequence breaks while the headline scenario still passes.
+
+The table now exists on both sides of the link, deliberately duplicated — an edge gateway
+does not install the backend package, and an agent in the field is routinely older than the
+cloud it talks to — with an AST-based parity guard that fails on disagreement in either
+direction. That is the same arrangement `test_role_vocabulary_parity.py` holds the role
+vocabulary in, written for the same failure. A copy with a parity guard is honest. A copy
+without one is drift with a delay on it.
+
+## Rule 259 — measure the whole store, not the file you named
+
+The second acceptance criterion was that a buffer driven 20% over its size cap sheds only
+bulk telemetry and leaves the alarm count unchanged. I filled a buffer with 4,400 padded rows
+against a 2 MB cap, asserted it was over the limit before pruning — the vacuity check,
+because a shed test on an under-full buffer passes while measuring nothing — and got:
+
+    buffer is only 0.00 MB against a 2 MB cap
+
+Both size measurements in the buffer read `buffer_path.stat().st_size`. WAL mode — which this
+buffer turns on itself, three lines into `_init_db` — keeps recent writes in `buffer.db-wal`
+until a checkpoint folds them in. So the size limiter had been computing its cap from a file
+that was 4 KB while two megabytes of readings sat beside it, and `get_stats()` had been
+telling the heartbeat that a filling device was using no disk. Both directions of wrong: a
+cap that cannot fire, and a gauge that reads zero.
+
+The part I keep turning over is that the same module already knew. Sixty lines up, the
+corruption-quarantine path moves the `-wal` and `-shm` sidecars along with the main file, with
+a comment explaining that a leftover WAL would be replayed into the fresh database and
+recreate the corruption. Somebody understood this mechanism well enough to write that comment.
+Two other methods in the same file measured `buffer.db` alone.
+
+That is not carelessness so much as scope. The person fixing corruption recovery was thinking
+about crash semantics; the person adding a size cap was thinking about disk. Neither was wrong
+about their own problem. Which is exactly why "one part of the module already handles this" is
+a reason to check the other parts rather than a reason to relax — it is evidence the fact is
+easy to hold in one place and forget in another.
+
+It is also the third time this sidecar has fooled a check here. The buffer-encryption work
+passed its headline test for the wrong reason on the same mechanism: read `buffer.db`, find no
+plaintext, conclude encryption works — when the row was in the WAL and would have been absent
+either way. That one was caught by its control case. This one was caught by a scenario that
+refused to set up, which is the cheapest way to find anything.
+
+### Nine mutations, one survivor, three holes
+
+Reverting each `ORDER BY` in turn failed a named scenario. Renaming the index away failed the
+query-plan assertion. Disabling the migration, stopping the insert classifying, drifting a
+tier away from the backend, ignoring the payload — all caught.
+
+Deleting the sidecar sum from `_on_disk_bytes` changed nothing at all.
+
+The reason is worth writing down, because the gap looks reasonable from inside.
+`enforce_size_limit` truncates the WAL before it measures, so on *that* path the main file
+really does hold everything and summing the sidecars is belt-and-braces. The sum is only
+load-bearing on the read-only path — `get_stats`, which deliberately does not checkpoint,
+because it runs on a metrics interval and should not mutate files to answer a question. The
+defect had two halves and I had written a scenario for one of them.
+
+Two more holes came out of the same pass. There are *two* prune paths — the hourly size
+limiter and the emergency one that runs when an INSERT hits `SQLITE_FULL` — and reverting the
+ordering on the emergency path alone left every other scenario green. That is rule 257
+recurring exactly one item after it was written: a path with no scenario is untested no matter
+how well its neighbours are covered, and the neighbours being well covered is what makes it
+invisible.
+
+The last hole was not correctness at all. Without the index, `ORDER BY priority,
+timestamp_edge` sorts the whole backlog into a temporary b-tree on every batch fetch — 400,000
+rows, 4,001 times. The E-stop still comes out first. It just comes out first slowly, which for
+an emergency stop is the same defect wearing a different hat, and no assertion about *order*
+can see it. `EXPLAIN QUERY PLAN` is asserted directly now.
+
+Nine mutations, eight caught, one survivor closed, three holes found. The pass keeps earning
+its cost — not by catching the bug being fixed, which the scenarios do, but by finding the
+parts of the fix that nothing was watching.
