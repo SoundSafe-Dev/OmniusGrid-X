@@ -1,0 +1,173 @@
+# 3.6 Incident Response (3) and 3.8 Media Protection (9).
+#
+# Incident response is the family where this system has something rare: a real, documented
+# incident with a written timeline and an open remediation list. That is worth more to an
+# assessor than a policy nobody has exercised — and it is also currently a finding, because
+# the remediation is not closed.
+#
+# Media protection is largely organizational, with one sharp technical exception: backup
+# confidentiality, and the unencrypted edge buffer recorded against OG-SC-004.
+
+controls:
+  - id: OG-IR-001
+    title: An incident handling capability exists — preparation, detection, analysis, containment, recovery
+    satisfies:
+      - 800-171:03.06.01
+      - 800-53r5:IR-4
+      - ISO27001:A.5.24
+      - SOC2:CC7.4
+    status:
+      commercial-cloud: partial
+      gov-cloud: partial
+      on-prem: partial
+      air-gapped: partial
+    implemented_by:
+      - docs/runbooks
+      - SECURITY-INCIDENT-2026-08-15.md
+      - docs/runbooks/incident-communication-templates.md
+      - docs/runbooks/leaked-key-rotation.md
+    proved_by:
+      - tests/test_build_configs_are_not_executable_payloads.py
+    evidence:
+      - junit/backend.xml
+    owner: security-operations
+    remediation:
+      due: "2026-11-30"
+      note: >-
+        There are eleven runbooks, incident communication templates, and — unusually — a real
+        worked incident: the 2026-08-15 supply-chain compromise is documented with IoCs, a
+        restoration table, and a guard written afterwards to prevent the specific technique.
+        That is stronger evidence of capability than an untested plan. It is PARTIAL for two
+        reasons, and the second is uncomfortable: there is no formal Incident Response PLAN
+        (the runbooks are recovery procedures, not a plan with roles, severity definitions
+        and authority to declare), and **that incident is still open** — the credential used
+        for the force-push was never identified, tokens are unrotated, and branch protection
+        is unconfirmed. An open compromise with an unidentified credential is the first thing
+        an assessor will read, and the date on this entry reflects that it should be closed
+        before an assessment rather than after.
+
+  - id: OG-IR-002
+    title: Incidents are tracked, documented and reported to designated authorities
+    satisfies:
+      - 800-171:03.06.02
+      - 800-53r5:IR-6
+      - ISO27001:A.5.25
+      - GDPR:Art33
+    status:
+      commercial-cloud: partial
+      gov-cloud: partial
+      on-prem: partial
+      air-gapped: partial
+    implemented_by:
+      - SECURITY-INCIDENT-2026-08-15.md
+      - docs/runbooks/incident-communication-templates.md
+    owner: security-operations
+    proved_by:
+      - tests/test_documented_files_exist.py
+    evidence:
+      - junit/backend.xml
+    remediation:
+      due: "2027-01-31"
+      note: >-
+        Documentation of the one real incident is thorough. Reporting is not defined: nobody
+        has written down who is notified, within what deadline, for which severity. Two hard
+        external deadlines already apply and neither is captured — GDPR Article 33 requires
+        supervisory-authority notification within 72 hours of awareness, and DFARS
+        252.204-7012 requires DoD reporting within 72 hours for CUI incidents. Those are legal
+        obligations that a missing runbook does not suspend.
+
+  - id: OG-IR-003
+    title: The incident response capability is tested
+    satisfies:
+      - 800-171:03.06.03
+      - 800-53r5:IR-3
+      - ISO27001:A.5.24
+    status:
+      commercial-cloud: partial
+      gov-cloud: partial
+      on-prem: partial
+      air-gapped: partial
+    implemented_by:
+      - backend/tests/test_backup_restore_drill.py
+    proved_by:
+      - tests/test_backup_restore_drill.py
+    evidence:
+      - junit/backend.xml
+    owner: security-operations
+    remediation:
+      due: "2027-02-28"
+      note: >-
+        One genuine automated drill: `test_backup_restore_drill.py` round-trips a real
+        `pg_dump`/`pg_restore` on every CI run and asserts that rows, schema version AND
+        tenant RLS isolation survive — a restore that silently drops RLS policies fails the
+        build. That is a tested recovery capability. It is not an incident response exercise:
+        no tabletop, no simulated compromise, no measured time-to-detect. The 2026-08-15
+        incident was an unplanned live test and its lessons are recorded, which is worth
+        citing while being clear it was not a drill.
+
+  - id: OG-MP-001
+    title: Backup CUI is protected at rest at storage locations
+    satisfies:
+      - 800-171:03.08.09
+      - 800-53r5:CP-9
+      - ISO27001:A.8.13
+      - SOC2:A1.2
+    status:
+      commercial-cloud: partial
+      gov-cloud: partial
+      on-prem: partial
+      air-gapped: partial
+    implemented_by:
+      - infrastructure/k8s/base/db-backup-cronjob.yaml
+    proved_by:
+      - tests/test_backup_restore_drill.py
+      - tests/test_recovery_claims_match_what_is_deployed.py
+    evidence:
+      - junit/backend.xml
+    owner: platform-infra
+    remediation:
+      due: "2027-02-28"
+      note: >-
+        A nightly `pg_dump -Fc` uploads with `--sse AES256` and reads the object back to
+        verify it, from a hardened pod. PARTIAL because retention and immutability are
+        explicitly the operator's job — the manifest's own README says the job does not prune
+        and that bucket versioning and object lock must be configured by hand, so neither is
+        evidenced here. Note the recovery gap this shares with the DR runbooks: RPO is up to
+        24 hours because point-in-time recovery is not operational, which is documented and
+        guarded rather than claimed.
+
+  - id: OG-MP-002
+    title: Media handling — marking, transport, sanitisation, removable media
+    satisfies:
+      - 800-171:03.08.01
+      - 800-171:03.08.02
+      - 800-171:03.08.03
+      - 800-171:03.08.04
+      - 800-171:03.08.05
+      - 800-171:03.08.06
+      - 800-171:03.08.07
+      - 800-171:03.08.08
+      - 800-53r5:MP-2
+      - 800-53r5:MP-6
+      - ISO27001:A.7.10
+    status:
+      commercial-cloud: organizational
+      gov-cloud: organizational
+      on-prem: organizational
+      air-gapped: organizational
+    implemented_by: []
+    owner: organisation
+    why_code_cannot: >-
+      Marking, transporting, sanitising and destroying physical and removable media are acts
+      performed by people on objects. An application cannot mark a disk, escort a courier or
+      degauss a drive, and asserting these controls in a repository would claim custody of
+      hardware the software does not own. In cloud profiles the underlying media controls are
+      inherited from the provider; on-prem and air-gapped they are wholly the operator's.
+    remediation:
+      due: "2027-03-31"
+      note: >-
+        Needs an owner and evidence in the ISMS, plus a provider CRM reference for the cloud
+        profiles. One technical dependency belongs to engineering and is tracked elsewhere:
+        digital media confidentiality for CUI at rest — including the unencrypted edge buffer
+        — is OG-SC-004, and the edge case is the one that makes 3.8 concrete rather than
+        theoretical, because an edge gateway is media that can be carried away.

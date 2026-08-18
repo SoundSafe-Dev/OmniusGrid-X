@@ -4197,3 +4197,40 @@ strictest requirements, and the assessor most likely to check.
 So the status field is a mapping, the loader requires all four profiles to be named, and an
 unnamed profile is an error rather than a default. An unanswered question should look like
 one.
+
+## Rule 251 — a coverage number needs its breakdown beside it, or it reads as a score
+
+The compliance catalogue now covers **110 of 110** NIST SP 800-171 practices. That sentence
+is true, and on its own it is one of the more misleading things in this repository.
+
+Covered means every practice has an honest answer. Here are the answers:
+
+    commercial-cloud   implemented=9   partial=33  absent=7  organizational=9   inherited=1
+
+Nine implemented. Forty controls carrying POA&M lines. Nine that no amount of code can ever
+close, because they are training records and background checks and locked doors.
+
+"110 of 110" and "9 implemented" describe the same catalogue. A reader who sees the first
+without the second concludes the system is compliant; a reader who sees the second without
+the first concludes the work has barely started. Both are wrong, and the difference between
+them is entirely in what sits next to the number.
+
+**The failure mode is quotation.** A qualifier one page away does not travel. A figure in a
+slide, a status email, or an investor update arrives without the paragraph that bounded it,
+and by then nobody remembers there was one. This has already happened once in this
+repository, with a different number: "31–35 operations return a 5xx" was published with the
+description *generated input reaching Postgres unvalidated*, which fitted eight of them —
+the count was right and the sentence around it was not, so the corrected version had to
+travel separately and later.
+
+So the rule is stronger than "document the caveat". Put the breakdown **in the same
+sentence**:
+
+> The catalogue covers all 110 practices — 9 implemented, 33 partial, 7 absent, 9
+> organizational.
+
+That sentence cannot be quoted into a lie. The short version can.
+
+The same discipline applies to every headline this codebase produces: test counts (5,047
+passing, 109 skipped), conformance (466 of 546, of which 8 are real 500s), coverage floors.
+A number that travels alone will be read as a score, and scores are read as good.

@@ -1,0 +1,144 @@
+# 3.14 System and Information Integrity — 7 practices.
+#
+# Flaw remediation is strong and automated. Malicious-code protection is absent in the
+# conventional sense (there is no anti-malware anywhere), and the honest answer is not "we
+# have an AV product" but a boundary argument plus the controls that actually apply to
+# immutable containers — which is a position that has to be written down before an
+# assessment, not argued during one.
+
+controls:
+  - id: OG-SI-001
+    title: System flaws are identified, reported and corrected in a timely manner
+    satisfies:
+      - 800-171:03.14.01
+      - 800-53r5:SI-2
+      - ISO27001:A.8.8
+      - SOC2:CC7.1
+    status:
+      commercial-cloud: partial
+      gov-cloud: partial
+      on-prem: partial
+      air-gapped: partial
+    implemented_by:
+      - .github/workflows/quality-gates.yml
+      - app/middleware/error_tracking.py
+      - docs/runbooks/error-triage.md
+    proved_by:
+      - tests/test_ci_gate_count_is_accurate.py
+      - tests/test_error_triage_sample_redaction_realdb.py
+    evidence:
+      - trivy/fs.sarif
+      - junit/backend.xml
+    owner: security-operations
+    remediation:
+      due: "2027-01-31"
+      note: >-
+        Identification is well covered — blocking dependency and container scanning, error
+        tracking with a triage runbook, and 5,000+ tests that catch regressions before
+        release. The gap is "timely": no SLA defines how quickly a flaw of a given severity
+        must be corrected, so timeliness is currently whatever the next release happens to
+        be. Same missing decision as OG-RA-002.
+
+  - id: OG-SI-002
+    title: Protection from malicious code
+    satisfies:
+      - 800-171:03.14.02
+      - 800-171:03.14.04
+      - 800-171:03.14.05
+      - 800-53r5:SI-3
+      - ISO27001:A.8.7
+    status:
+      commercial-cloud: partial
+      gov-cloud: partial
+      on-prem: partial
+      air-gapped: partial
+    implemented_by:
+      - backend/tests/test_build_configs_are_not_executable_payloads.py
+      - .github/workflows/quality-gates.yml
+      - infrastructure/k8s/base/namespace.yaml
+    proved_by:
+      - tests/test_build_configs_are_not_executable_payloads.py
+      - tests/test_gitignore_hides_nothing_unexplained.py
+    evidence:
+      - trivy/fs.sarif
+    owner: security-operations
+    remediation:
+      due: "2027-02-28"
+      note: >-
+        There is no anti-malware product, and adding one to an immutable read-only-rootfs
+        container would be theatre. What genuinely applies is here and is unusually specific,
+        because this repository was actually attacked: after the 2026-08-15 supply-chain
+        compromise put an obfuscated blockchain-C2 dropper in `frontend/postcss.config.js`,
+        a guard now fails the build if any frontend build config gains the ability to spawn a
+        process or open a socket, and a second guard requires every `.gitignore` entry to
+        explain what it hides — because the same commit added three bare filenames there to
+        keep the attacker's tooling out of `git status`. Trivy scans images and filesystems
+        for known malicious and vulnerable content on every run. PARTIAL because the boundary
+        argument — why signature-based AV is not the right control for this architecture —
+        is not written down, and an assessor will not accept it as folklore.
+
+  - id: OG-SI-003
+    title: Security alerts and advisories are monitored and acted upon
+    satisfies:
+      - 800-171:03.14.03
+      - 800-53r5:SI-5
+      - ISO27001:A.5.6
+      - SOC2:CC7.2
+    status:
+      commercial-cloud: partial
+      gov-cloud: partial
+      on-prem: partial
+      air-gapped: partial
+    implemented_by:
+      - infra/prometheus/alerts.yml
+      - infrastructure/k8s/monitoring/alertmanager.yaml
+    evidence:
+      - promtool/security_alerts_test.yml
+      - promtool/audit_alerts_test.yml
+    proved_by:
+      - tests/test_ci_gate_count_is_accurate.py
+    owner: security-operations
+    remediation:
+      due: "2027-02-28"
+      note: >-
+        ~57 alert rules including `AuthBruteForceSuspected`, `AuthFailureRatioHigh`,
+        `AuditWriteFailing` and `EdgeAgentCertExpiryApproaching`, routed by severity to
+        PagerDuty and Slack — and the rules are unit-tested with promtool rather than merely
+        written, which is rarer than it should be. PARTIAL on the advisory half: nothing
+        subscribes to vendor or CISA advisories, and there is no defined path from an
+        advisory to an action.
+
+  - id: OG-SI-004
+    title: Systems are monitored to detect attacks and unauthorised use
+    satisfies:
+      - 800-171:03.14.06
+      - 800-171:03.14.07
+      - 800-53r5:SI-4
+      - ISO27001:A.8.16
+      - SOC2:CC7.2
+    status:
+      commercial-cloud: partial
+      gov-cloud: partial
+      on-prem: partial
+      air-gapped: absent
+    implemented_by:
+      - infra/prometheus/alerts.yml
+      - app/middleware/audit.py
+      - app/middleware/request_context.py
+    proved_by:
+      - tests/test_audit_sensitive_operations.py
+    evidence:
+      - promtool/security_alerts_test.yml
+      - junit/backend.xml
+    owner: security-operations
+    remediation:
+      due: "2027-02-28"
+      note: >-
+        Authentication anomalies are alerted on and every request carries a correlation id
+        into structured logs. Three real gaps: there is **no IDS/IPS** (the deleted SOC 2
+        document claimed one), **log aggregation is not deployed to Kubernetes** — Loki
+        exists in docker-compose only, so in a cluster the logs are whatever the node keeps —
+        and there is no SIEM, so nothing correlates across components. `air-gapped` is
+        `absent` rather than `partial`: with no uplink, alerts reach a Prometheus that
+        nobody is scraping, which is the same problem the DDIL workstream records for local
+        alarms.

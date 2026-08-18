@@ -1,0 +1,190 @@
+# 3.5 Identification and Authentication — 11 practices.
+#
+# The family that decides a CMMC L2 assessment fastest, because 3.5.3 (multifactor) is a
+# named practice with no partial credit and no code path here satisfies it. Everything
+# around it — identity, session handling, credential storage — is solid, which is precisely
+# why the gap is worth stating at full strength rather than averaging into a family score.
+
+controls:
+  - id: OG-IA-001
+    title: Users, services and devices are identified before access is granted
+    satisfies:
+      - 800-171:03.05.01
+      - 800-171:03.05.02
+      - 800-53r5:IA-2
+      - 800-53r5:IA-3
+      - ISO27001:A.5.16
+      - SOC2:CC6.1
+    status:
+      commercial-cloud: implemented
+      gov-cloud: implemented
+      on-prem: implemented
+      air-gapped: implemented
+    implemented_by:
+      - app/core/security.py
+      - app/api/auth.py
+      - app/services/edge_ca.py
+      - app/api/edge_enroll.py
+      - app/services/device_provisioning.py
+    proved_by:
+      - tests/test_route_auth_walk.py
+      - tests/test_edge_enrollment.py
+      - tests/test_auth_sessions.py
+    evidence:
+      - junit/backend.xml
+    owner: platform-security
+    notes: >-
+      Three distinct identities: users (JWT with enforced `sub`/`jti`/`type`/`iat` claims),
+      edge devices (X.509 issued by an internal EC P-256 CA, tenant encoded in the
+      certificate subject), and service principals via SSO. Device enrolment is a one-time
+      bootstrap token exchanged for a signed certificate.
+
+  - id: OG-IA-002
+    title: Multifactor authentication for privileged and network access
+    satisfies:
+      - 800-171:03.05.03
+      - 800-171:03.05.04
+      - 800-53r5:IA-2(1)
+      - 800-53r5:IA-2(2)
+      - ISO27001:A.8.5
+      - SOC2:CC6.1
+    status:
+      commercial-cloud: absent
+      gov-cloud: absent
+      on-prem: absent
+      air-gapped: absent
+    implemented_by: []
+    owner: platform-security
+    remediation:
+      due: "2026-12-31"
+      note: >-
+        THE SINGLE LARGEST NAMED GAP IN THIS CATALOGUE. 3.5.3 requires MFA for local and
+        network access to privileged accounts and for network access to non-privileged
+        accounts. Nothing here provides it. `enable_mfa`/`disable_mfa` exist in
+        `app/services/keycloak_service.py` and are unreachable — this repository's own
+        orphaned-definition guard lists them, so the code is present, untested and called by
+        nothing. Two viable routes: wire the Keycloak TOTP required-action, or mandate
+        SSO-with-MFA for CUI profiles and disable local password auth entirely (the stronger
+        posture, and the one that also serves PIV/CAC). The second is the FIPS workstream's
+        Phase 2 anyway, so these should be done together. `03.05.04` (replay-resistant
+        authentication) rides on the same decision.
+
+  - id: OG-IA-003
+    title: Credentials are stored and transmitted only in cryptographically protected form
+    satisfies:
+      - 800-171:03.05.10
+      - 800-53r5:IA-5(1)
+      - ISO27001:A.5.17
+      - SOC2:CC6.1
+    status:
+      commercial-cloud: partial
+      gov-cloud: partial
+      on-prem: partial
+      air-gapped: partial
+    implemented_by:
+      - app/api/auth.py
+      - app/core/sso.py
+      - app/core/session.py
+      - app/services/user_invitations.py
+    proved_by:
+      - tests/test_auth_sessions.py
+      - tests/test_user_invitation_unit.py
+    evidence:
+      - junit/backend.xml
+    owner: platform-security
+    remediation:
+      due: "2027-01-31"
+      note: >-
+        Passwords are bcrypt (12 rounds); refresh tokens, API keys and invitation tokens are
+        stored as SHA-256 digests of high-entropy random secrets, which is correct — SP
+        800-132 governs passwords, not 128-bit random values. PARTIAL for one reason:
+        **bcrypt is not FIPS-approved**, so this cannot be `implemented` in a CUI
+        environment. The migration to PBKDF2-HMAC-SHA256 with dual-read and rehash-on-login
+        is the FIPS workstream's first phase, and its legacy-verify window must close before
+        the FIPS base image lands, because in enforcing mode bcrypt verify may be
+        unavailable rather than merely deprecated.
+
+  - id: OG-IA-004
+    title: Authentication feedback does not disclose which factor failed
+    satisfies:
+      - 800-171:03.05.11
+      - 800-53r5:IA-6
+      - SOC2:CC6.1
+    status:
+      commercial-cloud: implemented
+      gov-cloud: implemented
+      on-prem: implemented
+      air-gapped: implemented
+    implemented_by:
+      - app/api/auth.py
+    proved_by:
+      - tests/test_public_probes_do_not_disclose.py
+    evidence:
+      - junit/backend.xml
+    owner: platform-security
+    notes: >-
+      A uniform 401 for bad credentials and for an inactive user, so login cannot be used to
+      enumerate accounts. Auth metrics carry a reason label deliberately unlabelled by email
+      or IP, so the counter cannot become the enumeration oracle the response is not.
+
+  - id: OG-IA-005
+    title: Password composition, reuse and lifetime policy
+    satisfies:
+      - 800-171:03.05.07
+      - 800-171:03.05.08
+      - 800-171:03.05.09
+      - 800-53r5:IA-5
+      - ISO27001:A.5.17
+    status:
+      commercial-cloud: partial
+      gov-cloud: partial
+      on-prem: partial
+      air-gapped: partial
+    implemented_by:
+      - app/services/user_invitations.py
+      - app/core/config.py
+    proved_by:
+      - tests/test_user_invitation_unit.py
+    evidence:
+      - junit/backend.xml
+    owner: platform-security
+    remediation:
+      due: "2027-01-31"
+      note: >-
+        `validate_new_password` enforces a 12-character minimum and a 72-byte ceiling — and
+        **only on the invitation-accept path**. `POST /auth/register` and admin
+        `POST /users/` do not call it, so two of the three ways an account gets a password
+        apply no policy at all. There is no history, no expiry, and no breach-list check.
+        The first fix is to route all three paths through one validator; the policy content
+        is a second decision (NIST SP 800-63B argues against composition rules and expiry,
+        while 800-171 3.5.7-3.5.9 asks for them — that tension needs a written position
+        before an assessment, not during one).
+
+  - id: OG-IA-006
+    title: Identifier reuse and inactivity management
+    satisfies:
+      - 800-171:03.05.05
+      - 800-171:03.05.06
+      - 800-53r5:IA-4
+      - ISO27001:A.5.16
+    status:
+      commercial-cloud: partial
+      gov-cloud: partial
+      on-prem: partial
+      air-gapped: partial
+    implemented_by:
+      - app/api/user_management.py
+      - app/api/users.py
+    proved_by:
+      - tests/test_user_management.py
+    evidence:
+      - junit/backend.xml
+    owner: platform-security
+    remediation:
+      due: "2027-02-28"
+      note: >-
+        Identifiers are UUIDs and are never reused; deprovisioning is deactivation rather
+        than deletion (deliberately — audit rows, alarm acknowledgements and rule ownership
+        reference the user), and a last-active-admin guard prevents locking the tenant out.
+        PARTIAL because nothing acts on inactivity: `last_login` is stored and displayed, and
+        no job disables a dormant account. 3.5.6 asks for that to happen automatically.

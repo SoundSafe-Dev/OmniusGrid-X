@@ -1,0 +1,196 @@
+# 3.11 Risk Assessment (3) and 3.12 Security Assessment (4).
+#
+# Kept in one file because they are the same loop seen twice: find weaknesses, decide what to
+# do, prove the decision was carried out. Vulnerability scanning is genuinely automated and
+# blocking; the assessment half is the artifact this catalogue is becoming.
+
+controls:
+  - id: OG-RA-001
+    title: Vulnerabilities are scanned for continuously and block the build
+    satisfies:
+      - 800-171:03.11.02
+      - 800-53r5:RA-5
+      - ISO27001:A.8.8
+      - SOC2:CC7.1
+    status:
+      commercial-cloud: implemented
+      gov-cloud: implemented
+      on-prem: implemented
+      air-gapped: implemented
+    implemented_by:
+      - .github/workflows/quality-gates.yml
+      - .trivyignore
+    proved_by:
+      - tests/test_ci_gate_count_is_accurate.py
+    evidence:
+      - trivy/fs.sarif
+      - pip-audit/backend.json
+      - pip-audit/edge-agent.json
+      - npm-audit/frontend.json
+    owner: platform-infra
+    notes: >-
+      `pip-audit` on both Python trees, `npm audit --audit-level=high`, and Trivy across
+      vuln, secret and misconfig scanners with `exit-code: 1` — all blocking, on every
+      change, with zero suppressions: `.trivyignore` carries a written policy and no CVE
+      entries. That is stronger than the periodic scan the practice asks for.
+
+  - id: OG-RA-002
+    title: Vulnerabilities are remediated in accordance with risk
+    satisfies:
+      - 800-171:03.11.03
+      - 800-53r5:RA-5
+      - ISO27001:A.8.8
+      - SOC2:CC7.1
+    status:
+      commercial-cloud: partial
+      gov-cloud: partial
+      on-prem: partial
+      air-gapped: partial
+    implemented_by:
+      - .github/workflows/quality-gates.yml
+    proved_by:
+      - tests/test_ci_gate_count_is_accurate.py
+    evidence:
+      - trivy/fs.sarif
+    owner: security-operations
+    remediation:
+      due: "2027-01-31"
+      note: >-
+        Remediation is currently immediate-or-blocked, which sounds strict and is actually
+        the gap: there is no severity-based SLA, so a HIGH finding and a CRITICAL finding are
+        treated identically, and anything the scanners do not block has no defined response
+        time at all. The image scan in `ci-cd.yml` sets no `exit-code`, so it cannot fail a
+        deploy — findings there go to code scanning and nowhere else.
+
+  - id: OG-RA-003
+    title: Periodic risk assessment
+    satisfies:
+      - 800-171:03.11.01
+      - 800-53r5:RA-3
+      - ISO27001:A.5.7
+    status:
+      commercial-cloud: organizational
+      gov-cloud: organizational
+      on-prem: organizational
+      air-gapped: organizational
+    implemented_by: []
+    owner: organisation
+    why_code_cannot: >-
+      A risk assessment weighs likelihood and business impact against the organisation's risk
+      appetite, over a system boundary the organisation defines. No test can produce that
+      judgement, and a repository asserting "risk assessments are performed annually" — as
+      the deleted SOC 2 document did — is asserting something it cannot know.
+    remediation:
+      due: "2027-03-31"
+      note: >-
+        Needs an executive owner, a defined cadence, and evidence held in the ISMS. The
+        threat-model gap noted against OG-SC-009 is the technical input this depends on.
+
+  - id: OG-CA-001
+    title: Security controls are monitored continuously for continued effectiveness
+    satisfies:
+      - 800-171:03.12.03
+      - 800-53r5:CA-7
+      - ISO27001:A.5.35
+      - SOC2:CC4.1
+    status:
+      commercial-cloud: partial
+      gov-cloud: partial
+      on-prem: partial
+      air-gapped: partial
+    implemented_by:
+      - backend/compliance/catalog
+      - backend/app/core/compliance_catalog.py
+      - .github/workflows/quality-gates.yml
+    proved_by:
+      - tests/test_a_claimed_control_is_proved.py
+      - tests/test_every_control_is_registered.py
+    evidence:
+      - junit/backend.xml
+    owner: platform-security
+    remediation:
+      due: "2027-01-31"
+      note: >-
+        This catalogue IS the continuous-monitoring mechanism, and it is unusually literal
+        about it: a control claiming to operate must cite tests that pytest can collect, so
+        deleting a guard fails the build naming the control that lost its evidence. Every CI
+        run re-establishes the evidence rather than an annual screenshot doing it. PARTIAL
+        until coverage reaches 110 of 110 and the evidence bundle is produced and retained.
+
+  - id: OG-CA-002
+    title: Plans of action are developed to correct deficiencies
+    satisfies:
+      - 800-171:03.12.02
+      - 800-53r5:CA-5
+      - ISO27001:A.5.35
+    status:
+      commercial-cloud: partial
+      gov-cloud: partial
+      on-prem: partial
+      air-gapped: partial
+    implemented_by:
+      - backend/compliance/catalog
+    proved_by:
+      - tests/test_every_control_is_registered.py
+    evidence:
+      - junit/backend.xml
+    owner: platform-security
+    remediation:
+      due: "2026-12-31"
+      note: >-
+        Every `partial` and `absent` control in this catalogue carries an owner and a dated
+        remediation note, and a guard fails the build if one does not — so the POA&M cannot
+        acquire an undated line, which is how a POA&M turns into a list nobody revisits.
+        PARTIAL because the renderer that emits it as a POA&M document does not exist yet.
+
+  - id: OG-CA-003
+    title: A system security plan is developed, documented and periodically updated
+    satisfies:
+      - 800-171:03.12.04
+      - 800-53r5:PL-2
+      - ISO27001:A.5.1
+    status:
+      commercial-cloud: partial
+      gov-cloud: partial
+      on-prem: partial
+      air-gapped: partial
+    implemented_by:
+      - backend/compliance/catalog
+    proved_by:
+      - tests/test_every_control_is_registered.py
+    evidence:
+      - junit/backend.xml
+    owner: platform-security
+    remediation:
+      due: "2027-01-31"
+      note: >-
+        The catalogue holds the control narratives an SSP is made of, per deployment profile.
+        Missing: the renderer, and the parts of an SSP that are not control narratives —
+        system description, boundary diagram, data flows, interconnections. The boundary in
+        particular blocks several other controls (OG-AC-010) and is not this repository's to
+        decide.
+
+  - id: OG-CA-004
+    title: Controls are periodically assessed for effectiveness
+    satisfies:
+      - 800-171:03.12.01
+      - 800-53r5:CA-2
+      - ISO27001:A.5.35
+      - SOC2:CC4.1
+    status:
+      commercial-cloud: organizational
+      gov-cloud: organizational
+      on-prem: organizational
+      air-gapped: organizational
+    implemented_by: []
+    owner: organisation
+    why_code_cannot: >-
+      An assessment is performed BY someone, against a scope, with an opinion at the end. The
+      automated evidence here is an input to that — it is not a substitute for it, and a
+      catalogue that marked its own controls "assessed" because its tests passed would be
+      grading its own homework.
+    remediation:
+      due: "2027-03-31"
+      note: >-
+        Needs a scheduled internal assessment and, for CMMC L2, a C3PAO. The evidence bundle
+        is designed to make that assessment cheap rather than to replace it.

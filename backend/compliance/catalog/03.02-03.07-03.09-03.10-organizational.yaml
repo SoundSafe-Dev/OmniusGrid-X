@@ -1,0 +1,172 @@
+# 3.2 Awareness and Training (3), 3.7 Maintenance (6), 3.9 Personnel Security (2),
+# 3.10 Physical Protection (6) — 17 practices, none of which code can satisfy.
+#
+# WHY THESE ARE IN THE CATALOGUE AT ALL. Because omitting them is the same mistake as
+# faking them. An assessor works through 110 practices; a catalogue covering 93 and silent
+# on 17 reads as incomplete, and the reader cannot tell whether the gap is a decision or an
+# oversight. Every entry here states why code cannot satisfy it and who owns it instead.
+#
+# THE STATUS DISTINCTION MATTERS. Physical protection is `inherited` in cloud profiles — the
+# provider performs it and evidences it through a customer responsibility matrix — and
+# `organizational` on-prem and air-gapped, where nobody inherits anything and the operator
+# does it themselves. That single control is the clearest argument for per-profile status:
+# one global answer would be wrong for half the deployments.
+#
+# `inherited` entries need a real provider and CRM reference before an assessment. The
+# placeholders below are marked as such rather than invented, because a fabricated CRM
+# citation is worse than an empty one.
+
+controls:
+  - id: OG-AT-001
+    title: Security awareness and role-based training, including insider threat
+    satisfies:
+      - 800-171:03.02.01
+      - 800-171:03.02.02
+      - 800-171:03.02.03
+      - 800-53r5:AT-2
+      - 800-53r5:AT-3
+      - ISO27001:A.6.3
+      - SOC2:CC1.4
+    status:
+      commercial-cloud: organizational
+      gov-cloud: organizational
+      on-prem: organizational
+      air-gapped: organizational
+    implemented_by: []
+    owner: organisation
+    why_code_cannot: >-
+      Training is delivered to people and evidenced by completion records. No test can
+      establish that a person understood a risk. The deleted SOC 2 document asserted
+      "Security awareness training for all personnel" from inside a code repository, which is
+      precisely the class of claim that costs credibility when an assessor asks for the
+      attendance record.
+    remediation:
+      due: "2027-03-31"
+      note: >-
+        Needs a training programme with role-based content for privileged users, an insider
+        threat module, and completion records retained for the assessment period. Evidence
+        lives in an HR or LMS system, referenced from the SSP.
+
+  - id: OG-MA-001
+    title: System maintenance, maintenance tools, personnel and nonlocal maintenance
+    satisfies:
+      - 800-171:03.07.01
+      - 800-171:03.07.02
+      - 800-171:03.07.03
+      - 800-171:03.07.04
+      - 800-171:03.07.05
+      - 800-171:03.07.06
+      - 800-53r5:MA-2
+      - 800-53r5:MA-4
+      - ISO27001:A.7.13
+    status:
+      commercial-cloud: organizational
+      gov-cloud: organizational
+      on-prem: organizational
+      air-gapped: organizational
+    implemented_by: []
+    owner: organisation
+    why_code_cannot: >-
+      These practices govern the hardware lifecycle and the humans who touch it — sanitising
+      equipment before off-site repair, checking diagnostic media for malicious code,
+      supervising uncleared maintenance personnel. OmniusGrid runs on servers and edge
+      gateways it does not own, and has no visibility into who opens the case.
+    remediation:
+      due: "2027-03-31"
+      note: >-
+        Note one that will become technical if a decision goes the other way: 3.7.5 requires
+        MFA for nonlocal maintenance sessions. If remote support ever reaches an edge gateway
+        through this platform's fleet operations surface, that practice moves from
+        organizational to a control this system must implement — and the MFA gap in
+        OG-IA-002 blocks it.
+
+  - id: OG-PS-001
+    title: Personnel screening, and protection during termination and transfer
+    satisfies:
+      - 800-171:03.09.01
+      - 800-171:03.09.02
+      - 800-53r5:PS-3
+      - 800-53r5:PS-4
+      - ISO27001:A.6.1
+      - SOC2:CC1.4
+    status:
+      commercial-cloud: organizational
+      gov-cloud: organizational
+      on-prem: organizational
+      air-gapped: organizational
+    implemented_by: []
+    owner: organisation
+    why_code_cannot: >-
+      Screening happens before an account exists. No code path observes a background check.
+    remediation:
+      due: "2027-03-31"
+      note: >-
+        The technical half of 3.9.2 IS available and is worth citing in the SSP narrative
+        even though the practice is organizational: deprovisioning revokes sessions
+        immediately through the `sid`-to-session binding, deactivation is preferred over
+        deletion so audit history survives, and a last-active-admin guard prevents a
+        departure from locking a tenant out (see OG-IA-006). What is missing is the process
+        that triggers it on the day someone leaves.
+
+  - id: OG-PE-001
+    title: Physical access is limited, monitored, logged and managed
+    satisfies:
+      - 800-171:03.10.01
+      - 800-171:03.10.02
+      - 800-171:03.10.03
+      - 800-171:03.10.04
+      - 800-171:03.10.05
+      - 800-53r5:PE-2
+      - 800-53r5:PE-3
+      - 800-53r5:PE-6
+      - ISO27001:A.7.1
+      - ISO27001:A.7.2
+      - SOC2:CC6.4
+    status:
+      commercial-cloud: inherited
+      gov-cloud: inherited
+      on-prem: organizational
+      air-gapped: organizational
+    implemented_by: []
+    provider: "TBD — the cloud provider for each deployment"
+    crm_ref: "TBD — provider customer responsibility matrix, section to be cited"
+    owner: organisation
+    why_code_cannot: >-
+      Physical protection is performed at a facility. In cloud profiles it is inherited from
+      the provider's authorised data centres, which is the normal and correct answer. On-prem
+      and air-gapped it is inherited from nobody — the operator locks the room, escorts the
+      visitor and keeps the access log, and in a tactical deployment the "facility" may be a
+      vehicle.
+    remediation:
+      due: "2027-02-28"
+      note: >-
+        `provider` and `crm_ref` are placeholders and are marked TBD rather than filled with
+        a plausible-looking citation. Before an assessment they must name the actual provider
+        authorisation and the section of its customer responsibility matrix that carries
+        these controls; an invented reference is worse than an empty one, because it looks
+        checked. This is the entry that most needs the deployment-boundary decision.
+
+  - id: OG-PE-002
+    title: Safeguarding at alternate work sites
+    satisfies:
+      - 800-171:03.10.06
+      - 800-53r5:PE-17
+      - ISO27001:A.6.7
+    status:
+      commercial-cloud: organizational
+      gov-cloud: organizational
+      on-prem: organizational
+      air-gapped: organizational
+    implemented_by: []
+    owner: organisation
+    why_code_cannot: >-
+      An alternate work site is somebody's home or a customer's plant floor. The safeguards
+      are physical and procedural, and the organisation defines them.
+    remediation:
+      due: "2027-03-31"
+      note: >-
+        Not inherited even in cloud profiles: a provider's data-centre authorisation says
+        nothing about where an operator opens their laptop. Needs a remote-work policy, and
+        it interacts with OG-AC-011 (mobile device controls) and OG-SC-010 (split tunnelling)
+        — the three should be written as one section of the ISMS rather than three unrelated
+        answers.

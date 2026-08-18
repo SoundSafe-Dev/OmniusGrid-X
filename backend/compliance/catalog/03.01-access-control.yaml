@@ -1,0 +1,342 @@
+# 3.1 Access Control — 22 practices, the largest family in 800-171.
+#
+# This family is where OmniusGrid is strongest and weakest at once. Multi-tenant isolation
+# is the best-evidenced control in the system (~90 tests, RLS on ~62 tables with 29 FORCE).
+# The account-protection practices next to it — lockout, session lock, separation of duties —
+# do not exist at all. Both facts are stated here at full strength; a family average would
+# hide each behind the other.
+#
+# `proved_by` cites pytest node ids only. The Kubernetes gates (`tests/k8s/check_*.py`) are
+# CI scripts rather than collectable tests, so they appear under `evidence`.
+
+controls:
+  - id: OG-AC-001
+    title: Access requires an authenticated principal; anonymous access is refused
+    satisfies:
+      - 800-171:03.01.01
+      - 800-53r5:AC-3
+      - 800-53r5:IA-2
+      - ISO27001:A.5.15
+      - SOC2:CC6.1
+    status:
+      commercial-cloud: implemented
+      gov-cloud: implemented
+      on-prem: implemented
+      air-gapped: implemented
+    implemented_by:
+      - app/api/auth.py
+      - app/core/security.py
+      - app/middleware/rbac.py
+    proved_by:
+      - tests/test_route_auth_walk.py
+      - tests/test_websocket_auth_hardening.py
+      - tests/test_public_probes_do_not_disclose.py
+    evidence:
+      - junit/backend.xml
+    owner: platform-security
+    notes: >-
+      `test_route_auth_walk.py` walks the whole route tree asserting each route's auth gate,
+      so a new unauthenticated route fails the build rather than being found later.
+
+  - id: OG-AC-002
+    title: Every request is bound to its tenant, and the tenant is never taken from the request
+    satisfies:
+      - 800-171:03.01.02
+      - 800-171:03.01.03
+      - 800-53r5:AC-3
+      - 800-53r5:AC-4
+      - ISO27001:A.5.15
+      - SOC2:CC6.1
+      - GDPR:Art32.1b
+    status:
+      commercial-cloud: implemented
+      gov-cloud: implemented
+      on-prem: implemented
+      air-gapped: implemented
+    implemented_by:
+      - app/core/tenant.py
+      - app/core/tenant_refs.py
+      - app/middleware/tenant_isolation.py
+      - database/migrations/011_tenant_isolation_rls.sql
+      - database/migrations/033_rls_backfill.sql
+    proved_by:
+      - tests/test_tenant_isolation_api.py
+      - tests/test_every_tenant_table_has_a_policy.py
+      - tests/test_no_rls_claims_are_true_realdb.py
+      - tests/test_no_handler_takes_its_tenant_from_the_body.py
+      - tests/test_org_id_is_never_taken_from_the_client.py
+      - tests/test_a_tenant_reference_is_refused_realdb.py
+      - tests/test_tenant_session_guard.py
+    evidence:
+      - junit/backend.xml
+      - rls-policy-dump.sql
+    owner: platform-security
+    notes: >-
+      The strongest control in the system. Organisation is derived from the JWT subject and
+      fails closed; `app.current_org_id` is re-asserted at the start of every transaction by
+      an `after_begin` listener, which is the fix for a real defect where a mid-request
+      commit silently dropped the binding. `03.01.03` (CUI flow control) is claimed only for
+      the tenant boundary — there is no CUI-specific labelling or flow enforcement, which is
+      recorded against OG-AC-010.
+
+  - id: OG-AC-003
+    title: Privileged functions are restricted to a defined role vocabulary
+    satisfies:
+      - 800-171:03.01.05
+      - 800-171:03.01.07
+      - 800-53r5:AC-6
+      - ISO27001:A.8.2
+      - SOC2:CC6.3
+    status:
+      commercial-cloud: partial
+      gov-cloud: partial
+      on-prem: partial
+      air-gapped: partial
+    implemented_by:
+      - app/core/roles.py
+      - app/middleware/rbac.py
+      - database/migrations/048_user_role_constraint.sql
+    proved_by:
+      - tests/test_rbac.py
+      - tests/test_role_vocabulary_parity.py
+      - tests/test_task10_rbac_api.py
+    evidence:
+      - junit/backend.xml
+    owner: platform-security
+    remediation:
+      due: "2027-01-31"
+      note: >-
+        Three ranked roles (viewer < operator < admin), enforced with a CHECK constraint and
+        a single source of truth that raises at import on an unknown name. PARTIAL because
+        least privilege is coarse at this granularity — there is no per-resource permission
+        model — and because privileged execution is only partly captured in the audit log
+        (the middleware covers 18 route templates; see OG-AU-001). Kubernetes RBAC is
+        separately thin: only the monitoring stack has Roles.
+
+  - id: OG-AC-004
+    title: Unsuccessful logon attempts are limited
+    satisfies:
+      - 800-171:03.01.08
+      - 800-53r5:AC-7
+      - ISO27001:A.8.5
+      - SOC2:CC6.1
+    status:
+      commercial-cloud: partial
+      gov-cloud: partial
+      on-prem: partial
+      air-gapped: partial
+    implemented_by:
+      - app/core/config.py
+      - app/middleware/rate_limit.py
+      - app/api/auth.py
+    proved_by:
+      - tests/test_config_validation.py
+    evidence:
+      - junit/backend.xml
+    owner: platform-security
+    remediation:
+      due: "2026-12-31"
+      note: >-
+        Rate limiting is now REQUIRED in production — `validate_settings()` hard-fails at
+        startup without it (FS-744), which closed a hole where production could run with the
+        only brute-force control switched off and nothing would say so. Still PARTIAL
+        because rate limiting is not lockout: there is no `failed_login_count`, no
+        `locked_until`, and no progressive delay, so an attacker who paces below the limit
+        is unbounded. 800-171 3.1.8 expects the account to lock.
+
+  - id: OG-AC-005
+    title: Sessions terminate on a defined condition and can be revoked immediately
+    satisfies:
+      - 800-171:03.01.11
+      - 800-53r5:AC-12
+      - ISO27001:A.8.5
+      - SOC2:CC6.1
+    status:
+      commercial-cloud: partial
+      gov-cloud: partial
+      on-prem: partial
+      air-gapped: partial
+    implemented_by:
+      - app/core/session.py
+      - database/migrations/038_auth_session_hardening.sql
+    proved_by:
+      - tests/test_auth_sessions.py
+    evidence:
+      - junit/backend.xml
+    owner: platform-security
+    remediation:
+      due: "2027-01-31"
+      note: >-
+        Refresh tokens are stored as SHA-256 hashes with single-use rotation and
+        `replaced_by_jti` lineage; a durable `revoked_tokens` denylist is checked on every
+        request; access tokens carry `sid` binding them to a live session so deactivation
+        propagates across replicas immediately; concurrent sessions are capped at 3. PARTIAL
+        because termination is time-based (30 min access / 7 day refresh) with no
+        inactivity-based expiry.
+
+  - id: OG-AC-006
+    title: Session lock after inactivity
+    satisfies:
+      - 800-171:03.01.10
+      - 800-53r5:AC-11
+      - ISO27001:A.8.1
+    status:
+      commercial-cloud: absent
+      gov-cloud: absent
+      on-prem: absent
+      air-gapped: absent
+    implemented_by: []
+    owner: platform-security
+    remediation:
+      due: "2027-01-31"
+      note: >-
+        No idle lock or auto-logout exists in the frontend. A named L2 practice and a
+        visible one — an assessor sits at an unattended browser to check it.
+
+  - id: OG-AC-007
+    title: Separation of duties, and use of non-privileged accounts for non-security functions
+    satisfies:
+      - 800-171:03.01.04
+      - 800-171:03.01.06
+      - 800-53r5:AC-5
+      - 800-53r5:AC-6
+      - ISO27001:A.5.3
+    status:
+      commercial-cloud: absent
+      gov-cloud: absent
+      on-prem: absent
+      air-gapped: absent
+    implemented_by: []
+    owner: organisation
+    remediation:
+      due: "2027-03-31"
+      note: >-
+        Three roles with no duty-separation matrix: an admin both grants access and reviews
+        the audit log of that grant. There is also no second, non-privileged account model —
+        an admin operates as an admin for ordinary work. Part organizational (defining which
+        duties must not combine) and part code (enforcing it), so it is `absent` rather than
+        `organizational` — the code half is real work, not a policy statement.
+
+  - id: OG-AC-008
+    title: Remote access is routed through managed, monitored, encrypted access points
+    satisfies:
+      - 800-171:03.01.12
+      - 800-171:03.01.13
+      - 800-171:03.01.14
+      - 800-171:03.01.15
+      - 800-53r5:AC-17
+      - ISO27001:A.6.7
+      - SOC2:CC6.6
+    status:
+      commercial-cloud: partial
+      gov-cloud: partial
+      on-prem: partial
+      air-gapped: organizational
+    implemented_by:
+      - infrastructure/k8s/base/ingress.yaml
+      - app/middleware/security_headers.py
+      - app/services/remote_operations.py
+      - app/api/fleet_agents.py
+    proved_by:
+      - tests/test_remote_operations_unit.py
+      - tests/test_route_auth_walk.py
+    evidence:
+      - junit/backend.xml
+      - kubeconform/ingress.yaml
+    owner: platform-infra
+    why_code_cannot: >-
+      In an air-gapped enclave there is no remote access to manage; the practice is met by
+      the physical and procedural controls of the enclave itself, which this system cannot
+      implement or evidence.
+    remediation:
+      due: "2027-02-28"
+      note: >-
+        A single ingress with TLS termination and HSTS is the managed access point, and
+        privileged remote agent operations carry a `RemoteOperationAuditContext` recording
+        who requested them. PARTIAL because in-cluster traffic is plaintext (see OG-SC-003)
+        and there is no session monitoring beyond access logs.
+
+  - id: OG-AC-009
+    title: Connections to external systems are verified and controlled
+    satisfies:
+      - 800-171:03.01.20
+      - 800-53r5:AC-20
+      - ISO27001:A.5.19
+      - SOC2:CC9.2
+    status:
+      commercial-cloud: partial
+      gov-cloud: partial
+      on-prem: partial
+      air-gapped: implemented
+    implemented_by:
+      - app/services/erp_connectors
+      - app/api/erp_integrations.py
+      - infrastructure/k8s/base/ingress.yaml
+    proved_by:
+      - tests/test_erp_sync_correlation.py
+    evidence:
+      - junit/backend.xml
+      - kubeconform/networkpolicies.yaml
+    owner: platform-infra
+    remediation:
+      due: "2027-02-28"
+      note: >-
+        Eight ERP connectors and GeoTab are the external systems; egress is constrained by
+        default-deny NetworkPolicy with per-workload allow-lists. PARTIAL because there is
+        no formal inventory or approval record of external system connections, which is what
+        the practice asks for. `air-gapped` is `implemented` by construction: there are no
+        external connections.
+
+  - id: OG-AC-010
+    title: CUI on publicly accessible systems, and CUI-specific flow control
+    satisfies:
+      - 800-171:03.01.22
+      - 800-171:03.01.09
+      - 800-53r5:AC-22
+      - 800-53r5:AC-8
+    status:
+      commercial-cloud: absent
+      gov-cloud: absent
+      on-prem: absent
+      air-gapped: absent
+    implemented_by: []
+    owner: organisation
+    remediation:
+      due: "2027-03-31"
+      note: >-
+        There is no CUI marking, no CUI-aware flow control, and no privacy/security notice
+        at logon. This is downstream of a decision nobody has made yet: whether CUI enters
+        this system at all, and if so which fields carry it. Until the boundary is defined
+        these practices cannot be designed, let alone implemented — recorded here so the
+        dependency is visible rather than discovered during an assessment.
+
+  - id: OG-AC-011
+    title: Wireless, mobile device and portable storage controls
+    satisfies:
+      - 800-171:03.01.16
+      - 800-171:03.01.17
+      - 800-171:03.01.18
+      - 800-171:03.01.19
+      - 800-171:03.01.21
+      - 800-53r5:AC-18
+      - 800-53r5:AC-19
+      - ISO27001:A.8.1
+    status:
+      commercial-cloud: organizational
+      gov-cloud: organizational
+      on-prem: organizational
+      air-gapped: organizational
+    implemented_by: []
+    owner: organisation
+    why_code_cannot: >-
+      Wireless authorisation, mobile device enrolment, device encryption and portable-storage
+      restriction are properties of the endpoints and networks the organisation operates, not
+      of this application. OmniusGrid runs on servers and edge gateways it does not own or
+      manage; asserting these here would claim control over customer infrastructure. They are
+      satisfied by an MDM and a network policy, evidenced outside this repository.
+    remediation:
+      due: "2027-03-31"
+      note: >-
+        Needs an owner in the organisation and evidence held in the ISMS. Listed rather than
+        omitted because an assessor will ask, and "not applicable" is a claim that has to be
+        argued from the boundary definition.

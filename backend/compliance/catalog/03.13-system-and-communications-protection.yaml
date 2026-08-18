@@ -1,0 +1,318 @@
+# 3.13 System and Communications Protection — 16 practices.
+#
+# The family with the widest spread in this system. Network boundary control is genuinely
+# strong and CI-enforced against a real CNI; cryptographic protection of CUI at rest and in
+# transit is the weakest area in the whole catalogue, and 3.13.11 (FIPS-validated
+# cryptography) is currently unmet everywhere.
+#
+# Two of these are the reason the FIPS workstream exists at all, and one — CUI at rest on an
+# edge device — is the finding most likely to matter in a tactical deployment.
+
+controls:
+  - id: OG-SC-001
+    title: Network communications are denied by default and allowed by exception
+    satisfies:
+      - 800-171:03.13.01
+      - 800-171:03.13.05
+      - 800-171:03.13.06
+      - 800-53r5:SC-7
+      - ISO27001:A.8.20
+      - ISO27001:A.8.22
+      - SOC2:CC6.6
+    status:
+      commercial-cloud: implemented
+      gov-cloud: implemented
+      on-prem: implemented
+      air-gapped: implemented
+    implemented_by:
+      - infrastructure/k8s/base/ingress.yaml
+      - infrastructure/k8s/monitoring/networkpolicies.yaml
+      - infrastructure/k8s/database-ha/networkpolicies.yaml
+    evidence:
+      - ci/k8s-netpol.log
+      - ci/netpol-simulate.log
+      - kubeconform/networkpolicies.yaml
+    owner: platform-infra
+    proved_by:
+      - tests/test_public_probes_do_not_disclose.py
+    notes: >-
+      A `default-deny-all` NetworkPolicy on the namespace plus 29 per-workload allow-lists,
+      and — unusually — the enforcement is tested rather than assumed: the `k8s-netpol` CI
+      job applies them to a real Calico cluster and asserts DENY cases as well as ALLOW,
+      while `check_netpol_coverage.py` fails if any workload in a default-deny namespace
+      lacks both an ingress and an egress policy. The documented caveat is inherited
+      honestly: kind's default CNI ignores NetworkPolicy, so production must run Calico or
+      Cilium for any of this to take effect.
+
+  - id: OG-SC-002
+    title: FIPS-validated cryptography is used to protect CUI
+    satisfies:
+      - 800-171:03.13.11
+      - 800-53r5:SC-13
+      - ISO27001:A.8.24
+    status:
+      commercial-cloud: absent
+      gov-cloud: absent
+      on-prem: absent
+      air-gapped: absent
+    implemented_by: []
+    owner: platform-security
+    remediation:
+      due: "2027-03-31"
+      note: >-
+        Unmet everywhere, and the scope is smaller than it first appears — measured rather
+        than assumed. Already approved and needing no change: Ed25519 OTA signing (FIPS
+        186-5), EC P-256/SHA-256 X.509 in the edge CA, HS256 JWTs (HMAC-SHA-256 IS approved),
+        and SHA-256 digests of high-entropy random tokens. There is no MD5 or SHA-1 anywhere,
+        which removes the usually-expensive sweep. The real deltas are three: **bcrypt**
+        (not approved — see OG-IA-003), **Fernet** in `erp_security.py` (AES-128-CBC, and
+        keyed by a bare `sha256("master:org_id")` rather than a KDF, which is the actual
+        defect), and the **base image** — `python:3.11-slim` has no FIPS-validated OpenSSL
+        and no path to one, so backend, frontend and nginx images all move to UBI9. A guard
+        asserting no unapproved primitive is reachable lands with that work; it is
+        deliberately not cited here yet, because citing a test that does not exist is the
+        failure this catalogue is built to prevent.
+
+  - id: OG-SC-003
+    title: Confidentiality of CUI in transit
+    satisfies:
+      - 800-171:03.13.08
+      - 800-171:03.13.15
+      - 800-53r5:SC-8
+      - ISO27001:A.8.24
+      - SOC2:CC6.7
+      - GDPR:Art32.1a
+    status:
+      commercial-cloud: partial
+      gov-cloud: partial
+      on-prem: partial
+      air-gapped: partial
+    implemented_by:
+      - infrastructure/k8s/base/ingress.yaml
+      - app/middleware/security_headers.py
+      - edge-agent/opsgrid_agent/security/mtls.py
+      - edge-agent/opsgrid_agent/security/request_signing.py
+    proved_by:
+      - tests/test_signed_urls.py
+      - tests/test_broker_cert.py
+    evidence:
+      - junit/backend.xml
+    owner: platform-infra
+    remediation:
+      due: "2027-02-28"
+      note: >-
+        External traffic is TLS-terminated at the ingress with HSTS (1 year, includeSubDomains,
+        preload), and the edge uplink has real mTLS with CA pinning, a TLS 1.2 floor and
+        proof-of-possession request signing. PARTIAL because **in-cluster traffic is
+        plaintext**: `sslmode` appears in no database URL, and Redpanda's internal listener,
+        Redis, Qdrant and SeaweedFS are all unencrypted. Also honest about a live asymmetry
+        the repo already documents — the production backend requires mTLS while the shipped
+        edge-agent StatefulSet leaves `EDGE_REQUIRE_TLS` at a permissive default.
+
+  - id: OG-SC-004
+    title: Confidentiality of CUI at rest
+    satisfies:
+      - 800-171:03.13.16
+      - 800-53r5:SC-28
+      - ISO27001:A.8.24
+      - SOC2:CC6.7
+      - GDPR:Art32.1a
+    status:
+      commercial-cloud: absent
+      gov-cloud: absent
+      on-prem: absent
+      air-gapped: absent
+    implemented_by: []
+    owner: platform-infra
+    remediation:
+      due: "2027-02-28"
+      note: >-
+        Nothing encrypts data at rest. The database storage class carries no encryption
+        annotation and no KMS reference; there is no TDE and no column encryption outside the
+        audit hash. Field-level encryption exists as a class (`ERPSecurityManager`) with
+        **zero call sites**, so it protects nothing today. The finding that matters most is
+        at the edge: the store-and-forward buffer is **unencrypted SQLite on the device**, so
+        in a deployment where CUI telemetry is buffered during a comms outage it sits in
+        cleartext on hardware that can be physically captured. That is the scenario the
+        air-gapped and tactical profiles exist for, and it is the strongest argument for
+        SQLCipher on the buffer ahead of the cloud-side work.
+
+  - id: OG-SC-005
+    title: Cryptographic keys are established and managed
+    satisfies:
+      - 800-171:03.13.10
+      - 800-53r5:SC-12
+      - ISO27001:A.8.24
+    status:
+      commercial-cloud: partial
+      gov-cloud: partial
+      on-prem: partial
+      air-gapped: partial
+    implemented_by:
+      - app/services/edge_ca.py
+      - app/services/agent_signing.py
+      - app/utils/signed_urls.py
+      - infrastructure/k8s/secrets
+    proved_by:
+      - tests/test_signed_urls.py
+      - tests/test_edge_enrollment.py
+    evidence:
+      - junit/backend.xml
+    owner: platform-security
+    remediation:
+      due: "2027-02-28"
+      note: >-
+        There is real key management for device PKI — an internal CA issuing 30-day
+        certificates with expiry alerting — and OTA artifacts are Ed25519-signed. PARTIAL for
+        the application's own keys: `JWT_SECRET_KEY` is a single symmetric secret with no
+        `kid`, no key ring and no rotation path, so rotating it invalidates every live
+        session at once. Kubernetes offers two complete secret-provisioning paths (Sealed
+        Secrets, External Secrets) and **neither is referenced by any kustomization or
+        workflow**, so provisioning is an undocumented manual act per environment.
+
+  - id: OG-SC-006
+    title: User functionality is separated from system management functionality
+    satisfies:
+      - 800-171:03.13.03
+      - 800-171:03.13.04
+      - 800-53r5:SC-2
+      - 800-53r5:SC-4
+    status:
+      commercial-cloud: partial
+      gov-cloud: partial
+      on-prem: partial
+      air-gapped: partial
+    implemented_by:
+      - app/middleware/rbac.py
+      - app/api/user_management.py
+    proved_by:
+      - tests/test_route_auth_walk.py
+      - tests/test_rbac.py
+    evidence:
+      - junit/backend.xml
+    owner: platform-security
+    remediation:
+      due: "2027-03-31"
+      note: >-
+        Administrative routes are gated by role and admin surfaces are separate paths, but
+        they share one application, one process and one origin with user functionality —
+        separation is by authorisation, not by architecture. Resource isolation between
+        tenants is strong (RLS); resource isolation between privilege levels is not a thing
+        this design has.
+
+  - id: OG-SC-007
+    title: Session authenticity is protected
+    satisfies:
+      - 800-171:03.13.09
+      - 800-53r5:SC-10
+      - ISO27001:A.8.5
+    status:
+      commercial-cloud: partial
+      gov-cloud: partial
+      on-prem: partial
+      air-gapped: partial
+    implemented_by:
+      - app/core/session.py
+      - app/middleware/csrf.py
+    proved_by:
+      - tests/test_auth_sessions.py
+    evidence:
+      - junit/backend.xml
+    owner: platform-security
+    remediation:
+      due: "2027-01-31"
+      note: >-
+        Connections terminate at token expiry and sessions are revocable immediately, but
+        there is no inactivity-based termination (the same gap as OG-AC-005/OG-AC-006). CSRF
+        middleware exists and is disabled by default, with a documented rationale — Bearer
+        tokens rather than cookies — which is sound and should be written into the SSP rather
+        than left as a code comment.
+
+  - id: OG-SC-008
+    title: Mobile code, collaborative computing devices and VoIP
+    satisfies:
+      - 800-171:03.13.12
+      - 800-171:03.13.13
+      - 800-171:03.13.14
+      - 800-53r5:SC-15
+      - 800-53r5:SC-18
+      - 800-53r5:SC-19
+    status:
+      commercial-cloud: partial
+      gov-cloud: partial
+      on-prem: partial
+      air-gapped: partial
+    implemented_by:
+      - app/middleware/security_headers.py
+      - backend/tests/test_build_configs_are_not_executable_payloads.py
+    proved_by:
+      - tests/test_build_configs_are_not_executable_payloads.py
+    evidence:
+      - junit/backend.xml
+    owner: platform-security
+    remediation:
+      due: "2027-03-31"
+      note: >-
+        Mobile code is controlled by a Content-Security-Policy — which still permits
+        `unsafe-inline` and `unsafe-eval` for the Swagger UI, and that exception should be
+        scoped to the docs route rather than applied globally. The build-config guard is
+        genuine mobile-code control of a different kind: after the 2026-08-15 supply-chain
+        compromise put an obfuscated dropper in `postcss.config.js`, no frontend build config
+        may gain the ability to spawn a process or open a socket. There are no collaborative
+        computing devices and no VoIP in this system; that is an argument to record in the
+        boundary document, not a control to build.
+
+  - id: OG-SC-009
+    title: Architectural and engineering principles promote effective information security
+    satisfies:
+      - 800-171:03.13.02
+      - 800-53r5:SA-8
+      - ISO27001:A.8.27
+    status:
+      commercial-cloud: partial
+      gov-cloud: partial
+      on-prem: partial
+      air-gapped: partial
+    implemented_by:
+      - docs/engineering/sweeps
+      - docs/CODING_STANDARDS.md
+    proved_by:
+      - tests/test_method_rules_are_indexed.py
+      - tests/test_sql_is_not_built_by_interpolation.py
+      - tests/test_no_two_guards_keep_the_same_list.py
+    evidence:
+      - junit/backend.xml
+    owner: platform-security
+    remediation:
+      due: "2027-03-31"
+      note: >-
+        Unusually well evidenced for this practice: 250 numbered method rules, each written
+        after a specific defect and indexed by a guard, plus architectural invariants
+        enforced as tests rather than as review conventions (no SQL string interpolation, no
+        naive UTC, no handler taking its tenant from the body). PARTIAL because there is no
+        threat model or data-flow trust-boundary document — the practice asks for security
+        engineering principles applied to a described architecture, and the description is
+        the missing half.
+
+  - id: OG-SC-010
+    title: Split tunnelling is prevented on remote devices
+    satisfies:
+      - 800-171:03.13.07
+      - 800-53r5:SC-7(7)
+    status:
+      commercial-cloud: organizational
+      gov-cloud: organizational
+      on-prem: organizational
+      air-gapped: organizational
+    implemented_by: []
+    owner: organisation
+    why_code_cannot: >-
+      Split tunnelling is a property of a remote endpoint's network stack and VPN
+      configuration. OmniusGrid neither configures nor observes the routing tables of the
+      machines its operators use; claiming this control in an application would be claiming
+      something the application cannot see, let alone enforce.
+    remediation:
+      due: "2027-03-31"
+      note: >-
+        Satisfied by endpoint and VPN policy, evidenced in the ISMS. Recorded here because
+        an assessor will ask, and the answer needs an owner.

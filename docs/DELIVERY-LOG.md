@@ -12724,3 +12724,69 @@ a property of the code, it is a property of the code IN A PLACE. `air-gapped` ha
 round-trip and no time source; `on-prem` inherits no physical security from a provider. One
 global status forces a lie about whichever environment is least like the others — and that
 environment is usually the one the customer with the strictest requirements is running.
+
+## FS-747 — 110 of 110 accounted for, which is not 110 of 110 implemented
+
+The remaining thirteen 800-171 families are populated. **59 controls covering all 110
+practices**, every one with an owner, and every non-implemented one with a dated remediation
+note. Coverage went 9 → 110 and the ratchet floor moved with it, which changes what that
+ratchet means: from "coverage is growing" to "every practice stays accounted for".
+
+**The distinction the headline number hides, stated first because it is the one an assessor
+tests.** 110/110 *covered* means every practice has an honest answer. It is not 110/110
+*implemented*. Measured, per deployment profile:
+
+    commercial-cloud   implemented=9   partial=33  absent=7  organizational=9   inherited=1
+    gov-cloud          implemented=9   partial=33  absent=7  organizational=9   inherited=1
+    on-prem            implemented=9   partial=33  absent=7  organizational=10  inherited=0
+    air-gapped         implemented=10  partial=29  absent=9  organizational=11  inherited=0
+
+Nine controls are fully implemented. Forty carry POA&M lines. Nine are wholly organizational
+and cannot be closed by any amount of code.
+
+**Air-gapped diverges, and that is the argument for per-profile status made concrete.** It
+has one MORE implemented control (external-system connections are `implemented` by
+construction — there are none) and two more absent: audit timestamps have no authoritative
+source with no uplink, and attack monitoring alerts a Prometheus nobody is scraping. A single
+global status would have had to pick one of those answers and be wrong about the others.
+
+**What the population revealed that the inventories had not.** Writing 110 practices out
+forces the awkward ones into the open:
+
+* **`OG-IA-002` (MFA) is the largest single gap** — 3.5.3 is a named L2 practice with no
+  partial credit, and `enable_mfa` sits in `keycloak_service.py` on this repository's own
+  orphaned-definition list. Present, untested, called by nothing.
+* **`OG-SC-004` (CUI at rest) is `absent` everywhere**, and the sharpest instance is not the
+  database — it is the **unencrypted SQLite buffer on the edge device**. In the tactical
+  profile that is CUI in cleartext on hardware that can be physically carried away, which
+  makes 3.8 (media protection) concrete rather than theoretical.
+* **`OG-CM-002` (change control) is blocked on branch protection**, still unconfirmed from
+  the 2026-08-15 incident. 23 blocking CI jobs describe intent; without branch protection
+  they are not an enforced control, and the incident is the proof.
+* **`OG-IR-001` carries the shortest due date in the catalogue (2026-11-30)** because the
+  incident is still open — unidentified credential, unrotated tokens. An assessor reads that
+  first.
+* **`OG-SC-002` (FIPS) is smaller than feared and was worth measuring before planning**:
+  Ed25519, EC P-256, HS256 and SHA-256-of-random-tokens are all already approved, and there
+  is no MD5 or SHA-1 anywhere. The real deltas are bcrypt, Fernet, and the base image.
+
+**Two entries deliberately state less than they could.** `OG-PE-001` is `inherited` in cloud
+profiles with `provider` and `crm_ref` marked **TBD** rather than filled with a plausible
+citation — an invented CRM reference is worse than an empty one because it looks checked.
+And `OG-AC-010` records that CUI marking and flow control are downstream of a decision nobody
+has made: whether CUI enters this system at all. That dependency is visible now instead of
+being discovered mid-assessment.
+
+**The population also corrected one of my own guards.** `test_an_organizational_control_claims_no_test`
+was keyed on "organizational anywhere", and it failed `OG-AC-008` — managed remote access,
+which is `partial` on three profiles with real tests and `organizational` air-gapped, where
+there is no remote access to manage. The rule would have forced a control to drop the
+evidence for its implemented profiles in order to be honest about one, which is the exact
+opposite of what per-profile status exists for. Scoped to controls organizational on *all*
+profiles.
+
+RULE 251 — a coverage number needs its status breakdown printed beside it or it will be read
+as a score. "110 of 110" is true and, alone, actively misleading — it means every practice
+has an answer, and nine of those answers are "implemented" while forty are POA&M lines. The
+same figure supports a truthful claim and a false one depending on what sits next to it, so
+publish the breakdown in the same sentence, not the same document.

@@ -45,13 +45,18 @@ from app.core.compliance_catalog import (
 #: Practices claimed by at least one control. RAISE THIS as families are populated; it may
 #: never fall. Measured 2026-08-17 with 3.3 (Audit and Accountability) complete.
 #:
-#: 9 of 110 is not a coverage claim — it is the honest starting point of an incrementally
-#: built catalogue, and the number an assessor should see rather than a blank page or an
-#: aspirational one.
-COVERAGE_FLOOR = 9
+#: RAISED 9 -> 110 on 2026-08-17: all fourteen families populated. The floor is now the
+#: full population, which changes what this ratchet means — from "coverage is growing" to
+#: "every practice stays accounted for". A control deleted tomorrow drops a practice below
+#: it and fails the build.
+#:
+#: 110/110 COVERED IS NOT 110/110 IMPLEMENTED, and the difference is the whole point: 17
+#: practices are `organizational` and many more are `absent` or `partial` with dated
+#: remediation. Coverage means every practice has an honest answer, not a good one.
+COVERAGE_FLOOR = 110
 
 #: Controls in the catalogue. Same rule.
-CONTROL_FLOOR = 7
+CONTROL_FLOOR = 59
 
 
 def _controls() -> list[Control]:
@@ -164,11 +169,20 @@ class TestTheCatalogueIsWellFormed:
 
     def test_an_organizational_control_claims_no_test(self):
         """A control code cannot satisfy must not name a test that 'proves' it — that is
-        the shape of the claims deleted in FS-745."""
+        the shape of the claims deleted in FS-745.
+
+        SCOPED TO CONTROLS THAT ARE ORGANIZATIONAL EVERYWHERE, and the first version was
+        not. It failed `OG-AC-008` (managed remote access), which is `partial` in three
+        profiles with real tests behind it and `organizational` air-gapped — where there is
+        no remote access to manage, so the practice is met by the enclave rather than by
+        this system. Citing tests there is correct: they prove the three profiles that do
+        run code. A rule keyed on "organizational anywhere" would force a control to drop
+        the evidence for its implemented profiles in order to be honest about one, which is
+        the opposite of what per-profile status exists for."""
         offenders = [
             c.id
             for c in _controls()
-            if any(s == "organizational" for _p, s in c.statuses()) and c.proved_by
+            if all(s == "organizational" for _p, s in c.statuses()) and c.proved_by
         ]
         assert not offenders, (
             f"{offenders} are organizational on some profile and name `proved_by` tests. "
@@ -191,7 +205,7 @@ class TestCoverageOnlyGrows:
         """A floor set above the real number would pass forever without measuring anything;
         one set far below it stops being a ratchet. Kept within sight of the truth."""
         claimed = [p for p, ids in coverage().items() if ids]
-        assert COVERAGE_FLOOR <= len(claimed) <= COVERAGE_FLOOR + 20, (
+        assert COVERAGE_FLOOR <= len(claimed) <= 110, (
             f"coverage is {len(claimed)} and the floor is {COVERAGE_FLOOR}. Raise the floor "
             f"to lock the gain in — an unraised floor is how a ratchet quietly stops "
             f"ratcheting."

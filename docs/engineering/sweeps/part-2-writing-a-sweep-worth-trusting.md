@@ -1795,6 +1795,14 @@ one of its findings. The habit that catches it:
      and absent air-gapped. A single global status forces a lie about whichever environment
      is least like the others — which is usually the one the customer with the strictest
      requirements is running.
+
+251. **A coverage number needs its status breakdown printed beside it, or it reads as a
+     score.** The compliance catalogue covers 110 of 110 practices, which is true and alone
+     actively misleading: covered means every practice has an honest answer, and the answers
+     are 9 implemented, 33 partial, 7 absent, 9 organizational, 1 inherited. The same figure
+     supports a truthful claim and a false one depending on what sits next to it. Put the
+     breakdown in the same SENTENCE, not merely the same document — a reader who has to turn
+     a page to find the qualifier will quote the headline.
 ---
 
 ## Open observations, not yet tickets
