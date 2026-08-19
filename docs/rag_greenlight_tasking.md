@@ -111,9 +111,56 @@ behind `main`, whose only unique commit is a July notice to move off it.
 
 ---
 
-## Workstream B — CI pipeline
+## Workstream B — CI pipeline · closed 2026-08-19
 
-Three workflows, identical on `main` and the branch:
+**Done.** `.github/workflows/nightly-e2e.yml` gained a `rag-eval-nightly` job:
+`./scripts/rag.sh up` (builds + boots qdrant/seaweedfs/rag-inference/backend/
+rag-indexing-worker via compose, which pulls in `migrate`/timescaledb/redpanda/
+redis as transitive dependencies), then `scripts/verify_rag_e2e.py` and
+`pytest backend/tests/rag_eval` for real. `synthesis`/`negative` self-skip
+without a live LLM (no Ollama in CI) via their own `llm_available` fixture
+check, matching the earlier decision to scrap a hard synthesis gate (small-CPU-
+model failures there are a real capability ceiling, not a regression — see
+memory). Everything else in the suite (mechanics/retrieval/hybrid/isolation/
+lifecycle/metrics/corpus/robustness) runs and gates for real, where before it
+silently skipped every single run because no workflow ever started a live
+stack — `rag_client`'s fixture skips (not fails) when the stack is unreachable,
+by design, so this coverage gap produced no red anywhere.
+
+Re-verified rather than assumed: `backend/tests/test_rag_*.py` (unit/queue
+tests) turned out to need only a real Postgres — they fake out
+`document_store`/`vector_store` entirely (`test_rag_vector_delete_scoping.py`'s
+own docstring: "assert on the filter handed to the client rather than on a
+live Qdrant, so they stay fast and run anywhere"). `qdrant-client` and
+`testcontainers` are both already installed in `ci-cd.yml`'s `lint-and-test`
+job and none of these tests are in its ignore list, so — contrary to this
+doc's original claim that they "fail or skip rather than gate" — they were
+very likely already running and gating there; the real, confirmed-zero
+coverage was specifically the live-stack `rag_eval` suite. Left untouched:
+no new job was added for the unit/queue tests, since one already covers them.
+
+Migrations 043/044 needed no separate gating: `scripts/migrate.py` is a
+generic runner over every file in `database/migrations/`, already invoked by
+the compose `migrate` service that `rag-eval-nightly` inherits — confirmed by
+reading the runner, not assumed.
+
+**Update, same day:** `rag-inference` has since been added to `ci-cd.yml`'s
+`build-images` matrix (alongside `backend`/`frontend`/`edge-agent`), so there
+is now a built image for any future k8s deploy step to reference. Also added:
+a `rag-unit` job in `quality-gates.yml` running the 11 `backend/tests/test_rag_*.py`
+files against `postgres` + `qdrant` services (via the `TEST_DATABASE_URL`
+escape hatch). This is **not redundant** with `ci-cd.yml`'s `lint-and-test` —
+that workflow only triggers on push/PR to `main`, so a feature branch with no
+open PR got zero RAG-unit coverage until now; `quality-gates.yml` triggers on
+`feature/**` pushes directly. No Docker layer / model-weight caching was added
+for `rag-eval-nightly`, so each nightly run pays the ~5GB BGE weight download
+fresh; flagged as a known cost, not solved (weights live in a named Docker
+volume, not a bind mount, so `actions/cache` can't target them directly
+without a fragile tar/docker-cp round trip — needs either a bind mount or
+baking the weights into the image at build time).
+
+Three workflows previously, identical on `main` and the branch (now four, with
+`rag-eval-nightly` added to `nightly-e2e.yml`):
 
 | Workflow | Trigger | Services |
 |---|---|---|
@@ -193,15 +240,38 @@ this needs a driver script. What the greenlight needs:
 ## Recommended order
 
 1. **FS-669 first.** It is a live cross-tenant data-loss path, the fix is small,
-   and the re-ingest instance fires on a routine operation.
+   and the re-ingest instance fires on a routine operation. **Done.**
 2. **Escape hatch** (workstream B item 1) — unblocks 31 tests, needed before any
-   run can be called complete.
-3. **Perf driver + full green run** on instance 0 while it is warm.
-4. **FS-666** streaming route.
-5. **Replay onto `main`**, with attention to the five k8s manifests.
-6. **CI RAG job**, once the suite runs without docker-in-docker.
+   run can be called complete. **Done.**
+3. **Perf driver + full green run** on instance 0 while it is warm. **Done**
+   (driver + ablation knobs landed; numbers are point-in-time, not frozen here).
+4. **FS-666** streaming route. **Done, 2026-08-19** (`POST /query/stream`,
+   SSE citations→delta*→done, commit `d8bf6ede`).
+5. **Replay onto `main`**, with attention to the five k8s manifests. **Not
+   done — scoped, not executed.** See the corrected note above the k8s table:
+   the raw divergence (644 commits main-only / 101 HEAD-only, 978-file diff)
+   overstates the real work. Only ~34–40 commits under this branch's 101 are
+   RAG-specific; the rest duplicate tickets main already re-implemented
+   independently. The actual RAG-scoped diff is 32 files, +5,108/−1,912. One
+   real conflict: this branch's migrations `043_rag_documents.sql` /
+   `044_rag_document_size_bytes.sql` collide with main's own (different)
+   `043`/`044` — needs renumbering to `068`/`069` (main's highest is `067`).
+   The 5 k8s manifests are additive on both sides (different fields), not a
+   logic conflict — mechanical merge. Recommended mechanism: cherry-pick the
+   RAG-tagged commits onto a fresh branch off current `origin/main`, not a
+   merge/rebase of the whole branch.
+6. **CI RAG job**, once the suite runs without docker-in-docker. **Done,
+   2026-08-19** — `rag-unit` (per-PR, `quality-gates.yml`) + `rag-eval-nightly`
+   (`nightly-e2e.yml`) + `rag-inference` in the build matrix.
 
 FS-667 and FS-668 need no work beyond confirming they survive the merge.
+
+Remaining before "wire k8s": re-verify `verify_rag_e2e.py` against a cluster
+that includes the `rag-indexing-worker` (the existing kind-cluster validation
+predates async ingestion and doesn't exercise it), fix the mTLS env-var
+mismatch, decide the `omniusgrid-rag` namespace-topology question, and wire
+`QDRANT_API_KEY`/`RAG_INFERENCE_API_KEY` + NetworkPolicy scoping. See
+`docs/RAG_DEVELOPMENT.md` §8.
 
 ---
 
