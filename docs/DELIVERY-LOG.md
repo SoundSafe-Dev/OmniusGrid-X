@@ -14307,3 +14307,70 @@ Six mutations, six caught: the original artifact reintroduced, a conflict marker
 a cell, a row gaining one, and a contents entry pointed at a heading that does not exist. Two
 earlier "survivors" were malformed mutations of mine — replacing a row prefix left the rest of
 the line intact, so the row still had three cells and nothing should have failed.
+
+---
+
+## FS-765 — the second documentation pass, and what the first one missed
+
+The previous pass (FS-764) updated diagram 1, added diagram 4, and rewrote three glossary
+sections. Going back over the same two documents with the question *"what did I not look at"*
+found five more things, which is the useful result: a pass that finds nothing on the second
+attempt was not a pass, it was a skim.
+
+**Diagrams 2 and 3 were never audited.** The first pass fixed the diagram whose defect it had
+gone looking for and left the other two alone. Diagram 2's API node predated MFA entirely.
+Diagram 3 is titled *"offline-capable edge + cloud"* and drew **neither the store-and-forward
+buffer nor the local alarm sink** — the two components that make the claim in its own title
+true. It showed twelve collectors feeding a database directly, which is the architecture the
+DDIL work spent three weeks establishing is not what happens.
+
+**`Running the suites` documented neither of the commands this arc added.** That section
+answers "the commands CI runs, and what each proves", and it had no `pytest -m ddil` and no
+`make compliance`. Both now present, with the reasons they are shaped the way they are — the
+DDIL scenarios are nightly because one buffers 400,000 rows, while the cross-repository parity
+guards are unmarked and gate every push, because tier drift is a per-PR concern and a drain
+measurement is not.
+
+**The Security Model table had no MFA, no FIPS, no edge encryption and no branch protection**
+— four controls shipped in this arc, absent from the table a reader consults to learn what the
+security model *is*. It now also carries a row naming what is still open, because a security
+table that lists only what is done is the kind of document an assessor stops trusting halfway
+down.
+
+### Three glossary definitions that had become wrong
+
+Not missing — **wrong**, which is worse, and none of them would have been found by looking for
+gaps:
+
+- **Hash Chaining** read *"to prevent tampering"*. It does not prevent tampering; it makes
+  alteration detectable. `audit_logs` grants no append-only enforcement, so a role with UPDATE
+  or DELETE can still alter rows and the chain proves it happened. That distinction is the
+  entire reason `OG-AU-004` is `partial`, and the glossary was teaching the overclaim the
+  catalogue exists to avoid.
+- **Timeout** described only execution duration. Since FS-752 the same field is also the basis
+  of an expiry check that refuses a stale command *before the actuator is touched* — the
+  defect being that it was validated and discarded for years while days-old actuations
+  replayed on reconnect.
+- **Emergency Stop** said *"highest priority"*. True as an intention when written and now true
+  as a mechanism, in a specific place that did not exist: tier 1 in the edge buffer, drained
+  first and shed last.
+
+### And the guard I added yesterday broke on a formatting choice
+
+Aligning the columns of the run-command block — `cd backend    && pytest` — broke
+`test_readme_test_count_is_not_stale.py`, whose patterns match the exact single-space form.
+The alignment was not worth touching a guard for, so the block went back.
+
+But the edge-agent line I had added to that block arrived **unguarded**, which is precisely
+how the backend figure drifted 357 below reality before anyone looked. The guard now checks it
+too, in both directions — not an overstatement, and not a floor so low it would pass through a
+large regression — and it counts the DEFAULT configuration deliberately, because counting with
+`-m ddil` would let the stated figure drift upward by 109 without anybody editing the README.
+
+RULE 268 — a documentation pass finds what it went looking for, so the second question is
+always "what did I not open". The first pass here fixed the diagram whose defect had prompted
+it and never opened the other two, one of which was titled "offline-capable edge" and drew
+neither of the components that make it so. Gaps are found by auditing scope; **wrong**
+statements are found by re-reading things you have no reason to suspect — the glossary's
+"hash chaining prevents tampering" had been confidently false since it was written, and no
+audit of coverage would ever have surfaced it.

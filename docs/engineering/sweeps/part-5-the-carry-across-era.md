@@ -5299,3 +5299,76 @@ forty minutes earlier: rewriting history means force-pushing every ref, which pr
 refuses by design. Closing one item moved another one further away — not a mistake in either,
 just the shape of security work, and worth writing into the runbook as a sequence rather than
 discovering at the keyboard on the day.
+
+---
+
+## Rule 268 — a documentation pass finds what it went looking for
+
+I did a full pass over the README and the glossary, wrote it up, committed it. Asked to do it
+again, the honest options were to say it was done or to go back and ask what I had not opened.
+
+The second one found five things.
+
+**Diagram 2 and diagram 3 were never audited.** The first pass had gone looking for the
+data-flow diagram's stale edge-agent node, found it, fixed it, added a new diagram, and
+stopped. The other two were in the same section, twenty lines away, and I never read them.
+Diagram 2's API node predated MFA entirely. Diagram 3 — titled *"Physical / deployment
+topology (offline-capable edge + cloud)"* — drew twelve collectors feeding a database and
+**neither the store-and-forward buffer nor the local alarm sink**, which are the two
+components that make the phrase in its own title true.
+
+That is the mechanism worth naming. A pass motivated by a known defect inherits the defect's
+scope. I went in thinking "the edge agent description is stale", found the place it was stale,
+and the search terminated — the same shape as rule 265's wrong docstring, except the thing
+that ended the search was my own framing rather than someone else's sentence.
+
+**`Running the suites` had neither `pytest -m ddil` nor `make compliance`** — a section whose
+stated purpose is "the commands CI runs, and what each proves", missing both commands the last
+three weeks added.
+
+**The Security Model table had no MFA, no FIPS, no edge-buffer encryption, no branch
+protection.** Four controls shipped in this arc, none in the table a reader consults to learn
+what the security model is.
+
+### The three that were wrong, not missing
+
+Gaps you can find by auditing scope: list what exists, list what is documented, subtract. That
+is what the paragraphs above are.
+
+**Wrong statements cannot be found that way at all.** They are only found by re-reading things
+you have no reason to suspect, and the glossary had three:
+
+- *"Hash Chaining — method of linking log entries cryptographically to prevent tampering."*
+  It does not prevent tampering. It makes alteration **detectable**. `audit_logs` grants no
+  append-only enforcement, so a role with UPDATE or DELETE alters rows freely and the chain's
+  contribution is that you can tell afterwards. That distinction is exactly why `OG-AU-004` is
+  `partial` rather than `implemented`, and the glossary — the document people read to learn
+  the vocabulary — was teaching the overclaim that the whole control catalogue exists to stop
+  anyone making.
+- *"Timeout — maximum allowed time for command execution before failure."* True and now
+  incomplete: the same field became the basis of the staleness check that refuses a days-old
+  command before it reaches an actuator.
+- *"Emergency Stop — highest priority for safety-critical situations."* An intention when
+  written, a mechanism now, and the mechanism lives somewhere the sentence does not point at.
+
+None of the three was flagged by anything. All three sat in a document that had just been
+"fully updated", by me, the day before.
+
+### And a guard I wrote yesterday broke on a formatting choice today
+
+I aligned the columns in the run-command block:
+
+    cd backend    && pytest            # 5,100+ pass
+    cd edge-agent && pytest            # 460+ pass
+
+`test_readme_test_count_is_not_stale.py` matches `cd backend && pytest` with single spaces.
+Four tests failed instantly. The alignment was worth nothing and the guard was worth a great
+deal, so the block went back to single spaces — the right trade, made in ten seconds because
+the guard failed loudly rather than drifting.
+
+The interesting part is the line I had *added* to that block. `cd edge-agent && pytest # 460+`
+was a new claim with no assertion behind it, in the same block as two figures that are guarded
+precisely because unguarded ones rot — and the backend figure in that very block had drifted
+357 below reality before this week. I had written the count and moved on. It is guarded now,
+in both directions, and it counts the default configuration deliberately: counting with
+`-m ddil` would let the stated number drift upward by 109 without anyone editing the README.

@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import pathlib
 import re
+import sys
 import subprocess
 import sys
 
@@ -159,6 +160,34 @@ class TestTheOperationCountIsNotStale:
 
 RUN_BLOCK_BACKEND = re.compile(r"cd backend && pytest\s+#\s*([\d,]+)\+ pass")
 RUN_BLOCK_FRONTEND = re.compile(r"cd frontend && npx vitest run\s+#\s*([\d,]+)\+ across ([\d,]+)\+ files")
+#: FS-765. The edge line joined the block when the DDIL work landed, and arrived UNGUARDED —
+#: which is exactly how the backend figure drifted 357 below reality before anybody looked. A
+#: stated count with no assertion behind it is a claim with a decay rate.
+RUN_BLOCK_EDGE = re.compile(r"cd edge-agent && pytest\s+#\s*([\d,]+)\+ pass")
+
+
+def _edge_collected() -> int:
+    """Tests the edge agent collects in its DEFAULT configuration.
+
+    Default, not `-m ddil`: the README line describes what `cd edge-agent && pytest` prints,
+    and that excludes the DDIL scenarios by the marker in `edge-agent/pytest.ini`. Counting
+    them here would let the stated figure drift upward by 109 without anybody editing it.
+    """
+    import subprocess
+
+    edge = REPO / "edge-agent"
+    result = subprocess.run(
+        [sys.executable, "-m", "pytest", "--collect-only", "-q", "-o", "addopts="],
+        cwd=edge, capture_output=True, text=True, timeout=300,
+    )
+    match = re.search(r"(\d+)\s+tests? collected", result.stdout)
+    if not match:
+        match = re.search(r"(\d+)/\d+ tests collected", result.stdout)
+    assert match, (
+        "could not read a collected count from the edge-agent suite; the guard is broken, "
+        f"not the README.\n{result.stdout[-500:]}"
+    )
+    return int(match.group(1))
 
 
 def _frontend_test_files() -> int:
@@ -181,6 +210,32 @@ class TestTheRunCommandFiguresAreFloors:
         actual = _collected()
         assert actual >= claimed, (
             f"the run-command block claims {claimed:,}+ and pytest collects {actual:,}"
+        )
+
+    def test_the_edge_line_states_a_floor(self):
+        match = RUN_BLOCK_EDGE.search(README.read_text())
+        assert match, (
+            "the README's `cd edge-agent && pytest` line no longer states a floor of the "
+            "form `N+ pass`. It is in the same block as the backend and frontend figures "
+            "and drifts the same way."
+        )
+
+    def test_the_edge_line_is_not_an_overstatement(self):
+        claimed = int(RUN_BLOCK_EDGE.search(README.read_text()).group(1).replace(",", ""))
+        actual = _edge_collected()
+        assert actual >= claimed, (
+            f"the run-command block claims {claimed:,}+ edge tests and the default "
+            f"configuration collects {actual:,}"
+        )
+
+    def test_the_edge_floor_is_not_meaninglessly_low(self):
+        """The other half, as for the backend figure. A floor far below reality passes
+        forever and asserts nothing."""
+        claimed = int(RUN_BLOCK_EDGE.search(README.read_text()).group(1).replace(",", ""))
+        actual = _edge_collected()
+        assert claimed >= actual * 0.75, (
+            f"the README claims {claimed}+ edge tests against {actual} collected — far "
+            f"enough below that it would keep passing through a large regression"
         )
 
     def test_the_frontend_line_states_both_floors(self):

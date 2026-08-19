@@ -181,9 +181,9 @@ survives the implementation diverging from it.
 | **Command Type** | Source category of command (tactical, operator, system) | Backend |
 | **Action ID** | Specific command to execute (set_speed, pause_job, emergency_stop) | Backend |
 | **Command Queue** | Async queue for commands awaiting execution | Backend |
-| **Timeout** | Maximum allowed time for command execution before failure | Backend |
+| **Timeout** | Two distinct things share the name. `timeout_seconds` on a dispatched command is how long execution may take — and since FS-752 it is also the basis of an EXPIRY check on the edge: a command whose issue time plus timeout has passed is refused before the actuator is touched. The field was validated and then discarded for years, so a days-old actuation replayed verbatim on reconnect | Both |
 | **Retry** | Automatic re-queuing of failed commands with exponential backoff | Backend |
-| **Emergency Stop** | Immediate halt command with highest priority for safety-critical situations | Both |
+| **Emergency Stop** | Immediate halt for safety-critical situations. "Highest priority" is now enforced where it matters rather than only asserted: `emergency_stop` is a tier-1 metric in the edge buffer, so it drains ahead of every buffered reading when a link returns and is the last thing shed when the buffer fills. Before FS-754 it queued behind the backlog like anything else | Both |
 | **Command History** | Log of all commands executed on an asset with results and timestamps | Both |
 | **Issued By** | User or system that initiated the command | Backend |
 | **Issued At** | Timestamp when command was submitted | Backend |
@@ -480,9 +480,13 @@ survives the implementation diverging from it.
 | **Certificate Revocation** | Process of invalidating compromised device certificates | Backend |
 | **Device Provisioning** | Workflow for generating and distributing mTLS certificates to edge devices | Backend |
 | **Audit Trail** | Tamper-evident logging with cryptographic hash chaining | Backend |
-| **Hash Chaining** | Method of linking log entries cryptographically to prevent tampering | Backend |
+| **Hash Chaining** | Linking log entries cryptographically so that alteration is DETECTABLE. It does not *prevent* tampering, and the difference is the whole point: `audit_logs` grants no append-only enforcement, so a role with UPDATE or DELETE can still alter rows — the chain proves it happened. Verifiable end-to-end via `verify_audit_hash_chain()`, per organisation | Backend |
 | **Zero-Trust** | Security model assuming no implicit trust, requiring continuous verification | Backend |
 | **Purdue Model** | Network segmentation isolating manufacturing from enterprise zones | Backend |
+| **MFA (TOTP)** | Second factor at login, RFC 6238. Enrolment is two-step (`/mfa/enroll` then `/mfa/confirm`) so a half-configured factor cannot lock anyone out, and `/auth/login` demands a code once a factor is confirmed. See *Cryptography & FIPS* for the primitives | Backend |
+| **Recovery code** | Single-use fallback for a lost authenticator, stored as SHA-256 hashes and consumed on use. High-entropy random, so a plain digest is correct here — SP 800-132 governs passwords, not 128-bit secrets | Backend |
+| **`last_used_window`** | The TOTP window a user last authenticated with. Without it a code stays valid for the remainder of its 30-second window and can be replayed | Backend |
+| **Branch protection** | Repository-level refusal of force-pushes and deletions, admins included. Enabled on `main` 2026-08-18. The control the 2026-08-15 incident needed — 23 blocking CI jobs gate pull requests, and gate nothing at all if a credential can push straight past them | Backend |
 | **API Key** | Secret token for programmatic API access (e.g., GeoTab integration) | Backend |
 | **API Key Hash** | SHA256 hash of API key stored in database for security | Backend |
 | **API Key Scope** | Permission scope assigned to API key (read, write, admin) | Backend |

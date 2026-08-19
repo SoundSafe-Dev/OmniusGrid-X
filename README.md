@@ -38,7 +38,7 @@
 | [Documentation](#documentation) | The rest of `docs/` |
 
 **Engineering method.** The sweeps and guards in this repository follow a set of numbered
-rules, each written after a defect that a weaker check had missed. Rules 21–267 are recorded in
+rules, each written after a defect that a weaker check had missed. Rules 21–268 are recorded in
 `docs/engineering/defect-class-sweeps.md`, with the reasoning for each; the short list at the
 top of that file is what most people read.
 
@@ -248,8 +248,9 @@ python scripts/seed_demo_kanban.py
 ## Running the suites
 
 ```bash
-cd backend && pytest          # 4,800+ pass, ~100 skip. Docker is OPTIONAL: the real-DB
+cd backend && pytest          # 5,100+ pass, ~110 skip. Docker is OPTIONAL: the real-DB
                               # tests skip without it, the rest run anyway
+cd edge-agent && pytest       # 460+ pass — DDIL scenarios excluded by default (see below)
 cd frontend && npx vitest run  # 1,150+ across 135+ files
 cd frontend && npx tsc --noEmit
 ```
@@ -274,6 +275,10 @@ defect before it was closed:
 | Does a declared media type match what the handler sends? | `test_declared_media_types_are_honest.py` |
 | Does a naive timestamp crash a verdict it decides? | `test_naive_timestamps_do_not_crash_verdicts.py` |
 | Is a failure being rendered as an empty state? | `failureIsNotEmptiness.test.ts` (frontend) |
+| Does a reading survive a denied link — delivered, held, or discarded **and counted**? | `edge-agent/tests/ddil/` — the conservation law closes after every scenario |
+| Can the agent emit a wire codec this backend cannot decode? | `test_the_agent_emits_no_codec_the_backend_cannot_read.py` (subset, not equality: the backend may run ahead, the fleet may not) |
+| Does a control claim an implementation whose proving test has been deleted? | `test_a_claimed_control_is_proved.py` — every `proved_by` must be a really collected node id |
+| Is a reference document still well formed? | `test_the_reference_docs_are_well_formed.py` — a merge artifact sat in the glossary for weeks because every doc guard checked meaning and none checked shape |
 
 **The distinction that keeps recurring**: a route that answers 200 is not a feature that
 works. Validation is not function — an endpoint can reject rubbish correctly and silently
@@ -286,6 +291,32 @@ up. If containers fail to start with `input/output error` from containerd, the V
 disk rather than broken — `make lean` frees ~1.5 GB by dropping `backend/dataset` from your
 working tree, and `make unlean` puts it back. See
 [docs/engineering/large-assets.md](docs/engineering/large-assets.md).
+
+The **DDIL scenarios** are excluded from the default edge run and gate the nightly build,
+because one of them buffers 400,000 rows and a drain measurement is not a per-PR concern:
+
+```bash
+cd edge-agent && pytest -m ddil    # 109 scenarios, ~2 min
+```
+
+Time is compressed inside them — a 72-hour outage is a timestamp, not three days of waiting —
+which is the only reason scenarios representing days of link failure can live in CI at all.
+What is **not** excluded, and gates every push: the cross-repository parity guards that stop
+the agent and the backend disagreeing about priority tiers or wire codecs. Tier drift is a
+per-PR concern even though a 400,000-row drain is not.
+
+The **compliance package** is generated rather than written, and CI holds it byte-for-byte
+against its source:
+
+```bash
+make compliance                    # renders SSP, SoA and POA&M from backend/compliance/catalog/
+cd backend && pytest tests/test_generated_compliance_docs_are_current.py
+```
+
+Editing the catalogue without regenerating fails that test; editing the generated output by
+hand fails it the same way. A control cannot claim `implemented` without naming a test that a
+guard then confirms is really collected, so **deleting a cited test fails the build** rather
+than quietly lowering a number.
 
 The **API contract gate** is separate and opt-in, because it stands the app up under
 uvicorn and drives all 550 documented operations with generated input (~8 min):
@@ -776,7 +807,7 @@ flowchart TB
         P5["ERP · Intake · Correlation · Admin (Errors · Audit · Settings)"]
     end
 
-    API{{"FastAPI · app/main.py<br/>auth/RBAC · error envelope · pagination"}}
+    API{{"FastAPI · app/main.py<br/>auth/RBAC · TOTP second factor<br/>error envelope · pagination"}}
 
     subgraph SVC["Backend services / subsystems"]
         A["Assets · Telemetry · Alarms · OEE · KPI · Operations · Commands"]
@@ -786,7 +817,7 @@ flowchart TB
         E["Logistics: Yard (YMS) · Transportation (TMS) · GeoTab · geofencing"]
         F["ERP integrations + webhooks · Historian · Notifications"]
         G["Correlation AI · RAG · Intake/NLP · Registries · Compliance · Kanban"]
-        H["Edge: enroll · ingest · fleet · Exports · Audit · GDPR"]
+        H["Edge: enroll · ingest · fleet · Exports · Audit · GDPR<br/>MFA enrol/confirm · compliance catalogue"]
     end
 
     subgraph INFRA["Data + infra"]
@@ -837,8 +868,10 @@ flowchart TB
             TWIN["Digital-Twin Optimizer"]
             FEAT["Feature Extraction"]
         end
-        subgraph AGENTS["Edge Agents — collectors"]
-            COL["MQTT · OPC-UA · Modbus · EtherNet/IP<br/>PROFINET · BACnet · CAN · SNMP<br/>Sparkplug B · DNP3* · HTTP · OCR · file<br/>*DNP3: implemented, not field-proven"]
+        subgraph AGENTS["Edge Agents — collectors + offline store"]
+            COL["MQTT · OPC-UA · Modbus · EtherNet/IP<br/>PROFINET · BACnet · CAN · SNMP<br/>Sparkplug B · DNP3* · HTTP · OCR** · file<br/>*DNP3: implemented, not field-proven<br/>**OCR unavailable on the FIPS/UBI9 build"]
+            SFB[("Store-and-forward buffer<br/>AES-256-GCM · priority-drained")]
+            ALS[("Local alarm sink<br/>synchronous=FULL · /alerts")]
         end
         subgraph OPS["Operations & Correlation"]
             KANBAN["Kanban · Registries"]
@@ -850,8 +883,10 @@ flowchart TB
     end
 
     CG -. "outbound-only mTLS<br/>cloud never initiates" .-> EDGE
+    COL --> SFB
+    COL --> ALS
     COL --> TACT
-    COL --> TSDB
+    SFB --> TSDB
     TSDB --> RUL --> TWIN
     TACT --> STRAT
     TACT --> FEAT
@@ -2065,12 +2100,18 @@ inventory reaches; it is now generated from `App.tsx` and held there by two guar
 | Device | mTLS mutual certificate authentication per device |
 | Identity | Unique cryptographic identity per device |
 | API | JWT Bearer token authentication |
+| Second factor | RFC 6238 TOTP, enforced at login rather than merely enrollable — `/auth/login` demands a code once a factor is confirmed, and an already-used code is refused by window. Secrets are AES-256-GCM at rest; recovery codes are single-use SHA-256 hashes. **The login path reads `user_mfa` on a tenant-bound session**: `user_mfa` is FORCE RLS, so an unbound read matched zero rows for every user and the check passed silently — the shape this repository has now hit six times |
+| Password storage | PBKDF2-HMAC-SHA256, 600,000 rounds, with bcrypt kept verifiable-but-deprecated so the migration window does not lock out anyone who has not logged in since the cutover |
+| Cryptographic module | All three application images are UBI9, because Debian and musl have no FIPS-validated OpenSSL. **A capable image is not an enforcing runtime** — a container inherits the host kernel's FIPS state — so `REQUIRE_FIPS_MODE` probes at startup whether the process actually refuses MD5 for a security purpose, and refuses to serve if it cannot prove it |
+| Data at rest on the edge | The store-and-forward buffer is AES-256-GCM with an HKDF-derived key. A gateway holding buffered CUI is a device that can be physically carried away, which is a different threat model from a rack |
 | Multi-tenancy | Postgres RLS bound per transaction from the authenticated user (`app.current_org_id`), plus explicit `organization_id` predicates. **15 tables carry no org column and are scoped through their parent instead** — see the Tenant Isolation FAQ, and the register that keeps that list exact |
 | What RLS does **not** cover | **A foreign key is validated below row-level security.** A policy decides which rows a session may READ; Postgres checks a reference without consulting it, so a request body naming another tenant's id is accepted by the database and only the handler can refuse it. Closed centrally rather than route by route: [`backend/app/core/tenant_refs.py`](backend/app/core/tenant_refs.py) registers every request-body field that names a tenant-owned row and the query that proves ownership, `verify_refs` is wired into 20 handlers across 6 routers, and a guard fails the build when a request schema declares an id-shaped field that is neither verified nor explained. 404, never 403 — 403 on a foreign id is a membership oracle |
 | Audit | Hash-chained tamper-evident command logging |
 | Secrets | No plaintext secrets in git — Sealed Secrets (encrypted) or External Secrets Operator (Vault / AWS SM / GCP SM); see [`infrastructure/k8s/secrets/`](infrastructure/k8s/secrets/) |
 | Cluster network | Zero-trust: `default-deny-all` NetworkPolicy + per-workload allow-lists across every stack, with enforcement verified in CI on Calico (9 allow/deny cases); see [`infrastructure/k8s/NETWORK_SECURITY.md`](infrastructure/k8s/NETWORK_SECURITY.md) |
 | Workloads | Containers run non-root with read-only root filesystem and all Linux capabilities dropped |
+| Change control | Branch protection on `main`, both remotes, since 2026-08-18: force-pushes and deletions refused, admins included, one review required. That is the control the 2026-08-15 incident needed. Required status checks are deliberately **not** set — `main` reports zero check runs, and requiring a context that never arrives makes a branch permanently unmergeable |
+| What is still open | The `SoundSafe-Dev` PAT needs rotating; four accounts hold repository admin and can switch the protection off; the integration branch is unprotected because four lanes push to it directly; and a private key remains in git history. Tracked in [`SECURITY-INCIDENT-2026-08-15.md`](SECURITY-INCIDENT-2026-08-15.md) — listed here because a security table that shows only what is done is the kind of document an assessor stops trusting |
 
 ---
 

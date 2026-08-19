@@ -1947,6 +1947,15 @@ one of its findings. The habit that catches it:
      incident had called unidentifiable for a month. A blocker recorded once becomes a fact
      nobody re-examines — the cheapest item in any stale backlog is checking whether the wall
      is still there.
+
+268. **A documentation pass finds what it went looking for; the second question is what you
+     did not open.** One pass fixed the architecture diagram whose defect had prompted it and
+     never audited the other two — one of them titled "offline-capable edge" while drawing
+     neither the store-and-forward buffer nor the local alarm sink. Coverage gaps are found by
+     auditing scope. **Wrong** statements are only found by re-reading things you have no
+     reason to suspect: a glossary entry saying "hash chaining prevents tampering" had been
+     confidently false since it was written, and it makes the overclaim the control catalogue
+     exists to avoid.
 ---
 
 ## Open observations, not yet tickets
