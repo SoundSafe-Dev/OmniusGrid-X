@@ -24,7 +24,7 @@ Design:
   Inference/vector store unavailable -> ``RuntimeError`` (router maps to 503).
 """
 
-from typing import List, Dict, Any, Optional, Tuple
+from typing import AsyncIterator, List, Dict, Any, Optional, Tuple
 from functools import lru_cache
 
 import structlog
@@ -117,6 +117,102 @@ class Retriever:
         rerank = settings.RAG_RERANK_ENABLED if rerank is None else rerank
         search_mode = search_mode or settings.RAG_SEARCH_MODE
 
+        context, citations, used_context = await self._gather_context(
+            query, org_id=org_id, top_n=top_n, rerank=rerank, search_mode=search_mode
+        )
+        if not used_context:
+            return RagAnswer(
+                answer=_NO_CONTEXT_ANSWER,
+                citations=[],
+                used_context=False,
+                generated=False,
+            )
+
+        # Generate a grounded answer (or return citations only).
+        if not generate or not self.llm.available:
+            return RagAnswer(
+                answer=None,
+                citations=citations,
+                used_context=True,
+                generated=False,
+            )
+        answer = await self.llm.generate(
+            prompt=self._prompt(query, context), system=_SYSTEM_PROMPT
+        )
+        logger.info(
+            "rag_retriever.answered",
+            org_id=org_id,
+            cited=len(citations),
+        )
+        return RagAnswer(
+            answer=answer, citations=citations, used_context=True, generated=True
+        )
+
+    async def stream(
+        self,
+        query: str,
+        *,
+        org_id: str,
+        top_n: Optional[int] = None,
+        generate: bool = True,
+    ) -> Tuple[List[Citation], bool, bool, Optional[AsyncIterator[str]]]:
+        """Streaming counterpart to ``retrieve()``.
+
+        Embed/search/rerank happen synchronously here (they're fast relative
+        to generation) and their result - the citations - is returned
+        immediately. Generation, when it happens, is handed back as an
+        unstarted token iterator so the caller can stream it out separately
+        (e.g. over SSE) without this method itself buffering the answer.
+
+        Returns ``(citations, used_context, will_generate, tokens)``. ``tokens``
+        is ``None`` whenever there is nothing to stream - no matching context,
+        ``generate=False``, or the LLM is unavailable - matching the three
+        cases ``retrieve()`` handles by returning ``generated=False``.
+
+        Ablation overrides (``rerank``/``search_mode``) are intentionally not
+        threaded through here, same as the public ``/query`` route.
+        """
+        if not self.inference.available or not self.vectors.available:
+            raise RuntimeError(
+                "Retrieval unavailable: the inference or vector service is not "
+                "configured/reachable."
+            )
+        top_n = top_n or settings.RAG_RERANK_TOP_N
+
+        context, citations, used_context = await self._gather_context(
+            query,
+            org_id=org_id,
+            top_n=top_n,
+            rerank=settings.RAG_RERANK_ENABLED,
+            search_mode=settings.RAG_SEARCH_MODE,
+        )
+        if not used_context or not generate or not self.llm.available:
+            return citations, used_context, False, None
+
+        return (
+            citations,
+            True,
+            True,
+            self.llm.stream_generate(
+                prompt=self._prompt(query, context), system=_SYSTEM_PROMPT
+            ),
+        )
+
+    async def _gather_context(
+        self,
+        query: str,
+        *,
+        org_id: str,
+        top_n: int,
+        rerank: bool,
+        search_mode: str,
+    ) -> Tuple[str, List[Citation], bool]:
+        """Shared embed -> search -> rerank -> build-context steps.
+
+        Returns ``("", [], False)`` when nothing matched, so callers can
+        short-circuit before touching the LLM - same "no context" contract
+        both ``retrieve()`` and ``stream()`` rely on.
+        """
         # 1. Embed the query (BGE-M3 asymmetric query encoding).
         embedding = await self.inference.embed_query(query)
 
@@ -131,12 +227,7 @@ class Retriever:
             mode=search_mode,
         )
         if not candidates:
-            return RagAnswer(
-                answer=_NO_CONTEXT_ANSWER,
-                citations=[],
-                used_context=False,
-                generated=False,
-            )
+            return "", [], False
 
         # 3. Cross-encoder rerank and keep the strongest top_n passages, or -
         #    with reranking disabled - just take the top_n fused/raw candidates
@@ -152,29 +243,14 @@ class Retriever:
 
         # 4. Assemble numbered context (capped) + citations.
         context, citations = self._build_context(top)
+        return context, citations, True
 
-        # 5. Generate a grounded answer (or return citations only).
-        if not generate or not self.llm.available:
-            return RagAnswer(
-                answer=None,
-                citations=citations,
-                used_context=True,
-                generated=False,
-            )
-        prompt = (
+    @staticmethod
+    def _prompt(query: str, context: str) -> str:
+        return (
             f"Context:\n{context}\n\n"
             f"Question: {query}\n\n"
             "Answer using only the context above, citing sources as [n]."
-        )
-        answer = await self.llm.generate(prompt=prompt, system=_SYSTEM_PROMPT)
-        logger.info(
-            "rag_retriever.answered",
-            org_id=org_id,
-            candidates=len(candidates),
-            cited=len(citations),
-        )
-        return RagAnswer(
-            answer=answer, citations=citations, used_context=True, generated=True
         )
 
     def _build_context(

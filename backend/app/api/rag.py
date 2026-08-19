@@ -5,6 +5,7 @@ Exposes the retrieval-augmented pipeline over HTTP:
 
     POST   /ingest                     multipart upload -> store + queue a document
     POST   /query                       ask a question, get a grounded, cited answer
+    POST   /query/stream                same, but stream the answer over SSE
     GET    /documents                   list this org's stored documents
     GET    /documents/{doc_id}/status   where a queued document got to
     DELETE /documents/{doc_id}          remove a document's vectors + blobs
@@ -15,7 +16,8 @@ All endpoints are authenticated and scoped to the caller's organization: the
 the JWT-bound user, so tenants can never read or delete each other's documents.
 """
 
-from typing import Optional, List, Dict, Any
+import json
+from typing import AsyncIterator, Optional, List, Dict, Any
 
 from fastapi import (
     APIRouter,
@@ -26,6 +28,7 @@ from fastapi import (
     Form,
     status as http_status,
 )
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from app.core.config import settings
@@ -156,6 +159,57 @@ async def query(
         )
     except RuntimeError as exc:  # inference/vector store unavailable
         raise HTTPException(status_code=503, detail=str(exc))
+
+
+def _sse(event: str, data: Dict[str, Any]) -> str:
+    return f"event: {event}\ndata: {json.dumps(data)}\n\n"
+
+
+@router.post("/query/stream", summary="Ask a question, stream the answer (SSE)")
+async def query_stream(
+    body: QueryRequest,
+    current_user: User = Depends(get_current_active_user),
+) -> StreamingResponse:
+    """Same retrieval as ``/query``, but streams the generated answer over
+    Server-Sent Events instead of waiting for the full completion.
+
+    Retrieval and reranking run first, synchronously, so a 503 for an
+    unavailable inference/vector service still comes back as a normal HTTP
+    error rather than mid-stream. Frames after that, in order:
+
+    - one ``citations`` event - the same structured sources ``/query``
+      returns, plus ``used_context``/``generated`` flags
+    - zero or more ``delta`` events, one per token chunk, while ``generated``
+      was true
+    - a terminal ``done`` event (or ``error`` if generation fails mid-stream)
+    """
+    org_id = _org_id(current_user)
+    try:
+        citations, used_context, generated, tokens = await get_retriever().stream(
+            body.query, org_id=org_id, top_n=body.top_n, generate=body.generate
+        )
+    except RuntimeError as exc:  # inference/vector store unavailable
+        raise HTTPException(status_code=503, detail=str(exc))
+
+    async def event_source() -> AsyncIterator[str]:
+        yield _sse(
+            "citations",
+            {
+                "citations": [c.model_dump() for c in citations],
+                "used_context": used_context,
+                "generated": generated,
+            },
+        )
+        if generated and tokens is not None:
+            try:
+                async for delta in tokens:
+                    yield _sse("delta", {"content": delta})
+            except Exception as exc:  # LLM connection dropped mid-stream
+                yield _sse("error", {"detail": str(exc)})
+                return
+        yield _sse("done", {})
+
+    return StreamingResponse(event_source(), media_type="text/event-stream")
 
 
 @router.get("/documents", summary="List this org's documents")
