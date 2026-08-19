@@ -2,7 +2,16 @@
 # The dev Dockerfile (./Dockerfile) keeps the hot-reload workflow; compose's
 # prod profile and k8s use this one.
 
-FROM node:20-alpine AS build
+# UBI9, not node:20-alpine (FS-761). Alpine links against musl and ships LibreSSL/OpenSSL
+# builds with no FIPS-validated module — there is no configuration that gets an Alpine image
+# to a validated cryptographic boundary, which is why the plan named the frontend images
+# alongside the Python ones rather than treating this as a backend-only concern.
+#
+# The BUILD stage matters less than the runtime stage — it emits static files and its crypto
+# never faces a user — but it is moved too, because a build stage on a different libc is a
+# second toolchain to reason about for no benefit once the runtime has moved.
+FROM registry.access.redhat.com/ubi9/nodejs-22 AS build
+USER root
 WORKDIR /app
 COPY package*.json ./
 RUN npm ci
@@ -13,22 +22,43 @@ COPY . .
 # gates since FS-53/54); the image build just emits the bundle.
 RUN npx vite build
 
-FROM nginx:1.27-alpine
+# THE RUNTIME STAGE IS THE ONE THAT MATTERS. This process terminates TLS for every browser
+# session and proxies to the backend, so its OpenSSL is on the CUI path in a way the build
+# stage's never is.
+#
+# `nginx:1.27-alpine` becomes UBI9's nginx. The image layout differs from the Docker Hub
+# one — no `/etc/nginx/templates` envsubst entrypoint, and the default user is 1001 — so the
+# template substitution is done explicitly at start rather than inherited.
+FROM registry.access.redhat.com/ubi9/nginx-124
+USER root
 # envsubst template: BACKEND_ORIGIN is resolved at container start.
 ENV BACKEND_ORIGIN=http://backend:8000
-COPY nginx.conf /etc/nginx/templates/default.conf.template
+# `nginx.d`, not `nginx.default.d`: the latter is included INSIDE the vendor's default
+# server block, where a `server { }` directive is a startup error. See nginx.ubi.conf for
+# why the vendor top-level config is replaced rather than added to.
+COPY nginx.ubi.conf /etc/nginx/nginx.conf
+COPY nginx.conf /opt/app-root/etc/nginx.d/default.conf.template
+# The site config's `root` is /usr/share/nginx/html and is shared with the compose path, so
+# the bundle goes where that config already looks rather than moving it and editing both.
 COPY --from=build /app/dist /usr/share/nginx/html
 
-# Non-root (FS-77): run as the image's unprivileged `nginx` user (uid 101).
-# nginx listens on 8080 (see nginx.conf) so no privileged port bind is needed.
-# Redirect the pid to a writable path and hand the runtime dirs to the user so
-# the master process can start without root.
-RUN sed -i 's#^pid .*#pid /tmp/nginx.pid;#' /etc/nginx/nginx.conf \
-    && chown -R nginx:nginx /var/cache/nginx /var/log/nginx /usr/share/nginx/html \
-    && touch /tmp/nginx.pid \
-    && chown nginx:nginx /tmp/nginx.pid
-USER nginx
+# Non-root (FS-77), preserved across the base change. The UBI nginx image already runs as
+# an unprivileged user (1001) and already listens on 8080, so the pid-file and cache-dir
+# gymnastics the Docker Hub image needed are gone rather than translated — they existed to
+# undo that image's root-oriented defaults.
+RUN chown -R 1001:0 /usr/share/nginx/html /opt/app-root/etc /var/log/nginx \
+    && chmod -R g+rwX /usr/share/nginx/html /opt/app-root/etc /var/log/nginx
+USER 1001
 
 EXPOSE 8080
+# `curl` rather than `wget`: UBI carries curl and does not carry busybox's wget.
 HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
-    CMD wget -q -O /dev/null http://localhost:8080/ || exit 1
+    CMD curl -fsS -o /dev/null http://localhost:8080/ || exit 1
+
+# The Docker Hub nginx image runs envsubst over /etc/nginx/templates at start; UBI's does
+# not, so the substitution the config depends on is performed explicitly here. Without this
+# the proxy_pass line keeps the literal ${BACKEND_ORIGIN} and every API call 502s.
+CMD ["/bin/bash", "-c", "envsubst '$BACKEND_ORIGIN' \
+    < /opt/app-root/etc/nginx.d/default.conf.template \
+    > /opt/app-root/etc/nginx.d/default.conf \
+    && exec nginx -g 'daemon off;'"]

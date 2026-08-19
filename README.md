@@ -37,7 +37,7 @@
 | [Documentation](#documentation) | The rest of `docs/` |
 
 **Engineering method.** The sweeps and guards in this repository follow a set of numbered
-rules, each written after a defect that a weaker check had missed. Rules 21–265 are recorded in
+rules, each written after a defect that a weaker check had missed. Rules 21–266 are recorded in
 `docs/engineering/defect-class-sweeps.md`, with the reasoning for each; the short list at the
 top of that file is what most people read.
 
@@ -1867,6 +1867,7 @@ inventory reaches; it is now generated from `App.tsx` and held there by two guar
 - **PROFINET**: Siemens S7 data-block reads with typed field decoding (via `python-snap7`)
 - **BACnet**: Building automation / HVAC object reads (via `BAC0`/`bacpypes`)
 - **CAN bus**: Vehicle and machine controller frame capture with ID filtering (via `python-can`)
+- **FIPS-capable images, and a runtime check that they are actually enforcing**: all three application images are UBI9 (Debian and musl have no FIPS-validated OpenSSL), and because a container inherits the host kernel's FIPS state — a capable image with FIPS off is indistinguishable from an enforcing one — `REQUIRE_FIPS_MODE` probes at startup whether the process actually refuses unapproved cryptography, and refuses to serve when it cannot prove it
 - **Readings that say what their clock was worth**: the agent's clock-skew offset was computed for years and never applied to a telemetry timestamp — `correct()` had no callers, while the module docstring said it did. Timestamps are now corrected at send with the raw edge clock preserved beside them, and every row carries `time_quality` (synced / holdover / unsynced / unknown) so an air-gapped device's data says it cannot be trusted for ordering instead of looking identical to a synchronised one
 - **Compressed uplink, negotiated**: telemetry batches are framed as `codec_marker + body` and gzip-compressed (5-10x on repetitive JSON) — but only after a heartbeat ack says the backend can decode it. The agent emits uncompressed until told otherwise, because a new agent against an older backend would send unparseable bytes that the buffer has already marked sent
 - **OTA that survives a dropping link**: releases stream to a `.part` file and resume with HTTP `Range`, so progress survives the connection *and* the process — a 64 MB artifact completes across five forced disconnects. Two of the three download paths previously had no size limit at all, which made an oversized release URL a memory-exhaustion DoS in front of the signature check (`edge-agent/opsgrid_agent/ota/download.py`)

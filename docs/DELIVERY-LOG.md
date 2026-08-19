@@ -13928,3 +13928,145 @@ time handling would open first. An absent comment leaves a reader suspicious; a 
 wrong one sends them away satisfied. When a docstring asserts that something is applied,
 wired, enforced or preserved, grep for the second use of the thing it names before believing
 it — and when you fix the code, fix the sentence that hid it.
+
+---
+
+## FS-761 — the third FIPS delta, and the half a repository cannot close
+
+The last technical item from the compliance plan. FS-748 closed two of the three FIPS
+deltas — passwords to PBKDF2-HMAC-SHA256, ERP field encryption from Fernet to AES-256-GCM —
+and left the third, which was the base image: `python:3.11-slim` has no FIPS 140-3 validated
+OpenSSL and no path to one, because the FIPS provider Red Hat ships is part of what is
+validated.
+
+**All three application images now build, run and serve on UBI9.** Not "were changed to" —
+built and exercised:
+
+| image | from | to | verified |
+|---|---|---|---|
+| `backend/Dockerfile` | `python:3.11-slim` | `ubi9/python-311` | builds; `app.main` imports in the container |
+| `edge-agent/Dockerfile` | `python:3.11-slim` ×2 | `ubi9/python-311` ×2 | builds; seed wheel present with 74 modules; runtime deps import |
+| `frontend/Dockerfile.prod` | `node:20-alpine` + `nginx:1.27-alpine` | `ubi9/nodejs-22` + `ubi9/nginx-124` | builds; serves `index.html` 200, SPA fallback 200, envsubst applied, runs as uid 1001 |
+
+### The measurement that decides the shape of this item
+
+A freshly pulled `ubi9/python-311`, probed directly:
+
+    openssl:     OpenSSL 3.5.5
+    providers:   default          <- not `fips`
+    kernel flag: absent
+    md5:         allowed
+
+**That is a FIPS-capable image running with FIPS off, and it is indistinguishable from an
+enforcing one unless something looks.** A container inherits the host kernel's FIPS state, so
+the identical image is compliant on a node booted with `fips=1` and not on the node beside it,
+with nothing anywhere in a manifest to tell them apart.
+
+So `REQUIRE_FIPS_MODE` asks the only question that describes behaviour rather than
+configuration: does this process **refuse** MD5 for a security purpose? The kernel flag and
+the provider list are recorded too, and neither is the authority — both are statements about
+how things are set up, and only the behavioural probe cannot be true while the crypto in use
+is unapproved. It fails closed, is not gated on production (a staging deployment carrying the
+CUI flag is exactly the configuration somebody promotes), and defaults off, because most
+deployments have no FIPS obligation and a default of True would make every developer machine
+refuse to start on a claim nobody made.
+
+`OG-SC-002` stays `partial`. The repository half is done; moving to `implemented` needs
+FIPS-enabled nodes with the probe passing on them and the output in the evidence bundle. An
+unasserted claim of this kind is worse than no claim — "we run on a FIPS-validated module" is
+the first sentence an assessor tests.
+
+### Three costs, stated rather than hidden
+
+**The edge agent loses OCR.** `tesseract` has no UBI9 equivalent — not in BaseOS, AppStream
+or CodeReady Builder, and EPEL9 does not carry it for aarch64 at all, which was checked
+rather than assumed. It is left out instead of worked around: adding EPEL to the one image
+whose entire justification is a validation boundary means adding a community repository
+outside that boundary, and building tesseract from source into it is the same trade with more
+steps. The two screen-scraper collectors (QIDI, SOVOL) import lazily, so they disable
+themselves and log it rather than crashing the agent — the behaviour every fieldbus collector
+already has.
+
+**The infrastructure images are not UBI.** Redis and PostgreSQL still run their upstream
+Alpine images. They are data services rather than application code, moving them is a separate
+change with its own risk, and the cryptographic boundary between services is the TLS-everywhere
+item, which is separately `partial`. Named here so "all our images are FIPS-capable" is not a
+sentence anybody has to walk back.
+
+**`rag-inference` is still `python:3.10-slim`.** Another lane's image, not on the CUI path
+today. It is named in the guard's own test rather than omitted from its scope, because a
+guard that quietly excludes an image is how an unsupportable sentence gets written.
+
+### Things that only broke because the base changed
+
+Three, all found by building rather than by reading:
+
+- The agent's wheel-builder stage failed with `could not create 'opsgrid_agent.egg-info':
+  Permission denied`. UBI python images run as UID 1001; the Debian base ran the build stage
+  as root and the write was invisible.
+- The frontend refused to start: `"server" directive is not allowed here`. UBI's nginx
+  includes site config from two places with different semantics —
+  `nginx.d/*.conf` at http level and `nginx.default.d/*.conf` **inside** the default server
+  block. The site config is a full `server { }`.
+- And the trap behind that one. Moving the file to `nginx.d/` starts cleanly and serves **the
+  vendor's default page**, because UBI declares its own `default_server` on 8080 and a
+  `default_server` beats a server named `_`. The image builds, the container runs, the health
+  check passes, and the application is not being served. The vendor top-level config is
+  therefore replaced with twenty lines we own rather than patched with a `sed` against a file
+  Red Hat may relayout.
+
+### The mutation pass, and a rule I broke while citing it
+
+Twelve mutations, ten caught first time.
+
+**One survivor was a test that greps for a word.** `test_the_probe_asks_about_security_use`
+asserted `"usedforsecurity=True" in source`, and removing the keyword from the actual call
+survived — because the phrase still appears in the docstring three lines above, explaining why
+the keyword matters. That is rule 262's entry ("a test that greps for a word cannot tell code
+from prose") reproduced in a file whose own docstring cites the reasoning. It reads the call's
+keyword by AST now, and both the missing-keyword and the `usedforsecurity=False` mutations
+fail it.
+
+**The other survivor was the probe's negative answer.** Changing `return False` to
+`return True` — a probe that reports FIPS enforcement unconditionally — passed everything,
+because every other test in the file patches `crypto_is_enforcing` rather than running it. A
+probe that always says yes is the exact reassuring lie the whole item exists to prevent, and
+it would have shipped. The oracle is now established independently of the function: ask MD5
+directly, then require the probe to agree.
+
+### Two guards fired, and one of them caught me disabling a security control
+
+**The crypto guard flagged the FIPS probe**, correctly: `app/core/fips.py` constructs MD5.
+Registered in `DELIBERATELY_ALLOWED` with the argument written out — the probe calls
+`hashlib.new("md5", usedforsecurity=True)` and treats the **raise** as the answer, so no
+digest is ever computed and this is the one place in the codebase where MD5 *succeeding* is
+the finding. The guard's own failure message says these constructions "RAISE rather than
+returning a digest ... so this is an outage"; here the raise is the success path.
+
+Registering it exposed a defect in the guard. `test_no_weak_hash_is_referenced` honours
+`DELIBERATELY_ALLOWED` and its failure message instructs you to "add the file to
+DELIBERATELY_ALLOWED with that argument written out" — and
+`test_no_weak_hashlib_constructor` ignored the register entirely. Following the documented
+procedure did nothing. **A register with an escape hatch that only half the checks honour is
+worse than one with none**: it documents a procedure that silently does not work, so the next
+person assumes their reasoning was rejected on its merits. Both checks consult it now, and a
+real MD5 use in a non-allowlisted file still fails the guard — verified by planting one.
+
+**And `test_production_flags_insecure_defaults` caught something worse than a style issue.**
+I first wrote the `REQUIRE_FIPS_MODE` check immediately after the
+`EDGE_REQUIRE_PROOF_OF_POSSESSION` line at four-space indent — which **ended the
+`if production:` block**, silently reparenting every check below it into
+`if s.REQUIRE_FIPS_MODE:`. That setting defaults False, so `RATE_LIMIT_ENABLED` — the only
+brute-force control on `/auth/login`, with no account lockout behind it — stopped being
+checked in production entirely. Valid Python, no import error, one test failing.
+
+The check that caught it exists because the same control went missing a different way
+(FS-744). That is the second time this specific assertion has paid for itself, and the block
+now sits at the end of the function where a dedent reparents nothing.
+
+RULE 266 — a capability check must be tested against reality at least once, not only against
+its own mocks. Every test of the FIPS probe patched it out to exercise the callers, so a
+mutation making the probe return True unconditionally passed the entire file — the one
+answer that would let a deployment claim a cryptographic boundary it does not have. When a
+predicate exists to describe the environment, one test must run it for real and compare it
+against an independently established fact; the rest may mock it freely.

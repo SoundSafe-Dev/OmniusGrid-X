@@ -1928,6 +1928,15 @@ one of its findings. The habit that catches it:
      wrong one sends them away satisfied. When a docstring asserts that something is
      applied, wired, enforced or preserved, grep for the second use of the thing it names,
      and when you fix the code fix the sentence that hid it.
+
+266. **A capability check must be tested against reality at least once, not only against its
+     own mocks.** Every test of the FIPS runtime probe patched `crypto_is_enforcing` out in
+     order to exercise its callers, so a mutation making the probe return True
+     unconditionally passed the whole file — and "yes, this process enforces FIPS" is the
+     one answer that lets a deployment claim a cryptographic boundary it does not have.
+     When a predicate exists to describe the ENVIRONMENT rather than the code, one test must
+     run it for real and compare it against an independently established fact; the rest may
+     mock it freely.
 ---
 
 ## Open observations, not yet tickets

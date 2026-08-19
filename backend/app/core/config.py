@@ -422,6 +422,19 @@ class Settings(BaseSettings):
     # Dev-only auth conveniences. Both MUST be false in production; the
     # startup hook (validate_settings) hard-fails if they are left on.
     ALLOW_DEV_TOKEN: bool = True   # accept "dev-token" as an admin bypass
+
+    #: Whether this deployment must run under an enforcing FIPS module (FS-761).
+    #:
+    #: DEFAULT FALSE, and that is not a weak default — it is the honest one. Most
+    #: deployments of this system are commercial cloud and have no FIPS obligation, and
+    #: defaulting it True would make every developer laptop refuse to start on a claim
+    #: nobody made. It is the CUI and gov-cloud profiles that set it, and when they do it
+    #: fails CLOSED: a process that cannot prove it is enforcing does not serve.
+    #:
+    #: The check is behavioural rather than a base-image assertion, because a FIPS-capable
+    #: image is not a FIPS-enforcing runtime — a UBI container inherits the host kernel's
+    #: state, so the identical image is compliant on one node and not on the node beside it.
+    REQUIRE_FIPS_MODE: bool = False
     ALLOW_OPEN_REGISTRATION: bool = False  # unauthenticated POST /auth/register
 
     model_config = SettingsConfigDict(env_file=".env")
@@ -498,6 +511,7 @@ def validate_settings(s: "Settings" = None) -> list[str]:
             problems.append("GEOTAB_SIMULATED must be false in production (random demo telematics would be served as real data)")
         if not s.EDGE_REQUIRE_PROOF_OF_POSSESSION:
             problems.append("EDGE_REQUIRE_PROOF_OF_POSSESSION should be true in production (unsigned edge requests are replayable)")
+
         # THE ONLY BRUTE-FORCE CONTROL THIS API HAS, AND IT WAS UNGATED (FS-744).
         #
         # `RATE_LIMIT_ENABLED` defaults to False and every other insecure default in this
@@ -514,4 +528,30 @@ def validate_settings(s: "Settings" = None) -> list[str]:
                 "RATE_LIMIT_ENABLED must be true in production; it is the only "
                 "brute-force control on /auth/login (there is no account lockout)"
             )
+
+    # LAST IN THE FUNCTION, AND THE POSITION IS DELIBERATE (FS-761).
+    #
+    # Written first immediately after the `EDGE_REQUIRE_PROOF_OF_POSSESSION` check, at
+    # four-space indent — which ENDED the `if production:` block, so every production check
+    # below it became the body of `if s.REQUIRE_FIPS_MODE:` instead. That setting defaults
+    # False, so `RATE_LIMIT_ENABLED` — the only brute-force control on `/auth/login` — was
+    # silently never checked. `test_production_flags_insecure_defaults` caught it, which is
+    # the whole reason that assertion exists (FS-744 added it after the same check went
+    # missing a different way).
+    #
+    # NOT gated on production: a staging deployment carrying the CUI flag and not actually
+    # enforcing FIPS is exactly the configuration somebody promotes, and catching it only in
+    # production catches it after the promotion. The setting is opt-in, so anything that has
+    # it on has asserted the obligation itself.
+    if s.REQUIRE_FIPS_MODE:
+        from app.core.fips import crypto_is_enforcing
+
+        if not crypto_is_enforcing():
+            problems.append(
+                "REQUIRE_FIPS_MODE is set but this process is not enforcing FIPS "
+                "(unapproved algorithms are still available). A FIPS-capable base image "
+                "is not a FIPS-enforcing runtime: the container inherits the host kernel's "
+                "state. Boot the node with `fips=1`."
+            )
+
     return problems

@@ -1118,19 +1118,24 @@ Status is stated **per deployment profile**. OmniusGrid ships to commercial clou
 
 **Owner.** platform-security
 
-**Assessment.** RAISED absent -> partial (FS-748). Two of the three deltas are closed: passwords moved to PBKDF2-HMAC-SHA256 with dual-read migration, and ERP field encryption moved from Fernet (AES-128-CBC, keyed by a bare unsalted SHA-256 — the actual defect) to AES-256-GCM with an HKDF-SHA256-derived per-organisation key. `app/core/secrets.py` was deleted rather than ported: unreachable code whose cipher is not approved is a trap for whoever wires it up next. A guard now fails the build if application code imports passlib, bcrypt or Fernet, or constructs an unapproved hash, cipher or curve. Still PARTIAL for the third delta — the base image. `python:3.11-slim` has no FIPS-validated OpenSSL, so backend, frontend and nginx images must move to UBI9, and a UBI image with FIPS mode OFF looks identical to one with it on, which needs a runtime assertion rather than a static check. The scope was measured before any of it was planned, and most of the inventory was already fine: Ed25519 OTA signing, EC P-256/SHA-256 X.509, HS256 JWTs (HMAC-SHA-256 IS approved — the JWT work is key rotation, a different concern), SHA-256 digests of high-entropy random tokens, and no MD5 or SHA-1 anywhere. Measuring first is what turned "FIPS is absent, everything must change" into three specific deltas.
+**Assessment.** THE THIRD DELTA IS CLOSED IN THE REPOSITORY AND NOT IN THE DEPLOYMENT (FS-761), and the distinction is the whole reason this stays `partial` rather than moving to `implemented`. All three application images are now UBI9 — backend, edge agent, and the frontend's node build plus its TLS-terminating nginx runtime, since musl has no validated OpenSSL — and all three were built and run rather than only written. `REQUIRE_FIPS_MODE` probes at startup whether this process actually REFUSES an unapproved algorithm, and refuses to serve when it cannot prove it. What is NOT closed is the part a repository cannot close. Measured on a freshly pulled ubi9/python-311: providers `default`, no kernel flag, MD5 available. A container inherits the host kernel's FIPS state, so the identical image is enforcing on a node booted with `fips=1` and permissive on the node beside it. Moving to `implemented` needs FIPS-enabled nodes and the runtime probe passing on them, with the output in the evidence bundle. Two further gaps are stated rather than left silent: the infrastructure images (Redis, PostgreSQL) are not UBI, and the edge agent's UBI build has no `tesseract` — EPEL9 does not carry it for aarch64 — so the two OCR screen-scraper collectors are unavailable there and degrade to disabled. RAISED absent -> partial (FS-748). Two of the three deltas are closed: passwords moved to PBKDF2-HMAC-SHA256 with dual-read migration, and ERP field encryption moved from Fernet (AES-128-CBC, keyed by a bare unsalted SHA-256 — the actual defect) to AES-256-GCM with an HKDF-SHA256-derived per-organisation key. `app/core/secrets.py` was deleted rather than ported: unreachable code whose cipher is not approved is a trap for whoever wires it up next. A guard now fails the build if application code imports passlib, bcrypt or Fernet, or constructs an unapproved hash, cipher or curve. Still PARTIAL for the third delta — the base image. `python:3.11-slim` has no FIPS-validated OpenSSL, so backend, frontend and nginx images must move to UBI9, and a UBI image with FIPS mode OFF looks identical to one with it on, which needs a runtime assertion rather than a static check. The scope was measured before any of it was planned, and most of the inventory was already fine: Ed25519 OTA signing, EC P-256/SHA-256 X.509, HS256 JWTs (HMAC-SHA-256 IS approved — the JWT work is key rotation, a different concern), SHA-256 digests of high-entropy random tokens, and no MD5 or SHA-1 anywhere. Measuring first is what turned "FIPS is absent, everything must change" into three specific deltas.
 
 **Planned completion.** 2027-03-31
 
 **Implemented by.**
 
+- `app/core/fips.py`
 - `app/core/password.py`
 - `app/services/erp_security.py`
+- `backend/Dockerfile`
+- `edge-agent/Dockerfile`
+- `frontend/Dockerfile.prod`
 
 **Evidence — automated tests, run on every build.**
 
 - `tests/test_no_unapproved_primitive_is_reachable.py`
 - `tests/test_passwords_use_an_approved_kdf.py`
+- `tests/test_the_fips_claim_is_not_just_a_base_image.py`
 
 
 ### OG-SC-003 — Confidentiality of CUI in transit

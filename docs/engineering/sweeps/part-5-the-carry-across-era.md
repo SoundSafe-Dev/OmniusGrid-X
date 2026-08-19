@@ -5115,3 +5115,101 @@ so here is the mechanical form: **bind the real method from the real class onto 
 rather than writing an equivalent one. `self._time_fields = EdgeAgent._time_fields.__get__(self)`
 cannot drift. A stub with the same behaviour is a second implementation, and second
 implementations are the thing this entire document is about.
+
+---
+
+## Rule 266 — a capability check must be tested against reality at least once
+
+The last FIPS delta was the base image, and the base image turned out to be the easy half.
+
+`python:3.11-slim` has no FIPS 140-3 validated OpenSSL and no path to one — the FIPS provider
+is part of what Red Hat gets validated, so no amount of configuration moves Debian inside the
+boundary. Three images move: the backend, the edge agent, and the frontend's node build plus
+its nginx runtime, because musl has no validated OpenSSL either. That is a `FROM` line each,
+plus package-name translation, plus three things that only broke because the base changed and
+which I only found by building the images rather than writing them.
+
+Then I probed a freshly pulled `ubi9/python-311`:
+
+    openssl:     OpenSSL 3.5.5
+    providers:   default
+    kernel flag: absent
+    md5:         allowed
+
+**FIPS-capable, FIPS off, and indistinguishable from enforcing unless something looks.** The
+container inherits the host kernel's state, so the identical image is compliant on a node
+booted with `fips=1` and permissive on the node beside it, with nothing in any manifest to
+tell them apart. A `FROM` line is not an answer to "how do you know this process uses
+validated cryptography?" — it is an answer to "could it?".
+
+So the item is really a runtime probe, and the probe asks the only question that describes
+behaviour rather than configuration: does this process **refuse** MD5 for a security purpose?
+The kernel flag and the provider list get recorded, and neither is the authority. Both
+describe how things are set up. Only the refusal cannot be true while unapproved crypto is in
+use.
+
+### The mutant that would have shipped
+
+Twelve mutations. Ten caught. One of the two survivors is the one worth the rule.
+
+    def crypto_is_enforcing() -> bool:
+        try:
+            hashlib.new("md5", usedforsecurity=True)
+        except (ValueError, TypeError):
+            return True
+        return False        # <-- mutate to: return True
+
+A probe that reports FIPS enforcement unconditionally. Every test in the file passed.
+
+The reason is embarrassing once seen: every other test patches `crypto_is_enforcing` out. Of
+course it does — they are testing the *callers*, the startup assertion and
+`validate_settings`, and patching the environment probe is exactly right for that. The
+coverage looked thorough because it was thorough about everything except the one function
+whose answer the entire feature rests on.
+
+And of all the wrong answers this function could give, "yes, you are enforcing FIPS" is the
+worst one. It does not fail a deployment; it *passes* one. A cluster with FIPS off starts
+cleanly, the startup log records enforcement, and the assertion that exists specifically to
+prevent an unsupportable claim becomes the evidence for it.
+
+**A predicate that describes the environment needs one test that touches the environment.**
+The oracle has to come from somewhere other than the function: here, ask MD5 directly, then
+require the probe to agree. That catches always-True and always-False both, and it stays
+correct if CI ever runs on a FIPS-enforcing node — the test branches on what it observed
+rather than on what it assumed. Every other test in the file goes on mocking freely, which is
+correct; they are not about the environment.
+
+### And I broke rule 262 in the file that cites it
+
+The other survivor: removing `usedforsecurity=True` from the probe's call.
+
+The test for that was
+
+    assert "usedforsecurity=True" in source
+
+and the phrase survives the mutation, because it also appears in the docstring three lines
+above, explaining why the keyword matters. **A test that greps for a word cannot tell code
+from prose** — which is a sentence I wrote in this document two items ago, after doing the
+same thing to a `_draining` check, in a file whose docstring explains the reasoning.
+
+Writing the rule down did not stop me reaching for `in source` when it was the fastest thing
+to type. What stops it is the mutation pass, every time, without exception — the rule tells
+you what went wrong afterwards, and only the mutant tells you that it went wrong at all.
+
+### Three costs I could have hidden and did not
+
+`tesseract` has no UBI9 equivalent, and EPEL9 does not carry it for aarch64. The edge agent's
+OCR screen-scraper collectors are therefore unavailable in the compliance image. The
+temptation is to add EPEL and move on — and adding a community repository outside the
+validation boundary, to the one image whose entire justification is that boundary, trades
+away the reason for the change to keep an optional feature. Building tesseract from source
+into it is the same trade with extra steps.
+
+Redis and PostgreSQL are still upstream Alpine images. `rag-inference` is still
+`python:3.10-slim`, and it is named in the guard's own test rather than quietly left out of
+its scope — because a guard whose scope silently excludes an image is how "all our images are
+FIPS-capable" becomes a sentence somebody has to walk back in front of an assessor.
+
+The control stays `partial`. The repository half is finished; the deployment half needs nodes
+booted with `fips=1` and the probe passing on them, in the evidence bundle. That is not a
+disappointing result — it is the accurate one, and the accuracy is the deliverable.

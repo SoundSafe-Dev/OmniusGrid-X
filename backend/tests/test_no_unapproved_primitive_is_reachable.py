@@ -77,6 +77,18 @@ DELIBERATELY_ALLOWED: dict[str, str] = {
         "secret itself is wrapped in AES-256-GCM and recovery codes are SHA-256, so SHA-1 "
         "appears only inside the OTP construction."
     ),
+    "backend/app/core/fips.py": (
+        "MD5 is CONSTRUCTED here and never used, which is the exact inverse of what this "
+        "guard exists to catch. `crypto_is_enforcing()` calls "
+        "`hashlib.new(\"md5\", usedforsecurity=True)` and treats the RAISE as the answer: "
+        "the probe is asking whether this process refuses unapproved cryptography, and a "
+        "refusal is a pass. No digest is ever computed, no value is returned from it, and "
+        "the call is wrapped in the try/except that is the whole point of writing it.\n\n"
+        "The guard's own failure message says these constructions 'RAISE rather than "
+        "returning a digest' in a FIPS-enforcing runtime, and treats that as an outage. "
+        "Here it is the success path — this is the one place in the codebase where MD5 "
+        "raising is the desired outcome, and where MD5 *succeeding* is the finding."
+    ),
     "backend/app/core/password.py": (
         "The one module permitted to import passlib. It configures PBKDF2 as the preferred "
         "scheme and keeps bcrypt as DEPRECATED so existing hashes still verify during the "
@@ -233,9 +245,23 @@ class TestNoUnapprovedAlgorithmIsConstructed:
         )
 
     def test_no_weak_hashlib_constructor(self):
+        """THIS ONE DID NOT CONSULT THE REGISTER, AND ITS SIBLING DOES (FS-761).
+
+        `test_no_weak_hash_is_referenced` skips files in `DELIBERATELY_ALLOWED` and its
+        failure message tells you to "add the file to DELIBERATELY_ALLOWED with that
+        argument written out". This assertion ignored the register entirely, so following
+        that instruction did nothing and the only way past it was to stop constructing the
+        hash — which for `app/core/fips.py` would mean deleting the FIPS probe.
+
+        A register with an escape hatch that half the checks honour is worse than one with
+        none: it documents a procedure that silently does not work, and the next person
+        assumes their reasoning was rejected on its merits.
+        """
         findings = []
         weak = {"md5", "sha1", "new"}
         for path in _python_files():
+            if _relative(path) in DELIBERATELY_ALLOWED:
+                continue
             try:
                 tree = ast.parse(path.read_text())
             except SyntaxError:

@@ -57,16 +57,37 @@ controls:
       air-gapped: partial
     implemented_by:
       - app/core/password.py
+      - app/core/fips.py
       - app/services/erp_security.py
+      - backend/Dockerfile
+      - edge-agent/Dockerfile
+      - frontend/Dockerfile.prod
     proved_by:
       - tests/test_no_unapproved_primitive_is_reachable.py
       - tests/test_passwords_use_an_approved_kdf.py
+      - tests/test_the_fips_claim_is_not_just_a_base_image.py
     evidence:
       - junit/backend.xml
     owner: platform-security
     remediation:
       due: "2027-03-31"
       note: >-
+        THE THIRD DELTA IS CLOSED IN THE REPOSITORY AND NOT IN THE DEPLOYMENT (FS-761), and
+        the distinction is the whole reason this stays `partial` rather than moving to
+        `implemented`. All three application images are now UBI9 — backend, edge agent, and
+        the frontend's node build plus its TLS-terminating nginx runtime, since musl has no
+        validated OpenSSL — and all three were built and run rather than only written.
+        `REQUIRE_FIPS_MODE` probes at startup whether this process actually REFUSES an
+        unapproved algorithm, and refuses to serve when it cannot prove it.
+        What is NOT closed is the part a repository cannot close. Measured on a freshly
+        pulled ubi9/python-311: providers `default`, no kernel flag, MD5 available. A
+        container inherits the host kernel's FIPS state, so the identical image is enforcing
+        on a node booted with `fips=1` and permissive on the node beside it. Moving to
+        `implemented` needs FIPS-enabled nodes and the runtime probe passing on them, with
+        the output in the evidence bundle. Two further gaps are stated rather than left
+        silent: the infrastructure images (Redis, PostgreSQL) are not UBI, and the edge
+        agent's UBI build has no `tesseract` — EPEL9 does not carry it for aarch64 — so the
+        two OCR screen-scraper collectors are unavailable there and degrade to disabled.
         RAISED absent -> partial (FS-748). Two of the three deltas are closed: passwords
         moved to PBKDF2-HMAC-SHA256 with dual-read migration, and ERP field encryption moved
         from Fernet (AES-128-CBC, keyed by a bare unsalted SHA-256 — the actual defect) to

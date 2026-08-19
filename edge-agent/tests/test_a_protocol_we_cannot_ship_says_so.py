@@ -50,8 +50,21 @@ CAVEAT = "not field-proven"
 
 def _image_python() -> tuple[int, int]:
     """The interpreter the agent image actually runs."""
-    match = re.search(r"^FROM python:(\d+)\.(\d+)", DOCKERFILE.read_text(), re.M)
-    assert match, f"no `FROM python:X.Y` in {DOCKERFILE}; this check cannot be evaluated"
+    content = DOCKERFILE.read_text()
+    # TWO SPELLINGS, because the base moved to UBI9 for FIPS (FS-761) and the version is
+    # written differently: `python:3.11-slim` became `ubi9/python-311`. This function is a
+    # vacuity guard — it refuses to let the checks below run against an unknown Python — and
+    # it did exactly that when the base changed, which is the correct failure and the reason
+    # it exists. Teaching it the second spelling keeps the check evaluable rather than
+    # loosening it.
+    match = re.search(r"^FROM python:(\d+)\.(\d+)", content, re.M)
+    if not match:
+        ubi = re.search(r"^FROM \S+/ubi\d+/python-(\d)(\d+)", content, re.M)
+        assert ubi, (
+            f"no `FROM python:X.Y` or `FROM .../ubiN/python-XY` in {DOCKERFILE}; "
+            "this check cannot be evaluated"
+        )
+        return int(ubi.group(1)), int(ubi.group(2))
     return int(match.group(1)), int(match.group(2))
 
 
