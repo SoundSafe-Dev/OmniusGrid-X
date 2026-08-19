@@ -90,3 +90,64 @@ jobs:
       - name: API logs on failure
         if: failure()
         run: tail -50 /tmp/api.log
+
+  # RAG integration (workstream B): the only place any workflow boots Qdrant,
+  # SeaweedFS and rag-inference. Without this, backend/tests/rag_eval's
+  # rag_client fixture can't reach a live stack and every test in it skips
+  # (by design — see its docstring) rather than gates, so RAG integration
+  # coverage was silently zero. Belongs here, not in ci-cd.yml or
+  # quality-gates.yml: rag-inference is a from-source Docker build (~5GB BGE
+  # weights downloaded at container *runtime*, not build time — see
+  # rag-inference/Dockerfile's HF_HOME — so a Docker layer cache can't help)
+  # that would slow every PR.
+  #
+  # TODO(cache): the weights land in the `rag-models` *named* Docker volume
+  # (docker-compose.yml), not a bind-mounted host path, so `actions/cache`
+  # can't point at it directly the way it does for e.g. pip/npm caches —
+  # named volumes live under /var/lib/docker/volumes (root-owned) and would
+  # need an explicit tar/docker-cp export+import around the compose up/down
+  # to round-trip through actions/cache. Left unsolved rather than forcing a
+  # fragile shell dance: a clean fix is either (a) switch rag-inference to a
+  # bind mount in docker-compose.yml so actions/cache can target the host
+  # path directly, or (b) pre-bake the weights into the image at build time
+  # (trades this runtime cost for a slower, cacheable `docker/build-push-
+  # action` layer via ci-cd.yml's new rag-inference matrix entry).
+  #
+  # RAG unit/queue tests (backend/tests/test_rag_*.py) are NOT run here on
+  # purpose: they're pure Postgres-level unit/integration tests (every
+  # qdrant/seaweedfs/rag-inference touch is monkeypatched or a static check —
+  # see quality-gates.yml's rag-unit job for the file-by-file verification)
+  # and now run there, gated per-PR, with TEST_DATABASE_URL wired to a real
+  # postgres service — nothing about them needs this live stack.
+  rag-eval-nightly:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install RAG eval test deps
+        working-directory: ./backend
+        run: pip install -r requirements.txt -r requirements-dev.txt boto3
+
+      - name: Start RAG stack (build + boot qdrant/seaweedfs/rag-inference/backend/worker)
+        run: ./scripts/rag.sh up
+
+      - name: Data-plane e2e verification (embed -> ingest -> store -> index -> retrieve -> cleanup)
+        run: python3 scripts/verify_rag_e2e.py
+
+      - name: RAG eval suite
+        working-directory: ./backend
+        # synthesis/negative markers self-skip without a live LLM (no Ollama
+        # here) via their own `llm_available` check — everything else
+        # (mechanics/retrieval/hybrid/isolation/lifecycle/metrics/corpus/
+        # robustness) runs for real and gates.
+        run: python -m pytest tests/rag_eval -v
+
+      - name: RAG service logs on failure
+        if: failure()
+        run: docker compose logs --tail=200 qdrant seaweedfs rag-inference backend rag-indexing-worker

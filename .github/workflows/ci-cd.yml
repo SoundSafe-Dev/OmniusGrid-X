@@ -164,7 +164,7 @@ jobs:
 
     strategy:
       matrix:
-        component: [backend, frontend, edge-agent]
+        component: [backend, frontend, edge-agent, rag-inference]
         include:
           - component: backend
             dockerfile: ./backend/Dockerfile
@@ -180,6 +180,18 @@ jobs:
           - component: edge-agent
             dockerfile: ./edge-agent/Dockerfile
             context: ./edge-agent
+          - component: rag-inference
+            # RAG (workstream B): this only builds and pushes the image.
+            # infrastructure/k8s/base/rag/rag-inference-deployment.yaml
+            # already exists but its kustomization is deliberately standalone
+            # (not wired into base/kustomization.yaml or the staging/
+            # production overlays — see that dir's kustomization.yaml
+            # comment), so deploy-staging/deploy-production don't reference
+            # this image yet. This just makes sure a tagged image exists for
+            # whenever that wiring lands. Self-contained context/Dockerfile,
+            # same shape as edge-agent.
+            dockerfile: ./rag-inference/Dockerfile
+            context: ./rag-inference
 
     steps:
       - name: Checkout
