@@ -14070,3 +14070,40 @@ mutation making the probe return True unconditionally passed the entire file —
 answer that would let a deployment claim a cryptographic boundary it does not have. When a
 predicate exists to describe the environment, one test must run it for real and compare it
 against an independently established fact; the rest may mock it freely.
+
+---
+
+## FS-762 — a README pass, and the two things it found
+
+Documentation maintenance rather than a defect fix, recorded because both findings are the
+kind that recur.
+
+**The front door did not mention the last three weeks of work.** `grep -c DDIL README.md`
+returned **0**. Nine DDIL items, 109 scenarios, a 59-control catalogue covering all 110
+NIST SP 800-171 practices, generated SSP/SoA/POA&M, and three images moved to UBI9 — none of
+it visible in the document a reader meets first. Each item had been documented thoroughly in
+the delivery log and the sweeps, and the delivery log is where you look *after* you know the
+work exists.
+
+That is a specific failure mode of documenting as you go: the per-item record is excellent
+and the index never gets written, because no single item is the one that should introduce the
+workstream. A **Compliance and DDIL** section now sits between the security model and the ERP
+reference, with the nine items in a table stating what was actually wrong in each — an E-stop
+in batch 4,001 of 4,001, a 20 msg/s drain ceiling below the agent's own 50 msg/s ingest, two
+download paths with no size limit at all — rather than the feature each became.
+
+**The test-count floor had drifted 357 below reality.** The README states a floor of
+"4,800+ tests" for the `backend-full` gate; the suite is at 5,157.
+`test_readme_test_count_is_not_stale.py` was passing, correctly — a floor only fails when the
+prose has become a lie. But its own docstring says the floor is "deliberately close to the
+real figure" and that one set far below reality "passes forever and asserts nothing", which
+is the direction 4,800 was heading. Raised to 5,100.
+
+Worth noticing that the guard's design anticipated exactly this: it carries a second
+assertion, `test_the_floor_is_not_meaninglessly_low`, precisely because the failure mode of a
+floor is decay rather than falsehood. The number needs raising as a matter of maintenance,
+and this pass is when that happened.
+
+Also checked rather than assumed: the "550 operations" claim, counted from the live OpenAPI
+schema — accurate, and left alone. The "466 of 546" conformance row was deliberately not
+rescaled, for the reason it already states: 466/550 is not a number anybody ran.

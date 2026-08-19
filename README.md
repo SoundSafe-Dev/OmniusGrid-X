@@ -34,6 +34,7 @@
 | [API reference](#api-reference) | The endpoints worth knowing, by area — 113 rows of 550 operations, and **every row is checked to exist** |
 | [Features](#features) | Capability detail per subsystem |
 | [Security model](#security-model) | Auth, tenancy, secrets |
+| [Compliance and DDIL](#compliance-and-ddil) | What is claimed, what backs it, and what a denied link does |
 | [Documentation](#documentation) | The rest of `docs/` |
 
 **Engineering method.** The sweeps and guards in this repository follow a set of numbered
@@ -881,7 +882,7 @@ reliability layers (each with its own README):
 | **Object storage** | Generated exports & compliance reports go to SeaweedFS (S3) so a worker on one pod and the API on another share one bucket — fixes cross-pod download | [`base/object-store.yaml`](infrastructure/k8s/base/object-store.yaml) |
 | **Secrets** | Sealed Secrets (encrypted, safe-in-git) **or** External Secrets Operator (Vault / AWS SM / GCP SM). Placeholder dev credentials are **enforced** out of both deployed environments — a blocking gate fails if one becomes reachable, or if the deploy stops filtering them | [`secrets/`](infrastructure/k8s/secrets/) |
 | **Referential integrity in tests** | SQLite ships with `PRAGMA foreign_keys=OFF`, so an in-memory test can insert a child before its parent, or against a parent nobody created, and pass. That is why none of 3,200 tests could see the ordering defect that killed the demo seed. **Foreign keys are now enforced for every SQLite engine in the suite** (a `connect` listener in `conftest.py`) and the whole suite passes with them on. Getting there cost 76 failures at the first measurement, 39 after eleven missing `relationship()` edges were added at the model level, and 0 after the last eight fixtures were converted — not one of which was a test bug. `Base` now has **no model carrying an FK column without a relationship**, so the unit of work can order every parent before its child; the two genuinely mutual pairs keep a one-sided exemption that is itself asserted |
-| **CI safety** | **14 blocking gates** on every branch push. Backend: `backend-realdb` (schema parity, tenant isolation + RLS, timestamp defaults — against an ephemeral TimescaleDB, because RLS and server defaults are both no-ops on SQLite), `backend-full` (**4,800+ tests** — the whole suite bar the Kafka e2e, which runs in its own job; the figure is a FLOOR asserted by `test_readme_test_count_is_not_stale.py`, because the exact number was written down once as 2,149 and was a thousand short within weeks), `backend-kafka-e2e` (container e2e in its own process), `migration-hygiene` (duplicate prefixes; and since FS-578 the suite also applies the whole chain to an empty database and **re-runs every migration at its own point in it** — the runner executes statements one at a time in autocommit, because continuous aggregates refuse a transaction block, so a file that fails halfway has committed its earlier statements and recorded nothing, and running it again is the only recovery there is. 22 files look non-idempotent to a text search; **4 are**, and none of them can be repaired — editing an applied migration is checksum drift). Kubernetes: `k8s-manifests` (build + kubeconform + placeholder-credential check, **per environment** — the stacks used to be validated one way and applied another, which is how staging never had monitoring applied at all; plus a namespace/scale-target lint, a replica-floor check against each autoscaler's declared minimum, a secret-source pairing over BOTH provisioning paths, and a check that the canonical README names every buildable tree), `netpol-simulate`, `k8s-smoke` (kind: real operator webhooks), `k8s-netpol` (kind + **Calico**: policies genuinely enforced, 19 allow/deny cases), `netpol-coverage` (every workload in a default-deny namespace has a policy in both directions — the gap that killed tracing). Plus `prometheus-rules` (lints `alerts.yml` + `slo_rules.yml`, checks **both** Prometheus configs, and runs the alert unit tests — **globbed, not listed**, and **all 51 rules are now provably FIRABLE** rather than merely well-formed — each driven true from a series the product publishes, each with a must-stay-quiet companion, and the `UNTESTED` set in `test_every_alert_rule_is_provably_firable.py` went 23 → 15 → **0** and is closed: `check rules` cannot tell a rule that fires from one that never can, which is how `EdgeAgentBufferHigh` stayed unfirable for its whole existence: they were six filenames written out, so a new one ran only if somebody remembered to edit the workflow, and an alert test that does not run is indistinguishable from one that passes), `frontend-e2e-authenticated` (stands up Postgres + migrations + demo data + uvicorn and asserts the dashboard shows **non-zero** data — an element-visibility check would have passed against the FS-191 tenancy bug), `supply-chain`, `repo-hygiene`, frontend unit + e2e | `.github/workflows/quality-gates.yml` |
+| **CI safety** | **14 blocking gates** on every branch push. Backend: `backend-realdb` (schema parity, tenant isolation + RLS, timestamp defaults — against an ephemeral TimescaleDB, because RLS and server defaults are both no-ops on SQLite), `backend-full` (**5,100+ tests** — the whole suite bar the Kafka e2e, which runs in its own job; the figure is a FLOOR asserted by `test_readme_test_count_is_not_stale.py`, because the exact number was written down once as 2,149 and was a thousand short within weeks), `backend-kafka-e2e` (container e2e in its own process), `migration-hygiene` (duplicate prefixes; and since FS-578 the suite also applies the whole chain to an empty database and **re-runs every migration at its own point in it** — the runner executes statements one at a time in autocommit, because continuous aggregates refuse a transaction block, so a file that fails halfway has committed its earlier statements and recorded nothing, and running it again is the only recovery there is. 22 files look non-idempotent to a text search; **4 are**, and none of them can be repaired — editing an applied migration is checksum drift). Kubernetes: `k8s-manifests` (build + kubeconform + placeholder-credential check, **per environment** — the stacks used to be validated one way and applied another, which is how staging never had monitoring applied at all; plus a namespace/scale-target lint, a replica-floor check against each autoscaler's declared minimum, a secret-source pairing over BOTH provisioning paths, and a check that the canonical README names every buildable tree), `netpol-simulate`, `k8s-smoke` (kind: real operator webhooks), `k8s-netpol` (kind + **Calico**: policies genuinely enforced, 19 allow/deny cases), `netpol-coverage` (every workload in a default-deny namespace has a policy in both directions — the gap that killed tracing). Plus `prometheus-rules` (lints `alerts.yml` + `slo_rules.yml`, checks **both** Prometheus configs, and runs the alert unit tests — **globbed, not listed**, and **all 51 rules are now provably FIRABLE** rather than merely well-formed — each driven true from a series the product publishes, each with a must-stay-quiet companion, and the `UNTESTED` set in `test_every_alert_rule_is_provably_firable.py` went 23 → 15 → **0** and is closed: `check rules` cannot tell a rule that fires from one that never can, which is how `EdgeAgentBufferHigh` stayed unfirable for its whole existence: they were six filenames written out, so a new one ran only if somebody remembered to edit the workflow, and an alert test that does not run is indistinguishable from one that passes), `frontend-e2e-authenticated` (stands up Postgres + migrations + demo data + uvicorn and asserts the dashboard shows **non-zero** data — an element-visibility check would have passed against the FS-191 tenancy bug), `supply-chain`, `repo-hygiene`, frontend unit + e2e. The edge agent's **109 DDIL scenarios** run nightly rather than per-PR (`pytest -m ddil`) because a 400,000-row drain measurement is not a per-PR concern — but the cross-repo parity guards that stop the agent and backend disagreeing about priority tiers or wire codecs are unmarked and gate every push | `.github/workflows/quality-gates.yml` |
 | **Load / failover testing** | Kafka ingestion load generator (drives KEDA scaling + DB writes) + a runbook for driving throughput and DB-failover-under-load | [`tests/load/`](tests/load/) |
 
 ### 5. Page → API wiring
@@ -2014,6 +2015,95 @@ inventory reaches; it is now generated from `App.tsx` and held there by two guar
 | Secrets | No plaintext secrets in git — Sealed Secrets (encrypted) or External Secrets Operator (Vault / AWS SM / GCP SM); see [`infrastructure/k8s/secrets/`](infrastructure/k8s/secrets/) |
 | Cluster network | Zero-trust: `default-deny-all` NetworkPolicy + per-workload allow-lists across every stack, with enforcement verified in CI on Calico (9 allow/deny cases); see [`infrastructure/k8s/NETWORK_SECURITY.md`](infrastructure/k8s/NETWORK_SECURITY.md) |
 | Workloads | Containers run non-root with read-only root filesystem and all Linux capabilities dropped |
+
+---
+
+## Compliance and DDIL
+
+Two workstreams, one rule between them: **a control is written down as implemented only when
+it names the code that implements it and the test that proves it.** Everything below is
+either evidenced that way or recorded as a dated gap.
+
+### What is claimed
+
+**No framework compliance is claimed.** No assessment has been performed, no C3PAO engaged,
+no ATO sought. What exists is a machine-readable control catalogue under
+[`backend/compliance/catalog/`](backend/compliance/catalog/) — **59 controls covering all 110
+NIST SP 800-171 practices**, each with an owner, a per-deployment-profile status, and either
+a proving test or a dated POA&M line.
+
+Per-profile status is not decoration. Physical controls are `inherited` in cloud and
+`organizational` on-prem, and a single global status would have to be wrong about one of
+them, so every control carries four: commercial-cloud, gov-cloud, on-prem, air-gapped.
+
+The SSP, Statement of Applicability and POA&M in
+[`docs/compliance/generated/`](docs/compliance/generated/) are **generated** from that
+catalogue by `make compliance` and held byte-for-byte by a test — so a control cannot be
+claimed without naming the test that proves it, and **deleting that test fails the build**
+rather than silently lowering a number.
+
+This replaced two documents totalling 968 lines that asserted controls this system does not
+have — "Multi-factor authentication required" when MFA was orphaned unreachable code,
+"Quarterly access reviews" when none exist, an IDS that was never deployed. 314 control
+claims between them and not one citing an implementation file or a test. The reasoning for
+removing them is kept in [`docs/compliance/README.md`](docs/compliance/README.md) rather than
+buried, because an assessor who is told the evidence for one claim does not exist stops
+believing the others.
+
+### DDIL — denied, degraded, intermittent, limited bandwidth
+
+Nine items, each with an acceptance criterion measured by a harness rather than settled by
+reading the code. The harness was built **second on purpose** (S9), before the seven items
+graded against it, because "survives a 72-hour outage" is exactly the claim that reads as
+true in the source and is false in the process.
+
+Every scenario ends with the same assertion:
+
+    produced == sent + still_buffered + dead_lettered + dropped + expired
+
+A message that is neither delivered, nor held, nor deliberately discarded **and counted**,
+has vanished. No single counter catches that; only the balance does.
+
+| | What was actually wrong | Now |
+|---|---|---|
+| **S1** stale commands | A validated `timeout_seconds` was discarded, so a days-old actuation command replayed verbatim on reconnect | Expired and future-dated commands are refused; fails closed when the clock has never synced |
+| **S9** fault harness | "The buffer handles outages" was a belief nobody had tested | 109 scenarios; time is compressed, so three days of denial run in CI |
+| **S2** priority tiers | An emergency stop drained in batch 4,001 of 4,001 — five hours behind vibration nobody would read. The tiers existed, in the backend, on the wrong side of the link | Tier-ordered drain and shed; an E-stop is the first message off the edge |
+| **S3** local alarms | A firing rule's entire effect was a Prometheus counter (scraped over the link that is down), a log line (shipped over it), and a list that dies on restart — and the pipeline discarded the alert before it reached the uplink | Durable local write at `synchronous=FULL` first, tier-1 uplink second, `/alerts` on the agent's own server |
+| **S4** uplink reconnect | `_init_kafka_producer` ran once. Boot into an outage and the agent buffered forever, delivering nothing after the link returned | Supervisor with the shared backoff/breaker; a producer that delivers nothing for three batches is rebuilt |
+| **S5** adaptive backfill | Batch 100 every 5s — a hard 20 msg/s ceiling **below the agent's own 50 msg/s ingest**, so the backlog grew on a healthy link while the 24h cleaner ate the oldest end | Batch scales with backlog; age-expiry suspends mid-drain (the priority size cap still bounds disk); a broker outage no longer burns the per-message retry budget |
+| **S6** resumable OTA | Two of three download paths had **no size limit at all**, and none could resume — on a link that drops every few minutes a large artifact never arrives | Streams to `.part`, resumes with `Range`, and checks the range response rather than trusting it |
+| **S7** wire compression | `compression.py` was correct, tested, and called by nothing, because the receiver did not exist | Framed and gzipped — but only after a heartbeat ack says the backend can decode it |
+| **S8** clock quality | The skew offset was computed for years and never applied to a timestamp; the docstring said it was | Corrected at send with the raw clock preserved, and every row carries `synced`/`holdover`/`unsynced`/`unknown` |
+
+### FIPS
+
+Three deltas, measured before being planned — which turned "FIPS is absent, everything must
+change" into three specific items. Most of the inventory was already approved: Ed25519 OTA
+signing, EC P-256/SHA-256 X.509, HS256 JWTs (HMAC-SHA-256 **is** approved), and no MD5 or
+SHA-1 anywhere.
+
+Passwords moved to PBKDF2-HMAC-SHA256 with dual-read migration; ERP field encryption moved
+from Fernet keyed by a bare unsalted SHA-256 to AES-256-GCM with an HKDF-derived per-org key;
+and all three application images moved to UBI9, because Debian and musl have no FIPS-validated
+OpenSSL and no path to one.
+
+**A FIPS-capable image is not a FIPS-enforcing runtime**, and that is why there is a runtime
+probe rather than a `FROM` line. Measured on a freshly pulled `ubi9/python-311`: providers
+`default`, no kernel flag, MD5 available. A container inherits the host kernel's FIPS state,
+so the identical image is enforcing on a node booted with `fips=1` and permissive on the node
+beside it. `REQUIRE_FIPS_MODE` asks the only question that describes behaviour — does this
+process **refuse** MD5 for a security purpose — and refuses to serve when it cannot prove it.
+
+The control stays `partial`: the repository half is done, and `implemented` needs FIPS-enabled
+nodes with the probe passing on them, in the evidence bundle.
+
+### What only people can supply
+
+Recorded in the catalogue as `organizational` with `why_code_cannot`, never faked: training,
+incident-response handling and testing, maintenance, physical media protection, personnel
+screening, risk assessment. Plus the things no repository can produce — the CUI boundary
+definition, a C3PAO engagement, agency sponsorship, and the SOC 2 observation window.
 
 ---
 
