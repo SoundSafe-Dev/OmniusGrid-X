@@ -29,6 +29,7 @@ import {
   useCreateAgentRollout,
   useCreateFleetTargetPreview,
   useFleetCohorts,
+  useFleetTargetPreview,
   usePublishAgentRelease,
   useYankAgentRelease,
 } from '../../hooks/useFleet';
@@ -239,22 +240,36 @@ export const Fleet: FC = () => {
     rolloutForm.release_id,
     selectedSelector
   );
-  const previewExpiresAt = rolloutPreview
-    ? Date.parse(rolloutPreview.data.expires_at)
+  const previewMatchesSelection = Boolean(
+    rolloutPreview && rolloutPreview.fingerprint === selectedFingerprint
+  );
+  const storedPreview = useFleetTargetPreview(
+    rolloutPreview && previewMatchesSelection ? rolloutPreview.data.id : ''
+  );
+  const currentPreview =
+    rolloutPreview && storedPreview.data?.id === rolloutPreview.data.id
+      ? storedPreview.data
+      : rolloutPreview?.data ?? null;
+  const previewExpiresAt = currentPreview
+    ? Date.parse(currentPreview.expires_at)
     : 0;
+  const previewIsExpired = Boolean(
+    currentPreview &&
+      (currentPreview.expired ||
+        !Number.isFinite(previewExpiresAt) ||
+        previewExpiresAt <= previewClock)
+  );
   const previewIsFresh = Boolean(
-    rolloutPreview &&
-      !rolloutPreview.data.expired &&
-      Number.isFinite(previewExpiresAt) &&
-      previewExpiresAt > previewClock &&
-      rolloutPreview.fingerprint === selectedFingerprint
+    currentPreview && previewMatchesSelection && !previewIsExpired
   );
 
   useEffect(() => {
-    if (!rolloutPreview) return undefined;
+    if (!currentPreview || currentPreview.expired || !previewMatchesSelection) {
+      return undefined;
+    }
     const timer = window.setInterval(() => setPreviewClock(Date.now()), 1_000);
     return () => window.clearInterval(timer);
-  }, [rolloutPreview]);
+  }, [currentPreview, previewMatchesSelection]);
 
   const refreshAll = () => {
     versions.refetch();
@@ -265,7 +280,6 @@ export const Fleet: FC = () => {
 
   const updateRolloutTarget = (patch: Partial<RolloutFormState>) => {
     setRolloutForm((current) => ({ ...current, ...patch }));
-    setRolloutPreview(null);
     setFormError('');
   };
 
@@ -351,18 +365,19 @@ export const Fleet: FC = () => {
     if (rolloutForm.rollback_release_id) strategy.rollback_release_id = rolloutForm.rollback_release_id;
 
     const selector = selectorForRollout(rolloutForm);
-    const expiresAt = rolloutPreview
-      ? Date.parse(rolloutPreview.data.expires_at)
+    const expiresAt = currentPreview
+      ? Date.parse(currentPreview.expires_at)
       : 0;
     const hasFreshPreview = Boolean(
       rolloutPreview &&
+        currentPreview &&
         selector &&
         rolloutPreview.fingerprint === previewFingerprint(rolloutForm.release_id, selector) &&
-        !rolloutPreview.data.expired &&
+        !currentPreview.expired &&
         Number.isFinite(expiresAt) &&
         expiresAt > Date.now()
     );
-    if (!hasFreshPreview || !rolloutPreview) {
+    if (!hasFreshPreview || !currentPreview) {
       setFormError('Preview these targets again before creating the rollout.');
       return;
     }
@@ -381,9 +396,9 @@ export const Fleet: FC = () => {
       {
         name: rolloutForm.name.trim(),
         release_id: rolloutForm.release_id,
-        target_selector: rolloutPreview.data.selector,
-        preview_id: rolloutPreview.data.id,
-        membership_hash: rolloutPreview.data.membership_hash,
+        target_selector: currentPreview.selector,
+        preview_id: currentPreview.id,
+        membership_hash: currentPreview.membership_hash,
         strategy,
         scheduled_start_at: scheduledStartAt,
         enforce_maintenance_windows:
@@ -629,7 +644,7 @@ export const Fleet: FC = () => {
                     </Button>
                   </div>
 
-                  {rolloutPreview && (
+                  {rolloutPreview && currentPreview && (
                     <div className="mt-4 space-y-4">
                       <div
                         className={cn(
@@ -641,25 +656,36 @@ export const Fleet: FC = () => {
                       >
                         <div className="flex flex-wrap items-center justify-between gap-2">
                           <p className="font-medium text-opsgrid-text">
-                            {formatNumber(rolloutPreview.data.asset_count, 0)} assets on{' '}
-                            {formatNumber(rolloutPreview.data.agent_count, 0)} agents
+                            {formatNumber(currentPreview.asset_count, 0)} assets on{' '}
+                            {formatNumber(currentPreview.agent_count, 0)} agents
                           </p>
                           <Badge variant={previewIsFresh ? 'success' : 'warning'}>
-                            {previewIsFresh ? 'Ready' : 'Preview expired or changed'}
+                            {previewIsFresh
+                              ? 'Ready'
+                              : previewIsExpired
+                                ? 'Preview expired'
+                                : 'Targets changed'}
                           </Badge>
                         </div>
                         <p className="mt-1 text-xs text-opsgrid-text-secondary">
-                          Expires {formatDateTime(rolloutPreview.data.expires_at)} · membership{' '}
+                          Expires {formatDateTime(currentPreview.expires_at)} · membership{' '}
                           <span className="font-mono">
-                            {rolloutPreview.data.membership_hash.slice(0, 12)}
+                            {currentPreview.membership_hash.slice(0, 12)}
                           </span>
                         </p>
+                        {!previewIsFresh && (
+                          <p role="status" className="mt-2 text-sm text-opsgrid-text">
+                            {previewIsExpired
+                              ? 'This target preview has expired. Refresh it before creating the rollout.'
+                              : 'The rollout targets changed after this preview. Refresh it to approve the current selection.'}
+                          </p>
+                        )}
                       </div>
 
-                      {(rolloutPreview.data.warnings.length > 0 ||
-                        rolloutPreview.data.excluded_assets.length > 0) && (
+                      {(currentPreview.warnings.length > 0 ||
+                        currentPreview.excluded_assets.length > 0) && (
                         <div className="space-y-2">
-                          {rolloutPreview.data.warnings.map((warning, index) => (
+                          {currentPreview.warnings.map((warning, index) => (
                             <div
                               key={`${warning.code}-${index}`}
                               className="flex items-start gap-2 rounded-lg border border-status-warning/40 bg-status-warning/10 p-3 text-sm text-opsgrid-text"
@@ -668,7 +694,7 @@ export const Fleet: FC = () => {
                               <span>{warning.message}</span>
                             </div>
                           ))}
-                          {rolloutPreview.data.excluded_assets.map((asset) => (
+                          {currentPreview.excluded_assets.map((asset) => (
                             <div
                               key={asset.asset_id}
                               className="flex items-start gap-2 rounded-lg border border-opsgrid-border p-3 text-sm text-opsgrid-text-secondary"
@@ -693,7 +719,7 @@ export const Fleet: FC = () => {
                             </Table.Row>
                           </Table.Head>
                           <Table.Body>
-                            {rolloutPreview.data.agents.flatMap((agent) =>
+                            {currentPreview.agents.flatMap((agent) =>
                               agent.assets.map((asset) => (
                                 <Table.Row key={`${agent.agent_key}-${asset.asset_id}`}>
                                   <Table.Cell className="font-mono text-xs">

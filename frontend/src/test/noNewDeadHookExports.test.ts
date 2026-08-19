@@ -1,5 +1,5 @@
 /**
- * Nine exported hooks nothing imports. This stops it growing (FS-575).
+ * Eight exported hooks nothing imports. This stops it growing (FS-575).
  *
  * The frontend twin of `test_no_new_unreachable_modules.py`. An exported hook with no consumer
  * reads as available capability: it is typed, it compiles, it appears in autocomplete, and the
@@ -36,10 +36,6 @@ const HOOKS = join(SRC, 'hooks')
 
 /** Exported hooks with no consumer, and what each one is. */
 const DEAD_EXPORTS: Record<string, string> = {
-  useFleetTargetPreview:
-    'Reads a stored preview by id. The page creates previews and renders the response it ' +
-    'gets back, so it never re-fetches one — which is also why a preview expiring is ' +
-    'invisible to it today.',
   useFeatureFlags:
     'The whole feature-flag client is unused while the BACKEND serves the API — ' +
     'app/api/feature_flags.py mounts full CRUD. Nothing in the product gates behaviour on a ' +

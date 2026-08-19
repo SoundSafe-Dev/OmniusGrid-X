@@ -17,18 +17,21 @@
  * failed, because "something went wrong" leaves an operator unsure whether the bad release
  * is still going out.
  */
-import { render, screen } from '@testing-library/react'
+import { act, fireEvent, render, screen } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import type { FleetTargetPreview } from '../../types/fleet'
 
 const versions = vi.fn()
 const releases = vi.fn()
 const rollouts = vi.fn()
+const targetPreviews = vi.fn()
 const idle = () => ({ mutate: vi.fn(), mutateAsync: vi.fn(), isPending: false, isError: false })
 const mutations = {
   createRelease: idle(),
   publishRelease: idle(),
   yankRelease: idle(),
+  createTargetPreview: idle(),
   createRollout: idle(),
   cancelRollout: idle(),
 }
@@ -39,7 +42,8 @@ vi.mock('../../hooks/useFleet', () => ({
   // hook takes its test file with it. Stubbed neutrally; the assertions below are
   // about the affordances this file already covered.
   useFleetCohorts: () => ({ data: undefined, isLoading: false, isError: false, mutate: vi.fn(), mutateAsync: vi.fn(), isPending: false }),
-  useCreateFleetTargetPreview: () => ({ data: undefined, isLoading: false, isError: false, mutate: vi.fn(), mutateAsync: vi.fn(), isPending: false }),
+  useFleetTargetPreview: (previewId: string) => targetPreviews(previewId),
+  useCreateFleetTargetPreview: () => mutations.createTargetPreview,
   useAgentVersions: () => versions(),
   useAgentReleases: () => releases(),
   useAgentRollouts: () => rollouts(),
@@ -97,6 +101,69 @@ const rollout = (over: Record<string, unknown> = {}) => ({
   ...over,
 })
 
+const preview = (over: Partial<FleetTargetPreview> = {}): FleetTargetPreview => ({
+  id: 'preview-1',
+  release_id: 'rel-1',
+  selector: { all: true },
+  asset_ids: ['asset-1'],
+  agents: [
+    {
+      agent_key: 'agent-1',
+      agent_id: 'agent-1',
+      route_asset_id: 'asset-1',
+      asset_ids: ['asset-1'],
+      assets: [
+        {
+          asset_id: 'asset-1',
+          name: 'Mixer 1',
+          agent_id: 'agent-1',
+          agent_version: '1.3.0',
+          workcell_id: 'workcell-1',
+          workcell_name: 'Mixing',
+          site_id: 'site-1',
+          site_name: 'Plant A',
+          asset_type_id: 'type-1',
+          asset_type_name: 'Mixer',
+          asset_category: 'process',
+          collector_types: ['mqtt'],
+          tags: [],
+          groups: [],
+        },
+      ],
+    },
+  ],
+  excluded_assets: [],
+  warnings: [],
+  membership_hash: 'b'.repeat(64),
+  asset_count: 1,
+  agent_count: 1,
+  created_by: 'admin',
+  expires_at: '2099-08-18T12:05:00Z',
+  created_at: '2026-08-18T12:00:00Z',
+  expired: false,
+  ...over,
+})
+
+interface PreviewMutationOptions {
+  onSuccess?: (data: FleetTargetPreview) => void
+}
+
+const createPreviewResponses = (...responses: FleetTargetPreview[]) => {
+  let responseIndex = 0
+  mutations.createTargetPreview.mutate.mockImplementation(
+    (_payload: unknown, options?: PreviewMutationOptions) => {
+      const response = responses[Math.min(responseIndex, responses.length - 1)]
+      responseIndex += 1
+      options?.onSuccess?.(response)
+    },
+  )
+}
+
+const openRolloutForm = () => {
+  fireEvent.click(screen.getByRole('button', { name: 'Rollout' }))
+  fireEvent.change(screen.getByLabelText('Release'), { target: { value: 'rel-1' } })
+}
+
 const show = () =>
   render(
     <MemoryRouter>
@@ -110,6 +177,7 @@ beforeEach(() => {
   versions.mockReset()
   releases.mockReset()
   rollouts.mockReset()
+  targetPreviews.mockReset()
   for (const key of Object.keys(mutations) as (keyof typeof mutations)[]) {
     mutations[key] = idle()
   }
@@ -127,6 +195,7 @@ beforeEach(() => {
   )
   releases.mockReturnValue(query([release()]))
   rollouts.mockReturnValue(query([rollout()]))
+  targetPreviews.mockReturnValue(query(undefined))
 })
 
 describe('a failed OTA action names itself (FS-480)', () => {
@@ -219,5 +288,106 @@ describe('the page renders what loaded', () => {
     expect(screen.getAllByText('1.4.0').length).toBeGreaterThanOrEqual(2)
     expect(screen.getByText(/agent 1.4.0 → stable/)).toBeInTheDocument()
     expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+  })
+})
+
+describe('target preview freshness', () => {
+  it('uses the stored server response when it says a locally fresh preview expired', () => {
+    const created = preview()
+    const expired = preview({ expired: true })
+    createPreviewResponses(created)
+    targetPreviews.mockImplementation((previewId: string) =>
+      query(previewId ? expired : undefined),
+    )
+    show()
+    openRolloutForm()
+    fireEvent.change(screen.getByLabelText('Name'), { target: { value: 'Safe rollout' } })
+
+    fireEvent.click(screen.getByRole('button', { name: 'Preview targets' }))
+
+    expect(targetPreviews).toHaveBeenLastCalledWith('preview-1')
+    expect(screen.getByText('Preview expired')).toBeInTheDocument()
+    expect(screen.getByText(/has expired\. Refresh it/i)).toBeInTheDocument()
+    const submit = screen.getByRole('button', { name: 'Create rollout' })
+    expect(submit).toBeDisabled()
+
+    fireEvent.submit(submit.closest('form') as HTMLFormElement)
+
+    expect(mutations.createRollout.mutate).not.toHaveBeenCalled()
+    expect(screen.getByText(/preview these targets again/i)).toBeInTheDocument()
+  })
+
+  it('changes a ready preview to expired at its local deadline', () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-08-18T12:00:00Z'))
+    try {
+      const fresh = preview({ expires_at: '2026-08-18T12:00:02Z' })
+      createPreviewResponses(fresh)
+      targetPreviews.mockImplementation((previewId: string) =>
+        query(previewId ? fresh : undefined),
+      )
+      show()
+      openRolloutForm()
+
+      fireEvent.click(screen.getByRole('button', { name: 'Preview targets' }))
+
+      expect(screen.getByText('Ready')).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: 'Create rollout' })).toBeEnabled()
+
+      act(() => vi.advanceTimersByTime(2_000))
+
+      expect(screen.getByText('Preview expired')).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: 'Create rollout' })).toBeDisabled()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('blocks a changed selection until its replacement preview is ready', () => {
+    const allAssets = preview()
+    const explicitAssets = preview({
+      id: 'preview-2',
+      selector: { asset_ids: ['asset-2'] },
+      asset_ids: ['asset-2'],
+      membership_hash: 'c'.repeat(64),
+    })
+    const previews = new Map([
+      [allAssets.id, allAssets],
+      [explicitAssets.id, explicitAssets],
+    ])
+    createPreviewResponses(allAssets, explicitAssets)
+    targetPreviews.mockImplementation((previewId: string) =>
+      query(previewId ? previews.get(previewId) : undefined),
+    )
+    show()
+    openRolloutForm()
+    fireEvent.change(screen.getByLabelText('Name'), { target: { value: 'Focused rollout' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Preview targets' }))
+    expect(screen.getByText('Ready')).toBeInTheDocument()
+
+    fireEvent.change(screen.getByLabelText('Targets'), { target: { value: 'assets' } })
+    fireEvent.change(screen.getByLabelText('Asset IDs'), { target: { value: 'asset-2' } })
+
+    expect(screen.getByText('Targets changed')).toBeInTheDocument()
+    const submit = screen.getByRole('button', { name: 'Create rollout' })
+    expect(submit).toBeDisabled()
+    fireEvent.submit(submit.closest('form') as HTMLFormElement)
+    expect(mutations.createRollout.mutate).not.toHaveBeenCalled()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh preview' }))
+
+    expect(mutations.createTargetPreview.mutate.mock.calls[1][0]).toEqual({
+      release_id: 'rel-1',
+      selector: { asset_ids: ['asset-2'] },
+    })
+    expect(screen.getByText('Ready')).toBeInTheDocument()
+    const readySubmit = screen.getByRole('button', { name: 'Create rollout' })
+    expect(readySubmit).toBeEnabled()
+    fireEvent.click(readySubmit)
+    expect(mutations.createRollout.mutate.mock.calls[0][0]).toMatchObject({
+      preview_id: 'preview-2',
+      membership_hash: 'c'.repeat(64),
+      target_selector: { asset_ids: ['asset-2'] },
+    })
   })
 })

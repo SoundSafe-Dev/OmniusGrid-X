@@ -434,5 +434,6 @@ export function useFleetTargetPreview(previewId: string) {
     queryKey: [...TARGETING_KEY, 'preview', previewId],
     queryFn: () => fleetApi.targetPreview(previewId),
     enabled: Boolean(previewId),
+    refetchInterval: (query) => query.state.data?.expired ? false : 5_000,
   });
 }
