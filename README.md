@@ -734,9 +734,9 @@ flowchart LR
     end
 
     subgraph MACHINE["Machine surface"]
-        EA["Edge Agent<br/>10+ collectors · 24h buffer · PackML"]
+        EA["Edge Agent<br/>10+ collectors · PackML<br/>encrypted store-and-forward buffer"]
         RP["Redpanda (Kafka)"]
-        IW["Ingestion workers"]
+        IW["Ingestion workers<br/>decode codec · record time quality"]
     end
 
     subgraph STORE["Storage"]
@@ -751,7 +751,7 @@ flowchart LR
     ERPSRC --> XC
     XC --> CAI --> PG
     MACH --> EA
-    EA -. "outbound-only mTLS" .-> RP --> IW --> TS
+    EA -. "outbound-only mTLS<br/>priority-drained · gzip when negotiated" .-> RP --> IW --> TS
     TS --> API
     PG --> API
     API -->|"REST"| FE
@@ -861,7 +861,63 @@ flowchart TB
     TSDB --> HIST
 ```
 
-### 4. Production reliability & operations
+### 4. The edge uplink under a denied link
+
+The diagrams above show the happy path. **The link being down is the ordinary case**, not the
+exception — this is a factory floor, a vehicle, or a site on a satellite backhaul — so the
+path a reading takes when nothing is reachable is worth its own picture. Every arrow below is
+measured by a scenario in `edge-agent/tests/ddil/`, not asserted.
+
+```mermaid
+flowchart TB
+    R["Reading<br/>from a collector"]
+
+    subgraph LOCAL["On the device — works with no network at all"]
+        Q["Data-quality pipeline<br/>validate · scale · deadband"]
+        AL["Threshold rules<br/>evaluated locally"]
+        SINK[("local_alerts.db<br/>synchronous=FULL<br/>survives power loss")]
+        BUF[("buffer.db<br/>AES-256-GCM at rest<br/>priority + timestamp index")]
+        HTTP["/alerts · /healthz · /metrics<br/>on the agent itself"]
+    end
+
+    subgraph DRAIN["When the link returns"]
+        SUP["Uplink supervisor<br/>backoff + circuit breaker"]
+        BF["Backfill — batch scales with backlog<br/>tier 1 first, oldest first within a tier"]
+        CODEC["Frame + gzip<br/>only if the ack said it can decode"]
+    end
+
+    BE["Ingestion worker<br/>decode frame · store time_quality"]
+
+    R --> Q --> BUF
+    Q --> AL
+    AL ==>|"1 · durable, before anything on the network"| SINK
+    AL -->|"2 · queued as tier 1"| BUF
+    SINK --> HTTP
+    BUF --> BF
+    SUP -.->|"rebuilds a producer that<br/>delivers nothing for 3 batches"| BF
+    BF --> CODEC ==>|"E-stop leaves ahead of<br/>400k vibration samples"| BE
+
+    BUF -. "over the size cap:<br/>sheds tier 5 → 4, never tier 1" .-> DROP["Counted as dropped<br/>never silent"]
+```
+
+**What each part exists to prevent**, since none of it is obvious from the shape:
+
+- **Priority on the buffer**, not just in the cloud. The tiers existed backend-side for years;
+  an emergency stop still drained in batch 4,001 of 4,001 because the decision was being made
+  on the far side of the scarce resource.
+- **The alarm is written locally first.** Its previous consequences were a Prometheus counter
+  scraped over the down link, a log line shipped over the same link, and an in-memory list
+  that died on restart.
+- **Age-based expiry suspends during a drain**, because a backlog *is* the oldest data and
+  retention was deleting it faster than a 20 msg/s ceiling could send it. The size cap keeps
+  running — shedding by value beats shedding by age.
+- **Compression is negotiated, never assumed.** A new agent against an older backend would
+  send bytes it cannot parse, and the buffer marks a row sent the moment the broker accepts
+  it — loss, not delay.
+- **Every loss is counted.** `produced == sent + buffered + dead_lettered + dropped + expired`
+  closes after every scenario; a reading that is none of those has vanished.
+
+### 5. Production reliability & operations
 
 The Kubernetes stack (`infrastructure/k8s/`) is built for multi-pod, no-single-
 point-of-failure operation. Beyond the app Deployments, these are the enterprise
@@ -881,11 +937,11 @@ reliability layers (each with its own README):
 | **Cache / job store** | Redis — rate limiting, cross-worker idempotency, async export job store. It previously appeared only as a NetworkPolicy destination with no Service behind it, so the always-on auth limiter 500'd every login when it was unreachable | [`base/redis-statefulset.yaml`](infrastructure/k8s/base/redis-statefulset.yaml) |
 | **Object storage** | Generated exports & compliance reports go to SeaweedFS (S3) so a worker on one pod and the API on another share one bucket — fixes cross-pod download | [`base/object-store.yaml`](infrastructure/k8s/base/object-store.yaml) |
 | **Secrets** | Sealed Secrets (encrypted, safe-in-git) **or** External Secrets Operator (Vault / AWS SM / GCP SM). Placeholder dev credentials are **enforced** out of both deployed environments — a blocking gate fails if one becomes reachable, or if the deploy stops filtering them | [`secrets/`](infrastructure/k8s/secrets/) |
-| **Referential integrity in tests** | SQLite ships with `PRAGMA foreign_keys=OFF`, so an in-memory test can insert a child before its parent, or against a parent nobody created, and pass. That is why none of 3,200 tests could see the ordering defect that killed the demo seed. **Foreign keys are now enforced for every SQLite engine in the suite** (a `connect` listener in `conftest.py`) and the whole suite passes with them on. Getting there cost 76 failures at the first measurement, 39 after eleven missing `relationship()` edges were added at the model level, and 0 after the last eight fixtures were converted — not one of which was a test bug. `Base` now has **no model carrying an FK column without a relationship**, so the unit of work can order every parent before its child; the two genuinely mutual pairs keep a one-sided exemption that is itself asserted |
+| **Referential integrity in tests** | SQLite ships with `PRAGMA foreign_keys=OFF`, so an in-memory test can insert a child before its parent, or against a parent nobody created, and pass. That is why none of 3,200 tests could see the ordering defect that killed the demo seed. **Foreign keys are now enforced for every SQLite engine in the suite** (a `connect` listener in `conftest.py`) and the whole suite passes with them on. Getting there cost 76 failures at the first measurement, 39 after eleven missing `relationship()` edges were added at the model level, and 0 after the last eight fixtures were converted — not one of which was a test bug. `Base` now has **no model carrying an FK column without a relationship**, so the unit of work can order every parent before its child; the two genuinely mutual pairs keep a one-sided exemption that is itself asserted | [`conftest.py`](backend/tests/conftest.py) |
 | **CI safety** | **14 blocking gates** on every branch push. Backend: `backend-realdb` (schema parity, tenant isolation + RLS, timestamp defaults — against an ephemeral TimescaleDB, because RLS and server defaults are both no-ops on SQLite), `backend-full` (**5,100+ tests** — the whole suite bar the Kafka e2e, which runs in its own job; the figure is a FLOOR asserted by `test_readme_test_count_is_not_stale.py`, because the exact number was written down once as 2,149 and was a thousand short within weeks), `backend-kafka-e2e` (container e2e in its own process), `migration-hygiene` (duplicate prefixes; and since FS-578 the suite also applies the whole chain to an empty database and **re-runs every migration at its own point in it** — the runner executes statements one at a time in autocommit, because continuous aggregates refuse a transaction block, so a file that fails halfway has committed its earlier statements and recorded nothing, and running it again is the only recovery there is. 22 files look non-idempotent to a text search; **4 are**, and none of them can be repaired — editing an applied migration is checksum drift). Kubernetes: `k8s-manifests` (build + kubeconform + placeholder-credential check, **per environment** — the stacks used to be validated one way and applied another, which is how staging never had monitoring applied at all; plus a namespace/scale-target lint, a replica-floor check against each autoscaler's declared minimum, a secret-source pairing over BOTH provisioning paths, and a check that the canonical README names every buildable tree), `netpol-simulate`, `k8s-smoke` (kind: real operator webhooks), `k8s-netpol` (kind + **Calico**: policies genuinely enforced, 19 allow/deny cases), `netpol-coverage` (every workload in a default-deny namespace has a policy in both directions — the gap that killed tracing). Plus `prometheus-rules` (lints `alerts.yml` + `slo_rules.yml`, checks **both** Prometheus configs, and runs the alert unit tests — **globbed, not listed**, and **all 51 rules are now provably FIRABLE** rather than merely well-formed — each driven true from a series the product publishes, each with a must-stay-quiet companion, and the `UNTESTED` set in `test_every_alert_rule_is_provably_firable.py` went 23 → 15 → **0** and is closed: `check rules` cannot tell a rule that fires from one that never can, which is how `EdgeAgentBufferHigh` stayed unfirable for its whole existence: they were six filenames written out, so a new one ran only if somebody remembered to edit the workflow, and an alert test that does not run is indistinguishable from one that passes), `frontend-e2e-authenticated` (stands up Postgres + migrations + demo data + uvicorn and asserts the dashboard shows **non-zero** data — an element-visibility check would have passed against the FS-191 tenancy bug), `supply-chain`, `repo-hygiene`, frontend unit + e2e. The edge agent's **109 DDIL scenarios** run nightly rather than per-PR (`pytest -m ddil`) because a 400,000-row drain measurement is not a per-PR concern — but the cross-repo parity guards that stop the agent and backend disagreeing about priority tiers or wire codecs are unmarked and gate every push | `.github/workflows/quality-gates.yml` |
 | **Load / failover testing** | Kafka ingestion load generator (drives KEDA scaling + DB writes) + a runbook for driving throughput and DB-failover-under-load | [`tests/load/`](tests/load/) |
 
-### 5. Page → API wiring
+### 6. Page → API wiring
 
 How each frontend page is wired to the backend (primary endpoints; all under
 `/api/v1`, JWT-gated, live updates over `/ws`):
@@ -2139,7 +2195,7 @@ today, start at [`docs/erp/README.md`](docs/erp/README.md) instead.
 - [Delivery log](docs/DELIVERY-LOG.md) - Every slice delivered, verbatim, with the reasoning recorded against each: what was believed before, what turned out to be true, and what the difference cost. Moved out of this file on 2026-08-02, where it had grown to a third of the document. Most recently: the three defects that made `scripts/seed_demo_data.py` fail on every fresh database it had ever met, why none of 3,200 tests could see them (**SQLite does not enforce foreign keys by default**), and the four found only by *looking at* a running page — a heading rendered at its own background colour, an Activate control measured at 1.04:1, a float artifact beside a dollar figure, and a raw uuid in the column an operator reads to go and find a trailer
 - [ERP integration architecture](docs/erp/ARCHITECTURE.md) - The eight vendors and their protocols, the middleware, the endpoint list, and ERP-to-operational correlation. To *work on* a connector, start at [docs/erp/README.md](docs/erp/README.md) instead
 - [Correlation-AI training dataset](docs/CORRELATION-DATASET.md) - Statistics and worked single- and multi-domain scenarios, and how they feed Kanban and alerting
-- [OmniusGrid Glossary](OMNIUSGRID_GLOSSARY.md) - Backend & Frontend combined terminology reference (540+ terms)
+- [OmniusGrid Glossary](OMNIUSGRID_GLOSSARY.md) - Backend & Frontend combined terminology reference — **650+ terms** (654 counted on 2026-08-18; stated as a floor for the same reason the test-count floor is one). Now covers DDIL, the pre-certification programme, FIPS, and the method vocabulary the guards are written in
 - [Intake Cross-Correlation](docs/INTAKE_CROSS_CORRELATION.md) - PDF/DOCX/image parsing, shared key detection, cross-file correlation
 - [Correlation AI Engine](docs/CORRELATION_AI_ENGINE.md) - Cross-domain AI analysis, synthetic data generation, Gemma 4 fine-tuning — and **"Current state"**, which records that the model and its LoRA are deliberately unloaded, what the honest fallback returns, and the check to run when switching it back on
 - [Hybrid Architecture](HYBRID_ARCHITECTURE.md) - Human-in-the-Loop + Lights Out modes
@@ -2162,6 +2218,10 @@ today, start at [`docs/erp/README.md`](docs/erp/README.md) instead.
 - [Observability stack](infrastructure/k8s/monitoring/) - Prometheus + Alertmanager + kube-state-metrics + Grafana
 - [Secrets management](infrastructure/k8s/secrets/README.md) - Sealed Secrets + External Secrets Operator
 - [Network & pod security](infrastructure/k8s/NETWORK_SECURITY.md) - Zero-trust model, policy audit findings, CI enforcement matrix
+- [Compliance — what is claimed and what backs it](docs/compliance/README.md) - The rule that every control names its implementation and its proving test, and the record of two documents removed for asserting controls this system does not have
+- [Generated compliance package](docs/compliance/generated/) - SSP, Statement of Applicability and POA&M, rendered from the control catalogue by `make compliance` and held byte-for-byte by a test. Never hand-edited
+- [Security incident 2026-08-15](SECURITY-INCIDENT-2026-08-15.md) - All 17 branches force-pushed; what was affected, how it was restored, the actor now identified from the events API, and what still needs a person
+- [Runbooks](docs/runbooks/) - Branch protection (enabled on `main` 2026-08-18), leaked-key rotation (revocation outstanding, purge sequenced behind the protection), and the rest
 - [Load & failover testing](tests/load/README.md) - Ingestion load generator, autoscaling + DB-failover validation
 - [Validating ERP connectors without an ERP](docs/erp/validating-connectors-without-an-erp.md) - Tiered strategy: static guards, request-shape assertions, spec-driven mocks, a self-hosted Odoo, vendor sandboxes, record/replay — and what none of it catches
 

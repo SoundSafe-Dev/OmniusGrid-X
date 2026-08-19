@@ -14205,3 +14205,105 @@ development environment does not have"; the token was in the keychain the whole 
 admin on both repositories, and the missing piece was `gh` — a convenience wrapper over an API
 `curl` already reached. A blocker recorded once becomes a fact nobody re-examines, and the
 cheapest thing in any stale backlog is checking whether the wall is still there.
+
+---
+
+## FS-764 — the glossary, the diagrams, and a row that had been corrupt for weeks
+
+A full pass over `README.md` and `OMNIUSGRID_GLOSSARY.md` after the DDIL, compliance and FIPS
+arc. Four findings, one of them a defect rather than staleness.
+
+### A merge artifact, sitting in the glossary since July
+
+```
++(d1031146, 6d8893b3, b7d2e2c6)| **API Key Hash** | SHA256 hash of API key ... |
+```
+
+A `+` and three commit SHAs prepended to a table row — the residue of a conflict resolved by
+pasting. It arrived in `fa6bb72f` (the cross-tab workbook slice) and has been rendering as a
+broken row ever since, in the security section of the document people are pointed at to learn
+the vocabulary.
+
+**Nothing could have caught it.** `test_docs_links.py` checks links, `test_documented_files_exist.py`
+checks cited filenames, and neither has an opinion about whether a Markdown table is
+well-formed. Found by reading the section, which is the method the whole arc keeps
+rediscovering: guards catch the class you thought of.
+
+### The diagrams described an edge agent that no longer exists
+
+The data-flow diagram carried `Edge Agent · 10+ collectors · 24h buffer · PackML` with a link
+labelled `outbound-only mTLS`. Every word true when written, and by now it omits everything
+the last three weeks changed: the buffer is encrypted at rest, drained by priority, and the
+uplink is compressed only when the far end has said it can decode.
+
+More to the point, **the condition the platform is built for had no picture at all.** Three
+diagrams showed the happy path; the link being down is the ordinary case for a factory
+basement or a vehicle, and nothing depicted what a reading does when nothing is reachable. A
+fourth diagram now does — local durable alarm write before anything on the network,
+priority-ordered drain, the negotiated codec, the supervisor rebuilding a dead producer, and
+the size cap shedding tier 5 before tier 4 and never tier 1 — with the note that every arrow
+is measured by a scenario rather than asserted.
+
+**Rendered with the real parser, not eyeballed.** A bracket-and-`subgraph` balance check
+passes on plenty of diagrams Mermaid then rejects, so all four were run through
+`@mermaid-js/mermaid-cli`; all four produce SVG. A diagram that fails to parse renders as a
+code block on GitHub, which looks like a formatting choice rather than an error.
+
+### The glossary had none of the arc's vocabulary
+
+Zero entries for DDIL, CMMC, FIPS, POA&M, SSP, control catalogue, deployment profile,
+priority tier, `time_quality`, codec negotiation, conservation law. **654 terms and not one of
+them from the work the repository has been doing.**
+
+Three new sections — *DDIL & Edge Resilience*, *Cryptography & FIPS*, and a
+pre-certification subsection under Compliance Frameworks — plus per-reading telemetry fields
+(`timestamp_edge_raw`, `time_quality`, backfilled readings) in the section where a reader
+would look for them.
+
+And six entries under Testing Infrastructure for the method vocabulary this arc produced,
+because those terms appear in commit messages and review comments with no definition anywhere:
+**equivalent mutant**, **harness drift**, **instrument measuring itself**, **grep-vs-prose**,
+**near-side bias**, **blocked-on-access decay**. A term used in a commit message and defined
+nowhere is jargon; the same term with a row in the glossary is shared vocabulary.
+
+The header now states when the glossary was last reviewed and that terms are defined by what
+the code does rather than by what the feature was called when planned — several rows read
+"this used to claim X and did Y", which is the honest form for a document whose failure mode
+is preserving the intended meaning after the implementation diverged.
+
+### Numbers checked rather than trusted
+
+- Glossary term count: README said **540+**, actual **654**. Restated as a floor of 650+ with
+  the count and date beside it, for the same reason the test-count floor is a floor.
+- The Documentation index listed **no compliance material and no security material at all** —
+  not the generated package, not the incident record, not the runbooks. All four added.
+- Architecture section numbering: inserting the new diagram produced two sections numbered 5.
+  Caught by re-reading the headings after the edit, which is the cheapest check there is.
+
+### The guard, and the eleven more rows it found immediately
+
+`backend/tests/test_the_reference_docs_are_well_formed.py` is the structural check that was
+missing: no conflict residue, every table row starts its row, cell counts are consistent
+within a table, and every glossary contents entry resolves to a heading that exists. Scoped to
+the two documents people *look things up in* rather than read through, because a broken row in
+a lookup document is found by the person who needed that row.
+
+**It failed on its first run, on eleven rows nobody had noticed** — one in the README's
+reliability table and ten in the glossary, each missing its final cell, each rendering with a
+silently empty column. Ten of them are method-vocabulary entries whose `Backend/Frontend`
+value was simply never typed.
+
+It also failed on two rows that were *fine*, which mattered more. The first splitter treated
+every `|` as a delimiter, so it reported
+
+    `mode=section\|document\|table\|image\|batch`
+
+as a seven-column row. Escaped pipes and pipes inside inline code spans are **content**, and a
+structural guard that cannot parse the structure produces false positives on its first run —
+which is how a guard becomes the one people learn to skip. It strips code spans and splits on
+unescaped delimiters now.
+
+Six mutations, six caught: the original artifact reintroduced, a conflict marker, a row losing
+a cell, a row gaining one, and a contents entry pointed at a heading that does not exist. Two
+earlier "survivors" were malformed mutations of mine — replacing a row prefix left the rest of
+the line intact, so the row still had three cells and nothing should have failed.
