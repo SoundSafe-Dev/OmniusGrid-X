@@ -1,6 +1,28 @@
 # Runbook — committed private key (HAMAD_IDE.pem)
 
-**Status: rotation OUTSTANDING. History purge deferred (needs coordination).**
+**Status: local copy DELETED 2026-08-18. Revocation still outstanding. History purge still
+deferred — and now sequenced behind branch protection, see the bottom of this file.**
+
+## Update 2026-08-18
+
+The working-tree copy was deleted. Its identity is recorded here first, because deleting the
+file removes the only convenient way to work out *which* key to revoke:
+
+| | |
+|---|---|
+| Type | RSA 3072-bit, no comment |
+| SHA256 fingerprint | `SHA256:IpnNhMDmGEJkIbo8olbuPEIBU6SbFx+pNJSDfNzRc/w` |
+| Public key prefix | `ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQCy…` |
+| Blob still in history | `52ce7526c89cdcfc139d0a520ca0ca9d1d3af58c` (2,494 bytes) |
+
+Match that fingerprint against AWS EC2 key pairs, any `~/.ssh/authorized_keys` on hosts this
+key reached, and any CI or IDE configuration. **Deleting the local copy did not revoke
+anything** — a private key is compromised the moment it is published, and the file on this
+machine was the least dangerous copy of it. It was not in `~/.ssh/config` and not loaded in
+any ssh-agent, so nothing on this machine was actively using it.
+
+The blob remains reachable from `acc35f92`. Anyone with clone access can still read the key,
+which is why revocation is the fix and the purge is only cleanup.
 
 ## What happened
 
@@ -85,3 +107,33 @@ history for the same reason this key is.
 - `.github/workflows/quality-gates.yml` — `repo-hygiene` job (blocking)
 - FS-190 — external secrets (SealedSecrets/ESO); secrets are currently created
   by hand via `kubectl` with no rotation story.
+
+
+---
+
+## Sequencing note added 2026-08-18 — the purge now conflicts with branch protection
+
+`main` is protected on both remotes as of 2026-08-18, with `allow_force_pushes: false` and
+`enforce_admins: true` (see `SECURITY-INCIDENT-2026-08-15.md`).
+
+A `git filter-repo` purge rewrites every commit SHA on every branch and requires a
+**force-push of all refs to both remotes** — which protection now refuses, by design. So the
+purge is no longer just "coordinate with the team"; it is:
+
+1. Announce, and get every lane to stop pushing and note their branch heads.
+2. Temporarily set `allow_force_pushes: true` on `main` for both repositories.
+3. Run the purge from a known-good clone, preserving `refs/rescue/*`.
+4. Force-push all refs to both remotes.
+5. **Re-enable protection immediately**, and verify with the command in
+   `docs/runbooks/branch-protection.md`.
+6. Every developer reclones. Their existing clones are unmergeable afterwards — every SHA
+   changes, so a `pull` produces a duplicated history rather than a fast-forward.
+
+**Weigh that against what it buys.** The purge does not reduce the exposure at all: the key
+has been public in history since April and must be treated as compromised regardless.
+Revoking it is what closes the risk. The purge removes an artefact an assessor would find and
+ask about — worth doing, and worth doing on a planned day rather than opportunistically,
+because step 2 deliberately re-opens the exact hole that this month's incident went through.
+
+`git-filter-repo` is installed on the primary development machine, so the tooling is not the
+blocker.

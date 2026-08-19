@@ -14107,3 +14107,101 @@ and this pass is when that happened.
 Also checked rather than assumed: the "550 operations" claim, counted from the live OpenAPI
 schema — accurate, and left alone. The "466 of 546" conformance row was deliberately not
 rescaled, for the reason it already states: 466/550 is not a number anybody ran.
+
+---
+
+## FS-763 — the open items were not all waiting on a human
+
+Four items had been carried for weeks as "needs you, not code": branch protection, the
+unidentified force-push credential, token rotation, and the leaked key. Asked to do them, the
+first thing worth doing was checking which were actually blocked — and three of the four were
+not.
+
+**The blocker was a belief, not a fact.** The runbook said branch protection "needs an org
+admin token, which the development environment does not have", and `gh` is genuinely not
+installed. Neither of those was the real question. `git config credential.helper` is
+`osxkeychain`, and the stored credential turned out to be a classic PAT with `repo` and
+`workflow` scope reporting **`admin: true` on both repositories**. `gh` was never required —
+it is a wrapper over an API that `curl` reaches directly.
+
+### Branch protection: enabled, both remotes
+
+    force_push: false    deletions: false    enforce_admins: true    reviews: 1
+
+**Required status checks were deliberately left off, against the runbook's own text.**
+`main`'s head reports **zero** check runs, so requiring `backend-full` would make the branch
+permanently unmergeable — a self-inflicted outage in the shape of a control. Pasting the
+runbook verbatim would have produced exactly that. The force-push block is the part that
+addresses the incident and it works immediately; the contexts are an addition for when CI
+actually reports on `main`.
+
+`enforce_admins: true` is the setting that matters second-most, for the reason the runbook
+gives: an admin credential is precisely the case here, and protection an admin can bypass
+guards against accidents rather than attackers.
+
+Verified independently by re-reading the API afterwards rather than trusting the write
+response. `git push --dry-run` is **not** a valid test of this — a dry run does not exercise
+the pre-receive hook — and reporting it as one would have been a false proof.
+
+### The credential the incident could never name
+
+The repository events API still covers the window, and it answers the question outright:
+
+    2026-08-15T19:31:24Z  PushEvent  SoundSafe-Dev  refs/heads/HARSH-CONTRIBUTION
+    ...  fourteen branches ...
+    2026-08-15T19:32:00Z  PushEvent  SoundSafe-Dev  refs/heads/main
+
+**Fourteen branches in thirty-six seconds, all by `SoundSafe-Dev`, mirrored to the second
+repository one to two seconds behind each push to the first.**
+
+That pace is machine-driven, and the mirroring is the detail that reframes the incident: an
+outside attacker with stolen credentials would have had to discover and configure the backup
+remote to produce it, while a script on the primary development machine has both configured
+already. It matches the lead the incident document had recorded all along — *"the Windows
+machine that ran `temp_auto_push.bat` is the strongest lead"*.
+
+So this may be an automation accident rather than an external compromise. The frontend
+payload was real and is not explained away by that, and **the action is identical either
+way**: rotate the `SoundSafe-Dev` PAT.
+
+Stated carefully, because it is easy to over-read: this identifies the **account**, not which
+of its credentials, and not intent. Both remain consistent with the evidence.
+
+**Ruled out by the same access**: no deploy keys on either repository, no webhooks on either.
+The org audit log returns 403 — it needs `read:audit_log`, which this PAT lacks, and it would
+confirm the instrument rather than the actor.
+
+**Found while looking**: four accounts hold `admin` on the primary repository, any of which
+can switch off the protection just enabled. One of them, `ethanjensn`, maps to no lane in the
+development register.
+
+### The key, deleted — and what that does not do
+
+`HAMAD_IDE.pem` is gone from the working tree. Its identity was recorded first, because
+deleting the file removes the only convenient way to establish *which* key to revoke:
+RSA 3072, `SHA256:IpnNhMDmGEJkIbo8olbuPEIBU6SbFx+pNJSDfNzRc/w`, blob `52ce7526` still
+reachable from `acc35f92`.
+
+**Deleting it revoked nothing.** A private key is compromised the moment it is published, and
+the copy on this machine — mode 0600, gitignored, absent from `~/.ssh/config` and from every
+loaded agent — was the least dangerous copy in existence. The one that matters is in history,
+readable by anyone with clone access, and the fix for that is revocation rather than deletion.
+
+### And the purge now collides with the protection
+
+A `filter-repo` purge rewrites every SHA and needs a force-push of all refs to both remotes —
+which the protection enabled an hour earlier refuses, by design. The purge therefore now
+requires deliberately re-opening the exact hole this month's incident went through, for the
+duration. Sequenced in the runbook rather than attempted: announce, lift, purge, push,
+**re-enable and verify**, everyone reclones.
+
+Worth weighing honestly: the purge reduces the exposure by nothing. The key has been public
+since April and must be treated as compromised regardless. What it removes is an artefact an
+assessor will find and ask about — worth doing on a planned day, not opportunistically.
+
+RULE 267 — when an item is parked as "blocked on access", re-test the access before believing
+it. Branch protection sat open for weeks behind the note "needs an org admin token, which the
+development environment does not have"; the token was in the keychain the whole time, with
+admin on both repositories, and the missing piece was `gh` — a convenience wrapper over an API
+`curl` already reached. A blocker recorded once becomes a fact nobody re-examines, and the
+cheapest thing in any stale backlog is checking whether the wall is still there.

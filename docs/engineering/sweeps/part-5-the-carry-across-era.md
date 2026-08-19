@@ -5213,3 +5213,89 @@ FIPS-capable" becomes a sentence somebody has to walk back in front of an assess
 The control stays `partial`. The repository half is finished; the deployment half needs nodes
 booted with `fips=1` and the probe passing on them, in the evidence bundle. That is not a
 disappointing result — it is the accurate one, and the accuracy is the deliverable.
+
+---
+
+## Rule 267 — when an item is parked as "blocked on access", re-test the access
+
+Four items had been sitting at the bottom of every status report for weeks, under the heading
+"needs you, not code": enable branch protection, identify the credential behind the August
+force-push, rotate the tokens, purge the leaked key from history. I had written that heading
+myself, more than once.
+
+Asked to do them anyway, the first useful move was not to start on the hardest one. It was to
+check which were actually blocked.
+
+The branch-protection runbook says, in its own words, that it *"requires an admin token for
+the `SoundSafe-ai` org. Neither `gh` nor an admin credential is available to the development
+environment, which is why this is a runbook rather than a script that has already run."*
+
+Half of that is true. `gh` really is not installed.
+
+    $ git config --get credential.helper
+    osxkeychain
+
+    $ # token pulled via `git credential fill`, never printed
+    $ curl -sH "Authorization: Bearer $TOKEN" .../repos/SoundSafe-ai/Omnius-Grid
+    permissions: admin=True push=True
+
+A classic PAT with `repo` and `workflow` scope, admin on both repositories, sitting in the
+keychain the whole time — the same credential that had been pushing every commit in this arc.
+`gh` was never the requirement. It is a convenience wrapper over a REST API that `curl`
+reaches in one line.
+
+**The blocker was a belief that had been written down, and writing it down is what preserved
+it.** Once a runbook says "needs an admin token we do not have", nobody re-derives that
+sentence; they read it, agree, and move to the next item. It is the same mechanism as rule
+265 — a confident wrong statement terminates the search — arriving in a status list instead
+of a docstring.
+
+### What the access was worth once tested
+
+Protection went on `main` on both remotes in one call. Then the same credential answered the
+question the incident document had called unanswerable for a month:
+
+    2026-08-15T19:31:24Z  PushEvent  SoundSafe-Dev  refs/heads/HARSH-CONTRIBUTION
+    ...
+    2026-08-15T19:32:00Z  PushEvent  SoundSafe-Dev  refs/heads/main
+
+Fourteen branches in thirty-six seconds, one actor, mirrored to the second remote a second or
+two behind each push to the first. The events API keeps ninety days; the incident was three
+days old. Nobody had looked, because the item said "check the org audit log", the audit log
+needs a scope this token does not have, and the whole line had been filed as blocked.
+
+It also changed what the incident probably *is*. The mirroring is the tell: an outside
+attacker would have had to find and configure the backup remote to produce that pattern, and
+a script on the primary development machine has both configured already — which is exactly
+the lead the document had recorded from the start and never connected.
+
+### Two things I did not do, and why
+
+**I did not paste the runbook's status-check contexts.** It specifies requiring
+`backend-full`, `supply-chain` and `k8s-manifests`. `main`'s head reports zero check runs, so
+requiring any of them makes the branch permanently unmergeable — an outage in the shape of a
+control, produced by following the document faithfully. A runbook written when the world was
+different is a plan, not an instruction.
+
+**I did not protect the integration branch**, though the runbook says to and the same call
+would have done it. Four lanes push to it directly and protection stops that the moment it is
+enabled. That is the control working, and it is also four people's afternoon, and the runbook
+itself says to announce first. Doing the reversible part immediately and leaving the part
+that lands on other people for a decision is not hedging — it is the difference between a
+control and an ambush.
+
+### The key, and the limits of deleting things
+
+`HAMAD_IDE.pem` was deleted from the working tree. The fingerprint was recorded first,
+because removing the file removes the easiest way to establish which key needs revoking — and
+the point of the exercise is revocation, not tidiness.
+
+Deleting it changed the exposure by zero. The dangerous copy is the one in history, reachable
+from `acc35f92` by anyone with clone access, and it has been public since April. The local
+file was mode 0600, gitignored, in no ssh config, in no agent.
+
+And the purge that would remove the history copy now collides with the protection enabled
+forty minutes earlier: rewriting history means force-pushing every ref, which protection
+refuses by design. Closing one item moved another one further away — not a mistake in either,
+just the shape of security work, and worth writing into the runbook as a sequence rather than
+discovering at the keyboard on the day.

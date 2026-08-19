@@ -38,7 +38,7 @@
 | [Documentation](#documentation) | The rest of `docs/` |
 
 **Engineering method.** The sweeps and guards in this repository follow a set of numbered
-rules, each written after a defect that a weaker check had missed. Rules 21–266 are recorded in
+rules, each written after a defect that a weaker check had missed. Rules 21–267 are recorded in
 `docs/engineering/defect-class-sweeps.md`, with the reasoning for each; the short list at the
 top of that file is what most people read.
 
@@ -2097,6 +2097,23 @@ process **refuse** MD5 for a security purpose — and refuses to serve when it c
 
 The control stays `partial`: the repository half is done, and `implemented` needs FIPS-enabled
 nodes with the probe passing on them, in the evidence bundle.
+
+### Where the security posture actually stands
+
+Enabled 2026-08-18, both remotes: **branch protection on `main`** —
+`allow_force_pushes: false`, `allow_deletions: false`, `enforce_admins: true`, one required
+review. That is the control the 2026-08-15 incident needed; force-pushing all 17 branches is
+exactly what it refuses. Required status checks are deliberately **not** configured, because
+`main` reports zero check runs and requiring a context that never arrives makes a branch
+permanently unmergeable.
+
+Still open, and honestly open rather than quietly so: the `SoundSafe-Dev` PAT needs rotating
+(a web-session action), four accounts hold repository admin and can switch the protection off,
+the integration branch is unprotected because four lanes push to it directly, and the leaked
+key remains in history — deleting the working copy revoked nothing, and the purge now needs
+the protection temporarily lifted. All of it is tracked in
+[`SECURITY-INCIDENT-2026-08-15.md`](SECURITY-INCIDENT-2026-08-15.md) and
+[`docs/runbooks/`](docs/runbooks/).
 
 ### What only people can supply
 

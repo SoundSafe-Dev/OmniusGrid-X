@@ -1937,6 +1937,16 @@ one of its findings. The habit that catches it:
      When a predicate exists to describe the ENVIRONMENT rather than the code, one test must
      run it for real and compare it against an independently established fact; the rest may
      mock it freely.
+
+267. **When an item is parked as "blocked on access", re-test the access before believing
+     it.** Branch protection sat open for weeks behind a runbook note saying it "needs an org
+     admin token, which the development environment does not have". The token was in the
+     macOS keychain the entire time, a classic PAT reporting `admin: true` on both
+     repositories; what was actually missing was `gh`, a convenience wrapper over an API that
+     `curl` reaches directly. The same access then identified the force-push actor the
+     incident had called unidentifiable for a month. A blocker recorded once becomes a fact
+     nobody re-examines — the cheapest item in any stale backlog is checking whether the wall
+     is still there.
 ---
 
 ## Open observations, not yet tickets

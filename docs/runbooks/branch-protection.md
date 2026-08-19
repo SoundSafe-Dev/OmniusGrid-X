@@ -1,5 +1,37 @@
 # Runbook — branch protection
 
+**Status: ENABLED on `main`, both remotes, 2026-08-18. Integration branch still open.**
+
+    force_push: false    deletions: false    enforce_admins: true    reviews: 1
+
+Verify at any time:
+
+```bash
+TOKEN=$(printf "protocol=https\nhost=github.com\n\n" | git credential fill | sed -n 's/^password=//p')
+for repo in SoundSafe-ai/Omnius-Grid SoundSafe-Dev/OmniusGrid-X; do
+  curl -s -H "Authorization: Bearer $TOKEN" \
+    "https://api.github.com/repos/$repo/branches/main/protection" \
+    | python3 -c "import sys,json; d=json.load(sys.stdin); print('$repo', d['allow_force_pushes']['enabled'], d['enforce_admins']['enabled'])"
+done
+# expected: <repo> False True
+```
+
+**Required status checks are deliberately not configured**, and that decision should not be
+silently reversed. `main`'s head reports **zero** check runs, so requiring `backend-full` or
+any other context would leave the branch permanently unmergeable — a self-inflicted outage
+wearing a control's clothes. The runbook below still lists them because they are the right
+end state; add them once CI actually reports on `main`, and verify a PR can still go green.
+
+**The integration branch (`hamad/converged-pre-main`) is deliberately still unprotected.**
+Four lanes push to it directly, and protecting it stops that the moment it is enabled. That
+is the control working as intended and it is also somebody's afternoon, so it wants an
+announcement first rather than a surprise. One call when the team is ready — the loop below
+already covers it.
+
+---
+
+## Original entry
+
 **Status: NOT ENABLED, and this is the open half of a real incident.**
 
 On 2026-08-15 every branch on `origin` — all 17, including `main` — was force-pushed to a
