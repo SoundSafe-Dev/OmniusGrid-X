@@ -15381,3 +15381,42 @@ name the failure it survives, then check the artefact is somewhere that failure 
 reach. The same question applies to a backup bucket in the account that was compromised, and
 to a runbook stored only in the cluster it describes.
 
+### Documentation pass for FS-799..811
+
+Four documents carried claims this arc changed, and one carried a claim it *created*.
+
+**README.** The Maturity row for point-in-time recovery said "Not operational" — still true,
+and now incomplete: PITR is proven by a drill and unavailable in every environment, which are
+different sentences and the row now carries both. The Database HA row gained `archive_timeout`
+and the pooler cutover. The DR bullet gained the fact that the restore drill is now *timed*,
+because RTO had been an aspiration since the drill was written.
+
+A seventh diagram, **"What survives which failure"**, because none of the six drew the
+recovery path — which is where every finding in this arc was. Three failures need three
+different answers and they do not substitute for each other: synchronous replication survives
+a lost primary, an off-cluster archive survives a lost site, and only Object Lock in
+COMPLIANCE mode survives a compromised credential. The dotted arrow is the WAL archive as it
+was: pointing at a single-replica store inside the cluster it protected. `Loki` is dotted too
+and deliberately unfixed — log aggregation was deployed in-cluster so "check the container
+logs" would be executable in production, and during a cluster loss those logs are gone with
+everything else. Recorded rather than solved, because pretending otherwise is how the archive
+finding happened.
+
+**Glossary** +10 terms, and two of them are the ones that would have prevented this arc's
+findings if anybody had written them down first: *failure domain* ("a backup that shares a
+failure domain with its source is not a backup of that domain") and *`archive_timeout`* ("WAL
+archiving existing is not the same as RPO being bounded"). Also base backup, recovery target,
+PITR, Object Lock, COMPLIANCE vs GOVERNANCE, pooler, cutover preflight, digest pin. 696 → 706.
+
+**Compliance.** `OG-MP-001` said immutability was "explicitly the operator's job… configured
+by hand, so neither is evidenced here". It now records the tooling and the weekly check, and
+gives three *narrower* reasons for staying `partial`: `bootstrap` has not been run against the
+real bucket, the off-cluster endpoints are placeholders that fail, and RPO is still 24 hours
+everywhere because the cutover has not happened. A remediation note that only records the good
+news is how a control drifts to `implemented` while nothing changed on the ground.
+
+**The runbook** replaced its one-sentence instruction with the two commands and the reasoning
+behind COMPLIANCE mode, including what it costs.
+
+All seven mermaid diagrams render under `mermaid-cli`.
+

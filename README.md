@@ -408,7 +408,7 @@ OmniusGrid is a resilient manufacturing operations platform designed for Industr
 | **Observability** | Prometheus metrics, Loki logs, Grafana dashboards, TimescaleDB |
 | **Security** | Agent enrollment with CA pinning, mTLS + proof-of-possession request signing, Redpanda broker mTLS, route-walk auth enforcement test, tamper-evident audit trails |
 | **DevOps** | GitHub Actions CI/CD with **27 blocking jobs and 1 advisory** across `quality-gates.yml` and `ci-cd.yml`, counted by `test_ci_gate_count_is_accurate.py` so this number cannot go stale (tsc/eslint/vitest/Playwright, the full backend suite against a real TimescaleDB, migration-chain hygiene, an API contract ratchet over all 550 documented operations, a k6 smoke load test against a real running app, supply-chain: pip-audit/npm-audit/Trivy, and four Kubernetes gates: manifest validation, NetworkPolicy simulation, kind smoke test, Calico policy-enforcement test), kustomize deploys with operator-gated platform stacks, Kubernetes base incl. workers + Redis + db-migrate Job, checksum-tracked SQL migration runner |
-| **Operations** | K3s-orchestrated, CloudNativePG HA manifests (auto-failover + PITR) applied where the operator's CRDs are present — **PITR is not operational today; what runs is a nightly `pg_dump` with an RPO up to 24 h**, see [Maturity](#maturity--what-is-proven-what-is-implemented-what-is-aspirational). KEDA lag-based worker autoscaling, automatic disaster recovery. The deploy applies the monitoring/autoscaling/HA-DB stacks itself, each gated on its operator's CRDs being present |
+| **Operations** | K3s-orchestrated, CloudNativePG HA manifests (auto-failover + PITR) applied where the operator's CRDs are present — **PITR is not operational today; what runs is a nightly `pg_dump` with an RPO up to 24 h**, though the recovery mechanism itself is now proven by a drill (FS-802..806) and the WAL archive has been moved out of the cluster it protects (FS-811), see [Maturity](#maturity--what-is-proven-what-is-implemented-what-is-aspirational). KEDA lag-based worker autoscaling, automatic disaster recovery. The deploy applies the monitoring/autoscaling/HA-DB stacks itself, each gated on its operator's CRDs being present |
 | **Logistics** | YMS/TMS with GeoTab telematics, detention billing, HOS compliance, dock-production sync, webhook processing |
 | **Task Management** | Kanban board with task grouping, assignment, approval workflows |
 | **Compliance** | Actionable registries (OSHA, ISO, internal), data correlation mapping, scoring. **Compliance Assistant** — grounded Q&A over the policy corpus (SOPs, OSHA, collective agreements) with inline citations, presigned links to the source documents, and the forms an answer implies you must file |
@@ -424,7 +424,7 @@ if it drifts, and each is stated here rather than left to be discovered.
 | Area | Status | The measured position |
 |---|---|---|
 | **DNP3** | Implemented, hardened, **not field-proven** | The collector is written and swept by the same guards as every other collector — one shared `ReconnectPolicy` for backoff and circuit-breaking, aware-UTC timestamps, counted failures — and tested against a fake master. It has never spoken to a real outstation. `dnp3_python` publishes **cp38–cp310 linux wheels only**, so its pin carries `python_version < "3.11"` and the agent image is `python:3.11-slim`: **the driver is absent from every image we build.** Live DNP3 sites: **zero**, by construction. This is a supply gap in an upstream package, not a protocol problem, and it clears when a maintained py3.11 DNP3 driver exists or we vendor a `libopendnp3` binding. The other 10 industrial protocols are unaffected |
-| **Point-in-time recovery** | **Not operational** | What runs is a nightly logical backup — `pg_dump -Fc` to S3 via the `db-backup` CronJob — with a restore drill in the blocking CI gate. **RPO is therefore up to 24 hours, not ≈0.** The CloudNativePG manifest with continuous WAL archiving does describe real PITR, and it is applied only where the CNPG operator CRDs are present, which no current environment has; the `legacy-patroni/` pgBackRest CronJob is in no kustomization and applied nowhere. Treat every pgBackRest instruction in the DR runbooks as **aspirational**. The deployed image ships no `pgbackrest` binary and sets no `archive_mode` |
+| **Point-in-time recovery** | **Mechanism proven, not operational** | What runs is a nightly logical backup — `pg_dump -Fc` to S3 via the `db-backup` CronJob — with a restore drill in the blocking CI gate. **RPO is therefore up to 24 hours, not ≈0**, in every environment. What changed in FS-802..806 is that PITR is no longer *undescribed and untested*: `test_pitr_recovers_to_a_point_in_time_realdb.py` performs a mistaken `DELETE`, recovers to a timestamp before it, and asserts the destroyed rows return while the later write does not (~8s, mutation-verified). That proves the mechanics; it is **not** a deployed capability, and `test_the_recovery_promise_matches_the_deployment.py` computes which of those two sentences the documents are allowed to contain. The CNPG stack is applied only where the operator's CRDs are present, which no current environment has; `legacy-patroni/` is in no kustomization. FS-811 also found the CNPG archive pointing at the **in-cluster** SeaweedFS — an archive inside the failure domain it protects, which would have made the ≤5-min figure a 24-hour one on a cluster loss; both overlays now patch it off-cluster |
 | **API contract conformance** | Measured, ratcheted, improving | **466 of 546** operations conform under generated input in the configuration CI runs (measured 2026-08-17, before the four MFA routes were added — the schema now declares 550, and the gate will re-measure against that; the figure is left as it was taken rather than rescaled, because 466/550 is not a number anybody ran). Of the 80 that do not, **8 return a 500** — that is the real defect count, each one diagnosed by operation in the gate document. A further 14 return a *declared* 503 because the dependency genuinely was not running; Schemathesis counts any 5xx, so an honest 503 is charged to the API, and separating the two is why this row can be specific. The rest: 34 accepting input their own schema forbids, 22 answering an undocumented status to an unsupported method, 3 others. Published rather than buried, because the instrument is the story: a Schemathesis ratchet over **all 550 operations blocks CI** at a floor that only moves up. It moved twice this week — the tenancy work in FS-736/737 turned cross-tenant 500s into declared 404s with nobody targeting the gate, and the floors rose 438/440 → 445 |
 
 Nothing above is a surprise waiting in a scanner report. If a diligence review runs
@@ -1070,7 +1070,63 @@ recreate the original bug, and no `or vector(0)`, which would page forever on a 
 not deployed the exporter. *"I cannot measure availability"* is a third state, and it pages
 under its own name.
 
-### 7. Production reliability & operations
+### 7. What survives which failure
+
+The availability diagram above shows how an outage is *detected*. This one shows what is left
+afterwards — and the dotted boxes are where this sprint found the answer was "nothing".
+
+```mermaid
+flowchart TB
+    subgraph CLUSTER["The cluster"]
+        PG[("TimescaleDB / CNPG")]
+        SW["SeaweedFS<br/>replicas: 1"]
+        LOKI["Loki<br/>logs"]
+    end
+
+    subgraph OUT["Outside the cluster"]
+        S3[("S3 bucket<br/>versioned + object-locked")]
+        EXT[("External WAL archive<br/>https, off-cluster")]
+    end
+
+    PG -->|"nightly pg_dump<br/>RPO 24h"| S3
+    PG -.->|"WAL, was in-cluster"| SW
+    PG ==>|"WAL every 5 min<br/>archive_timeout"| EXT
+
+    %% Every row below is what the CNPG design gives. None of it is operational today:
+    %% no environment has been cut over, so the live answer to all three is the nightly dump.
+    LOSS1["Lost primary"] --> R1["RPO ~ 0 - not operational<br/>needs the CNPG cutover"]
+    LOSS2["Lost cluster / site"] --> R2["RPO = archive_timeout<br/>only if the archive is OUTSIDE"]
+    LOSS3["Compromised backup key"] --> R3["survives only with<br/>Object Lock COMPLIANCE"]
+
+    style SW stroke-dasharray: 5 5
+    style LOKI stroke-dasharray: 5 5
+    style EXT stroke-width: 3px
+    style S3 stroke-width: 3px
+```
+
+**The dotted arrow is the finding.** The WAL archive was written to `seaweedfs` — a
+single-replica store *inside the cluster it protects*. For a lost primary that changes
+nothing; for a lost **cluster**, which is the only scenario an archive exists for, the archive
+goes with it and the documented ≤5-minute RPO silently becomes the nightly dump's 24 hours.
+Every signal stays green, because archiving works perfectly right up to the moment it is
+needed.
+
+Three different failures need three different answers, and they do not substitute for each
+other. **None of the three is operational today** — no environment has been cut over to
+CloudNativePG, so the live answer to all of them is the nightly `pg_dump` at RPO 24 h:
+
+| failure | what survives it |
+|---|---|
+| the primary instance | synchronous replication — a standby confirmed every acknowledged commit |
+| the cluster or the site | an archive **outside** that cluster |
+| a compromised backup credential | **Object Lock in COMPLIANCE mode** — versioning alone leaves versions a key holder can delete |
+
+`Loki` is dotted too, and deliberately unfixed: log aggregation was deployed in-cluster
+(FS-789) so that "check the container logs" became an executable instruction in production —
+and during a cluster loss those logs are gone with everything else. Recorded rather than
+solved.
+
+### 8. Production reliability & operations
 
 The Kubernetes stack (`infrastructure/k8s/`) is built for multi-pod, no-single-
 point-of-failure operation. Beyond the app Deployments, these are the enterprise
@@ -1078,7 +1134,7 @@ reliability layers (each with its own README):
 
 | Concern | Implementation | Where |
 |---------|----------------|-------|
-| **Database HA** | 3-instance CloudNativePG — automatic failover, synchronous replication (RPO≈0), continuous WAL archiving to S3 for PITR, PgBouncer pooler. **These are the manifest's properties, not a running cluster's — PITR is not operational today.** The stack is applied only where the CNPG operator is installed and no current environment has it, so the live RPO is the nightly `pg_dump`'s: up to 24 h | [`database-ha/`](infrastructure/k8s/database-ha/) |
+| **Database HA** | 3-instance CloudNativePG — automatic failover, synchronous replication (RPO≈0), continuous WAL archiving for PITR, PgBouncer pooler, and `archive_timeout: 5min` (FS-800), which is the parameter that actually bounds RPO: Postgres archives a segment only when it FILLS at 16 MB, so a quiet system left its tail unarchived for hours. **These are the manifest's properties, not a running cluster's — PITR is not operational today**, and the live RPO is the nightly `pg_dump`'s: up to 24 h. The application now reaches the cluster through the pooler via the `cnpg-pooler` component (FS-801) rather than a manual step, and the deploy refuses without the operator's CRDs and again if the data was never migrated | [`database-ha/`](infrastructure/k8s/database-ha/) |
 | **Worker autoscaling** | KEDA scales ingestion / export / compliance workers on Redpanda consumer-group **lag** (export + compliance scale to zero when idle) | [`autoscaling/`](infrastructure/k8s/autoscaling/) |
 | **Observability** | Prometheus + Alertmanager + kube-state-metrics + Grafana, in-cluster, plus **blackbox / node / postgres exporters and Loki + promtail** (FS-769/776/777/779/789). Those four were missing, and the absence was invisible: nine alert rules — three of them `critical` — watched series that no deployment produced, and **log aggregation existed for docker-compose only**, so every runbook step reading "check the container logs" was unexecutable in the cluster. Canonical alert rules shared with docker-compose; "Platform / Infra", **SLO overview, RED, and capacity/forecast** dashboards | [`monitoring/`](infrastructure/k8s/monitoring/) |
 | **Distributed tracing** | otel-collector + Jaeger, now actually reachable: policies both directions, OTLP export wired on the API and all four workers, and probes on the collector's `health_check` extension. **The workers never actually called `setup_tracing`** — it lives in `app/main.py` and nothing else invoked it — so all four emitted no spans of any kind; and aiokafka was uninstrumented, so a trace ENDED AT THE PRODUCER and the consumer's half began a new unparented trace. Both closed in FS-791, which makes device → Redpanda → worker → TimescaleDB followable end to end for the first time. Jaeger now persists to a volume (FS-792) instead of losing every trace on the restart an incident produces, and the collector **tail-samples** (FS-793) so what survives is what failed or was slow, not whatever the memory limit spared. Previously deployed with NO NetworkPolicy in a default-deny namespace and no OTEL env on the backend — dead in Kubernetes AND in compose, with nothing erroring | [`otel-collector.yaml`](infrastructure/k8s/base/otel-collector.yaml) |
@@ -1094,7 +1150,7 @@ reliability layers (each with its own README):
 | **CI safety** | **27 blocking jobs and 1 advisory** on every branch push — the same figure the **DevOps** row of the capability table states, asserted by `test_ci_gate_count_is_accurate.py`. It read **14** here and **31** there until FS-797, when the guard was found counting the `on:` triggers `pull_request:` and `push:` as jobs. Backend: `backend-realdb` (schema parity, tenant isolation + RLS, timestamp defaults — against an ephemeral TimescaleDB, because RLS and server defaults are both no-ops on SQLite), `backend-full` (**5,100+ tests** — the whole suite bar the Kafka e2e, which runs in its own job; the figure is a FLOOR asserted by `test_readme_test_count_is_not_stale.py`, because the exact number was written down once as 2,149 and was a thousand short within weeks), `backend-kafka-e2e` (container e2e in its own process), `migration-hygiene` (duplicate prefixes; and since FS-578 the suite also applies the whole chain to an empty database and **re-runs every migration at its own point in it** — the runner executes statements one at a time in autocommit, because continuous aggregates refuse a transaction block, so a file that fails halfway has committed its earlier statements and recorded nothing, and running it again is the only recovery there is. 22 files look non-idempotent to a text search; **4 are**, and none of them can be repaired — editing an applied migration is checksum drift). Kubernetes: `k8s-manifests` (build + kubeconform + placeholder-credential check, **per environment** — the stacks used to be validated one way and applied another, which is how staging never had monitoring applied at all; plus a namespace/scale-target lint, a replica-floor check against each autoscaler's declared minimum, a secret-source pairing over BOTH provisioning paths, and a check that the canonical README names every buildable tree), `netpol-simulate`, `k8s-smoke` (kind: real operator webhooks), `k8s-netpol` (kind + **Calico**: policies genuinely enforced, 19 allow/deny cases), `netpol-coverage` (every workload in a default-deny namespace has a policy in both directions — the gap that killed tracing). Plus `prometheus-rules` (lints `alerts.yml` + `slo_rules.yml`, checks **both** Prometheus configs, and runs the alert unit tests — **globbed, not listed**, and **all 74 alert rules are now provably FIRABLE** rather than merely well-formed — each driven true from a series the product publishes, each with a must-stay-quiet companion, and the `UNTESTED` set in `test_every_alert_rule_is_provably_firable.py` went 23 → 15 → **0** and is closed — though FS-774 showed that firable is not the same as connected: a quarter of `alerts.yml` is written as YAML block scalars, and the sweep checking that each rule's metrics exist read `expr:` one line at a time, so it captured `"|"` and never examined them: `check rules` cannot tell a rule that fires from one that never can, which is how `EdgeAgentBufferHigh` stayed unfirable for its whole existence: they were six filenames written out, so a new one ran only if somebody remembered to edit the workflow, and an alert test that does not run is indistinguishable from one that passes), `frontend-e2e-authenticated` (stands up Postgres + migrations + demo data + uvicorn and asserts the dashboard shows **non-zero** data — an element-visibility check would have passed against the FS-191 tenancy bug), `supply-chain`, `repo-hygiene`, frontend unit + e2e. The edge agent's **109 DDIL scenarios** run nightly rather than per-PR (`pytest -m ddil`) because a 400,000-row drain measurement is not a per-PR concern — but the cross-repo parity guards that stop the agent and backend disagreeing about priority tiers or wire codecs are unmarked and gate every push | `.github/workflows/quality-gates.yml` |
 | **Load / failover testing** | Kafka ingestion load generator (drives KEDA scaling + DB writes) + a runbook for driving throughput and DB-failover-under-load | [`tests/load/`](tests/load/) |
 
-### 8. Page → API wiring
+### 9. Page → API wiring
 
 How each frontend page is wired to the backend (primary endpoints; all under
 `/api/v1`, JWT-gated, live updates over `/ws`):
@@ -2183,11 +2239,15 @@ inventory reaches; it is now generated from `App.tsx` and held there by two guar
 - **Zero-Trust Security**: mTLS device provisioning with certificate revocation
 - **Immutable Audit Trail**: Tamper-evident logging with cryptographic hash chaining
 - **Disaster Recovery**: nightly logical backup (`pg_dump -Fc`) to S3 via the
-  `db-backup` CronJob, verified by a restore drill in the blocking CI gate.
-  **Point-in-time recovery is not yet operational** — the pgBackRest WAL-archiving
-  config exists but the deployed database image ships no `pgbackrest` binary and
-  no `archive_mode` is set, so treat pgBackRest instructions in the
-  `docs/deployment/dr-*.md` runbooks as aspirational until that lands. See
+  `db-backup` CronJob, verified by a **timed** restore drill in the blocking CI gate
+  (FS-810 — it had never been timed, so RTO was an aspiration; the restore-path floor
+  is now measured on every run). **Point-in-time recovery is not yet operational** in
+  any environment — every one runs the nightly dump at RPO 24 h — but the mechanism is
+  proven by a drill (FS-802..806) rather than merely described, and the bucket holding
+  the backups is now verified weekly for versioning and Object Lock by the
+  `backup-immutability-check` CronJob rather than by a sentence asking an operator to
+  enable them (FS-811). Treat pgBackRest instructions in the `docs/deployment/dr-*.md`
+  runbooks as aspirational. See
   [`docs/runbooks/database-backup-restore.md`](docs/runbooks/database-backup-restore.md).
 - **Enhanced API Documentation**: Comprehensive OpenAPI/Swagger documentation with detailed descriptions, authentication flows, error codes, and examples
 - **Automated Recovery Scripts**: Shell scripts for TimescaleDB, Redpanda, and backend service recovery
@@ -2407,7 +2467,7 @@ today, start at [`docs/erp/README.md`](docs/erp/README.md) instead.
 - [Delivery log](docs/DELIVERY-LOG.md) - Every slice delivered, verbatim, with the reasoning recorded against each: what was believed before, what turned out to be true, and what the difference cost. Moved out of this file on 2026-08-02, where it had grown to a third of the document. Most recently: the three defects that made `scripts/seed_demo_data.py` fail on every fresh database it had ever met, why none of 3,200 tests could see them (**SQLite does not enforce foreign keys by default**), and the four found only by *looking at* a running page — a heading rendered at its own background colour, an Activate control measured at 1.04:1, a float artifact beside a dollar figure, and a raw uuid in the column an operator reads to go and find a trailer
 - [ERP integration architecture](docs/erp/ARCHITECTURE.md) - The eight vendors and their protocols, the middleware, the endpoint list, and ERP-to-operational correlation. To *work on* a connector, start at [docs/erp/README.md](docs/erp/README.md) instead
 - [Correlation-AI training dataset](docs/CORRELATION-DATASET.md) - Statistics and worked single- and multi-domain scenarios, and how they feed Kanban and alerting
-- [OmniusGrid Glossary](OMNIUSGRID_GLOSSARY.md) - Backend & Frontend combined terminology reference — **650+ terms** (696 counted on 2026-08-20; stated as a floor for the same reason the test-count floor is one). Now covers DDIL, the pre-certification programme, FIPS, the interaction/feedback model, the method vocabulary the guards are written in, and the SLO/SLI vocabulary FS-769..798 introduced — error budget, burn rate, blackbox probe, `absent()` alert, dead man's switch, inert alert, flag-gated metric, tail sampling
+- [OmniusGrid Glossary](OMNIUSGRID_GLOSSARY.md) - Backend & Frontend combined terminology reference — **650+ terms** (706 counted on 2026-08-20; stated as a floor for the same reason the test-count floor is one). Now covers DDIL, the pre-certification programme, FIPS, the interaction/feedback model, the method vocabulary the guards are written in, and the SLO/SLI vocabulary FS-769..798 introduced — error budget, burn rate, blackbox probe, `absent()` alert, dead man's switch, inert alert, flag-gated metric, tail sampling — and the backup/recovery vocabulary FS-799..811 introduced: base backup, `archive_timeout`, recovery target, failure domain, Object Lock, COMPLIANCE mode, digest pin
 - [Intake Cross-Correlation](docs/INTAKE_CROSS_CORRELATION.md) - PDF/DOCX/image parsing, shared key detection, cross-file correlation
 - [Correlation AI Engine](docs/CORRELATION_AI_ENGINE.md) - Cross-domain AI analysis, synthetic data generation, Gemma 4 fine-tuning — and **"Current state"**, which records that the model and its LoRA are deliberately unloaded, what the honest fallback returns, and the check to run when switching it back on
 - [Hybrid Architecture](HYBRID_ARCHITECTURE.md) - Human-in-the-Loop + Lights Out modes
