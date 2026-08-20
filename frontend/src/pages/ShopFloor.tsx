@@ -356,7 +356,12 @@ const MachineDown: FC = () => {
       routes="scheduling, production, quality, accounting"
     >
       {openQuery.isError && (
-        <ErrorState message="Could not load open downtime — a machine may be recorded as down that is not shown here." />
+        <ErrorState
+          message="Could not load open downtime."
+          detail="A machine may be recorded as down that is not shown here."
+          onRetry={() => openQuery.refetch()}
+          retrying={openQuery.isFetching}
+        />
       )}
       {openEvents.length > 0 && (
         <div className="mb-3 space-y-2">

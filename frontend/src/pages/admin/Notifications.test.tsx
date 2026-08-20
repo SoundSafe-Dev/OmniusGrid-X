@@ -110,7 +110,7 @@ describe('Notifications — subscriptions', () => {
     // other means "the subscriptions service is down".
     listSubscriptions.mockRejectedValue(new Error('unreachable'))
     wrap()
-    expect(await screen.findByText('Failed to load subscriptions.')).toBeInTheDocument()
+    expect(await screen.findByText('Subscriptions could not be loaded.')).toBeInTheDocument()
     expect(
       screen.queryByText(/No subscriptions yet\. Create one below/i),
     ).not.toBeInTheDocument()
@@ -122,7 +122,7 @@ describe('Notifications — subscriptions', () => {
     // rendered immediately above it — this asserts they appear together.
     listSubscriptions.mockRejectedValue(new Error('unreachable'))
     wrap()
-    await screen.findByText('Failed to load subscriptions.')
+    await screen.findByText('Subscriptions could not be loaded.')
     expect(screen.getByRole('button', { name: /send test/i })).toBeDisabled()
   })
 })
@@ -171,7 +171,7 @@ describe('Notifications — the delivery log', () => {
     // If this looked the same, they would debug a webhook that works.
     deliveryLog.mockRejectedValue(new Error('unreachable'))
     wrap()
-    expect(await screen.findByText('Failed to load the delivery log.')).toBeInTheDocument()
+    expect(await screen.findByText('The delivery log could not be loaded.')).toBeInTheDocument()
     expect(screen.queryByText('No deliveries yet.')).not.toBeInTheDocument()
   })
 
@@ -179,7 +179,7 @@ describe('Notifications — the delivery log', () => {
     // A dead log must not blank the subscriptions above it, and vice versa.
     deliveryLog.mockRejectedValue(new Error('unreachable'))
     wrap()
-    await screen.findByText('Failed to load the delivery log.')
+    await screen.findByText('The delivery log could not be loaded.')
     expect(screen.getByText('Ops webhook')).toBeInTheDocument()
   })
 })

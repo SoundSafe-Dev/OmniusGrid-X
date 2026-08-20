@@ -155,8 +155,12 @@ export const ErrorTriage: FC = () => {
   // "not known" is worse than a blank one, because a zero is an answer.
   const summaryFigure = (value: number | undefined) =>
     value === undefined ? '—' : formatNumber(value, 0);
+  // The hint stays a sentence: it sits under a NUMBER, where a button would be visual
+  // noise repeated across every tile. The chart below carries the retry for the same query,
+  // so the escape exists on the page — see the ErrorState note about not offering the same
+  // recovery three times in one view.
   const summaryHint = summary.isError
-    ? 'Could not load — this is not a count of zero'
+    ? 'Unavailable — this is not a count of zero. Retry from the chart below.'
     : summary.isLoading
       ? 'Loading…'
       : undefined;
@@ -241,7 +245,9 @@ export const ErrorTriage: FC = () => {
         subtitle="Unhandled exceptions per hour"
         height={220}
         loading={summary.isLoading}
-        error={summary.isError ? 'Failed to load error volume' : null}
+        error={summary.isError ? 'Error volume could not be loaded.' : null}
+        onRetry={() => summary.refetch()}
+        retrying={summary.isFetching}
       >
         {seriesData.length === 0 ? (
           <div className="flex h-full items-center justify-center text-sm text-opsgrid-text-secondary">

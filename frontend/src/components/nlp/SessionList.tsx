@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { analysisSessionsApi, AnalysisSession } from '../../api/analysisSessions';
 import { Plus, Trash2, Clock, FileText, MessageSquare, RefreshCw } from 'lucide-react';
 import { Button } from '../ui/Button';
-import { useDialog } from '../ui';
+import { useDialog, ErrorState } from '../ui';
 
 interface SessionListProps {
   onSessionSelect: (session: AnalysisSession) => void;
@@ -128,7 +128,11 @@ export const SessionList: React.FC<SessionListProps> = ({
             Loading sessions...
           </div>
         ) : error ? (
-          <div className="p-4 text-center text-status-alarm text-sm">{error}</div>
+          <ErrorState
+              message={error}
+              onRetry={() => loadSessions()}
+              retrying={isLoading}
+            />
         ) : filteredSessions.length === 0 ? (
           <div className="p-4 text-center text-opsgrid-text-secondary text-sm">
             No sessions found

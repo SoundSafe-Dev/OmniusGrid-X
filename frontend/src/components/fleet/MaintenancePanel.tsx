@@ -1,4 +1,5 @@
 import { FC, useState, useEffect } from 'react';
+import { ErrorState } from '../ui';
 import {
   Wrench, Calendar, AlertTriangle, DollarSign, Plus,
   Clock, Truck
@@ -97,7 +98,11 @@ export const MaintenancePanel: FC = () => {
   if (error) {
     return (
       <div className="bg-opsgrid-panel border border-opsgrid-border rounded-lg p-4">
-        <p className="text-status-alarm text-sm">{error}</p>
+        <ErrorState
+            message={error}
+            onRetry={() => loadData()}
+            retrying={isLoading}
+          />
       </div>
     );
   }

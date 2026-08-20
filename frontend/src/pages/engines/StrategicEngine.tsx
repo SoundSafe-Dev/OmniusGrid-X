@@ -6,7 +6,7 @@ import { enginesApi, twinOptimizerApi, defaultOptimizeRequest } from '../../api'
 import type { OptimizeRecommendation } from '../../api/twinOptimizer';
 import { StrategicRecommendation } from '../../types';
 import { formatDateTime, formatPercentage } from '../../utils';
-import { Tooltip, TooltipTrigger, TooltipContent } from '../../components/ui';
+import { Tooltip, TooltipTrigger, TooltipContent, ErrorState } from '../../components/ui';
 import { useAuthStore } from '../../stores/authStore';
 
 export const StrategicEngine: FC = () => {
@@ -16,7 +16,7 @@ export const StrategicEngine: FC = () => {
   // string constant is an audit trail of nobody.
   const operatorId = useAuthStore((s) => s.user?.id ?? s.user?.email ?? 'unknown-operator');
 
-  const { data: recommendations, isLoading, isError } = useQuery({
+  const { data: recommendations, isLoading, isError, refetch, isFetching } = useQuery({
     queryKey: ['strategic-recommendations'],
     queryFn: () => enginesApi.getStrategicRecommendations(),
     refetchInterval: 30000,
@@ -28,6 +28,8 @@ export const StrategicEngine: FC = () => {
   const {
     data: history,
     isError: historyError,
+    refetch: refetchHistory,
+    isFetching: historyFetching,
   } = useQuery({
     queryKey: ['strategic-history'],
     queryFn: () => enginesApi.getRecommendationHistory(),
@@ -233,10 +235,12 @@ export const StrategicEngine: FC = () => {
                `pendingRecs` is [] and this said "No pending recommendations. Check back
                later" — an instruction to stop looking, given to someone whose
                recommendations could not be fetched. Rule 24. */
-            <p role="alert" className="text-status-alarm text-center py-8">
-              Recommendations could not be loaded. This is a failed request — it does not
-              mean the strategic engine has nothing to suggest.
-            </p>
+            <ErrorState
+              message="Recommendations could not be loaded."
+              detail="This is a failed request — it does not mean the strategic engine has nothing to suggest. It retries every 30 seconds on its own; the button is for not waiting."
+              onRetry={() => refetch()}
+              retrying={isFetching}
+            />
           ) : pendingRecs.length === 0 ? (
             <p className="text-opsgrid-text-secondary text-center py-8">
               No pending recommendations. Check back later for new suggestions from the cloud strategic engine.
@@ -274,9 +278,12 @@ export const StrategicEngine: FC = () => {
               render — blaming the endpoint's shape for what was actually a request that
               did not complete. Both statements are only true once the query succeeded. */}
           {historyError && (
-            <p className="py-3 text-sm text-opsgrid-text-secondary">
-              History could not be loaded — the history request failed.
-            </p>
+            <ErrorState
+              message="History could not be loaded."
+              detail="The history request failed; it retries every 30 seconds."
+              onRetry={() => refetchHistory()}
+              retrying={historyFetching}
+            />
           )}
           {!historyError && !decisionHistoryAvailable && (
             // An untitled empty div under a card headed "History" reads as "nothing has

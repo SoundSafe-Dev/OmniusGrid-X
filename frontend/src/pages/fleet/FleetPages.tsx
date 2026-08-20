@@ -8,8 +8,8 @@ import { workcellsApi, assetsApi, organizationsApi } from '../../api';
 import { AgentOperationsPanel } from './AgentOperationsPanel';
 
 export const FleetOverview: FC = () => {
-  const { data: workcells, isLoading: workcellsLoading, isError: workcellsError } = useQuery({ queryKey: ['fleet-workcells'], queryFn: () => workcellsApi.list() });
-  const { data: assetsPage, isLoading: assetsLoading, isError: assetsError } = useQuery({ queryKey: ['fleet-assets'], queryFn: () => assetsApi.list({ limit: 500 }) });
+  const { data: workcells, isLoading: workcellsLoading, isError: workcellsError, refetch: refetchWorkcells } = useQuery({ queryKey: ['fleet-workcells'], queryFn: () => workcellsApi.list() });
+  const { data: assetsPage, isLoading: assetsLoading, isError: assetsError, refetch: refetchAssets } = useQuery({ queryKey: ['fleet-assets'], queryFn: () => assetsApi.list({ limit: 500 }) });
   // THE THIRD QUERY IS THE ONE THAT MATTERED. It was destructured for `data` alone,
   // and its result gates the live vehicle map below — `{orgId && <GeoTabIntegration …>}`.
   // On a failed request `orgs` is undefined, `orgId` is undefined, and the map simply
@@ -17,7 +17,7 @@ export const FleetOverview: FC = () => {
   // the telematics it exists to show, which is the same failure-as-emptiness the other
   // two queries here already guard against — it just took a different form, absence of
   // a whole widget rather than an empty list.
-  const { data: orgs, isLoading: orgsLoading, isError: orgsError } = useQuery({ queryKey: ['fleet-orgs'], queryFn: () => organizationsApi.list() });
+  const { data: orgs, isLoading: orgsLoading, isError: orgsError, refetch: refetchOrgs } = useQuery({ queryKey: ['fleet-orgs'], queryFn: () => organizationsApi.list() });
   const orgId = orgs?.[0]?.id;
 
   const assets = assetsPage?.items ?? [];
@@ -44,7 +44,19 @@ export const FleetOverview: FC = () => {
   if (workcellsError || assetsError) {
     return (
       <Card className="p-4">
-        <ErrorState message="Failed to load fleet data. Please try again." />
+        <ErrorState
+          message="Fleet data could not be loaded."
+          detail="Three requests feed this view; retrying repeats all of them."
+          onRetry={() => {
+            // All three, because the message covers all three and the user cannot tell
+            // from it which one failed. Retrying only one leaves the page in the same
+            // state and looks like the button did nothing.
+            void refetchWorkcells();
+            void refetchAssets();
+            void refetchOrgs();
+          }}
+          retrying={workcellsLoading || assetsLoading || orgsLoading}
+        />
       </Card>
     );
   }
@@ -105,11 +117,22 @@ export const FleetOverview: FC = () => {
         <GeoTabIntegration organizationId={orgId} height={480} />
       ) : orgsLoading ? null : (
         <Card title="Live Vehicle Tracking">
-          <p role="alert" className="text-status-alarm text-sm">
-            {orgsError
-              ? 'Could not load your organization, so vehicle tracking is not shown. This is a failed request — not an empty fleet.'
-              : 'No organization is associated with this account, so vehicle tracking cannot be shown.'}
-          </p>
+          {orgsError ? (
+            <ErrorState
+              message="Could not load your organization, so vehicle tracking is not shown."
+              detail="This is a failed request — not an empty fleet."
+              onRetry={() => refetchOrgs()}
+              retrying={orgsLoading}
+            />
+          ) : (
+            /* NOT a failure, so deliberately no retry: the account genuinely has no
+               organization, and a Retry button here would promise something no amount of
+               clicking can deliver. */
+            <p role="alert" className="text-status-alarm text-sm">
+              No organization is associated with this account, so vehicle tracking cannot be
+              shown.
+            </p>
+          )}
         </Card>
       )}
     </div>
@@ -125,9 +148,9 @@ const packmlStatus = (state?: string): string => {
 };
 
 export const OrganizationTree: FC = () => {
-  const { data: orgs, isLoading: orgsLoading, isError: orgsError } = useQuery({ queryKey: ['orgtree-orgs'], queryFn: () => organizationsApi.list() });
-  const { data: workcells, isLoading: workcellsLoading, isError: workcellsError } = useQuery({ queryKey: ['orgtree-workcells'], queryFn: () => workcellsApi.list() });
-  const { data: assetsPage, isLoading: assetsLoading, isError: assetsError } = useQuery({ queryKey: ['orgtree-assets'], queryFn: () => assetsApi.list({ limit: 500 }) });
+  const { data: orgs, isLoading: orgsLoading, isError: orgsError, refetch: refetchTreeOrgs } = useQuery({ queryKey: ['orgtree-orgs'], queryFn: () => organizationsApi.list() });
+  const { data: workcells, isLoading: workcellsLoading, isError: workcellsError, refetch: refetchTreeWorkcells } = useQuery({ queryKey: ['orgtree-workcells'], queryFn: () => workcellsApi.list() });
+  const { data: assetsPage, isLoading: assetsLoading, isError: assetsError, refetch: refetchTreeAssets } = useQuery({ queryKey: ['orgtree-assets'], queryFn: () => assetsApi.list({ limit: 500 }) });
 
   const org = orgs?.[0];
   // Constant root node id so the default-expanded set stays valid once the org
@@ -235,7 +258,15 @@ export const OrganizationTree: FC = () => {
         {isLoading ? (
           <SkeletonCard lines={6} />
         ) : isError ? (
-          <ErrorState message="Failed to load organization structure. Please try again." />
+          <ErrorState
+          message="The organization structure could not be loaded."
+          onRetry={() => {
+            void refetchTreeOrgs();
+            void refetchTreeWorkcells();
+            void refetchTreeAssets();
+          }}
+          retrying={orgsLoading || workcellsLoading || assetsLoading}
+        />
         ) : (
           renderNode(orgData)
         )}

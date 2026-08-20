@@ -2,7 +2,7 @@ import React, { useState, useRef, useEffect } from 'react';
 import { Button } from '../ui/Button';
 import { Input } from '../ui/Input';
 import { Badge } from '../ui/Badge';
-import { Tooltip, TooltipTrigger, TooltipContent, useDialog } from '../ui';
+import { Tooltip, TooltipTrigger, TooltipContent, useDialog, ErrorState } from '../ui';
 import { analysisSessionsApi, AnalysisSession, SessionMessage } from '../../api/analysisSessions';
 import { SessionList } from './SessionList';
 import { DataSourcesPanel, DataSourcesPanelHandle } from './DataSourcesPanel';
@@ -241,7 +241,7 @@ export const CorrelationAIPane: React.FC<CorrelationAIPaneProps> = ({ className 
         // FS-481. `setCurrentSession(latest)` may already have run, so the pane can show a
         // named session with no messages — indistinguishable from a session nobody used.
         if (!cancelled) {
-          setTranscriptError('Your last session could not be loaded — it is not an empty session. Reload to retry.');
+          setTranscriptError('Your last session could not be loaded — it is not an empty session.');
         }
       }
     };
@@ -283,7 +283,7 @@ export const CorrelationAIPane: React.FC<CorrelationAIPaneProps> = ({ className 
       // pane is empty so it is not mistaken for a session that was never used.
       setMessages([]);
       setHistoryTruncated(false);
-      setTranscriptError('This session\'s history could not be loaded — it is not an empty session. Select it again to retry.');
+      setTranscriptError('This session\'s history could not be loaded — it is not an empty session.');
     }
   };
 
@@ -648,12 +648,19 @@ export const CorrelationAIPane: React.FC<CorrelationAIPaneProps> = ({ className 
           {/* A transcript that failed to load, said out loud (FS-481). Above the branch
               below because that branch renders the SAME empty state for a session with no
               messages and a session whose messages could not be fetched. */}
-          {transcriptError && (
-            <div
-              role="alert"
-              className="mb-3 rounded border border-red-500/40 bg-red-500/10 px-3 py-2 text-sm text-red-500"
-            >
-              {transcriptError}
+                    {transcriptError && (
+            <div className="mb-3">
+              {/* `currentSession` is the transcript that failed, so selecting it again IS
+                  the retry — the copy used to say "Select it again to retry", which is an
+                  instruction to do by hand what a button can do (FS-768). */}
+              <ErrorState
+                message={transcriptError}
+                onRetry={
+                  currentSession
+                    ? () => void handleSessionSelect(currentSession)
+                    : undefined
+                }
+              />
             </div>
           )}
           {!currentSession ? (

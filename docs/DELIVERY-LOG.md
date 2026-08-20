@@ -14561,3 +14561,87 @@ tightened to look for the ESCAPE rather than the component. Write the check agai
 property the user experiences, not against the mechanism you happen to be introducing — and
 when you are both the author of the metric and the person being measured, assume you will find
 the loophole by accident.
+
+---
+
+## FS-768 — the last forty, and a guard that lost sight of its subject
+
+The dead-end backlog is **0**. The ceiling in `errorStatesAreActionable.test.ts` is zero, so
+the next one cannot be added quietly, and the mutation check confirms it: reintroduce a
+`<p>Failed to load…</p>` and the ratchet fails.
+
+Getting there was not a find-and-replace, and the reasons are the interesting part.
+
+### Most of them needed a decision, not a transform
+
+Almost every remaining site sat in a component with three or four queries. Wiring a retry
+means answering *which* query the message describes, and getting it wrong produces the worst
+outcome available — a button that runs a different request, succeeds, and leaves the failed
+panel exactly as it was. It looks like it worked.
+
+Where a message covered several queries at once, the retry repeats all of them:
+`FleetOverview` says "Fleet data could not be loaded" over three requests, and retrying one
+would leave the page unchanged and read as a broken button.
+
+### Several needed a refactor before a retry was possible at all
+
+    useEffect(() => {
+      const fetchData = async () => { ... }
+      fetchData()
+    }, [])
+
+A fetch defined inside its effect cannot be called by anything else. The only way to run it
+again was to remount the component — close the modal, reload the page — which discards
+whatever the user had typed. Four of these were lifted into `useCallback`:
+`TaskDetailModal`, `FleetTrackerMap`, `PlatformDataSourcePicker`, and the shipment-costs
+fetch in `TransportationManagement`.
+
+### Three sites deliberately did not get an `ErrorState`
+
+- **A status chip in a header row.** A full block would push the map off screen, so the retry
+  is a small control beside the badge.
+- **A table cell.** The retry sits *in* the cell, where the reader's eye already is.
+- **A DOT-regulated compliance notice.** This one is worth stating plainly: the block is
+  already `role="alert"` with carefully-worded copy refusing the inference that unknown means
+  compliant. Nesting an `ErrorState` — itself an alert — produced **two alerts in one region**,
+  which a screen reader announces twice and which broke the test that reads the notice. It got
+  a plain button.
+
+### And a retry is not always the right answer
+
+`FleetRolloutDetail` said "Rollout not found or failed to load", merging two cases that need
+opposite treatment. A 404 is final; offering a retry sends the reader clicking at something
+that will never work. They are told apart now, and only the failure gets a button. A fleet
+with no organisation attached is not a failure at all and gets no control either.
+
+### The guard that lost its subject
+
+Lifting those fetches out of `useEffect` broke `idKeyedFetchesDoNotGoStale.test.ts` — not an
+assertion, its **vacuity check**: "finds the effects it is meant to be checking", expected 0
+to be greater than 0.
+
+The class it guards is a hand-rolled id-keyed fetch that fails to clear, catch or cancel. The
+code was unchanged; the hook around it was not, and the sweep's population fell to zero. Its
+own header records losing the population once before, to a line break, and says the vacuity
+test is the only reason that was noticed. It now scans `useCallback` as well, because the
+defect lives in the fetch, not in the hook that happens to hold it.
+
+### Five corrections to the detector, and what they cost
+
+The count went 68 → 40 → 0, but three of those steps were the instrument rather than the work:
+
+| Correction | Why it was wrong |
+|---|---|
+| `console.error('Failed to load…')` excluded | A log line the user never sees |
+| Comments excluded, including `{/*` | It was flagging the prose that EXPLAINS a failure state, its own included |
+| `<ErrorState>` no longer counts as actionable | The component is a means; the assertion is about the escape |
+| Setter lookback widened to five lines | A ternary inside `setError(` puts the copy well below the call |
+| Window widened to ±10 | A failure and its retry are still adjacent with a comment between them — and comments are common there, because these are the places somebody stopped to explain what the failure means |
+
+RULE 271 — when you change the shape of the code, check what was watching that shape. Lifting
+four fetches out of `useEffect` into `useCallback` did not change a line of their behaviour
+and silently emptied the population of the sweep that guards them; only its vacuity check
+noticed, and that check exists because the same sweep had already been emptied once by a line
+break. A guard keyed on syntax follows the syntax, not the defect — so after a refactor, run
+the guards that scan for the construct you just moved, and read the number they report rather
+than the pass.

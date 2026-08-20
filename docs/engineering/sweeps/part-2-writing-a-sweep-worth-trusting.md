@@ -1973,6 +1973,14 @@ one of its findings. The habit that catches it:
      mechanism was mistaken for the property. Write the check against what the user
      experiences (is there an escape?), not against the component you are introducing, and
      assume that an author measuring their own work will find the loophole by accident.
+
+271. **When you change the shape of the code, check what was watching that shape.** Lifting
+     four fetches out of `useEffect` into `useCallback` — so a Retry control could call them —
+     changed no behaviour and silently emptied the population of the sweep that guards
+     id-keyed fetches. Only its vacuity check noticed, and that check exists because the same
+     sweep had been emptied once before by a line break. A guard keyed on syntax follows the
+     syntax, not the defect. After a refactor, run the guards that scan for the construct you
+     moved and read the number they report, not the pass.
 ---
 
 ## Open observations, not yet tickets

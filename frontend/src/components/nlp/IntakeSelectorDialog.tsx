@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { ErrorState } from '../ui';
 import { Link } from 'react-router-dom';
 import { nlpCorrelationApi, IntakeItem } from '../../api/nlpCorrelation';
 import { X, Search, FileText, Image, FileSpreadsheet, Loader2 } from 'lucide-react';
@@ -157,7 +158,11 @@ export const IntakeSelectorDialog: React.FC<IntakeSelectorDialogProps> = ({
           {isLoading ? (
             <div className="text-center text-opsgrid-text-secondary py-8">Loading...</div>
           ) : error ? (
-            <div className="text-center text-status-alarm py-8">{error}</div>
+            <ErrorState
+              message={error}
+              onRetry={() => loadIntakeItems()}
+              retrying={isLoading}
+            />
           ) : filteredItems.length === 0 ? (
             <div className="text-center text-opsgrid-text-secondary py-8">
               <p>No items found in the Intake Inbox.</p>

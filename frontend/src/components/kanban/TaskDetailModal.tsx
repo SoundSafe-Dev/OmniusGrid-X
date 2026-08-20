@@ -2,10 +2,10 @@
  * TaskDetailModal - Modal for viewing and editing task details
  */
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback} from 'react';
 import { useKanban, Task, TaskColumn } from '../../stores/kanbanStore';
 import { Button } from '../ui/Button';
-import { useDialog } from '../ui';
+import { useDialog, ErrorState } from '../ui';
 import { api } from '../../api/client';
 import { X, Play, CheckCircle, AlertCircle, User, Clock, Calendar, ArrowRightLeft, ChevronDown } from 'lucide-react';
 
@@ -52,8 +52,10 @@ export const TaskDetailModal: React.FC<TaskDetailModalProps> = ({
   const [actionError, setActionError] = useState<string | null>(null);
 
   // Fetch users when modal opens
-  useEffect(() => {
-    const fetchUsers = async () => {
+  // LIFTED OUT OF THE EFFECT so a retry can call it (FS-768). Defined inline, the only way
+  // to run it again was to close and reopen the modal — which discards whatever the user had
+  // typed in it.
+  const fetchUsers = useCallback(async () => {
       if (!isOpen) return;
       setIsLoadingUsers(true);
       setUsersError(false);
@@ -71,9 +73,11 @@ export const TaskDetailModal: React.FC<TaskDetailModalProps> = ({
       } finally {
         setIsLoadingUsers(false);
       }
-    };
-    fetchUsers();
   }, [isOpen]);
+
+  useEffect(() => {
+    void fetchUsers();
+  }, [fetchUsers]);
 
   /**
    * Run a mutation, and say so when it fails.
@@ -401,9 +405,12 @@ export const TaskDetailModal: React.FC<TaskDetailModalProps> = ({
                   {isLoadingUsers ? (
                     <div className="px-3 py-2 text-sm text-gray-500">Loading users...</div>
                   ) : usersError ? (
-                    <div className="px-3 py-2 text-sm text-status-alarm">
-                      Could not load users.
-                    </div>
+                    <ErrorState
+                      message="Could not load users."
+                      detail="The list is empty because the request failed, not because nobody is in this organisation."
+                      onRetry={() => void fetchUsers()}
+                      retrying={isLoadingUsers}
+                    />
                   ) : users.length === 0 ? (
                     <div className="px-3 py-2 text-sm text-gray-500">No users available</div>
                   ) : (

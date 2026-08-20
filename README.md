@@ -39,7 +39,7 @@
 | [Documentation](#documentation) | The rest of `docs/` |
 
 **Engineering method.** The sweeps and guards in this repository follow a set of numbered
-rules, each written after a defect that a weaker check had missed. Rules 21–270 are recorded in
+rules, each written after a defect that a weaker check had missed. Rules 21–271 are recorded in
 `docs/engineering/defect-class-sweeps.md`, with the reasoning for each; the short list at the
 top of that file is what most people read.
 
@@ -2166,7 +2166,7 @@ were measured across all 37 pages before any of them were changed.
 
 | | Measured | Now |
 |---|---|---|
-| Failure states offering a way forward | **3 of 68** | Shared `ErrorState`; 28 sites converted, the rest ratcheted |
+| Failure states offering a way forward | **3 of 68** | **All of them.** The ratchet ceiling is **0** |
 | Mutations confirming they happened | **4 of 21 pages** | `ToastProvider` — there had been no non-blocking primitive at all |
 | Native `window.confirm` | 3 sites, beside a `DialogProvider` written to replace them | 0 |
 
@@ -2197,10 +2197,18 @@ reality to stop meaning anything. It counts the ESCAPE rather than the component
 `<ErrorState>` with no `onRetry` is still a dead end, which matters because the alternative
 made the ratchet gameable by the person draining it.
 
-**What remains.** 40 sites, almost all in components with several queries, where wiring a
-retry means deciding *which* query the message describes. A retry wired to the wrong query is
-worse than none, because it looks like it worked — so the conversion tooling refuses to guess
-and reports those for a human.
+**What it took, because none of it was a find-and-replace.** Most sites sat in components
+with several queries, and a retry has to name *which* query the message describes — one wired
+to the wrong query succeeds and looks like it worked. Several needed a fetch lifted out of a
+`useEffect` with `useCallback` before anything could call it twice. Three were left as plain
+buttons rather than `ErrorState`: a status chip in a header row, a table cell, and a
+DOT-regulated compliance notice that is already `role="alert"` and would have ended up
+announcing itself twice.
+
+**And a retry is not always the right answer.** A rollout that returns 404 gets the message
+and no button, because the two cases are told apart rather than merged; a fleet with no
+organisation attached is not a failure at all. `onRetry` is optional precisely so those can
+say so.
 
 ---
 

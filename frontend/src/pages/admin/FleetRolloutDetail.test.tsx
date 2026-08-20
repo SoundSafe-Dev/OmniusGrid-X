@@ -127,7 +127,7 @@ describe('a rollout that will not load', () => {
   it('says so rather than rendering an empty shell', async () => {
     show({ data: undefined, isError: true })
     await waitFor(() =>
-      expect(screen.getByRole('alert').textContent).toMatch(/not found or failed to load/i),
+      expect(screen.getByRole('alert').textContent).toMatch(/rollout not found|could not be loaded/i),
     )
   })
 

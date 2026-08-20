@@ -48,9 +48,13 @@ vi.mock('../api/alarmRules', () => ({
 const confirmMock = vi.fn()
 const alertMock = vi.fn()
 
-vi.mock('../components/ui', async () => {
+vi.mock('../components/ui', async (importOriginal) => {
   const { forwardRef } = await import('react')
   return {
+    // FS-768. Spread the real module first: this listed its exports, and the page then
+    // imported `ErrorState`, so a real change arrived as "No ErrorState export is defined
+    // on the mock" — a mock defect in the message, a drifted stand-in in fact.
+    ...(await importOriginal<typeof import('../components/ui')>()),
     Button: ({ children, ...rest }: any) => <button {...rest}>{children}</button>,
     Input: forwardRef(({ label, helperText, ...rest }: any, ref: any) => (
       <label>

@@ -1,4 +1,5 @@
 import { FC, useEffect, useState, useRef, useCallback } from 'react';
+import { ErrorState } from '../ui';
 import { MapContainer, TileLayer, useMap, Marker, Popup, Polyline, Circle } from 'react-leaflet';
 import { Map as MapIcon, Truck, Navigation, AlertTriangle, Shield, X } from 'lucide-react';
 import L from 'leaflet';
@@ -128,9 +129,9 @@ export const FleetTrackerMap: FC<FleetTrackerMapProps> = ({
   // because neither is visible in the map itself.
   const [liveStalled, setLiveStalled] = useState(false);
 
-  // Initial data fetch
-  useEffect(() => {
-    const fetchData = async () => {
+  // LIFTED so the failure banner can retry it (FS-768). Inline in the effect, a failed
+  // initial load left the map permanently empty until the page was reloaded.
+  const fetchData = useCallback(async () => {
       try {
         setIsLoading(true);
         const [vehicleData, shipmentData, geofenceData] = await Promise.all([
@@ -148,10 +149,11 @@ export const FleetTrackerMap: FC<FleetTrackerMapProps> = ({
       } finally {
         setIsLoading(false);
       }
-    };
-
-    fetchData();
   }, []);
+
+  useEffect(() => {
+    void fetchData();
+  }, [fetchData]);
 
   // Subscribe to real-time updates
   useEffect(() => {
@@ -234,10 +236,12 @@ export const FleetTrackerMap: FC<FleetTrackerMapProps> = ({
             untracked one draw the same empty tiles, and a stalled poll draws the same pins
             as a moving fleet standing still (FS-487). */}
         {loadError && (
-          <span role="alert" className="text-xs text-status-alarm">
-            Vehicle positions could not be loaded — this map is empty because the request
-            failed, not because nothing is being tracked.
-          </span>
+          <ErrorState
+            message="Vehicle positions could not be loaded."
+            detail="This map is empty because the request failed, not because nothing is being tracked."
+            onRetry={() => void fetchData()}
+            retrying={isLoading}
+          />
         )}
         {!loadError && liveStalled && (
           <span role="alert" className="text-xs text-status-warning">

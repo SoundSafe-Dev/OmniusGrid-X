@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { ErrorState } from '../ui';
 import { analysisSessionsApi } from '../../api/analysisSessions';
 import { Activity, AlertTriangle, CheckSquare, FileText, RefreshCw } from 'lucide-react';
 import { Button } from '../ui/Button';
@@ -86,7 +87,11 @@ export const RealTimeDataPanel: React.FC<RealTimeDataPanelProps> = ({
     if (error) {
       return (
         <div className="text-center py-8">
-          <p className="text-sm text-status-alarm">{error}</p>
+          <ErrorState
+            message={error}
+            onRetry={() => loadData()}
+            retrying={isLoading}
+          />
         </div>
       );
     }

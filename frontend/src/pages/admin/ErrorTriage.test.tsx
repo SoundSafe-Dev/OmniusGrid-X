@@ -137,12 +137,12 @@ describe('a failed summary is not a quiet week', () => {
     useErrorSummary.mockReturnValue(summary({ data: undefined, isError: true }))
     show()
 
-    expect(screen.getByText(/failed to load error volume/i)).toBeInTheDocument()
+    expect(screen.getByText(/error volume could not be loaded/i)).toBeInTheDocument()
   })
 
   it('says nothing when the summary loaded', () => {
     show()
-    expect(screen.queryByText(/failed to load error volume/i)).not.toBeInTheDocument()
+    expect(screen.queryByText(/error volume could not be loaded/i)).not.toBeInTheDocument()
   })
 })
 

@@ -29,7 +29,7 @@ export const ERPIntegrationsPage: FC = () => {
   // configure something, given to someone whose integrations could not be read. This
   // file already had the right idiom: `EmptyOrError` below is used by every sub-panel.
   // Only the top-level list, the first thing on the page, skipped it (method rule 18).
-  const { data: integrations, isLoading, isError } = useQuery({ queryKey: ['erp-integrations'], queryFn: () => erpApi.listIntegrations() })
+  const { data: integrations, isLoading, isError, refetch, isFetching } = useQuery({ queryKey: ['erp-integrations'], queryFn: () => erpApi.listIntegrations() })
   const [showAdd, setShowAdd] = useState(false)
   const [form, setForm] = useState<ERPIntegrationCreate>(EMPTY_FORM)
   const [authConfigText, setAuthConfigText] = useState('{}')
@@ -200,7 +200,12 @@ export const ERPIntegrationsPage: FC = () => {
             </Card>
           ))}
           {isError ? (
-            <ErrorState message="Could not load ERP integrations. This is a failed request — it does not mean you have none configured." />
+            <ErrorState
+              message="Could not load ERP integrations."
+              detail="This is a failed request — it does not mean none are configured."
+              onRetry={() => refetch()}
+              retrying={isFetching}
+            />
           ) : (integrations ?? []).length === 0 && (
             <p className="text-opsgrid-text-secondary">No ERP integrations yet. Add one to get started.</p>
           )}
@@ -274,13 +279,23 @@ const TruncationNotice: FC<{ shown: number; limit: number }> = ({ shown, limit }
   </p>
 )
 
-const EmptyOrError: FC<{ isError: boolean; empty: boolean; what: string }> = ({
+// `onRetry` is optional here because the helper is used for both a failed request and a
+// genuinely empty list, and only the first has anything to retry.
+const EmptyOrError: FC<{
+  isError: boolean
+  empty: boolean
+  what: string
+  onRetry?: () => void
+  retrying?: boolean
+}> = ({
   isError,
   empty,
   what,
+  onRetry,
+  retrying,
 }) =>
   isError ? (
-    <p className="text-xs text-opsgrid-danger">Could not load {what}.</p>
+    <ErrorState message={`Could not load ${what}.`} onRetry={onRetry} retrying={retrying} />
   ) : empty ? (
     <p className="text-xs text-opsgrid-text-secondary">No {what} yet.</p>
   ) : null

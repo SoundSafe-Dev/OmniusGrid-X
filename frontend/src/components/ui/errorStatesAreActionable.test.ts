@@ -81,9 +81,48 @@ function deadEnds(): string[] {
       //     ErrorState's, which the first version of the detector counted against itself.
       const trimmed = line.trim();
       if (/console\.(error|warn|log|debug)/.test(line)) return;
-      if (trimmed.startsWith('*') || trimmed.startsWith('//') || trimmed.startsWith('/*')) return;
+      // `{/*` too: a JSX comment opens with a brace, and this file's own detector missed
+      // it — flagging a comment that EXPLAINS a failure state as if it were one.
+      if (
+        trimmed.startsWith('*') ||
+        trimmed.startsWith('//') ||
+        trimmed.startsWith('/*') ||
+        trimmed.startsWith('{/*')
+      )
+        return;
 
-      const window = lines.slice(Math.max(0, i - 6), i + 7).join('\n');
+      // COPY ASSIGNED TO STATE RENDERS SOMEWHERE ELSE, BY CONSTRUCTION.
+      //
+      // `setError('Could not load sessions.')` sits in a `catch`, and the escape lives
+      // wherever `{error}` is rendered — often a hundred lines away. Judging it by the six
+      // lines around the ASSIGNMENT reports a dead end for a component that has a perfectly
+      // good retry, which is the metric telling somebody to fix what is already fixed.
+      //
+      // For those, ask whether the component offers an escape at all. For copy written
+      // directly into markup, the local window is the right question.
+      // The setter's opening paren is often on a previous line:
+      //     setActionError(
+      //       `Could not load results for "${item.title}".`,
+      //     );
+      // so the test looks BACK a couple of lines as well as at this one. Without that the
+      // copy is judged by the six lines around a string literal in a catch block, which is
+      // nowhere near where it renders.
+      // Five lines back, not two: a setter whose argument is a multi-line ternary puts the
+      // copy well below the `setX(`.
+      //     setLoadError(
+      //       isSessionNotFound(error)
+      //         ? 'This session no longer exists.'
+      //         : 'Could not load data sources.',
+      //     );
+      const preceding = lines.slice(Math.max(0, i - 5), i + 1).join('\n');
+      const assignedToState = /set[A-Z]\w*\(/.test(preceding);
+      const scope = assignedToState ? source : lines.slice(Math.max(0, i - 6), i + 7).join('\n');
+      if (ACTIONABLE.test(scope)) return;
+
+      // ±10 rather than ±6. A failure and its retry are still adjacent with an explanatory
+      // comment between them, and comments between the two are common here precisely because
+      // these are the places where somebody stopped to explain what the failure means.
+      const window = lines.slice(Math.max(0, i - 10), i + 11).join('\n');
       if (ACTIONABLE.test(window)) return;
       if (SELF_HEALING.test(window) && POLLS.test(source)) return;
       found.push(`${file.replace(SRC, '')}:${i + 1}`);
@@ -95,23 +134,33 @@ function deadEnds(): string[] {
 /**
  * Pinned 2026-08-19 at the measured value. **Only ever lower this.**
  *
- * 72 → 67 → 40. The detector was sharpened twice on the way down, and each sharpening was a
- * correction to the INSTRUMENT rather than progress:
+ * **0.** 72 → 67 → 40 → 0. Every failure state in the application now offers the user a way
+ * forward, and the ceiling is zero so the next one cannot be added quietly.
+ *
+ * The detector was sharpened five times on the way down, and each sharpening was a correction
+ * to the INSTRUMENT rather than progress:
  *   - `console.error('Failed to load…')` is a log line the user never sees.
  *   - a comment quoting the copy is not a failure state, including this file's own prose.
  *   - `<ErrorState>` WITHOUT `onRetry` no longer counts as actionable. It did briefly, which
  *     made the ratchet gameable by the person draining it: swapping a `<p>` for the component
  *     satisfied the detector and left the user exactly as stuck.
  *
- * What remains is not an oversight. Almost every one sits in a component with several
- * queries, so wiring a retry means deciding WHICH query the message describes — and a Retry
- * wired to the wrong query is worse than none, because it looks like it worked. The
- * conversion script refuses to guess and reports those; so should anyone draining the rest.
+ *   - a JSX comment opens with `{/*`, and the detector was flagging comments that EXPLAIN a
+ *     failure state as if they were one.
+ *   - a setter's copy can sit five lines below the `setX(` when the argument is a ternary.
+ *   - a failure and its retry are still adjacent with a comment between them, so the window
+ *     is ±10 rather than ±6 — comments are common there precisely because these are the
+ *     places somebody stopped to explain what the failure means.
+ *
+ * WIRING THE LAST ONES WAS NOT MECHANICAL. Most sat in components with several queries, where
+ * a retry has to name WHICH query the message describes — a retry wired to the wrong one is
+ * worse than none, because it succeeds and looks like it worked. Several needed a fetch
+ * lifted out of a `useEffect` with `useCallback` before anything could call it twice.
  *
  * Lower it as sites are converted. The third test below fails if you convert one and forget
  * to lower it — banking an improvement silently is how a ratchet stops ratcheting.
  */
-const DEAD_END_CEILING = 40;
+const DEAD_END_CEILING = 0;
 
 describe('failure states the user can act on', () => {
   it('finds failure messages at all', () => {

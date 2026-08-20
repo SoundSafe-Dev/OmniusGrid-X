@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef, useImperativeHandle } from 'react';
+import { ErrorState } from '../ui';
 import { analysisSessionsApi, DataSource } from '../../api/analysisSessions';
 import { Upload, FileText, Trash2, Loader2 } from 'lucide-react';
 import { Button } from '../ui/Button';
@@ -340,7 +341,11 @@ export const DataSourcesPanel = React.forwardRef<DataSourcesPanelHandle, DataSou
             Loading data sources...
           </div>
         ) : loadError ? (
-          <div className="text-center text-status-alarm text-sm py-4">{loadError}</div>
+          <ErrorState
+            message={loadError}
+            onRetry={() => void loadDataSources()}
+            retrying={isLoading}
+          />
         ) : dataSources.length === 0 ? (
           <div className="text-center text-opsgrid-text-secondary text-sm py-4">
             No data sources added yet

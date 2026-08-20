@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { ErrorState } from '../ui';
 import { User, Target, Settings, Loader2 } from 'lucide-react';
 import { Button } from '../ui/Button';
 import { Badge } from '../ui/Badge';
@@ -52,7 +53,11 @@ export const ContextPanel: React.FC<ContextPanelProps> = ({ className = '' }) =>
             <Loader2 className="w-4 h-4 animate-spin text-opsgrid-text-secondary" />
           </div>
         ) : error ? (
-          <p className="text-xs text-status-alarm">{error}</p>
+          <ErrorState
+            message={error}
+            onRetry={() => loadUserContext()}
+            retrying={isLoading}
+          />
         ) : userContext ? (
           <div className="space-y-2 mb-4">
             <div className="flex items-center gap-2">
@@ -82,7 +87,11 @@ export const ContextPanel: React.FC<ContextPanelProps> = ({ className = '' }) =>
             )}
           </div>
         ) : (
-          <p className="text-xs text-opsgrid-text-secondary">Failed to load context</p>
+          <ErrorState
+            message="Context could not be loaded."
+            onRetry={() => loadUserContext()}
+            retrying={isLoading}
+          />
         )}
       </div>
 

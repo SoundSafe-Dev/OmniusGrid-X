@@ -3,7 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Plus, Pencil, Trash2, SlidersHorizontal } from 'lucide-react'
 import { alarmRulesApi } from '../api/alarmRules'
 import { assetsApi, workcellsApi } from '../api'
-import { Button, Input, Modal, Select, useDialog } from '../components/ui'
+import { Button, Input, Modal, Select, useDialog, ErrorState } from '../components/ui'
 import {
   AlarmComparator,
   AlarmRule,
@@ -148,7 +148,7 @@ const AlarmRules: FC = () => {
     [severityFilter, enabledFilter],
   )
 
-  const { data, isLoading, isError } = useQuery({
+  const { data, isLoading, isError, refetch, isFetching } = useQuery({
     queryKey: [RULES_QUERY_KEY, filters],
     queryFn: () => alarmRulesApi.list(filters),
   })
@@ -296,12 +296,12 @@ const AlarmRules: FC = () => {
       )}
 
       {isError && !isLoading && (
-        <div
-          role="alert"
-          className="bg-opsgrid-panel border border-status-alarm rounded-lg p-4 text-opsgrid-text"
-        >
-          Could not load alarm rules. Retry, or check that the backend is reachable.
-        </div>
+        <ErrorState
+          message="Could not load alarm rules."
+          detail="Check that the backend is reachable, then retry."
+          onRetry={() => refetch()}
+          retrying={isFetching}
+        />
       )}
 
       {!isLoading && !isError && rules.length === 0 && (

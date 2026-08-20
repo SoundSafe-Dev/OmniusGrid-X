@@ -132,7 +132,7 @@ describe('FleetOverview', () => {
   it('does not render a failed fleet load as an empty fleet', async () => {
     listWorkcells.mockRejectedValue(new Error('unreachable'))
     wrap(<FleetOverview />)
-    expect(await screen.findByText(/Failed to load fleet data/i)).toBeInTheDocument()
+    expect(await screen.findByText(/fleet data could not be loaded/i)).toBeInTheDocument()
     expect(screen.queryByText('No workcells configured.')).not.toBeInTheDocument()
   })
 
@@ -141,7 +141,7 @@ describe('FleetOverview', () => {
     listWorkcells.mockResolvedValue([])
     wrap(<FleetOverview />)
     expect(await screen.findByText('No workcells configured.')).toBeInTheDocument()
-    expect(screen.queryByText(/Failed to load fleet data/i)).not.toBeInTheDocument()
+    expect(screen.queryByText(/fleet data could not be loaded/i)).not.toBeInTheDocument()
   })
 
   it('counts only assets in the Execute state as executing', async () => {
@@ -186,7 +186,7 @@ describe('OrganizationTree — the control', () => {
     listOrgs.mockRejectedValue(new Error('unreachable'))
     wrap(<OrganizationTree />)
     await waitFor(() =>
-      expect(screen.getByText(/Failed to load organization structure/i)).toBeInTheDocument(),
+      expect(screen.getByText(/organization structure could not be loaded/i)).toBeInTheDocument(),
     )
     expect(screen.queryByText('Organization')).not.toBeInTheDocument()
   })

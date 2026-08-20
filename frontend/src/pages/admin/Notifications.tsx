@@ -35,12 +35,12 @@ const SEVERITY_OPTIONS = NOTIFICATION_SEVERITIES.map((s) => ({ value: s, label: 
 export const Notifications: FC = () => {
   const queryClient = useQueryClient();
 
-  const { data: subscriptions, isLoading, isError } = useQuery({
+  const { data: subscriptions, isLoading, isError, refetch: refetchSubs, isFetching: subsFetching } = useQuery({
     queryKey: ['notification-subscriptions'],
     queryFn: () => notificationsApi.listSubscriptions(),
   });
 
-  const { data: log, isError: isLogError } = useQuery({
+  const { data: log, isError: isLogError, refetch: refetchLog, isFetching: logFetching } = useQuery({
     queryKey: ['notification-log'],
     queryFn: () => notificationsApi.deliveryLog(100),
     refetchInterval: 30000,
@@ -216,7 +216,11 @@ export const Notifications: FC = () => {
           <p role="alert" className="text-sm text-status-alarm mb-3">{rowError}</p>
         )}
         {isError ? (
-          <ErrorState message="Failed to load subscriptions." />
+          <ErrorState
+            message="Subscriptions could not be loaded."
+            onRetry={() => refetchSubs()}
+            retrying={subsFetching}
+          />
         ) : subs.length === 0 ? (
           <p className="text-opsgrid-text-secondary text-center py-8">
             No subscriptions yet. Create one below to start receiving alerts.
@@ -465,7 +469,11 @@ export const Notifications: FC = () => {
           </p>
         )}
         {isLogError ? (
-          <ErrorState message="Failed to load the delivery log." />
+          <ErrorState
+            message="The delivery log could not be loaded."
+            onRetry={() => refetchLog()}
+            retrying={logFetching}
+          />
         ) : deliveries.length === 0 ? (
           <div className="flex flex-col items-center text-opsgrid-text-secondary py-8">
             <BellRing className="w-8 h-8 mb-2" />

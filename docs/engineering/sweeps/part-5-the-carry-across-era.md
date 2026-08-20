@@ -5537,3 +5537,74 @@ week, with everyone's agreement — which is what it is.
 
 **A gate that has failed on every run for months is not a strict gate. It is an absent one**,
 and everybody has already stopped reading it.
+
+---
+
+## Rule 271 — when you change the shape of the code, check what was watching that shape
+
+Finishing the dead-end backlog meant getting a Retry control onto forty failure states. Four
+of them could not have one, because the fetch they needed to re-run was written inside its own
+effect:
+
+    useEffect(() => {
+      const fetchData = async () => { ...three requests... }
+      fetchData()
+    }, [])
+
+Nothing outside that closure can call `fetchData`. The only way to run it again is to remount
+the component — close the modal, reload the page — which is exactly the recovery the whole
+exercise exists to remove. So four of them were lifted into `useCallback`, with a thin effect
+left behind to invoke it. Not one line of their behaviour changed.
+
+Then the suite failed on a test I had never touched:
+
+    idKeyedFetchesDoNotGoStale > finds the effects it is meant to be checking
+    AssertionError: expected 0 to be greater than 0
+
+That sweep guards a genuinely nasty class: a detail panel keyed on an id that fetches without
+clearing, catching or cancelling, so shipment A's costs stay on screen under shipment B's
+heading. Its scanner matches `useEffect(() => { ... }, [deps])`.
+
+I had moved every one of its subjects into `useCallback`. The defect class was untouched — the
+same hand-rolled fetch, the same three hazards — and the sweep could no longer see any of it.
+
+**Only the vacuity check noticed.** Every real assertion in that file passed, because an
+assertion over an empty set is satisfied. And the file's own header says this has happened
+before:
+
+> the one id-keyed fetch in the tree is written as a wrapped promise chain ... so the sweep's
+> population fell to ZERO and every id-keyed detail view in the tree was unchecked. Nothing
+> about the code changed — a line break did. This is the failure the vacuity test above exists
+> for, and the only reason it was noticed.
+
+Twice now. A line break the first time, a hook the second.
+
+**A guard keyed on syntax follows the syntax, not the defect.** That is not a flaw to be
+engineered away — matching source text is how these sweeps work, and it is why they are cheap
+enough to have a hundred of them. It does mean a refactor can silently retire one, and the
+refactor will look completely innocent, because the thing that changed is not the thing the
+guard is about.
+
+The practical rule is small: after moving code between constructs, run the guards that scan
+for the construct you moved, and **read the population they report** rather than the pass. The
+number is the interesting output; the green tick is not.
+
+### The rest of the forty
+
+Worth recording that the bulk of the work was not mechanical either. Almost every remaining
+site sat in a component with three or four queries, and a retry has to name which query the
+message describes. Get it wrong and the button runs a different request, succeeds, and leaves
+the failed panel exactly as it was — a failure mode strictly worse than no button, because it
+looks like it worked.
+
+Three sites deliberately kept a plain control instead of the component. The sharpest was the
+HOS compliance notice: a block that is already `role="alert"`, carrying copy specifically
+worded to refuse the inference that "unknown" means "compliant". Dropping an `ErrorState` —
+itself an alert — inside it produced two alerts in one region, which a screen reader announces
+twice and which broke the test that reads the notice. The lesson generalises: a component that
+announces belongs where nothing is announcing yet.
+
+And some failures should not offer a retry at all. `FleetRolloutDetail` merged "not found"
+with "failed to load" into one sentence; they need opposite treatment, because a 404 will
+never succeed and a button that cannot work teaches the user the product is broken. Telling
+them apart was a better fix than wiring a retry to both.

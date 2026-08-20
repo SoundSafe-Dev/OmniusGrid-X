@@ -295,7 +295,20 @@ export const GeoTabIntegration: FC<GeoTabIntegrationProps> = ({
             {/* The count is only a count when the request succeeded. On failure this says
                 so instead of reporting zero (FS-548). */}
             {loadError ? (
-              <Badge variant="error">Vehicles unavailable</Badge>
+              // A badge, not a panel: this sits in a header row beside other status chips,
+              // and a full ErrorState block here would push the map off screen. The retry
+              // is a control next to the chip so the recovery is where the bad news is.
+              <span className="inline-flex items-center gap-2">
+                <Badge variant="error">Vehicles unavailable</Badge>
+                <button
+                  type="button"
+                  onClick={() => void fetchVehicles()}
+                  disabled={isLoading}
+                  className="text-xs underline text-opsgrid-text-secondary hover:text-opsgrid-text disabled:opacity-60"
+                >
+                  {isLoading ? 'Retrying…' : 'Retry'}
+                </button>
+              </span>
             ) : isLoading ? (
               <Badge variant="info">Loading…</Badge>
             ) : (

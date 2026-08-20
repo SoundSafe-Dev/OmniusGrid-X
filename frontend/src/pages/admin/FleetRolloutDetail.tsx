@@ -1,14 +1,13 @@
 import { FC, useMemo, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
-import { ArrowLeft, AlertTriangle, RefreshCw } from 'lucide-react';
+import {ArrowLeft, RefreshCw } from 'lucide-react';
 import {
   Badge,
   Button,
   Card,
   SkeletonCard,
   SkeletonTable,
-  Table,
-} from '../../components/ui';
+  Table, ErrorState } from '../../components/ui';
 import {
   useAgentRollout,
   useCancelAgentRollout,
@@ -175,9 +174,18 @@ export const FleetRolloutDetail: FC = () => {
         <Card noPadding><SkeletonCard lines={4} /></Card>
       ) : rollout.isError || !rollout.data ? (
         <Card>
-          <div role="alert" className="flex items-center gap-2 text-status-alarm">
-            <AlertTriangle size={18} /> Rollout not found or failed to load.
-          </div>
+          {/* The two cases are told apart rather than merged: a 404 is final and a
+              failed request is not, and offering a retry for a rollout that does not exist
+              sends the reader clicking at something that will never work (FS-768). */}
+          <ErrorState
+            message={
+              rollout.isError
+                ? 'This rollout could not be loaded.'
+                : 'Rollout not found.'
+            }
+            onRetry={rollout.isError ? () => rollout.refetch() : undefined}
+            retrying={rollout.isFetching}
+          />
         </Card>
       ) : (
         <>

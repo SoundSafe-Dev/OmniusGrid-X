@@ -1,6 +1,7 @@
-import { FC, useEffect, useState } from 'react'
+import { FC, useEffect, useState, useCallback} from 'react'
 import { Database, Plus } from 'lucide-react'
 import { Button } from '../ui/Button'
+import { ErrorState } from '../ui'
 import { platformCorrelationApi, PlatformSourceType } from '../../api/platformCorrelation'
 
 // Compact affordance to attach live platform data (sensor/asset telemetry, yard,
@@ -27,8 +28,11 @@ export const PlatformDataSourcePicker: FC<Props> = ({ sessionId, onAttached }) =
   const [typesError, setTypesError] = useState(false)
   const [loadingTypes, setLoadingTypes] = useState(true)
 
-  useEffect(() => {
+  // LIFTED so the failure below can be retried (FS-768). Inline in the effect, the only
+  // way to run it again was to remount the picker.
+  const loadTypes = useCallback(() => {
     let cancelled = false
+    setLoadingTypes(true)
     platformCorrelationApi
       .listSourceTypes()
       .then((loaded) => {
@@ -48,6 +52,8 @@ export const PlatformDataSourcePicker: FC<Props> = ({ sessionId, onAttached }) =
       cancelled = true
     }
   }, [])
+
+  useEffect(loadTypes, [loadTypes])
 
   const attach = async () => {
     if (!sessionId) return
@@ -73,10 +79,12 @@ export const PlatformDataSourcePicker: FC<Props> = ({ sessionId, onAttached }) =
           <Database className="w-3.5 h-3.5" /> Add platform data
         </div>
         {typesError && (
-          <p role="alert" className="text-[11px] mb-1 text-status-alarm">
-            Could not load platform data sources. The list below is empty because the
-            request failed, not because none exist.
-          </p>
+          <ErrorState
+            message="Could not load platform data sources."
+            detail="The list below is empty because the request failed, not because none exist."
+            onRetry={loadTypes}
+            retrying={loadingTypes}
+          />
         )}
         <div className="flex gap-2">
           <select

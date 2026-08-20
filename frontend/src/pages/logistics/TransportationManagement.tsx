@@ -1,4 +1,4 @@
-import { FC, forwardRef, type HTMLAttributes, useState, useEffect } from 'react';
+import { FC, forwardRef, type HTMLAttributes, useState, useEffect, useCallback} from 'react';
 import { useQuery } from '@tanstack/react-query';
 import {
   Truck,
@@ -111,8 +111,13 @@ export const TransportationManagement: FC = () => {
     queryFn: () => transportationApi.getCarriers(),
   });
 
-  const { data: driversData, isLoading: driversLoading, isError: driversError } =
-    useQuery({
+  const {
+    data: driversData,
+    isLoading: driversLoading,
+    isError: driversError,
+    refetch: refetchDrivers,
+    isFetching: driversFetching,
+  } = useQuery({
     queryKey: [TRANSPORT_QUERY_KEY, 'drivers'],
     queryFn: () => transportationApi.getDrivers(),
   });
@@ -879,6 +884,20 @@ export const TransportationManagement: FC = () => {
                 <p className="text-status-alarm font-medium">
                   HOS status unknown — driver data could not be loaded
                 </p>
+                {/* A PLAIN BUTTON, NOT AN <ErrorState> (FS-768). This block is already
+                    `role="alert"` and carries carefully-worded compliance copy; nesting a
+                    component that is itself an alert produced two alerts in one region and
+                    broke the test that reads this notice. The escape is what was missing —
+                    a DOT-regulated check that could not be performed is exactly where a
+                    dispatcher must not be left deciding from a blank. */}
+                <button
+                  type="button"
+                  onClick={() => refetchDrivers()}
+                  disabled={driversFetching || driversLoading}
+                  className="mt-3 inline-flex items-center rounded-md border border-status-alarm/60 px-3 py-1.5 text-xs text-status-alarm hover:bg-status-alarm/10 disabled:opacity-60"
+                >
+                  {driversFetching || driversLoading ? 'Retrying…' : 'Retry driver data'}
+                </button>
                 <p className="text-xs text-opsgrid-text-secondary mt-1">
                   This is not a clean bill of compliance; it means the check could not run.
                 </p>
@@ -1100,12 +1119,17 @@ const ShipmentDetailModal: FC<{
   // acts on, and nothing about it looks stale.
   const [costsError, setCostsError] = useState(false);
 
-  useEffect(() => {
+  const [costsFetching, setCostsFetching] = useState(false);
+
+  // LIFTED OUT OF THE EFFECT so the failure below can be retried (FS-768). Inline, the only
+  // way to try again was to close the modal and reopen it.
+  const refetchCosts = useCallback(() => {
     let cancelled = false;
     // Cleared FIRST, so the gap between shipments renders as absent rather than as the
     // previous shipment's figures.
     setCosts(null);
     setCostsError(false);
+    setCostsFetching(true);
     transportationApi
       .getShipmentCosts(shipment.id)
       .then((loaded) => {
@@ -1113,11 +1137,16 @@ const ShipmentDetailModal: FC<{
       })
       .catch(() => {
         if (!cancelled) setCostsError(true);
+      })
+      .finally(() => {
+        if (!cancelled) setCostsFetching(false);
       });
     return () => {
       cancelled = true;
     };
   }, [shipment.id]);
+
+  useEffect(refetchCosts, [refetchCosts]);
 
   return (
     <div 
@@ -1213,7 +1242,11 @@ const ShipmentDetailModal: FC<{
           )}
 
           {costsError && (
-            <ErrorState message="Could not load costs for this shipment." />
+            <ErrorState
+              message="Could not load costs for this shipment."
+              onRetry={() => refetchCosts()}
+              retrying={costsFetching}
+            />
           )}
           {costs && (
             <div className="bg-opsgrid-bg rounded-lg p-4">

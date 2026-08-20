@@ -21,7 +21,7 @@ import {
   SkeletonTable,
   Table,
 } from '../../components';
-import { useDialog } from '../../components/ui';
+import { ErrorState, useDialog } from '../../components/ui';
 import { formatDateTime } from '../../utils/formatters';
 import { useAuthStore } from '../../stores';
 import { User, UserInvitation, UserRole } from '../../types';
@@ -365,9 +365,16 @@ export const UsersPage: FC = () => {
                    about the tenant; a failed request supports no claim at all, and an
                    admin who reads it concludes the invitations they sent never landed. */
                 <Table.Row>
-                  <Table.Cell colSpan={5} className="py-8 text-center text-status-alarm" role="alert">
-                    Users could not be loaded — this is a loading failure, not an empty
-                    organisation.
+                  <Table.Cell colSpan={5} className="py-8 text-center" role="alert">
+                    {/* The retry lives IN the cell rather than above the table: the row is
+                        where the reader's eye already is, and an admin who reads "could not
+                        be loaded" needs the way out in the same place as the sentence. */}
+                    <ErrorState
+                      message="Users could not be loaded."
+                      detail="This is a loading failure, not an empty organisation."
+                      onRetry={() => usersQuery.refetch()}
+                      retrying={usersQuery.isFetching}
+                    />
                   </Table.Cell>
                 </Table.Row>
               ) : users.length === 0 ? (
@@ -494,9 +501,13 @@ export const UsersPage: FC = () => {
                    who reads it stops chasing an invitation that may well be outstanding.
                    Same fix as FS-482 and the failureIsNotEmptiness sweep. */
                 <Table.Row>
-                  <Table.Cell colSpan={6} className="py-8 text-center text-status-alarm" role="alert">
-                    Invitations could not be loaded — this is a loading failure, not an
-                    absence of invitations.
+                  <Table.Cell colSpan={6} className="py-8 text-center" role="alert">
+                    <ErrorState
+                      message="Invitations could not be loaded."
+                      detail="This is a loading failure, not an absence of invitations."
+                      onRetry={() => invitationsQuery.refetch()}
+                      retrying={invitationsQuery.isFetching}
+                    />
                   </Table.Cell>
                 </Table.Row>
               ) : invitations.length === 0 ? (

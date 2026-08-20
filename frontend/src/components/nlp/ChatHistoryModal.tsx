@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { ErrorState } from '../ui';
 import { analysisSessionsApi, SessionMessage, AnalysisSession } from '../../api/analysisSessions';
 import { X, Search, Calendar } from 'lucide-react';
 import { Button } from '../ui/Button';
@@ -135,7 +136,11 @@ export const ChatHistoryModal: React.FC<ChatHistoryModalProps> = ({
           {isLoading ? (
             <div className="text-center text-opsgrid-text-secondary py-8">Loading...</div>
           ) : error ? (
-            <div className="text-center text-status-alarm py-8">{error}</div>
+            <ErrorState
+              message={error}
+              onRetry={() => loadChatHistory()}
+              retrying={isLoading}
+            />
           ) : messages.length === 0 ? (
             <div className="text-center text-opsgrid-text-secondary py-8">
               No chat history found

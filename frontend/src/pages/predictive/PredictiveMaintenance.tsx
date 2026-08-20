@@ -35,7 +35,7 @@ const formatHours = (hours: number): string => {
 const PAGE_LIMIT = 100;
 
 export const PredictiveMaintenance: FC = () => {
-  const { data, isLoading, isError } = useQuery({
+  const { data, isLoading, isError, refetch, isFetching } = useQuery({
     queryKey: ['rul-assessments'],
     queryFn: () => rulApi.listAssessments({ hours: 24, limit: PAGE_LIMIT }),
     refetchInterval: 60000,
@@ -168,7 +168,11 @@ export const PredictiveMaintenance: FC = () => {
         subtitle="Predictive-maintenance assessment per asset, most urgent first"
       >
         {isError ? (
-          <ErrorState message="Failed to load RUL assessments." />
+          <ErrorState
+            message="RUL assessments could not be loaded."
+            onRetry={() => refetch()}
+            retrying={isFetching}
+          />
         ) : assessments.length === 0 ? (
           <p className="text-opsgrid-text-secondary text-center py-8">
             No assets available for assessment.

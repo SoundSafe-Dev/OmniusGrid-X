@@ -1,4 +1,5 @@
 import { FC, useState, useEffect } from 'react';
+import { ErrorState } from '../ui';
 import {
   Activity, AlertTriangle, Shield, User, Truck,
   Wrench, CheckCircle
@@ -149,7 +150,11 @@ export const HealthSecurityPanel: FC = () => {
         </div>
       ) : error ? (
         <div className="bg-opsgrid-panel border border-opsgrid-border rounded-lg p-4">
-          <p className="text-status-alarm text-sm">{error}</p>
+          <ErrorState
+            message={error}
+            onRetry={() => loadData()}
+            retrying={isLoading}
+          />
         </div>
       ) : (
       <>

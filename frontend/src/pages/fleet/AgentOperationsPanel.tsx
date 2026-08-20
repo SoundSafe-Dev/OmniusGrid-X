@@ -10,8 +10,7 @@ import {
 
 import { handleApiError } from '../../api';
 import { Badge, Button, Card, Input, Select,
-  useDialog,
-} from '../../components/ui';
+  useDialog, ErrorState } from '../../components/ui';
 import { useAuth } from '../../hooks/useAuth';
 import {
   useAgentRemoteOperation,
@@ -207,9 +206,11 @@ export const AgentOperationsPanel: FC = () => {
         </div>
 
         {inventory.isError && (
-          <p role="alert" className="text-sm text-status-alarm">
-            Fleet inventory could not be loaded.
-          </p>
+          <ErrorState
+            message="Fleet inventory could not be loaded."
+            onRetry={() => inventory.refetch()}
+            retrying={inventory.isFetching}
+          />
         )}
         {!inventory.isLoading && eligibleAssets.length === 0 && (
           <p className="text-sm text-opsgrid-text-secondary">

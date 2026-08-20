@@ -66,7 +66,15 @@ function idKeyedFetches(): Effect[] {
   const found: Effect[] = []
   for (const file of sourceFiles(SRC)) {
     const source = withoutComments(readFileSync(file, 'utf8'))
-    const pattern = /useEffect\(\(\)\s*=>\s*\{([\s\S]{0,1200}?)\},\s*\[([^\]]*)\]\)/g
+    // `useCallback` AS WELL AS `useEffect` (FS-768). The one id-keyed fetch in the tree was
+    // lifted out of its effect into a `useCallback` so a failure could offer a Retry — the
+    // code is unchanged, the hook around it is not, and this sweep's population fell to ZERO
+    // again. That is the second time: the comment below records losing it to a line break.
+    //
+    // The class is a hand-rolled id-keyed fetch, wherever it is written. Both hooks take the
+    // same `(body, deps)` shape, so one alternation covers them.
+    const pattern =
+      /use(?:Effect|Callback)\(\s*(?:async\s*)?\(\)\s*=>\s*\{([\s\S]{0,1200}?)\},\s*\[([^\]]*)\]\)/g
     for (const match of source.matchAll(pattern)) {
       const [, body, deps] = match
       if (!/\b(?:id|Id)\b/.test(deps)) continue
