@@ -114,8 +114,36 @@ spec:
       memory: "4Gi"
       cpu: "2000m"
 
-  # Continuous WAL archiving + base backups to S3 → point-in-time recovery.
-  # This is the PITR the pg_dump CronJob explicitly could not provide.
+  # Continuous WAL archiving + base backups → point-in-time recovery.
+  #
+  # ── THE ENDPOINT BELOW IS A DEVELOPMENT DEFAULT AND MUST BE OVERRIDDEN (FS-811) ────
+  #
+  # `http://seaweedfs:8333` is the single-replica object store running IN THIS CLUSTER
+  # (base/object-store.yaml, `replicas: 1`). That is fine for kind and for a laptop, and
+  # it is wrong for anything that matters, because **an archive inside the failure domain
+  # it protects is not a backup of that failure domain**.
+  #
+  # Concretely, against the two RPO figures the runbooks quote:
+  #
+  #   lost primary instance   RPO ~= 0     unaffected — a standby confirmed every commit,
+  #                                        and nothing is read from the archive at all
+  #   lost cluster or site    RPO <= 5min  FALSE with this endpoint. The archive is in the
+  #                                        cluster, so it is lost with it. There is no
+  #                                        recovery point at all beyond the nightly pg_dump
+  #                                        the separate db-backup CronJob writes to real S3
+  #
+  # The second is the scenario the number was written for, so leaving this default in a
+  # real environment turns a 5-minute claim into a 24-hour one — silently, because
+  # archiving continues to work perfectly right up until the moment it is needed.
+  #
+  # `platform/<env>/database-ha` patches this to an external endpoint. The production
+  # overlay ships a placeholder that FAILS rather than a value that quietly works, and
+  # `test_the_wal_archive_leaves_the_cluster.py` asserts the built output never carries an
+  # in-cluster Service name.
+  #
+  # Also note the scheme: `http://`, so WAL travels unencrypted. Acceptable to a pod-local
+  # Service, not to anything off-cluster — an external endpoint must be `https://`
+  # (OG-SC-003).
   backup:
     barmanObjectStore:
       destinationPath: "s3://opsgrid-backups/cnpg"

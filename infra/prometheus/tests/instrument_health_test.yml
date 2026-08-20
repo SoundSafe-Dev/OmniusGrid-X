@@ -433,3 +433,48 @@ tests:
       - eval_time: 26h
         alertname: AuditLogGrowthAccelerating
         exp_alerts: []
+
+  # ── The backup bucket that can be erased (FS-811) ────────────────────────────────
+  - interval: 1m
+    name: a failing immutability check pages
+    input_series:
+      - series: 'kube_job_status_failed{job_name="backup-immutability-check-28401600"}'
+        values: '1x40'
+      - series: 'kube_cronjob_status_last_successful_time{cronjob="backup-immutability-check"}'
+        values: '0x40'
+    alert_rule_test:
+      - eval_time: 30m
+        alertname: BackupBucketNotImmutable
+        exp_alerts:
+          - exp_labels: {severity: high, team: infrastructure}
+            exp_annotations:
+              summary: "The backup bucket is not versioned and object-locked"
+              description: "backup-immutability-check failed. Versioning, Object Lock in COMPLIANCE mode, public-access block or default encryption is missing, so a holder of the backup credentials can delete history. Read the job's logs for which one, then base/scripts/bucket-immutability.sh bootstrap against a new bucket."
+              runbook_url: "https://github.com/SoundSafe-Dev/OmniusGrid-X/blob/main/docs/runbooks/database-backup-restore.md"
+
+  - interval: 1m
+    name: a passing immutability check is quiet
+    input_series:
+      - series: 'kube_job_status_failed{job_name="backup-immutability-check-28401600"}'
+        values: '0x40'
+    alert_rule_test:
+      - eval_time: 30m
+        alertname: BackupBucketNotImmutable
+        exp_alerts: []
+
+  - interval: 1m
+    name: the check going missing is the same silence as the control being off
+    input_series:
+      # Deliberately NOT the cronjob series — absent() is tested by what is not here.
+      - series: 'up{job="prometheus"}'
+        values: '1x120'
+    alert_rule_test:
+      - eval_time: 90m
+        alertname: BackupImmutabilityCheckNotRunning
+        exp_alerts:
+          - exp_labels: {severity: medium, team: infrastructure}
+            exp_annotations:
+              summary: "The backup immutability check has not run in two weeks"
+              description: "It runs weekly. Two weeks of silence means the CronJob is gone, suspended or failing to schedule — and nothing is checking whether a compromised credential could erase the backups."
+              runbook_url: "https://github.com/SoundSafe-Dev/OmniusGrid-X/blob/main/docs/runbooks/database-backup-restore.md"
+

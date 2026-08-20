@@ -30,8 +30,51 @@ kubectl -n omniusgrid create secret generic backup-credentials \
   --from-literal=bucket='opsgrid-backups'
 ```
 
-Set a bucket lifecycle policy for retention (the job does not prune) and enable
-versioning + object lock so a compromised key cannot erase history.
+### Bucket immutability — no longer an instruction (FS-811)
+
+This used to read *"enable versioning + object lock so a compromised key cannot erase
+history"*: one sentence describing the control that decides whether an attacker holding the
+backup credentials can delete every backup you have. Nothing applied it and nothing checked
+it, and that failure is invisible until somebody is actively destroying your data.
+
+**Creating a bucket correctly:**
+
+```sh
+BACKUP_S3_BUCKET=opsgrid-backups AWS_DEFAULT_REGION=us-east-1 \
+  infrastructure/k8s/base/scripts/bucket-immutability.sh bootstrap
+```
+
+Sets versioning, Object Lock in **COMPLIANCE** mode (35 days), the public-access block,
+default encryption, and a lifecycle rule for retention — the upload job does not prune.
+
+COMPLIANCE rather than GOVERNANCE is a real trade and worth understanding before you run it.
+GOVERNANCE can be bypassed by a principal holding `s3:BypassGovernanceRetention`, which is
+precisely the permission an attacker who has compromised the account grants themselves.
+COMPLIANCE cannot be bypassed or shortened by anyone including the account root — which also
+means **an object locked by mistake cannot be removed until its retention expires**, and you
+pay to store it.
+
+Object Lock is enabled *at bucket creation*. AWS has since allowed turning it on for an
+existing versioned bucket, but support varies by account and region; creating a new bucket and
+copying objects across is the path that always works.
+
+**Checking a live bucket** is not something anyone has to remember. The
+`backup-immutability-check` CronJob runs `verify` weekly with the credentials the cluster
+already holds, and `BackupBucketNotImmutable` pages when it fails. To run it by hand:
+
+```sh
+BACKUP_S3_BUCKET=… AWS_DEFAULT_REGION=… \
+  infrastructure/k8s/base/scripts/bucket-immutability.sh verify
+```
+
+It is read-only — every call is a `get-*`, so it cannot alter the bucket.
+
+**Why it is a separate CronJob** rather than a step in the nightly backup: folding it in would
+mean an unprotected bucket stops backups happening at all, turning a bad situation into a
+worse one, and would stop `kube_cronjob_status_last_successful_time` advancing — firing
+`DatabaseBackupStale` and telling an operator there are no backups when there are. Two
+distinct problems, two distinct signals: `DatabaseBackupJobFailed` for *the backup did not
+happen*, `BackupBucketNotImmutable` for *the backups exist and can be erased*.
 
 ## Restore
 

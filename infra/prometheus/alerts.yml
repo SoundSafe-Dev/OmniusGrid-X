@@ -1090,6 +1090,48 @@ groups:
           summary: "Public TLS certificate expires in under 3 days"
           description: "{{ $labels.instance }} certificate expires in {{ $value | humanizeDuration }}. Renewal is now an incident."
 
+      # FS-811. The backup bucket is not immutable, so a compromised backup credential can
+      # erase every backup you have — including the old versions.
+      #
+      # DISTINCT FROM `DatabaseBackupJobFailed` on purpose, and the distinction is the whole
+      # reason this is its own CronJob. That alert means "the backup did not happen". This one
+      # means "the backups exist and can be deleted by anyone holding the key". Folding the
+      # check into db-backup would have conflated them, stopped
+      # kube_cronjob_status_last_successful_time advancing, and fired DatabaseBackupStale —
+      # telling an operator there are no backups when there are.
+      - alert: BackupBucketNotImmutable
+        expr: max(kube_job_status_failed{job_name=~".*backup-immutability-check.*"}) > 0
+        for: 15m
+        labels:
+          severity: high
+          team: infrastructure
+        annotations:
+          summary: "The backup bucket is not versioned and object-locked"
+          description: >-
+            backup-immutability-check failed. Versioning, Object Lock in COMPLIANCE mode,
+            public-access block or default encryption is missing, so a holder of the backup
+            credentials can delete history. Read the job's logs for which one, then
+            base/scripts/bucket-immutability.sh bootstrap against a new bucket.
+          runbook_url: "https://github.com/SoundSafe-Dev/OmniusGrid-X/blob/main/docs/runbooks/database-backup-restore.md"
+
+      # The check itself going missing is the same silence as the control being off. If the
+      # weekly job stops being scheduled, nothing reports the bucket's state at all.
+      - alert: BackupImmutabilityCheckNotRunning
+        expr: |
+          absent(kube_cronjob_status_last_successful_time{cronjob=~".*backup-immutability-check"})
+          or (time() - max(kube_cronjob_status_last_successful_time{cronjob=~".*backup-immutability-check"})) > 1209600
+        for: 1h
+        labels:
+          severity: medium
+          team: infrastructure
+        annotations:
+          summary: "The backup immutability check has not run in two weeks"
+          description: >-
+            It runs weekly. Two weeks of silence means the CronJob is gone, suspended or
+            failing to schedule — and nothing is checking whether a compromised credential
+            could erase the backups.
+          runbook_url: "https://github.com/SoundSafe-Dev/OmniusGrid-X/blob/main/docs/runbooks/database-backup-restore.md"
+
       # FS-817. `audit_logs` has NO retention policy — only `user_audit_logs` does — and it
       # is a plain table, so `add_retention_policy` does not apply either. It grows without
       # bound, and the loop closes on itself: unbounded audit growth fills the volume, the

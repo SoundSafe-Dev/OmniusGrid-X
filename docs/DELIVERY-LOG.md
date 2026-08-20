@@ -15303,3 +15303,81 @@ proven" would have been true and would have been read as "PITR is available" by 
 who matters — someone recovering an outage at 3am. State the capability and the availability
 separately, and put the availability first.
 
+---
+
+## FS-811 — the archive was inside the cluster it protected, and the bucket was a sentence
+
+FS-811 was scoped as "enforce bucket immutability as IaC, not as an instruction". Doing it
+found something larger first.
+
+### The WAL archive was written to the cluster it protects
+
+`database-ha/cluster.yaml` archived continuously to `http://seaweedfs:8333` — the
+**single-replica** object store running in the same cluster (`base/object-store.yaml`,
+`replicas: 1`). The comment above it read *"Continuous WAL archiving + base backups to S3 →
+point-in-time recovery. This is the PITR the pg_dump CronJob explicitly could not provide."*
+
+Against the two RPO figures the runbooks quote — figures **this sprint wrote, two commits
+earlier**:
+
+| failure | claimed | actual with that endpoint |
+|---|---|---|
+| lost primary instance | ≈ 0 | ≈ 0 — unaffected. A standby confirmed every commit; the archive is never read |
+| lost cluster or site | ≤ 5 min | **24 hours.** The archive is in the cluster, so it goes with it. The only surviving copy is the nightly `pg_dump` |
+
+The second is the scenario the number exists for. FS-800 had set `archive_timeout` precisely to
+bound it, against an endpoint that was quietly making it meaningless — and the failure is
+invisible, because archiving works perfectly right up until the moment the cluster is gone.
+
+Both environment overlays now patch the endpoint out of the cluster. They ship
+`https://REPLACE-ME…s3.example.invalid`, which **fails**, on the same reasoning as the
+`alertmanager-secrets` placeholders: a value that fails loudly beats one that quietly works
+against the wrong store. Staging carries it too, because a site-loss rehearsal (FS-925)
+against a different archive topology from production tests the wrong thing.
+`test_the_wal_archive_leaves_the_cluster.py` asserts no overlay carries an in-cluster Service
+name, and that the endpoint is `https://` — WAL leaving the cluster in plaintext is OG-SC-003,
+and every committed row travels through that stream.
+
+### Then the bucket
+
+The runbook said: *"enable versioning + object lock so a compromised key cannot erase
+history."* One sentence, describing the control that decides whether an attacker holding the
+backup credentials can delete every backup you have. Nothing applied it; nothing checked it.
+
+`base/scripts/bucket-immutability.sh` does both. `bootstrap` creates a bucket with versioning,
+Object Lock in **COMPLIANCE** mode, the public-access block, default encryption and a
+lifecycle rule. `verify` is read-only and checks a live one.
+
+COMPLIANCE rather than GOVERNANCE is deliberate and is a real trade: GOVERNANCE can be
+bypassed by a principal holding `s3:BypassGovernanceRetention` — exactly the permission an
+attacker who has compromised the account grants themselves — while COMPLIANCE cannot be
+bypassed by anyone including root, which also means an object locked by mistake cannot be
+removed until its retention expires. Versioning alone is not enough: a delete leaves the old
+versions, and a holder of the key can delete those too.
+
+**And nobody has to remember to run it.** The cluster already holds the credentials, because
+the nightly upload needs them, so `backup-immutability-check` runs `verify` weekly and
+`BackupBucketNotImmutable` pages when it fails.
+
+Separate from `db-backup` on purpose. Folding the check in would mean an unprotected bucket
+stops backups happening at all — turning a bad situation into a worse one — and would stop
+`kube_cronjob_status_last_successful_time` advancing, firing `DatabaseBackupStale` and telling
+an operator there are no backups when there are. Two distinct problems, two distinct signals.
+
+### The kustomize trap, twice
+
+Putting the script in a tidy `infrastructure/backup/` broke `base`, because CI builds it
+without `--load-restrictor LoadRestrictionsNone` and a generator reading a file above its own
+kustomization is refused. Moving it under `base/scripts/` fixed that — and appending a second
+`configMapGenerator:` key to the kustomization then silently **replaced** the existing one,
+because YAML keeps the last of a duplicated key. Every overlay failed with `backend-config
+does not exist`. Both caught by building all four trees rather than the one being edited.
+
+RULE 282 — **a backup that shares a failure domain with its source is not a backup of that
+failure domain.** The archive ran, the retention was tuned, `archive_timeout` bounded the
+number, and every dashboard was green — and a cluster loss would have taken the archive with
+it, silently downgrading a 5-minute RPO to 24 hours. When a recovery figure is written down,
+name the failure it survives, then check the artefact is somewhere that failure does not
+reach. The same question applies to a backup bucket in the account that was compromised, and
+to a runbook stored only in the cluster it describes.
+

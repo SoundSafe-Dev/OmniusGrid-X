@@ -16,6 +16,10 @@ resources:
   - compliance-reports-worker-deployment.yaml
   - migration-job.yaml
   - db-backup-cronjob.yaml
+  # FS-811. Weekly read-only check that the backup bucket is versioned and
+  # object-locked. Separate from db-backup on purpose: an unprotected bucket must not
+  # stop backups happening, and must not make DatabaseBackupStale fire.
+  - backup-immutability-cronjob.yaml
   - timescaledb-statefulset.yaml
   - redpanda-statefulset.yaml
   - redis-statefulset.yaml
@@ -47,6 +51,16 @@ resources:
 # a pod that refuses to start with a named reason instead of one that starts insecure
 # and says nothing. Staging opts down to "staging" explicitly.
 configMapGenerator:
+  # FS-811. The bucket-immutability script, shared between the weekly CronJob and a human
+  # running it locally, so the cluster and the runbook cannot drift apart.
+  #
+  # It lives INSIDE base/ (scripts/) rather than a tidier infrastructure/backup/ because CI
+  # builds base WITHOUT `--load-restrictor LoadRestrictionsNone`, and a generator reading a
+  # file above its own kustomization is refused outright. One copy in a slightly odd place
+  # beats two copies that drift, or a CI flag loosening the restriction for every other file.
+  - name: backup-immutability-script
+    files:
+      - bucket-immutability.sh=scripts/bucket-immutability.sh
   - name: backend-config
     literals:
       - ENVIRONMENT=production

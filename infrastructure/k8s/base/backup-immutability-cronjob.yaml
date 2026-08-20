@@ -1,0 +1,102 @@
+# Weekly check that the backup bucket is actually immutable (FS-811).
+#
+# WHY THIS IS A JOB AND NOT A NOTE. `database-backup-restore.md` asked an operator to "enable
+# versioning + object lock so a compromised key cannot erase history". Nothing applied it and
+# nothing checked it — and the failure is invisible until somebody is actively destroying your
+# data, which is the worst possible moment to discover a control was never turned on.
+#
+# The cluster already holds the credentials, in `backup-credentials`, because the nightly
+# upload needs them. So the check can simply run, with no new secret and nothing for anyone to
+# remember.
+#
+# WHY IT IS SEPARATE FROM THE BACKUP JOB, deliberately. Folding it into `db-backup` would mean
+# a misconfigured bucket fails the backup — so a bucket that is merely *unprotected* would
+# stop backups happening at all, turning a bad situation into a worse one. It would also stop
+# `kube_cronjob_status_last_successful_time` advancing, firing `DatabaseBackupStale` and
+# telling an operator there are no backups when there are. Two distinct problems deserve two
+# distinct signals: `DatabaseBackupJobFailed` for "the backup did not happen",
+# `BackupBucketNotImmutable` for "the backups exist and can be erased".
+#
+# READ-ONLY. Every call is a `get-*`. It cannot alter the bucket, so a bug here cannot break a
+# backup; `bootstrap` is a separate subcommand that a human runs deliberately.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: backup-immutability-check
+  labels:
+    app.kubernetes.io/name: backup-immutability-check
+    app.kubernetes.io/component: backup
+spec:
+  schedule: "0 4 * * 1"          # 04:00 Monday — after the weekend's backups
+  timeZone: "Etc/UTC"
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 3600
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3      # a failure is the whole point; keep it inspectable
+  jobTemplate:
+    spec:
+      backoffLimit: 1
+      activeDeadlineSeconds: 600
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/name: backup-immutability-check
+        spec:
+          restartPolicy: Never
+          automountServiceAccountToken: false
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 65532
+            runAsGroup: 65532
+            seccompProfile:
+              type: RuntimeDefault
+          containers:
+            - name: verify
+              image: amazon/aws-cli:2.17.0@sha256:643507c10ada7964ca6157b3d799f030b90577643da9955d319a77399ed80d73
+              imagePullPolicy: IfNotPresent
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities:
+                  drop: ["ALL"]
+              env:
+                - name: AWS_ACCESS_KEY_ID
+                  valueFrom:
+                    secretKeyRef:
+                      name: backup-credentials
+                      key: aws-access-key-id
+                - name: AWS_SECRET_ACCESS_KEY
+                  valueFrom:
+                    secretKeyRef:
+                      name: backup-credentials
+                      key: aws-secret-access-key
+                - name: AWS_DEFAULT_REGION
+                  valueFrom:
+                    secretKeyRef:
+                      name: backup-credentials
+                      key: region
+                - name: BACKUP_S3_BUCKET
+                  valueFrom:
+                    secretKeyRef:
+                      name: backup-credentials
+                      key: bucket
+              command: ["/bin/sh", "/scripts/bucket-immutability.sh", "verify"]
+              volumeMounts:
+                - name: script
+                  mountPath: /scripts
+                  readOnly: true
+                - name: aws-cache
+                  mountPath: /tmp
+              resources:
+                requests: { cpu: "50m", memory: "64Mi" }
+                limits:   { cpu: "200m", memory: "256Mi" }
+          volumes:
+            # Generated from infrastructure/backup/bucket-immutability.sh so the script the
+            # cluster runs and the one a human runs locally are the same file.
+            - name: script
+              configMap:
+                name: backup-immutability-script
+                defaultMode: 0555
+            - name: aws-cache
+              emptyDir:
+                sizeLimit: 32Mi

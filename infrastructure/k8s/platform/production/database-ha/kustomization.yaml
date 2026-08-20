@@ -13,3 +13,15 @@ resources:
   - ../../../database-ha
 
 namespace: omniusgrid
+
+# FS-811. The WAL archive must not live in the cluster it protects. `database-ha/` defaults
+# to the in-cluster SeaweedFS, which is right for kind and wrong for production: a lost
+# cluster takes the archive with it, and the <=5 minute RPO silently becomes the nightly
+# dump's 24 hours. The patch carries a placeholder that fails rather than a value that
+# quietly works against the wrong store.
+patches:
+  - path: external-wal-archive.yaml
+    target:
+      kind: Cluster
+      name: omniusgrid-db
+      namespace: omniusgrid

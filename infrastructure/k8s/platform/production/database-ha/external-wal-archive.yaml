@@ -1,0 +1,31 @@
+# FS-811. Move the WAL archive OUT of the cluster it protects.
+#
+# `database-ha/cluster.yaml` defaults to `http://seaweedfs:8333` — the single-replica object
+# store running in this same cluster. For "lost primary" that changes nothing, because a
+# standby has confirmed every acknowledged commit and the archive is never read. For "lost
+# cluster or site" — which is the scenario the <=5 minute RPO figure was written for — the
+# archive is lost with the thing it was protecting, and the real recovery point falls back to
+# the nightly pg_dump, at 24 hours.
+#
+# THE VALUE BELOW IS A PLACEHOLDER AND WILL FAIL. That is deliberate, and it is the same
+# choice made for `alertmanager-secrets` and the placeholder-secret filter: a value that fails
+# loudly is better than one that quietly works against the wrong store. Replace it with the
+# real endpoint for this environment before applying.
+#
+#   * `https://`, not `http://` — WAL leaving the cluster unencrypted is OG-SC-003.
+#   * A DIFFERENT failure domain from the cluster: another region, or a different provider.
+#     Another bucket in the same account is fine for a cluster loss and useless for an
+#     account compromise, which is what the object-lock work below is for.
+#   * The bucket must have versioning and object lock enabled —
+#     `infrastructure/backup/bucket-immutability.sh bootstrap` creates one correctly, and
+#     the weekly `backup-immutability-check` CronJob verifies it with the credentials it
+#     already holds.
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: omniusgrid-db
+  namespace: omniusgrid
+spec:
+  backup:
+    barmanObjectStore:
+      endpointURL: "https://REPLACE-ME.s3.example.invalid"

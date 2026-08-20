@@ -6103,3 +6103,45 @@ The general form: **state the capability and its availability separately, and pu
 first.** Where a guard can pair a promise against the deployment, let it decide which sentence
 you are allowed to write.
 
+---
+
+## Rule 282 — a backup that shares a failure domain with its source is not a backup of it
+
+The CloudNativePG cluster archived WAL continuously to `http://seaweedfs:8333`. Everything
+about that line is correct except where it points: SeaweedFS is a **single-replica** object
+store running in the same cluster (`base/object-store.yaml`, `replicas: 1`).
+
+Read against the two RPO figures — written into the runbooks *by this same sprint, two commits
+earlier*:
+
+| failure | claimed | actual |
+|---|---|---|
+| lost primary instance | ≈ 0 | ≈ 0. Correct — a standby confirmed every acknowledged commit and the archive is never read |
+| lost cluster or site | ≤ 5 min | **24 hours.** The archive is in the cluster. It goes with it |
+
+The second is the only scenario the archive exists for. And FS-800 had just set
+`archive_timeout: 5min` specifically to bound that number — tuning a parameter that governs an
+archive which would not survive the event it was being tuned for.
+
+**What makes this class hard is that every signal is green.** Archiving works. Base backups
+complete. `DatabaseBackupStale` stays quiet. A restore drill against the running cluster
+passes, because the archive is right there. The configuration is not subtly wrong — it is
+exactly right for every failure except the one it was written for, and that failure is the
+only one where anybody looks.
+
+Three instances of the same shape, worth checking for by name:
+
+- **The archive in the cluster.** Fixed here: both environment overlays patch the endpoint
+  out, with a placeholder that fails rather than a value that quietly works against the wrong
+  store, and a guard asserting no overlay carries an in-cluster Service name.
+- **The backup bucket in the compromised account.** Versioning and Object Lock are what make
+  the bucket survive the credential rather than the datacentre — the second half of FS-811.
+- **The runbook in the cluster it describes.** Loki was deployed in-cluster by FS-789 to make
+  "check the container logs" executable; during a cluster loss it is gone too. That one is
+  accepted rather than solved, and worth stating.
+
+The general move: **when a recovery figure is written down, name the failure it is meant to
+survive, then check the artefact is somewhere that failure does not reach.** It is one
+question, it takes a minute, and nothing else in the system will ask it for you — a review
+looks at whether the backup runs, not at where it lands.
+

@@ -2074,6 +2074,16 @@ one of its findings. The habit that catches it:
      who matters — someone recovering an outage at 3am. State capability and availability
      separately and put availability first. Where a guard pairs a promise against the
      deployment, let it decide which one you are allowed to write.
+
+282. **A backup that shares a failure domain with its source is not a backup of that failure
+     domain.** The CNPG WAL archive was written to a single-replica object store inside the
+     cluster it protected. Archiving worked, retention was tuned, `archive_timeout` bounded
+     the RPO, every dashboard was green — and a cluster loss would have taken the archive with
+     it, turning a documented 5-minute RPO into 24 hours, invisibly, because the failure only
+     appears at the moment of recovery. When a recovery figure is written down, name the
+     failure it is meant to survive and then check the artefact lives somewhere that failure
+     does not reach. Applies equally to a backup bucket in the account that was compromised,
+     and to a runbook stored only in the cluster it describes.
 ---
 
 ## Open observations, not yet tickets

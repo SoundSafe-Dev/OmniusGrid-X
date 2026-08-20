@@ -13,3 +13,14 @@ resources:
   - ../../../database-ha
 
 namespace: omniusgrid-staging
+
+# FS-811. Same as production: the WAL archive must not live in the cluster it protects.
+# Staging carries it too rather than keeping the in-cluster default, because staging is where
+# a site-loss recovery gets rehearsed (FS-925) — and a rehearsal against a different archive
+# topology from production tests the wrong thing.
+patches:
+  - path: external-wal-archive.yaml
+    target:
+      kind: Cluster
+      name: omniusgrid-db
+      namespace: omniusgrid
