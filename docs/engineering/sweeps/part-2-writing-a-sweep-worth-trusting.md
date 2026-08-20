@@ -2039,6 +2039,14 @@ one of its findings. The habit that catches it:
      cross-tenant data loss. A statement is not a state. Reconstruct what the chain actually
      produces — in order, including removals — and prefer a guard that replays it over one
      that reports the first or last match.
+
+278. **An exemption is a claim, and it needs its own check.** A digest-pinning guard exempted
+     `omniusgrid/*` on the grounds that every deploy repoints those images with
+     `kustomize edit set image`. True for backend and frontend; false for edge-agent, which CI
+     built, pushed and deployed while no deploy job pinned it — so the agent that receives OTA
+     bundles ran whatever was last pushed. A register that lists what is excused without
+     asserting the excuse converts a finding into a permanent blind spot, and reads as
+     diligence while doing it. Where an entry says *because X*, test X.
 ---
 
 ## Open observations, not yet tickets

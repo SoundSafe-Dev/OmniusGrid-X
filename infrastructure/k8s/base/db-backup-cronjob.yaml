@@ -57,7 +57,11 @@ spec:
           # only ordering guarantee a Job gives us.
           initContainers:
             - name: dump
-              image: postgres:15-alpine
+              # FS-821. The BACKUP image. `15-alpine` floats, so the pg_dump that writes the archive could
+        # change minor version between runs — and a dump written by a newer pg_dump than the
+        # pg_restore used to recover it is a restore that fails during an incident.
+        # Digest resolved 2026-08-20.
+              image: postgres:15-alpine@sha256:fe0737ba566a2c5b2a28f34433c0a423261900ec17b9bf7ad115e1aae7e57f1b
               imagePullPolicy: IfNotPresent
               securityContext:
                 allowPrivilegeEscalation: false
@@ -105,7 +109,7 @@ spec:
 
           containers:
             - name: upload
-              image: amazon/aws-cli:2.17.0
+              image: amazon/aws-cli:2.17.0@sha256:643507c10ada7964ca6157b3d799f030b90577643da9955d319a77399ed80d73
               imagePullPolicy: IfNotPresent
               securityContext:
                 allowPrivilegeEscalation: false

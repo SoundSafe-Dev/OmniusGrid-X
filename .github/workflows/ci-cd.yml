@@ -317,6 +317,36 @@ jobs:
         with:
           sarif_file: 'trivy-results.sarif'
 
+      # FS-825. THE IMAGE SCAN COULD NOT FAIL A DEPLOY, and the SSP said so.
+      #
+      # The step above produces SARIF and uploads it to the security tab — useful, and
+      # entirely advisory: it sets no `exit-code`, so it exits 0 whatever it finds. Both
+      # `deploy-staging` and `deploy-production` list `security-scan` in `needs:`, which
+      # made the gate look real. It has never been able to stop anything.
+      #
+      # The filesystem scan in quality-gates.yml has been blocking since FS-79 on
+      # HIGH,CRITICAL. This one is deliberately narrower — CRITICAL, and only where a fix
+      # EXISTS — because a container image carries its whole base OS, and unfixable
+      # distro CVEs would turn a supply-chain gate into a build that is red every morning.
+      # A gate people route around is worse than the advisory one it replaced.
+      #
+      # The escape hatch is the same reviewed `.trivyignore` the fs scan uses, whose own
+      # header requires a reason and an expiry per entry.
+      #
+      # NOT VERIFIABLE LOCALLY: this scans an image that only exists after the push above,
+      # so its first real exercise is the next CI run. If it turns out to fail on
+      # unfixable noise, the fix is a triaged `.trivyignore` entry, not removing the
+      # exit-code.
+      - name: Fail the build on fixable CRITICAL vulnerabilities
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/backend:${{ steps.tag.outputs.tag }}
+          format: 'table'
+          severity: 'CRITICAL'
+          ignore-unfixed: true
+          exit-code: '1'
+          trivyignores: .trivyignore
+
   # ============================================================================
   # DEPLOY TO STAGING
   # ============================================================================
@@ -364,7 +394,8 @@ jobs:
           cd infrastructure/k8s/overlays/staging
           kustomize edit set image \
             omniusgrid/backend=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/backend:${{ github.ref_name }}-${{ github.sha }} \
-            omniusgrid/frontend=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/frontend:${{ github.ref_name }}-${{ github.sha }}
+            omniusgrid/frontend=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/frontend:${{ github.ref_name }}-${{ github.sha }} \
+            omniusgrid/edge-agent=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/edge-agent:${{ github.ref_name }}-${{ github.sha }}
           cd -
 
           # Migrations must COMPLETE before the Deployments are updated. A single
@@ -478,10 +509,20 @@ jobs:
 
           # Pin image tags via kustomize (sed previously targeted files that
           # don't exist in the overlay).
+          #
+          # FS-821. EDGE-AGENT WAS MISSING FROM THIS LIST. The build matrix
+          # (build-images) builds and pushes all three components, and
+          # base/kustomization.yaml deploys the edge-agent StatefulSet — but only
+          # backend and frontend were ever repointed, so the deployed agent ran
+          # `omniusgrid/edge-agent:latest`: whatever happened to be pushed last, with
+          # no correlation to the release tag. On the component that receives OTA
+          # bundles and talks to industrial equipment, "which build is on the floor"
+          # had no answer, and neither did "roll back to the previous one".
           cd infrastructure/k8s/overlays/production
           kustomize edit set image \
             omniusgrid/backend=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/backend:${VERSION} \
-            omniusgrid/frontend=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/frontend:${VERSION}
+            omniusgrid/frontend=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/frontend:${VERSION} \
+            omniusgrid/edge-agent=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/edge-agent:${VERSION}
           cd -
 
           # THE CNPG STACK FIRST (FS-801). The production overlay now includes the

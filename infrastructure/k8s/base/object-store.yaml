@@ -92,7 +92,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: seaweedfs
-          image: chrislusf/seaweedfs:3.68
+          image: chrislusf/seaweedfs:3.68@sha256:172f7f002fb5fb2c1fbfcb702c6c9d3482d7cbb49e913fe8d1b0331f82957cf5
           imagePullPolicy: IfNotPresent
           args:
             - "server"

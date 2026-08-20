@@ -5933,3 +5933,46 @@ reported telemetry as carrying a 90-day global policy — because migration 072'
 the dangerous statement in order to warn against it. Rule 37 again, for the third time in this
 repository, and inside the very fix for it.
 
+---
+
+## Rule 278 — an exemption is a claim, and it needs its own check
+
+`test_no_workload_runs_a_mutable_tag.py` requires every deployed image to carry a
+`@sha256:` digest, and exempts three:
+
+```python
+DEPLOY_PINNED = {"omniusgrid/backend", "omniusgrid/frontend", "omniusgrid/edge-agent"}
+```
+
+The reasoning is sound. `base/` carries `:latest` as a placeholder, and both deploy jobs run
+`kustomize edit set image` to repoint each one at the exact tag that build pushed. Pinning a
+digest in `base/` would be wrong — it would have to be rewritten on every release.
+
+**It was true for two of the three.** `build-images` builds and pushes all three components,
+`base/kustomization.yaml` deploys the edge-agent StatefulSet, and both deploy jobs listed only
+backend and frontend. The agent that receives OTA bundles and talks to industrial equipment
+ran `omniusgrid/edge-agent:latest`: whatever was pushed last, with no correlation to the
+release tag, and untouched by a platform rollback.
+
+Note what the exemption did. Without it, the guard would have flagged edge-agent immediately.
+*With* it, the image was excused for a reason that did not hold, and the guard reported a
+clean tree — so the exemption did not merely fail to catch the problem, it actively hid one
+the rule would otherwise have found.
+
+The fix is small and general:
+
+```python
+@pytest.mark.parametrize("image", sorted(DEPLOY_PINNED))
+def test_every_deploy_pinned_image_is_actually_pinned_by_a_deploy(image):
+    for job in ("deploy-staging", "deploy-production"):
+        assert f"{image}=" in script_of(job)
+```
+
+Every register in this repository has this shape. `INFRA_EXPORTERS` claimed exporters were
+deployed and two were not (rule 272). `DIFFERENT_QUESTIONS` claims two overlapping lists ask
+different questions. `NOT_OURS_TO_DEPLOY` claims a metric family has no manifest here.
+`UNRESOLVABLE` claims an image cannot be pinned yet. Each is prose asserting a fact about the
+world, sitting inside a test file, and therefore checkable — usually in about five lines.
+
+Where an entry says *because X*, test X.
+

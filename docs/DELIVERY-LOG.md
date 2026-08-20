@@ -15038,3 +15038,60 @@ time. A statement is not a state — reconstruct the state the chain actually pr
 prefer a guard that reads the whole chain in order, including removals, over one that reports
 the first or last match.
 
+---
+
+## FS-821 / FS-825 — the database engine floated on `:latest`, and one component was never pinned at all
+
+### Nothing could be rolled back to
+
+`base/` ran the **database engine** on `timescale/timescaledb:latest-pg15` and the **broker**
+on `redpandadata/redpanda:latest`. Both tags are repointed by their publishers on every
+release, so two clusters built a week apart ran different builds of the two components every
+byte of customer data passes through. During an incident, "which version is this" and "roll
+back to the previous one" had no answer.
+
+The sharpest of the three was the **backup** image. `postgres:15-alpine` floats across every
+15.x patch, so the `pg_dump` writing the archive could change minor version between runs — and
+a dump written by a newer `pg_dump` than the `pg_restore` used to read it is a restore that
+fails *during the recovery it exists for*.
+
+Every deployed image is now pinned `tag@sha256:…`, digests resolved from the registries on
+2026-08-20 rather than invented. The tag stays for readability; the digest is what Kubernetes
+enforces.
+
+### And one component was pinned by nothing
+
+`build-images` builds and pushes **backend, frontend and edge-agent**. `base/kustomization.yaml`
+deploys the edge-agent StatefulSet. Both deploy jobs repointed only backend and frontend.
+
+So the deployed agent ran `omniusgrid/edge-agent:latest` — whatever was pushed last, with no
+correlation to the release tag. On the component that receives OTA bundles and talks to
+industrial equipment, nobody could say which build was on the floor, and rolling back the
+platform left the agent where it was.
+
+This is the exact failure mode the exemption list would have hidden: `omniusgrid/*` is exempt
+from digest pinning *because every deploy repoints it*, and for one of the three that was
+false. `test_no_workload_runs_a_mutable_tag.py` therefore checks the exemption's premise as
+well as the rule — every image claimed to be deploy-pinned must actually appear in both deploy
+jobs.
+
+### The image scan could not fail a deploy
+
+`security-scan` produced SARIF, uploaded it, and set no `exit-code` — so it exited 0 whatever
+it found. Both deploy jobs list `security-scan` in `needs:`, which made the gate look real; it
+had never been able to stop anything, and the SSP said so in OG-RA-002.
+
+A second step now blocks on **fixable CRITICAL** findings, using the same reviewed
+`.trivyignore` the filesystem scan has used since FS-79. Narrower than that scan's
+HIGH,CRITICAL on purpose: a container image carries its whole base OS, and unfixable distro
+CVEs would leave the build red every morning — a gate people route around is worse than the
+advisory one it replaced. Its first real exercise is the next CI run, because it scans an
+image that only exists after the push; if it fails on unfixable noise the answer is a triaged
+`.trivyignore` entry, not removing the exit-code.
+
+RULE 278 — **an exemption is a claim, and it needs its own check.** "These images need no
+digest because every deploy pins them" was true for two of three, and the third was the edge
+agent. A register that lists what is excused, without asserting the excuse, converts a
+finding into a permanent blind spot — and reads as diligence while doing it. Where an entry
+says *because X*, test X.
+

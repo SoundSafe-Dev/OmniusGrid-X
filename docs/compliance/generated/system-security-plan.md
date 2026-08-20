@@ -958,7 +958,7 @@ Status is stated **per deployment profile**. OmniusGrid ships to commercial clou
 
 **Owner.** security-operations
 
-**Assessment.** Remediation is currently immediate-or-blocked, which sounds strict and is actually the gap: there is no severity-based SLA, so a HIGH finding and a CRITICAL finding are treated identically, and anything the scanners do not block has no defined response time at all. The image scan in `ci-cd.yml` sets no `exit-code`, so it cannot fail a deploy — findings there go to code scanning and nowhere else.
+**Assessment.** Remediation is currently immediate-or-blocked, which sounds strict and is actually the gap: there is no severity-based SLA, so a HIGH finding and a CRITICAL finding are treated identically, and anything the scanners do not block has no defined response time at all. PARTIALLY CLOSED 2026-08-20 (FS-825): the image scan in `ci-cd.yml` set no `exit-code`, so it could not fail a deploy — findings went to code scanning and nowhere else, while both deploy jobs listed `security-scan` in `needs:` and looked gated. A second step now blocks on **fixable CRITICAL** findings, using the same reviewed `.trivyignore` as the filesystem scan. Deliberately narrower than the fs scan's HIGH,CRITICAL: a container image carries its whole base OS, and unfixable distro CVEs would make the build red every morning — a gate people route around is worse than the advisory one it replaced. STILL PARTIAL for the original reason: **there is no severity-based SLA**, so a HIGH finding still has no defined response time. That is a policy decision, not a pipeline change.
 
 **Planned completion.** 2027-01-31
 

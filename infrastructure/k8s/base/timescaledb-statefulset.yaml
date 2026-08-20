@@ -27,7 +27,12 @@ spec:
       
       containers:
         - name: timescaledb
-          image: timescale/timescaledb:latest-pg15
+          # FS-821. THE DATABASE ENGINE was floating on a mutable tag. `latest-pg15` is repointed by the
+        # publisher whenever they cut a release, so two clusters built a week apart ran
+        # different Postgres and TimescaleDB builds, and "roll back to what was running"
+        # had no answer. Digest resolved 2026-08-20; the tag is kept for readability and
+        # the digest is what Kubernetes enforces.
+          image: timescale/timescaledb:latest-pg15@sha256:6343bdc87ca132c6b53acb26113a6bad1821d188fa39975a745f32ddd9757634
           imagePullPolicy: IfNotPresent
           
           securityContext:

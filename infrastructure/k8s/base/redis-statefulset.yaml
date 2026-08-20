@@ -71,7 +71,8 @@ spec:
           type: RuntimeDefault
       containers:
         - name: redis
-          image: redis:7-alpine
+          # FS-821. `7-alpine` floats across every 7.x patch. Digest resolved 2026-08-20.
+          image: redis:7-alpine@sha256:ff02b58f971e7d7d156a1267e283fcbbeee91773b6aa36c49dac28ecfe28eadf
           imagePullPolicy: IfNotPresent
           # appendonly: the export job store must survive a restart (see header).
           # maxmemory-policy noeviction: silently evicting an idempotency key
