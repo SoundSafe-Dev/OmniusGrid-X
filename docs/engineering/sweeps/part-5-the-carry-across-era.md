@@ -5883,3 +5883,53 @@ precisely when a false positive is most likely to be believed.
 So: when a test cannot drive a rule true, check the test's sampling interval against the
 lookback window before touching the rule.
 
+---
+
+## Rule 277 — when a premise names a line of code, read what that line does at the point it runs
+
+The sprint item read: *"`database/migrations/005_data_retention.sql:22` drops raw telemetry
+after 7 days."* The citation is exact. The file says:
+
+```sql
+SELECT add_retention_policy('telemetry', INTERVAL '7 days', if_not_exists => TRUE);
+```
+
+**And it does nothing.** `001_init.sql:104` had already installed a retention policy at 30
+days, and `if_not_exists => TRUE` means "do not error if one exists" — it does not rewrite the
+interval. So the seven was inert on the day it was written. Then
+`034_historian_retention.sql:210` removed the global policy outright, replacing it with a
+per-tenant row DELETE whose fallback is 30 days.
+
+Three separate documents carried "7 days", including `uptime-commitment.md`, written earlier
+in this same sprint by the same hand that then acted on it. Every one of them quoted the file
+correctly.
+
+**What it nearly cost.** The first migration written against that premise raised the window by
+reinstating a global `add_retention_policy('telemetry', INTERVAL '90 days')` — which is what
+034 had removed, for the reason 034 states plainly: a Timescale chunk contains rows for MANY
+organisations, so dropping it deletes data belonging to tenants who configured a longer
+window. Silent, cross-tenant, irreversible, and invisible until a customer asks for data they
+are entitled to.
+
+It was caught by accident. `test_migration_chain_hygiene` rejected the file because it looked
+data-only, and following that up meant reading 034 properly.
+
+### Three things follow
+
+**A statement is not a state.** `grep` finds statements. The state is what the whole chain
+produces, in order, including removals — and no single file describes it. The corrected guard
+(`test_compression_runs_before_retention_drops.py`) replays every `add_`/`remove_` in source
+order for exactly this reason; a version that took the first match reported the 30-day policy
+as live, and one that took the last reported 7.
+
+**A no-op is worse than a wrong value.** A policy set to the wrong number is visible to anyone
+who queries `timescaledb_information.jobs`. A statement that silently does nothing looks
+correct in the file and leaves no trace in the database, so the file and the belief agree with
+each other and both are wrong. `if_not_exists => TRUE`, `ON CONFLICT DO NOTHING`, and
+`CREATE ... IF NOT EXISTS` all have this property.
+
+**The guard read the prose that described the defect.** The corrected parser's *first* run
+reported telemetry as carrying a 90-day global policy — because migration 072's header quotes
+the dangerous statement in order to warn against it. Rule 37 again, for the third time in this
+repository, and inside the very fix for it.
+

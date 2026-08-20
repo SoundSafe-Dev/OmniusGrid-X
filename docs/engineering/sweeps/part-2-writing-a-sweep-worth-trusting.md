@@ -2029,6 +2029,16 @@ one of its findings. The habit that catches it:
      test's own sampling interval first: Prometheus's 5-minute lookback makes an hourly series
      stale for 55 minutes of every hour, so a `for:` clause can never accumulate and a
      perfectly good rule looks unfirable.
+
+277. **When a premise names a line of code, read what that line DOES at the point it runs.**
+     `add_retention_policy('telemetry', INTERVAL '7 days', if_not_exists => TRUE)` says seven
+     days and changes nothing: a 30-day policy already existed, `if_not_exists` does not
+     rewrite an interval, and a later migration removed the policy entirely. Three documents
+     and a sprint plan repeated "raw telemetry is dropped after 7 days", quoting the file
+     accurately every time, and the first fix written against that premise would have caused
+     cross-tenant data loss. A statement is not a state. Reconstruct what the chain actually
+     produces — in order, including removals — and prefer a guard that replays it over one
+     that reports the first or last match.
 ---
 
 ## Open observations, not yet tickets

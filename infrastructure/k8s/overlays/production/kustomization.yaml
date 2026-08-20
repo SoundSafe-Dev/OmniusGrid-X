@@ -41,6 +41,23 @@ configMapGenerator:
       - CACHE_ENABLED=true
 
 
+# FS-801. THE CNPG CUTOVER. Repoints the backend, the four workers, the migration Job
+# and the backup CronJob at the CloudNativePG pooler instead of base's single-replica
+# StatefulSet — which is what turns the HA cluster from a manifest into the database the
+# application actually uses, and what makes the 15-minute RPO real rather than described.
+#
+# database-ha/README.md called this a manual step. A manual step in a runbook is a step
+# that gets skipped, and the failure is silent in the worst direction: the HA cluster runs,
+# WAL archiving works perfectly, and it archives a database nothing is writing to.
+#
+# PREREQUISITE, and it is hard: the CloudNativePG operator must be installed and
+# infrastructure/k8s/database-ha/ applied and migrated BEFORE this overlay is applied.
+# Otherwise every pod points at a Service that does not exist. `deploy-production` in
+# ci-cd.yml applies database-ha first for this reason, and
+# `test_the_cnpg_cutover_is_coherent.py` asserts it still does.
+components:
+  - ../../components/cnpg-pooler
+
 patches:
   # Explicit targets: the base resources carry namespace omniusgrid, so a bare
   # patchesStrategicMerge id (no namespace) never matches under kustomize v5.

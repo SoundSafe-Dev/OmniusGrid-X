@@ -63,6 +63,31 @@ spec:
       effective_cache_size: "3GB"
       work_mem: "16MB"
       maintenance_work_mem: "256MB"
+      # FS-800. THIS IS THE PARAMETER THAT BOUNDS RPO, and it was not set.
+      #
+      # WAL archiving existing is not the same as RPO being bounded. Postgres archives a
+      # segment when it FILLS — 16 MB — so on a quiet system the tail of the write-ahead
+      # log sits unarchived for as long as it takes to produce 16 MB. Overnight, on a
+      # single-site fleet, that can be many hours. Recovering from object storage would
+      # then lose everything since the last completed segment, and nothing in the cluster
+      # would have looked unhealthy.
+      #
+      # `archive_timeout` forces a segment switch after this long even when the segment is
+      # partly empty, so the worst-case loss on a full-cluster loss becomes the timeout
+      # rather than "however long until 16 MB accumulates".
+      #
+      # 5 minutes against a 15-minute RPO target: the ceiling has to leave room for the
+      # archive itself to complete and retry. The cost is a padded 16 MB segment every
+      # five idle minutes — about 4.6 GB/day of mostly-zeroes at worst, which gzip
+      # (configured above) reduces to almost nothing.
+      #
+      # NOTE THE TWO DIFFERENT RPOs, which the runbooks previously conflated:
+      #   * losing the PRIMARY -> RPO ~= 0, because minSyncReplicas: 1 means a standby has
+      #     confirmed every acknowledged commit. Nothing is recovered from S3 at all.
+      #   * losing the WHOLE CLUSTER or the site -> RPO = archive_timeout, because the only
+      #     surviving copy is the archive.
+      # Only the second is what a 15-minute contractual RPO is about.
+      archive_timeout: "5min"
     pg_hba:
       # App connects with the generated role over TLS inside the namespace.
       - host omniusgrid omniusgrid 10.0.0.0/8 scram-sha-256

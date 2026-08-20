@@ -25,9 +25,28 @@ lost.
 > has never been timed.
 >
 > These numbers are corrected here **before** the mechanisms are built, not after, because
-> this table is where an SLA number gets quoted from. Closing the gap to the agreed
-> RPO of 15 minutes is FS-800–806; measuring RTO is FS-808–810. The target column below
-> is what we are building toward; the **Actual today** column is what may be promised.
+> this table is where an SLA number gets quoted from. The target column below is what we are
+> building toward; the **Actual today** column is what may be promised.
+>
+> **UPDATE 2026-08-20 (FS-800/801).** The mechanism now exists, and it distinguishes two
+> RPOs the previous table conflated:
+>
+> | failure | RPO once the CNPG stack is applied | why |
+> |---|---|---|
+> | Primary instance lost | **≈ 0** | `minSyncReplicas: 1` — a standby has confirmed every acknowledged commit. Nothing is recovered from object storage at all |
+> | Whole cluster / site lost | **≤ 5 minutes** | `archive_timeout: 5min` forces a WAL segment switch even when the segment is not full |
+>
+> `archive_timeout` is the parameter that actually bounds the second number, and it was
+> **not set**. Postgres archives a WAL segment when it *fills* — 16 MB — so on a quiet
+> system the tail of the log sat unarchived for as long as it took to produce 16 MB, which
+> overnight can be many hours. WAL archiving existing is not the same as RPO being bounded.
+>
+> **This applies only where the CloudNativePG operator is installed and
+> `infrastructure/k8s/platform/<env>/database-ha` has been applied.** The production overlay
+> now includes the `cnpg-pooler` component so the application actually talks to that cluster
+> (it previously did not, which meant WAL archiving would have faithfully archived a
+> database nothing was writing to). Until an environment has been cut over, its RPO is still
+> the nightly `pg_dump` — **up to 24 hours**.
 
 | Scenario | RTO target | RPO target | **Actual today** | Mechanism today |
 |----------|-----------|-----------|------------------|-----------------|

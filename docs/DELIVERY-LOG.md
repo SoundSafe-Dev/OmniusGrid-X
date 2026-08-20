@@ -14936,3 +14936,105 @@ window that still answers the question, keep the longer baseline on a dashboard 
 un-unit-testable costs nothing, and when a test cannot drive a rule true, suspect the test's
 sampling interval against Prometheus's 5-minute lookback before suspecting the rule.
 
+---
+
+## FS-816 / FS-800 / FS-801 — a wrong premise caught by a guard, and the parameter that bounds RPO
+
+### The retention premise was wrong, and the fix for it would have destroyed data
+
+FS-816 was scoped from `005_data_retention.sql:22`:
+
+```sql
+SELECT add_retention_policy('telemetry', INTERVAL '7 days', if_not_exists => TRUE);
+```
+
+**That statement is a no-op and always has been.** `001_init.sql:104` had already installed a
+retention policy at 30 days, and `if_not_exists => TRUE` means "succeed quietly if one exists"
+— it does not change the interval. Then `034_historian_retention.sql:210` removed the global
+policy altogether, deliberately, and replaced it with `enforce_tenant_historian_retention()`:
+a per-tenant, per-metric row DELETE, because a Timescale chunk holds rows for many
+organisations and a global chunk-drop cannot honour a per-tenant window.
+
+The real default was **30 days, tenant-configurable**. The seven never existed. Three
+documents repeated it, including one written earlier in this same sprint.
+
+**The first migration written to fix it reinstated the global policy.** It would have dropped
+whole chunks out from under tenants who had configured longer windows — silent, cross-tenant,
+irreversible data loss, discovered only when a customer asked for data they were entitled to.
+It was caught because `test_migration_chain_hygiene` rejected the file for an unrelated reason
+(it looked data-only) and the investigation went one level deeper.
+
+The delivered change raises the **per-tenant default** 30 → 90: the column default, and the
+`COALESCE` fallback that is what a tenant with no configured row actually gets. Tenants who
+set their own value are untouched, and the change only ever lengthens retention, so it cannot
+delete anything that previously survived.
+
+### What it costs, measured rather than assumed
+
+Against the real schema and the real `compress_segmentby`, 2,161,000 rows:
+
+| | bytes/row |
+|---|---|
+| uncompressed | 142.7 |
+| compressed | 19.4 |
+| **ratio** | **7.3× (86.4% saved)** |
+
+Compression at 7 days is live and *is* realised — chunks compress at day 7 and rows are
+deleted at day 30, so twenty-three of those days already cost compressed bytes. Extending to
+90 therefore costs compressed bytes too: ~140 GB and about **$14/month** for a 250-asset fleet
+at a 5-second poll.
+
+`DELETE` against a compressed chunk was verified before shipping, because the whole scheme
+depends on it — 7,201 rows across 6 compressed chunks, deleted cleanly on TimescaleDB 2.26.3.
+Below 2.11 that DELETE is refused, which would silently stop tenant retention past day 7.
+
+### The parameter that bounds RPO was not set
+
+The CNPG cluster defines WAL archiving to object storage, and a weekly base backup. It did not
+set `archive_timeout`.
+
+**WAL archiving existing is not the same as RPO being bounded.** Postgres archives a segment
+when it *fills* — 16 MB — so on a quiet system the tail of the log sits unarchived for as long
+as it takes to produce 16 MB. Overnight, on a single-site fleet, that is hours. Recovering from
+object storage would lose everything since the last completed segment, and nothing in the
+cluster would have looked unhealthy.
+
+`archive_timeout: 5min` forces a segment switch even when the segment is mostly empty. It also
+made explicit two RPOs the runbooks had been conflating: a lost **primary** is ≈0 because
+`minSyncReplicas: 1` means a standby confirmed every acknowledged commit, and only a lost
+**cluster or site** is bounded by the archive.
+
+### The cutover was a manual step, and manual steps get skipped
+
+`database-ha/README.md` described repointing `DATABASE_URL` at the pooler as something an
+operator does by hand. The failure mode is the worst kind: the HA cluster runs, WAL archiving
+works perfectly, and it archives a database nothing is writing to.
+
+It is now a kustomize component included by `overlays/production`, repointing all seven
+clients — backend, four workers, migration Job, backup CronJob. The production deploy applies
+`database-ha` first and **fails outright** if the CloudNativePG CRDs are absent, rather than
+rolling out pods that point at a Service nobody created.
+
+**Two defects in that component were found only by reading the built output.**
+
+1. A single shared patch named `PLACEHOLDER` as the container, assuming the patch *target*
+   supplies the name. It does not — kustomize merges containers by name, found no
+   `PLACEHOLDER`, and **added a second, image-less container to all seven workloads** while
+   each real container went on using the old secret. `kustomize build` exited 0 and
+   `kubeconform` was satisfied.
+2. Once the names were right, strategic merge combined the env entries *field by field*, so
+   `DATABASE_URL` carried both `value` and base's `valueFrom`. The API server rejects that —
+   "may not have more than one field specified". Build green, apply fails. `valueFrom: null`
+   is what deletes the inherited field.
+
+Neither is visible in an exit code. `test_the_cnpg_cutover_is_coherent.py` now holds the
+component, the built manifests and the deploy job to one another.
+
+RULE 277 — **when a premise names a line of code, read what that line does at the point it
+runs.** `add_retention_policy('telemetry', INTERVAL '7 days', if_not_exists => TRUE)` says
+seven days and means nothing, because a policy already existed and a later migration removed
+it. Three documents and a sprint plan repeated the number; the file was quoted accurately every
+time. A statement is not a state — reconstruct the state the chain actually produces, and
+prefer a guard that reads the whole chain in order, including removals, over one that reports
+the first or last match.
+

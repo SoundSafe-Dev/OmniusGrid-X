@@ -93,11 +93,11 @@ a customer declining to sign.
 
 | Claim | Reality today | Tracked as |
 |---|---|---|
-| RPO 15 min | Nightly `pg_dump` to S3. **Real RPO is up to 24 hours.** PITR is described in a CloudNativePG manifest applied in no environment | FS-799–806 |
+| RPO 15 min | **Mechanism built 2026-08-20 (FS-800/801)**, not yet deployed. With the CNPG stack applied: **≈0** for a lost primary (synchronous replication) and **≤5 min** for a lost site (`archive_timeout: 5min` — the parameter that actually bounds it, and it was unset). The production overlay now points the application at that cluster's pooler, which it previously did not. **Until an environment is cut over its RPO is still the nightly `pg_dump` — up to 24 hours** | FS-799–806 |
 | RTO 1 hour | Never measured. The restore drill skips silently without `testcontainers` | FS-808–810 |
 | Regional resilience | Single region, single database instance in `base/`. No cross-region replication | FS-807, 855–859 |
 | Backups are safe | Bucket versioning and object lock are documented as manual steps, so a compromised key can erase every backup | FS-811 |
-| Telemetry is retained | **Raw telemetry is dropped after 7 days.** Post-incident forensics beyond a week is not possible | FS-816 |
+| Telemetry is retained | **Corrected 2026-08-20.** This row said "dropped after 7 days", repeating `005_data_retention.sql:22` — a statement that is a **no-op**, because `001_init.sql:104` had already installed a 30-day policy and `if_not_exists => TRUE` does not change an existing interval. `034_historian_retention.sql:210` then removed the global policy altogether in favour of a per-tenant row DELETE. The real default was **30 days**, tenant-configurable; FS-816 raised it to **90** | FS-816 ✅ |
 | Rollback | Rolling update only; images float on mutable tags, including the database engine and the broker, so "roll back to what was running" is unanswerable | FS-821–828 |
 
 ## 6. Credit schedule *(proposal — needs a commercial owner)*

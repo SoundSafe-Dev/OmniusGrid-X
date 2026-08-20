@@ -484,6 +484,33 @@ jobs:
             omniusgrid/frontend=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/frontend:${VERSION}
           cd -
 
+          # THE CNPG STACK FIRST (FS-801). The production overlay now includes the
+          # `cnpg-pooler` component, so every workload — including the migration Job
+          # below — resolves DATABASE_URL to `omniusgrid-db-pooler-rw`. That Service is
+          # created by the CloudNativePG operator from infrastructure/k8s/platform/
+          # production/database-ha, so it has to exist BEFORE the manifests that name it.
+          #
+          # Conditional on the CRDs, matching the staging job. If the operator is absent
+          # the deploy FAILS LOUDLY rather than rolling out pods that point at a Service
+          # nobody created — a CrashLoopBackOff across the whole platform is a worse
+          # outcome than a refused deploy, and much harder to read.
+          if kubectl get crd clusters.postgresql.cnpg.io >/dev/null 2>&1; then
+            echo "::group::database-ha (CloudNativePG present)"
+            kustomize build --load-restrictor LoadRestrictionsNone \
+              infrastructure/k8s/platform/production/database-ha \
+              | python3 tests/k8s/strip_placeholder_secrets.py | kubectl apply -f -
+            kubectl wait --for=condition=Ready cluster/omniusgrid-db \
+              -n omniusgrid --timeout=600s || true
+            echo "::endgroup::"
+          else
+            echo "::error::CloudNativePG CRDs are not installed, but overlays/production"
+            echo "::error::includes the cnpg-pooler component — every workload would point"
+            echo "::error::at omniusgrid-db-pooler-rw, which will not exist."
+            echo "::error::Install the operator and migrate the data first:"
+            echo "::error::  infrastructure/k8s/database-ha/README.md"
+            exit 1
+          fi
+
           # Migrations must COMPLETE before the Deployments are updated — see the
           # staging job for the rationale (apply -k would roll pods onto the new
           # image while the migration is still running).

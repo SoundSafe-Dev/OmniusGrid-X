@@ -1,0 +1,80 @@
+apiVersion: kustomize.config.k8s.io/v1alpha1
+kind: Component
+
+# THE CUTOVER (FS-801). Repoints every database client at the CloudNativePG PgBouncer
+# pooler instead of the single-replica StatefulSet in base/.
+#
+# WHY A COMPONENT. `database-ha/README.md` described this as a manual step — "repoint
+# DATABASE_URL at the pooler" — which meant the HA cluster could be applied and the
+# application would carry on talking to the old single-instance database, with WAL
+# archiving faithfully archiving a database nothing writes to. A manual step in a runbook
+# is a step that is skipped; a component is a step that is either in the overlay or not.
+#
+# ORDER OF OPERATIONS, and it is not optional:
+#
+#   1. Install the CloudNativePG operator (it provides the postgresql.cnpg.io CRDs).
+#   2. Apply infrastructure/k8s/database-ha/ and wait for the Cluster to be ready.
+#   3. Migrate the data out of base/timescaledb-statefulset.yaml into it.
+#   4. THEN apply an overlay including this component.
+#
+# Applying this component before step 2 points the application at a Service that does not
+# exist, and every pod CrashLoopBackOffs. `test_the_cnpg_cutover_is_coherent.py` asserts
+# that any overlay including this component is one whose deploy path also applies
+# database-ha, so the ordering cannot be got wrong silently — but nothing in Kubernetes
+# can make step 3 happen for you.
+#
+# WHAT IT ACTUALLY CHANGES. Every workload reads `database-credentials/url` today, so the
+# cutover is one env override repeated across the seven consumers. The URL is composed from
+# the CNPG-generated app secret rather than hard-coded: `$(VAR)` in an env value is expanded
+# by the kubelet from earlier env vars in the SAME container, which is how the password
+# reaches the URL without ever being written into a manifest.
+#
+# ONE PATCH PER WORKLOAD, and not because it is tidier. A single shared patch naming
+# `PLACEHOLDER` as the container — on the assumption the patch target supplies the name —
+# made kustomize ADD a second, image-less container to every workload while the real
+# container carried on using the old secret. `kustomize build` exited 0 and kubeconform was
+# content. Strategic merge keys containers by name, so the name has to be the real one.
+
+# EXPLICIT TARGETS, WITH THE NAMESPACE. The base resources carry `namespace: omniusgrid`,
+# and under kustomize v5 a strategic-merge patch whose metadata omits the namespace matches
+# nothing — it fails the build with "no matches for Id ... [noNs]". The production overlay
+# records the same lesson at its own `patches:` block; this is the second place it bites.
+patches:
+  - path: backend.yaml
+    target:
+      kind: Deployment
+      name: backend
+      namespace: omniusgrid
+  - path: ingestion-worker.yaml
+    target:
+      kind: Deployment
+      name: ingestion-worker
+      namespace: omniusgrid
+  - path: export-worker.yaml
+    target:
+      kind: Deployment
+      name: export-worker
+      namespace: omniusgrid
+  - path: compliance-reports-worker.yaml
+    target:
+      kind: Deployment
+      name: compliance-reports-worker
+      namespace: omniusgrid
+  - path: ota-rollout-worker.yaml
+    target:
+      kind: Deployment
+      name: ota-rollout-worker
+      namespace: omniusgrid
+  # The migration Job and the backup CronJob read the same secret and must follow the
+  # application. If they do not, migrations run against the OLD database while the app
+  # reads the new one — the worst available outcome, and entirely silent.
+  - path: db-migrate.yaml
+    target:
+      kind: Job
+      name: db-migrate
+      namespace: omniusgrid
+  - path: db-backup.yaml
+    target:
+      kind: CronJob
+      name: db-backup
+      namespace: omniusgrid

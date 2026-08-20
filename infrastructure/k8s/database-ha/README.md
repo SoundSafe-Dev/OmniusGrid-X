@@ -1,5 +1,31 @@
 # High-availability database (CloudNativePG)
 
+> **UPDATE 2026-08-20 (FS-801). The cutover is no longer manual for production.**
+>
+> The "Cutover" section below described repointing `DATABASE_URL` at the pooler as a step an
+> operator performs by hand. A manual step in a runbook is a step that gets skipped, and this
+> one fails silently in the worst direction: the HA cluster runs, WAL archiving works
+> perfectly, and it faithfully archives a database nothing is writing to.
+>
+> `infrastructure/k8s/components/cnpg-pooler` is now a kustomize component included by
+> `overlays/production`. It repoints all seven database clients — the backend, the four
+> workers, the migration Job and the backup CronJob — at `omniusgrid-db-pooler-rw`, composing
+> the URL from the operator-generated `omniusgrid-db-app` secret.
+>
+> The `deploy-production` job applies `platform/production/database-ha` **first**, and fails
+> the deploy outright if the CloudNativePG CRDs are absent rather than rolling out pods that
+> point at a Service nobody created.
+>
+> **Step 3 below is still yours.** Nothing automates migrating the existing data out of
+> `base/timescaledb-statefulset.yaml`. Cut over an environment only after that is done and
+> verified. `backend/tests/test_the_cnpg_cutover_is_coherent.py` holds the component, the
+> built manifests and the deploy job to one another.
+>
+> `archive_timeout: 5min` is also now set on the Cluster (FS-800). It is the parameter that
+> bounds RPO: without it Postgres archives a WAL segment only when it FILLS (16 MB), so on a
+> quiet system the tail of the log sits unarchived for hours.
+
+
 The base stack (`base/timescaledb-statefulset.yaml`) runs **one** TimescaleDB
 pod: a node or disk failure is a full outage, and the only backup is a nightly
 `pg_dump` (RPO up to 24h, no PITR). This directory replaces it with a 3-instance
