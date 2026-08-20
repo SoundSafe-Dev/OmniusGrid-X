@@ -34,11 +34,12 @@
 | [API reference](#api-reference) | The endpoints worth knowing, by area — 113 rows of 550 operations, and **every row is checked to exist** |
 | [Features](#features) | Capability detail per subsystem |
 | [Security model](#security-model) | Auth, tenancy, secrets |
+| [Interaction model](#interaction-model) | What a failure looks like, and how the user gets out of it |
 | [Compliance and DDIL](#compliance-and-ddil) | What is claimed, what backs it, and what a denied link does |
 | [Documentation](#documentation) | The rest of `docs/` |
 
 **Engineering method.** The sweeps and guards in this repository follow a set of numbered
-rules, each written after a defect that a weaker check had missed. Rules 21–269 are recorded in
+rules, each written after a defect that a weaker check had missed. Rules 21–270 are recorded in
 `docs/engineering/defect-class-sweeps.md`, with the reasoning for each; the short list at the
 top of that file is what most people read.
 
@@ -799,7 +800,7 @@ Every frontend page talks to `app/main.py` (60+ routers behind one error envelop
 
 ```mermaid
 flowchart TB
-    subgraph FEP["Frontend — React pages"]
+    subgraph FEP["Frontend — React pages<br/>ErrorState + retry · toasts · skeletons"]
         P1["Dashboard · Assets · AssetDetail · Alarms · OEE"]
         P2["Analytics · Predictive Maintenance (RUL) · Historian"]
         P3["Engines: Tactical · Strategic · Cloud Gateway · MLOps"]
@@ -952,7 +953,50 @@ flowchart TB
 - **Every loss is counted.** `produced == sent + buffered + dead_lettered + dropped + expired`
   closes after every scenario; a reading that is none of those has vanished.
 
-### 5. Production reliability & operations
+### 5. What the user sees while a request is in flight
+
+The diagrams above describe where data goes. This one describes what is on screen while it
+travels — the three states every page has, and which of them were missing.
+
+```mermaid
+stateDiagram-v2
+    direction LR
+
+    [*] --> Loading: page opens
+    Loading --> Loaded: 200
+    Loading --> Failed: 4xx/5xx or no network
+
+    Loaded --> Mutating: user acts
+    Mutating --> Confirmed: 200
+    Mutating --> ActionFailed: error
+
+    Failed --> Loading: Retry (refetch)
+    ActionFailed --> Loaded: message stays, control re-enabled
+    Confirmed --> Loaded: toast, 4s
+
+    note right of Failed
+        Was a sentence in red, 65 of 68 times.
+        Only recovery was a page reload, which
+        discards filters, range and scroll.
+    end note
+
+    note right of Confirmed
+        Did not exist. 17 of 21 mutation pages
+        said nothing at all, so a click that
+        worked looked like a click that did not.
+    end note
+```
+
+**The arrows that were missing are the whole point.** `Failed --> Loading` did not exist: the
+only path out of a failure was closing the page. `Mutating --> Confirmed` did not exist
+either, so the user's evidence that an action succeeded was the list refreshing — which it
+also does on a ten-second poll, meaning there was no evidence at all.
+
+`ActionFailed --> Loaded` keeps the message on screen and re-enables the control, rather than
+clearing the error on the next render: a failure that disappears while the user is reading it
+is how "I thought I clicked it" happens.
+
+### 6. Production reliability & operations
 
 The Kubernetes stack (`infrastructure/k8s/`) is built for multi-pod, no-single-
 point-of-failure operation. Beyond the app Deployments, these are the enterprise
@@ -976,7 +1020,7 @@ reliability layers (each with its own README):
 | **CI safety** | **14 blocking gates** on every branch push. Backend: `backend-realdb` (schema parity, tenant isolation + RLS, timestamp defaults — against an ephemeral TimescaleDB, because RLS and server defaults are both no-ops on SQLite), `backend-full` (**5,100+ tests** — the whole suite bar the Kafka e2e, which runs in its own job; the figure is a FLOOR asserted by `test_readme_test_count_is_not_stale.py`, because the exact number was written down once as 2,149 and was a thousand short within weeks), `backend-kafka-e2e` (container e2e in its own process), `migration-hygiene` (duplicate prefixes; and since FS-578 the suite also applies the whole chain to an empty database and **re-runs every migration at its own point in it** — the runner executes statements one at a time in autocommit, because continuous aggregates refuse a transaction block, so a file that fails halfway has committed its earlier statements and recorded nothing, and running it again is the only recovery there is. 22 files look non-idempotent to a text search; **4 are**, and none of them can be repaired — editing an applied migration is checksum drift). Kubernetes: `k8s-manifests` (build + kubeconform + placeholder-credential check, **per environment** — the stacks used to be validated one way and applied another, which is how staging never had monitoring applied at all; plus a namespace/scale-target lint, a replica-floor check against each autoscaler's declared minimum, a secret-source pairing over BOTH provisioning paths, and a check that the canonical README names every buildable tree), `netpol-simulate`, `k8s-smoke` (kind: real operator webhooks), `k8s-netpol` (kind + **Calico**: policies genuinely enforced, 19 allow/deny cases), `netpol-coverage` (every workload in a default-deny namespace has a policy in both directions — the gap that killed tracing). Plus `prometheus-rules` (lints `alerts.yml` + `slo_rules.yml`, checks **both** Prometheus configs, and runs the alert unit tests — **globbed, not listed**, and **all 51 rules are now provably FIRABLE** rather than merely well-formed — each driven true from a series the product publishes, each with a must-stay-quiet companion, and the `UNTESTED` set in `test_every_alert_rule_is_provably_firable.py` went 23 → 15 → **0** and is closed: `check rules` cannot tell a rule that fires from one that never can, which is how `EdgeAgentBufferHigh` stayed unfirable for its whole existence: they were six filenames written out, so a new one ran only if somebody remembered to edit the workflow, and an alert test that does not run is indistinguishable from one that passes), `frontend-e2e-authenticated` (stands up Postgres + migrations + demo data + uvicorn and asserts the dashboard shows **non-zero** data — an element-visibility check would have passed against the FS-191 tenancy bug), `supply-chain`, `repo-hygiene`, frontend unit + e2e. The edge agent's **109 DDIL scenarios** run nightly rather than per-PR (`pytest -m ddil`) because a 400,000-row drain measurement is not a per-PR concern — but the cross-repo parity guards that stop the agent and backend disagreeing about priority tiers or wire codecs are unmarked and gate every push | `.github/workflows/quality-gates.yml` |
 | **Load / failover testing** | Kafka ingestion load generator (drives KEDA scaling + DB writes) + a runbook for driving throughput and DB-failover-under-load | [`tests/load/`](tests/load/) |
 
-### 6. Page → API wiring
+### 7. Page → API wiring
 
 How each frontend page is wired to the backend (primary endpoints; all under
 `/api/v1`, JWT-gated, live updates over `/ws`):
@@ -2115,6 +2159,51 @@ inventory reaches; it is now generated from `App.tsx` and held there by two guar
 
 ---
 
+## Interaction model
+
+Three things a user does constantly — waiting, failing, and being told an action worked —
+were measured across all 37 pages before any of them were changed.
+
+| | Measured | Now |
+|---|---|---|
+| Failure states offering a way forward | **3 of 68** | Shared `ErrorState`; 28 sites converted, the rest ratcheted |
+| Mutations confirming they happened | **4 of 21 pages** | `ToastProvider` — there had been no non-blocking primitive at all |
+| Native `window.confirm` | 3 sites, beside a `DialogProvider` written to replace them | 0 |
+
+**A failure with no way out is not a small annoyance.** The only recovery from a dead-end
+error was reloading the page, which discards the filters, the selected time range, the scroll
+position and anything half-typed elsewhere — so a transient 502 on one panel cost an operator
+their whole working state. The Alarms page said *"Check your connection and try again"* while
+offering no way to try again, and `refetch` had been available in react-query the whole time.
+
+    <ErrorState message="Alarms could not be loaded."
+                detail="Your filters and time range are still set."
+                onRetry={() => refetch()} retrying={isFetching} />
+
+`onRetry` is optional and its absence is meaningful: a deleted record or a permission this
+session will never have gets the message without a button, because a retry that cannot work
+is worse than none.
+
+**Confirmation is non-blocking on purpose.** `DialogProvider.alert()` exists and is the wrong
+tool for "it worked" — it takes focus and demands a dismissal for something the user already
+knows they asked for, and a confirmation that interrupts gets dismissed unread, which is how
+a real warning later gets missed. Toasts auto-dismiss at four seconds for a success and ten
+for an error, because "it worked" expiring is fine and "it failed" vanishing before it is read
+is not.
+
+**What is guarded.** `errorStatesAreActionable.test.ts` is a ratchet: the dead-end count may
+fall and may not rise, and a second assertion fails if the ceiling drifts far enough above
+reality to stop meaning anything. It counts the ESCAPE rather than the component — an
+`<ErrorState>` with no `onRetry` is still a dead end, which matters because the alternative
+made the ratchet gameable by the person draining it.
+
+**What remains.** 40 sites, almost all in components with several queries, where wiring a
+retry means deciding *which* query the message describes. A retry wired to the wrong query is
+worse than none, because it looks like it worked — so the conversion tooling refuses to guess
+and reports those for a human.
+
+---
+
 ## Compliance and DDIL
 
 Two workstreams, one rule between them: **a control is written down as implemented only when
@@ -2236,7 +2325,7 @@ today, start at [`docs/erp/README.md`](docs/erp/README.md) instead.
 - [Delivery log](docs/DELIVERY-LOG.md) - Every slice delivered, verbatim, with the reasoning recorded against each: what was believed before, what turned out to be true, and what the difference cost. Moved out of this file on 2026-08-02, where it had grown to a third of the document. Most recently: the three defects that made `scripts/seed_demo_data.py` fail on every fresh database it had ever met, why none of 3,200 tests could see them (**SQLite does not enforce foreign keys by default**), and the four found only by *looking at* a running page — a heading rendered at its own background colour, an Activate control measured at 1.04:1, a float artifact beside a dollar figure, and a raw uuid in the column an operator reads to go and find a trailer
 - [ERP integration architecture](docs/erp/ARCHITECTURE.md) - The eight vendors and their protocols, the middleware, the endpoint list, and ERP-to-operational correlation. To *work on* a connector, start at [docs/erp/README.md](docs/erp/README.md) instead
 - [Correlation-AI training dataset](docs/CORRELATION-DATASET.md) - Statistics and worked single- and multi-domain scenarios, and how they feed Kanban and alerting
-- [OmniusGrid Glossary](OMNIUSGRID_GLOSSARY.md) - Backend & Frontend combined terminology reference — **650+ terms** (654 counted on 2026-08-18; stated as a floor for the same reason the test-count floor is one). Now covers DDIL, the pre-certification programme, FIPS, and the method vocabulary the guards are written in
+- [OmniusGrid Glossary](OMNIUSGRID_GLOSSARY.md) - Backend & Frontend combined terminology reference — **650+ terms** (671 counted on 2026-08-19; stated as a floor for the same reason the test-count floor is one). Now covers DDIL, the pre-certification programme, FIPS, the interaction/feedback model, and the method vocabulary the guards are written in
 - [Intake Cross-Correlation](docs/INTAKE_CROSS_CORRELATION.md) - PDF/DOCX/image parsing, shared key detection, cross-file correlation
 - [Correlation AI Engine](docs/CORRELATION_AI_ENGINE.md) - Cross-domain AI analysis, synthetic data generation, Gemma 4 fine-tuning — and **"Current state"**, which records that the model and its LoRA are deliberately unloaded, what the honest fallback returns, and the check to run when switching it back on
 - [Hybrid Architecture](HYBRID_ARCHITECTURE.md) - Human-in-the-Loop + Lights Out modes

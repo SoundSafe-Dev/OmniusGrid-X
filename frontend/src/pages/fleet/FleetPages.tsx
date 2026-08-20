@@ -2,7 +2,7 @@ import { FC, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Building2, MapPin, Users, ChevronRight, ChevronDown, Factory, Box, Activity } from 'lucide-react';
 import { Card, Badge, SkeletonCard } from '../../components';
-import { Tooltip, TooltipTrigger, TooltipContent } from '../../components/ui';
+import { Tooltip, TooltipTrigger, TooltipContent, ErrorState } from '../../components/ui';
 import { GeoTabIntegration } from '../../components/fleet/GeoTabIntegration';
 import { workcellsApi, assetsApi, organizationsApi } from '../../api';
 import { AgentOperationsPanel } from './AgentOperationsPanel';
@@ -44,9 +44,7 @@ export const FleetOverview: FC = () => {
   if (workcellsError || assetsError) {
     return (
       <Card className="p-4">
-        <p className="text-status-alarm text-sm">
-          Failed to load fleet data. Please try again.
-        </p>
+        <ErrorState message="Failed to load fleet data. Please try again." />
       </Card>
     );
   }
@@ -237,9 +235,7 @@ export const OrganizationTree: FC = () => {
         {isLoading ? (
           <SkeletonCard lines={6} />
         ) : isError ? (
-          <p className="text-status-alarm text-sm">
-            Failed to load organization structure. Please try again.
-          </p>
+          <ErrorState message="Failed to load organization structure. Please try again." />
         ) : (
           renderNode(orgData)
         )}

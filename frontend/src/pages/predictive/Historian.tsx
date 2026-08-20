@@ -95,7 +95,13 @@ export const Historian: FC = () => {
     queryFn: () => telemetryApi.getAvailableMetrics(effectiveAssetId),
     enabled: Boolean(effectiveAssetId),
   });
-  const metricOptions = metricsQuery.data?.metrics ?? [];
+  // `?? []` allocates a NEW array every render, so the effect below re-ran every render.
+  // `useMemo` gives it a stable identity — and CI runs eslint with `--max-warnings=0`, so
+  // this warning was failing the build (FS-767).
+  const metricOptions = useMemo(
+    () => metricsQuery.data?.metrics ?? [],
+    [metricsQuery.data?.metrics],
+  );
 
   useEffect(() => {
     if (metricOptions.length > 0 && !metricOptions.includes(metric)) {
@@ -264,7 +270,7 @@ export const Historian: FC = () => {
       </Card>
 
       {/* ANNOUNCED, and it says which failure it is (FS-479).
-          
+
           This card is the only error surface on a FIRST query — the more specific "this is
           a loading failure, not an empty window" lives inside the `{data && …}` block, so
           it appears only when a previous query succeeded. Someone whose first query fails

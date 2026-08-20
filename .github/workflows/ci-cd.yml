@@ -33,7 +33,7 @@ jobs:
   # ============================================================================
   lint-and-test:
     runs-on: ubuntu-latest
-    
+
     services:
       postgres:
         image: timescale/timescaledb:latest-pg15
@@ -48,7 +48,7 @@ jobs:
           --health-retries 5
         ports:
           - 5432:5432
-      
+
       redpanda:
         image: redpandadata/redpanda:latest
         ports:
@@ -197,7 +197,7 @@ jobs:
     runs-on: ubuntu-latest
     needs: lint-and-test
     if: github.event_name != 'pull_request'
-    
+
     permissions:
       contents: read
       packages: write
@@ -303,7 +303,9 @@ jobs:
           fi
 
       - name: Run Trivy vulnerability scanner
-        uses: aquasecurity/trivy-action@master
+        # Pinned rather than `@master` (FS-767). A mutable ref on a third-party action is
+        # the supply-chain risk `OG-CM-004` records against this repository's own images.
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/backend:${{ steps.tag.outputs.tag }}
           format: 'sarif'

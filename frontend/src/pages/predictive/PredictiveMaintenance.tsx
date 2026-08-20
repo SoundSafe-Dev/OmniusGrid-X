@@ -3,7 +3,7 @@ import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import { Activity, AlertTriangle, ChevronDown, ChevronRight, ExternalLink, HeartPulse } from 'lucide-react';
 import { Card, Badge, SkeletonCard } from '../../components';
-import { Tooltip, TooltipTrigger, TooltipContent } from '../../components/ui';
+import { Tooltip, TooltipTrigger, TooltipContent, ErrorState } from '../../components/ui';
 import { rulApi } from '../../api';
 import type { RULAssessment } from '../../api/rul';
 import { formatDateTime, formatPercentage, cn } from '../../utils';
@@ -168,9 +168,7 @@ export const PredictiveMaintenance: FC = () => {
         subtitle="Predictive-maintenance assessment per asset, most urgent first"
       >
         {isError ? (
-          <p className="text-status-alarm text-sm py-4">
-            Failed to load RUL assessments.
-          </p>
+          <ErrorState message="Failed to load RUL assessments." />
         ) : assessments.length === 0 ? (
           <p className="text-opsgrid-text-secondary text-center py-8">
             No assets available for assessment.

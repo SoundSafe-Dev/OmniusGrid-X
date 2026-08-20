@@ -18,8 +18,7 @@ import {
   Select,
   SkeletonTable,
   Table,
-  useDialog,
-} from '../../components/ui';
+  useDialog, ErrorState } from '../../components/ui';
 import {
   useAssignFleetWorkcellSite,
   useBulkFleetTagAssignments,
@@ -948,9 +947,9 @@ export const FleetTargeting: FC = () => {
         {inventory.isLoading && !inventory.data ? (
           <SkeletonTable rows={6} columns={7} />
         ) : inventory.isError ? (
-          <div role="alert" className="p-6 text-status-alarm">
-            Failed to load fleet inventory.
-          </div>
+          <ErrorState message="Failed to load fleet inventory."
+            onRetry={() => inventory.refetch()}
+            retrying={inventory.isFetching} />
         ) : filteredAssets.length === 0 ? (
           <div className="p-8 text-center text-sm text-opsgrid-text-secondary">
             No inventory assets match this search.

@@ -1965,6 +1965,14 @@ one of its findings. The habit that catches it:
      production Docker image had even been "verified" by checking nginx returned 200 for
      `index.html`: a 200 for a page that throws on load. A bundler's output has failure modes
      that do not exist upstream of it, so at least one check must load what is deployed.
+
+270. **A metric the improver can satisfy without doing the work will be satisfied without the
+     work.** The dead-end detector accepted `<ErrorState>` as evidence of a recoverable
+     failure, so a bulk conversion produced sixteen sites carrying the component with no
+     `onRetry` — passing the check, leaving the user exactly as stuck. Nobody cheated; the
+     mechanism was mistaken for the property. Write the check against what the user
+     experiences (is there an escape?), not against the component you are introducing, and
+     assume that an author measuring their own work will find the loophole by accident.
 ---
 
 ## Open observations, not yet tickets

@@ -27,6 +27,7 @@ survives the implementation diverging from it.
 - [Cross-Tab Workbook Correlation & Intake](#cross-tab-workbook-correlation--intake)
 - [Intake Cross-Correlation Enhancement](#intake-cross-correlation-enhancement)
 - [Frontend Architecture](#frontend-architecture)
+- [Interaction & Feedback](#interaction--feedback)
 - [Security & Authentication](#security--authentication)
 - [Compliance Frameworks](#compliance-frameworks)
 - [DDIL & Edge Resilience](#ddil--edge-resilience)
@@ -467,6 +468,27 @@ survives the implementation diverging from it.
 
 ---
 
+## Interaction & Feedback
+
+What the user sees while a request is in flight, when it fails, and when an action succeeds.
+Every row was measured across all 37 pages before the primitive existed.
+
+| Term | Definition | Backend/Frontend |
+|------|------------|------------------|
+| **`ErrorState`** | The shared failure component: an announced message (`role="alert"`, not colour alone) and an optional retry. Replaces 65 dead ends that offered a sentence in red and nothing else | Frontend |
+| **Dead-end failure state** | A failure whose only recovery is a full page reload — which discards filters, the selected time range, scroll position and anything half-typed elsewhere. A transient 502 on one panel therefore cost the operator their whole working state | Frontend |
+| **`onRetry` is optional** | Deliberately. A deleted record, or a permission this session will never have, gets the message without a button: a retry that cannot work is worse than none, because the user clicks it repeatedly and concludes the product is broken rather than that the answer is no | Frontend |
+| **Self-healing failure** | A failure on a polling query that says "Retrying automatically…" and genuinely carries a `refetchInterval`. **Not** a dead end — and counting it as one would have pressured somebody into adding a Retry button that duplicates a poll | Frontend |
+| **`ToastProvider`** | Non-blocking confirmation. Successes auto-dismiss at 4s, errors at 10s and are dismissible: "it worked" expiring is fine, "it failed" vanishing before it is read is not | Frontend |
+| **Modal vs non-blocking confirmation** | `DialogProvider.alert()` is modal and right for a decision; it is wrong for "it worked", because it takes focus and demands a dismissal for something the user already knows they asked for. A confirmation that interrupts gets dismissed unread — which is how a real warning later gets missed | Frontend |
+| **Live region** | The `aria-live` container toasts render into. It is mounted ALWAYS, empty when idle, because a screen reader only announces changes to a region it was already watching — mounting a populated one announces nothing, which is the standard way this ships broken | Frontend |
+| **Double-submit** | A mutation trigger left enabled while its request is in flight. Seven pages had it, and the cause was upstream: with no success feedback, clicking again is the reasonable response to uncertainty | Frontend |
+| **Ratchet (UX)** | `errorStatesAreActionable.test.ts` — the dead-end count may fall and may not rise, with a second assertion that fails when the ceiling drifts far enough above reality to stop meaning anything | Frontend |
+| **Counting the escape, not the component** | The ratchet looks for `onRetry`/a button, NOT for `<ErrorState>`. Accepting the component made it gameable by the person draining the backlog: swapping a `<p>` for the component satisfies the detector and leaves the user exactly as stuck | Frontend |
+| **Ambiguous retry** | A failure inside a component with several queries, where wiring a retry means deciding which query the message describes. A retry wired to the wrong query is worse than none — it looks like it worked — so the conversion tooling refuses to guess | Frontend |
+
+---
+
 ## Security & Authentication
 
 | Term | Definition | Backend/Frontend |
@@ -635,6 +657,8 @@ term below exists because the happy path assumed a link that is usually there.
 | **Privileged-read conclusion** | Asserting an outcome through a superuser connection, which bypasses RLS. It proves the write was ACCEPTED and says nothing about whether the row is visible to the tenant — under row-level security those are different questions, and the second is usually the one that matters. Two fixes in this repo proved only the first until they were reworked to read back through `GET /api/v1/audit/logs` and `/fleet/agents/versions`. Use the privileged connection for setup and diagnosis, not to conclude. Method rule 20 | Backend |
 | **Positive control** | An assertion that the mechanism under test can still FIRE, paired with the one asserting it does not. "devLogin was not called" is satisfied just as well by a bypass that has been deleted, so `Login.test.tsx` also stubs `VITE_DEV_MODE=true`, re-imports the module, and asserts the bypass *does* fire. Without the pair, a security check keeps passing after the thing it guards has stopped existing | Both |
 | **Log noise as a source** | Reading the warnings your own test runs emit. `get_historical_oee` had never returned a row and four audit writers had never written one; no sweep found either, and both scrolled past during unrelated real-DB runs. Both had been failing on every request since they were written. Method rule 16 | Both |
+| **Artifact under test** | Whether a check loads what is SHIPPED or what is convenient. A manual-chunk cycle white-screened the entire production bundle while `vite build` exited 0, `tsc` read the source, 1,211 unit tests imported the source, and Playwright drove a dev server that does no chunking. The Docker image had even been "verified" by checking nginx returned 200 for `index.html` — a 200 for a page that throws on load | Both |
+| **Chunk cycle** | Two bundler output chunks importing each other. ES modules resolve the cycle with partially-initialised bindings, so whichever evaluates first sees `undefined` for the other's exports — here `React.createContext` inside react-query, before any component mounted | Frontend |
 | **Equivalent mutant** | A mutation that changes no observable behaviour, so no test can distinguish it — deleting an `conn.commit()` where the sqlite3 context manager already commits, for instance. A surviving mutant asks "what would be different?" and *nothing* is a legitimate answer. Say so and leave the redundant line; writing a passing test around it looks like coverage and is noise | Both |
 | **Harness drift** | A test stand-in that has stopped resembling the object it stands in for. When the real class gains a method the stub lacks, the `AttributeError` is swallowed by a catch-all and surfaces as an unrelated assertion failing — which reads exactly like a regression. Bind the real method off the real class (`EdgeAgent._time_fields.__get__(self)`); a stub with equivalent behaviour is a second implementation, and second implementations drift | Both |
 | **Instrument measuring itself** | A resource assertion polluted by its own harness. A memory check on a streamed download failed at 47 MB, and 44 MB of that was the fake server slicing its own payload inside the measurement window. Correctness harnesses fail loudly when they misbehave; resource harnesses quietly become most of the reading. Prefer `tracemalloc` to `ru_maxrss`, which is a process-wide high-water mark that never decreases | Both |

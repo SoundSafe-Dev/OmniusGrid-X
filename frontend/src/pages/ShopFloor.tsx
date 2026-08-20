@@ -6,7 +6,7 @@ import {
 import { shopFloorApi, Fanout, Posting } from '../api/shopFloor'
 import { assetsApi } from '../api'
 import { formatDateTime } from '../utils/formatters'
-import { Button } from '../components/ui'
+import { Button, ErrorState } from '../components/ui'
 
 /**
  * The four floor workflows, and the ledger of what each one reached (FS-405).
@@ -205,11 +205,7 @@ const ClockTime: FC = () => {
         <p className="text-xs text-opsgrid-text-secondary">Checking for a running clock…</p>
       ) : isError ? (
         <div>
-          <p className="text-xs text-status-alarm" role="alert">
-            Could not check whether you already have a clock running. Neither button is shown,
-            because clocking in on top of an open clock produces overlapping hours that
-            payroll cannot reconcile.
-          </p>
+          <ErrorState message="Could not check whether you already have a clock running. Neither button is shown, because clocking in on top of an open clock produces overlapping hours that payroll cannot reconcile." />
           <Button className="mt-2" size="sm" variant="outline" onClick={() => refetch()}>
             Check again
           </Button>
@@ -228,10 +224,7 @@ const ClockTime: FC = () => {
             Clock out
           </Button>
           {clockOut.isError && (
-            <p className="mt-2 text-xs text-status-alarm" role="alert">
-              Could not clock out — YOUR CLOCK IS STILL RUNNING and no hours were posted.
-              Try again; do not leave the floor assuming this was recorded.
-            </p>
+            <ErrorState message="Could not clock out — YOUR CLOCK IS STILL RUNNING and no hours were posted. Try again; do not leave the floor assuming this was recorded." />
           )}
         </div>
       ) : (
@@ -244,10 +237,7 @@ const ClockTime: FC = () => {
             Clock in
           </Button>
           {clockIn.isError && (
-            <p className="mt-2 text-xs text-status-alarm" role="alert">
-              Could not clock in. If you already have a clock running, close that one first —
-              two open clocks produce overlapping hours and payroll cannot tell which is real.
-            </p>
+            <ErrorState message="Could not clock in. If you already have a clock running, close that one first — two open clocks produce overlapping hours and payroll cannot tell which is real." />
           )}
         </div>
       )}
@@ -366,10 +356,7 @@ const MachineDown: FC = () => {
       routes="scheduling, production, quality, accounting"
     >
       {openQuery.isError && (
-        <p className="mb-2 text-xs text-status-alarm" role="alert">
-          Could not load open downtime — a machine may be recorded as down that is not
-          shown here.
-        </p>
+        <ErrorState message="Could not load open downtime — a machine may be recorded as down that is not shown here." />
       )}
       {openEvents.length > 0 && (
         <div className="mb-3 space-y-2">
@@ -400,10 +387,7 @@ const MachineDown: FC = () => {
             </div>
           ))}
           {end.isError && (
-            <p className="text-xs text-status-alarm" role="alert">
-              Could not close this downtime — the machine is still recorded as down and
-              scheduling has not been told it is back.
-            </p>
+            <ErrorState message="Could not close this downtime — the machine is still recorded as down and scheduling has not been told it is back." />
           )}
         </div>
       )}

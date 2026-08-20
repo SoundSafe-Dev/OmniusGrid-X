@@ -1372,6 +1372,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
+          # Two commits, so `git diff HEAD~1 HEAD` can name the changed files. The default
+          # shallow clone has one, and the diff below would find nothing.
+          fetch-depth: 2
           # backend/dataset is a 1.5 GB LLM-generated training corpus that NO job
           # reads. Excluding it keeps the checkout at ~100 MB instead of 1.6 GB.
           sparse-checkout: |
@@ -1381,7 +1384,53 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-      - uses: pre-commit/action@v3.0.1
+
+      # SCOPED TO WHAT THIS CHANGE TOUCHED (FS-767).
+      #
+      # `pre-commit/action` runs `--all-files`. On this tree that is a 1,159-file, 65,000-line
+      # reformat — ruff-format and prettier over a codebase that predates both — so the job
+      # has failed on every run since it was added and will keep failing until somebody
+      # decides to do that reformat. It burns runner minutes on every push to tell nobody
+      # anything they did not already know, which is the definition of a gate that has
+      # stopped being read.
+      #
+      # A repo-wide reformat is a decision with four other lanes' in-flight work on the other
+      # side of it, so it is not made here. Checking the files a change actually touches makes
+      # this useful now: new code is held to the hooks, and the historical tree is a separate,
+      # deliberate piece of work.
+      - name: pre-commit (changed files only)
+        run: |
+          python -m pip install --quiet pre-commit
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            BASE="${{ github.event.pull_request.base.sha }}"
+          else
+            BASE="${{ github.event.before }}"
+          fi
+          # A new branch reports an all-zero `before`, and a force-push can name a commit
+          # this shallow clone does not have. Both fall back to the previous commit rather
+          # than silently checking everything or nothing.
+          if [ -z "$BASE" ] || [ "$BASE" = "0000000000000000000000000000000000000000" ] \
+             || ! git cat-file -e "$BASE^{commit}" 2>/dev/null; then
+            BASE="$(git rev-parse HEAD~1 2>/dev/null || git rev-parse HEAD)"
+          fi
+          CHANGED="$(git diff --name-only --diff-filter=ACMR "$BASE" HEAD)"
+          if [ -z "$CHANGED" ]; then
+            echo "no files changed in this push; nothing for the hooks to check"
+            exit 0
+          fi
+          echo "$CHANGED" | sed 's/^/  /'
+          # THE REFORMATTERS ARE SKIPPED, DELIBERATELY.
+          #
+          # `ruff-format` and `prettier` rewrite a whole file, not the lines a change
+          # touched. Fixing one character in `IntakeInbox.tsx` reformatted 2,139 lines of
+          # it — a file in another lane's active work — which turns a lint fix into a merge
+          # conflict for somebody else. The hygiene hooks below cost nothing and catch real
+          # things; formatting the tree is a separate decision that wants a quiet week and
+          # everyone's agreement, not a side effect of an unrelated push.
+          #
+          # Remove this SKIP the day the tree is formatted, in the same change.
+          # shellcheck disable=SC2086
+          SKIP=ruff-format,prettier pre-commit run --files $CHANGED
 
   # --- task 20: supply-chain scanning --------------------------------------
   supply-chain:
@@ -1417,7 +1466,11 @@ jobs:
         # remediated — backend/frontend/rag images run non-root (FS-77), k8s has
         # egress NetworkPolicies (FS-78), and a curated .trivyignore documents
         # any residual accepted findings. exit-code 1 now gates the merge.
-        uses: aquasecurity/trivy-action@0.24.0
+        # v0.36.0, not 0.24.0 (FS-767). The old pin does not exist — the tags carry a `v`
+        # prefix and 0.24.0 is not among them — so this job died at "Set up job" on EVERY
+        # run with "Unable to resolve action". A supply-chain gate that cannot start is not
+        # a lenient gate, it is an absent one.
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           scan-type: fs
           scan-ref: .

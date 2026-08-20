@@ -1,4 +1,5 @@
 import { FC, FormEvent, useState } from 'react';
+import { ErrorState } from '../../components/ui'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { BellRing, Plus, Send, Trash2 } from 'lucide-react';
 import { Badge, Button, Card, Input, Select, SkeletonCard } from '../../components';
@@ -215,7 +216,7 @@ export const Notifications: FC = () => {
           <p role="alert" className="text-sm text-status-alarm mb-3">{rowError}</p>
         )}
         {isError ? (
-          <p className="text-status-alarm text-sm py-4">Failed to load subscriptions.</p>
+          <ErrorState message="Failed to load subscriptions." />
         ) : subs.length === 0 ? (
           <p className="text-opsgrid-text-secondary text-center py-8">
             No subscriptions yet. Create one below to start receiving alerts.
@@ -437,7 +438,7 @@ export const Notifications: FC = () => {
           </div>
           {formError && <p className="text-sm text-status-alarm">{formError}</p>}
           {createMutation.isError && !formError && (
-            <p className="text-sm text-status-alarm">Failed to create subscription.</p>
+            <ErrorState message="Failed to create subscription." />
           )}
           <Button
             type="submit"
@@ -464,7 +465,7 @@ export const Notifications: FC = () => {
           </p>
         )}
         {isLogError ? (
-          <p className="text-status-alarm text-sm py-4">Failed to load the delivery log.</p>
+          <ErrorState message="Failed to load the delivery log." />
         ) : deliveries.length === 0 ? (
           <div className="flex flex-col items-center text-opsgrid-text-secondary py-8">
             <BellRing className="w-8 h-8 mb-2" />

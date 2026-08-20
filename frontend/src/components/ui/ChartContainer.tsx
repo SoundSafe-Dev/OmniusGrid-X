@@ -1,5 +1,6 @@
 import { FC, ReactNode } from 'react';
 import { cn } from '../../utils';
+import { ErrorState } from './ErrorState';
 
 interface ChartContainerProps {
   children: ReactNode;
@@ -9,6 +10,13 @@ interface ChartContainerProps {
   height?: number;
   loading?: boolean;
   error?: string | null;
+  /**
+   * How to try the failed query again (FS-767). Optional, and its absence is meaningful:
+   * a chart whose failure cannot be retried says so without offering a control that does
+   * nothing. Every chart that passes it gets a recoverable failure for one line.
+   */
+  onRetry?: () => void;
+  retrying?: boolean;
 }
 
 export const ChartContainer: FC<ChartContainerProps> = ({
@@ -19,6 +27,8 @@ export const ChartContainer: FC<ChartContainerProps> = ({
   height = 300,
   loading = false,
   error = null,
+  onRetry,
+  retrying = false,
 }) => {
   return (
     <div
@@ -48,10 +58,13 @@ export const ChartContainer: FC<ChartContainerProps> = ({
           </div>
         ) : error ? (
           <div className="flex items-center justify-center h-full">
-            {/* Colour is the only cue this had; a chart that failed to load is exactly when
+            {/* Colour was the only cue this had; a chart that failed to load is exactly when
                 a screen-reader user has nothing else to go on. Same gap `ui/Select.tsx`
-                carried at 100% reported coverage. */}
-            <p className="text-status-alarm" role="alert">{error}</p>
+                carried at 100% reported coverage.
+                `ErrorState` carries the announcement AND the way out — before FS-767 the
+                only recovery from a failed chart was reloading the page, which discarded
+                whatever time range the operator had selected to see it. */}
+            <ErrorState message={error} onRetry={onRetry} retrying={retrying} />
           </div>
         ) : (
           children

@@ -98,7 +98,7 @@ const humanizeTechnicalLabel = (value: unknown, fallback = 'Unknown'): string =>
   if (!text) return fallback;
   const normalized = text
     .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
-    .replace(/[_.\/]+/g, ' ')
+    .replace(/[_./]+/g, ' ')
     .replace(/\s+/g, ' ')
     .trim();
   const titled = normalized.charAt(0).toUpperCase() + normalized.slice(1);

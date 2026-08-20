@@ -5459,3 +5459,81 @@ button that duplicates a poll. **Friction added in the name of removing it**, wi
 justify it. The detector now honours that claim only where the file actually polls — because a
 page that says it is retrying and is not is the worst version of all three, since the user
 waits for something that will never happen.
+
+---
+
+## Rule 270 — a metric the improver can satisfy without doing the work
+
+The dead-end backlog was 68 failure states offering the user nothing. I built `ErrorState`,
+wired the operator-facing pages by hand, and then wrote a script to convert the rest, because
+sixty-odd sites is not a thing to do one at a time if a pattern will do it.
+
+The script worked. It turned
+
+    <p className="text-status-alarm">Failed to load version distribution.</p>
+
+into
+
+    <ErrorState message="Failed to load version distribution." />
+
+Eighteen sites in one run. The detector's count dropped. The ratchet was satisfied.
+
+**Nothing had changed for the user.** No `onRetry`, so no button, so still a reload as the
+only way out — the exact defect, now wearing the component built to fix it.
+
+The detector was looking for `<ErrorState`. That is a reasonable thing to look for right up
+until the person being measured is the person adding `<ErrorState>` everywhere, at which point
+it stops measuring the property and starts measuring the mechanism.
+
+I did not do it on purpose. That is the part worth writing down: I wrote the check, I knew
+what it was for, and I still produced sixteen sites that passed it without helping anyone,
+because the conversion felt like progress and the number moved in the right direction. **A
+metric you can satisfy by accident, you will satisfy by accident.**
+
+The fix is one line — drop `<ErrorState` from the actionable pattern, keep `onRetry|<button|
+onClick|refetch(` — and it costs sixteen conversions that now count as unfinished, which is
+exactly right. They are unfinished.
+
+### Two more corrections in the same direction
+
+The same detector had already been wrong twice, both times by counting things that were not
+failures the user could see:
+
+- `console.error('Failed to load…')` — a log line. Converting one would be nonsense.
+- Comments quoting the copy, including `ErrorState`'s own docstring and this detector's prose.
+  A guard that counts its own explanation is the self-vouching shape from part 4, arriving in
+  a UX metric.
+
+Each correction lowered the number without any code changing, which feels like cheating and is
+the opposite: the earlier numbers were wrong, and a backlog you cannot trust the size of is one
+nobody will finish.
+
+### What is left, and why it is not laziness
+
+Forty sites remain, and almost every one sits in a component with three or four queries. Wiring
+a retry there means answering "which query does this message describe?" — and getting it wrong
+produces the worst outcome available: a Retry button that runs a different request, succeeds,
+and leaves the failed panel exactly as it was. It looks like it worked.
+
+The conversion script refuses to act when a component has more than one query and reports the
+component instead. That refusal is the useful part. A tool that guesses here would have
+"finished" the backlog in one run and left forty plausible-looking traps behind it.
+
+### And the CI that had been failing on every single run
+
+Separately, and in the same session: 520 workflow runs on one remote and 740 on the other, at a
+100% failure rate, because the mirror ran the identical suite a second time on every push.
+
+Four of the failures were real and cheap — a Trivy action pinned to a version that does not
+exist (so the supply-chain gate had never once started), a lint error, a hook warning under
+`--max-warnings=0`, and the collector import above. One was not cheap: `pre-commit --all-files`
+demanding a 1,159-file reformat of a tree that predates the formatters.
+
+The temptation with that last one is to run the formatter and make the red go away. It would
+have worked, and it would have handed four other lanes a 65,000-line merge conflict for a
+problem none of them have. Scoping the hooks to the files a change touches makes the gate
+useful today and leaves the reformat as a decision somebody makes deliberately, on a quiet
+week, with everyone's agreement — which is what it is.
+
+**A gate that has failed on every run for months is not a strict gate. It is an absent one**,
+and everybody has already stopped reading it.

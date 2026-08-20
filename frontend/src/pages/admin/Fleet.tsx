@@ -18,8 +18,7 @@ import {
   Input,
   Select,
   SkeletonTable,
-  Table,
-} from '../../components/ui';
+  Table, ErrorState } from '../../components/ui';
 import {
   useAgentReleases,
   useAgentRollouts,
@@ -754,7 +753,9 @@ export const Fleet: FC = () => {
         {versions.isLoading && !versions.data ? (
           <SkeletonTable rows={4} columns={4} />
         ) : versions.isError ? (
-          <div role="alert" className="p-6 text-status-alarm">Failed to load version distribution.</div>
+          <ErrorState message="Failed to load version distribution."
+            onRetry={() => versions.refetch()}
+            retrying={versions.isFetching} />
         ) : versionItems.length === 0 ? (
           <div className="p-8 text-center text-sm text-opsgrid-text-secondary">No agent heartbeats have been recorded.</div>
         ) : (
@@ -788,7 +789,9 @@ export const Fleet: FC = () => {
           {releases.isLoading && !releases.data ? (
             <SkeletonTable rows={5} columns={5} />
           ) : releases.isError ? (
-            <div role="alert" className="p-6 text-status-alarm">Failed to load releases.</div>
+            <ErrorState message="Failed to load releases."
+            onRetry={() => releases.refetch()}
+            retrying={releases.isFetching} />
           ) : releaseItems.length === 0 ? (
             <div className="p-8 text-center text-sm text-opsgrid-text-secondary">No releases created yet.</div>
           ) : (
@@ -841,7 +844,9 @@ export const Fleet: FC = () => {
           {rollouts.isLoading && !rollouts.data ? (
             <SkeletonTable rows={5} columns={5} />
           ) : rollouts.isError ? (
-            <div role="alert" className="p-6 text-status-alarm">Failed to load rollouts.</div>
+            <ErrorState message="Failed to load rollouts."
+            onRetry={() => rollouts.refetch()}
+            retrying={rollouts.isFetching} />
           ) : rolloutItems.length === 0 ? (
             <div className="p-8 text-center text-sm text-opsgrid-text-secondary">No rollouts created yet.</div>
           ) : (

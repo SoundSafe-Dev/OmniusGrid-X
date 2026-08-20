@@ -2,7 +2,7 @@ import { FC, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { AlertTriangle, ChevronDown, ChevronRight, Wrench } from 'lucide-react';
 import { Card, Badge, SkeletonCard } from '../../components';
-import { Tooltip, TooltipTrigger, TooltipContent } from '../../components/ui';
+import { Tooltip, TooltipTrigger, TooltipContent, ErrorState } from '../../components/ui';
 import { AnnotatedChart, FacilityHeatmap } from '../../components/charts';
 import { assetsApi, dashboardApi, telemetryApi, maintenanceApi } from '../../api';
 import {
@@ -22,7 +22,7 @@ const RUNNING_STATES = ['Execute', 'Idle'];
 const AT_RISK_STATES = ['Held', 'Holding', 'Suspended', 'Aborted', 'Aborting', 'Stopped', 'Stopping'];
 
 export const AssetHealth: FC = () => {
-  const { data: assetsPage, isLoading, isError } = useQuery({ queryKey: ['assethealth-assets'], queryFn: () => assetsApi.list({ limit: 500 }) });
+  const { data: assetsPage, isLoading, isError, refetch, isFetching } = useQuery({ queryKey: ['assethealth-assets'], queryFn: () => assetsApi.list({ limit: 500 }) });
   const assets = assetsPage?.items ?? [];
 
   if (isLoading) {
@@ -38,9 +38,11 @@ export const AssetHealth: FC = () => {
   if (isError) {
     return (
       <Card className="p-4">
-        <p className="text-status-alarm text-sm">
-          Failed to load asset health data. Please try again.
-        </p>
+        <ErrorState
+          message="Asset health data could not be loaded."
+          onRetry={() => refetch()}
+          retrying={isFetching}
+        />
       </Card>
     );
   }
@@ -99,7 +101,7 @@ export const AssetHealth: FC = () => {
 };
 
 export const PredictiveMaintenance: FC = () => {
-  const { data: upcoming, isLoading, isError } = useQuery({ queryKey: ['predictive-upcoming'], queryFn: () => maintenanceApi.getUpcomingMaintenance(30) });
+  const { data: upcoming, isLoading, isError, refetch, isFetching } = useQuery({ queryKey: ['predictive-upcoming'], queryFn: () => maintenanceApi.getUpcomingMaintenance(30) });
   const items = upcoming ?? [];
 
   const dueLabel = (dateStr?: string) => {
@@ -117,9 +119,11 @@ export const PredictiveMaintenance: FC = () => {
           {isLoading ? (
             <SkeletonCard lines={3} />
           ) : isError ? (
-            <p className="text-status-alarm text-sm">
-              Failed to load maintenance schedule. Please try again.
-            </p>
+            <ErrorState
+              message="The maintenance schedule could not be loaded."
+              onRetry={() => refetch()}
+              retrying={isFetching}
+            />
           ) : items.length === 0 ? (
             <p className="text-sm text-opsgrid-text-secondary">No maintenance scheduled in the next 30 days.</p>
           ) : items.map((s) => (
@@ -169,7 +173,7 @@ export const TelemetryCharts: FC = () => {
   const selectedAsset = assets.find((a) => a.id === assetId) ?? assets[0];
 
   const startTime = new Date(Date.now() - (RANGE_HOURS[timeRange] ?? 24) * 3600_000).toISOString();
-  const { data: history, isLoading: historyLoading, isError: historyError } = useQuery({
+  const { data: history, isLoading: historyLoading, isError: historyError, refetch: refetchHistory, isFetching: historyFetching } = useQuery({
     queryKey: ['analytics-telemetry', selectedAsset?.id, timeRange],
     // getHistoryPage, not getHistory (FS-486). `getHistory` returns `response.data.items`
     // and discards the `meta` envelope, so the 1000-point server default was invisible
@@ -263,9 +267,11 @@ export const TelemetryCharts: FC = () => {
   if (anyError) {
     return (
       <Card className="p-4">
-        <p className="text-status-alarm text-sm">
-          Failed to load telemetry data. Please try again.
-        </p>
+        <ErrorState
+          message="Telemetry data could not be loaded."
+          onRetry={() => refetchHistory()}
+          retrying={historyFetching}
+        />
       </Card>
     );
   }

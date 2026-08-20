@@ -14468,3 +14468,96 @@ whose module graph is a different shape entirely. A bundler's output is a build 
 its own failure modes — chunk cycles, load order, minifier assumptions — and none of them
 exist upstream of it. At least one check must load the thing that is actually deployed, and
 "the server returned 200" is not that check.
+
+---
+
+## FS-767 — the CI that failed on every run, and the rest of the UX drain
+
+Two asks: drain the friction backlog, and stop the workflows burning quota on failures.
+
+### Every run was failing, and half of them were duplicates
+
+520 runs on `origin`, 740 on the mirror, and a sample of the last thirty on each showed a
+**100% failure rate**. Every push ran the full 22-job suite twice, because both remotes carry
+the same branches and both had Actions enabled.
+
+**The mirror's Actions are now disabled.** `SoundSafe-Dev/OmniusGrid-X` holds the identical
+SHA — checked, not assumed — so its CI was re-proving what `origin` had just proved. That
+halves the burn on its own and is reversible in one API call.
+
+Then the failures themselves, four of which were real and fixable:
+
+| Job | Why it failed | Fix |
+|---|---|---|
+| `supply-chain` | `aquasecurity/trivy-action@0.24.0` **does not exist** — the tags carry a `v` prefix. Died at "Set up job" on every run since it was pinned | Pinned `v0.36.0`; `ci-cd.yml` was on `@master`, also pinned |
+| `backend-full` | `ModuleNotFoundError: No module named 'cv2'` collecting the new DDIL tests | Made the OCR imports lazy — see below |
+| `frontend-unit` | One `no-useless-escape` error and one hook warning, with `--max-warnings=0` | Both fixed |
+| `pre-commit` | `--all-files` on a tree that has never been formatted | Scoped to changed files |
+
+**A supply-chain gate that cannot start is not a lenient gate, it is an absent one** — and it
+had been absent long enough that nobody read the red any more, which is the real cost of a
+permanently failing job.
+
+### The lazy-import invariant that was already written down
+
+`requirements-dev.txt` states it plainly and builds CI around it: *"The collectors import
+their drivers lazily, so importing them without the drivers is exercised on purpose"*, and it
+deliberately does not install opencv. `screen_scraper.py` imported `cv2`, `numpy` and
+`pytesseract` at module scope, and `collectors/coordinator.py` imports `screen_scraper` at
+module scope — so **importing the coordinator required the entire OCR stack.**
+
+Nothing noticed for as long as no test imported the coordinator. When one did, the suite
+failed at COLLECTION, and a pytest marker cannot help there: deselection happens after import.
+
+Guarded by `edge-agent/tests/test_optional_drivers_are_not_required_to_import.py`, which runs
+each import in a **subprocess** with the drivers blocked. The first version patched
+`sys.modules` in-process and failed with "Duplicated timeseries in CollectorRegistry" — a
+harness artifact reported as a product defect. A fresh interpreter is also the honest
+simulation: CI does not re-import, it imports once, in a process where the driver was never
+installed.
+
+### pre-commit: a decision that belongs to four other people
+
+Running the hooks repo-wide produced **1,159 files changed, 65,682 insertions** — ruff-format
+and prettier over a codebase that predates both. That is not a whitespace fix, it is a
+reformat, and it lands on every lane's in-flight work.
+
+So the job now checks **only the files a change touched**, with the reformatters skipped. Even
+scoped, prettier rewrote 2,139 lines of `IntakeInbox.tsx` — a file in the intake lane's active
+work — for a one-character lint fix, which turns a lint fix into somebody else's merge
+conflict. The hygiene hooks (whitespace, YAML, large files, merge markers, secrets) cost
+nothing and pass today; formatting the tree is a deliberate decision that wants a quiet week
+and everyone's agreement, and the SKIP is documented to be removed in the same change that
+makes it.
+
+### The drain, and three corrections to my own instrument
+
+Dead-end count: **68 → 40**, and the path down was as much about the detector as the code.
+
+1. `console.error('Failed to load…')` is a log line the user never sees. Rewriting it as a
+   component would be nonsense.
+2. A comment quoting the copy is not a failure state — the detector was counting its own
+   prose, and `ErrorState`'s docstring.
+3. **`<ErrorState>` without `onRetry` no longer counts as actionable.** It did, briefly, and a
+   bulk conversion promptly produced sixteen sites that satisfied the detector and left the
+   user exactly as stuck. The ratchet was gameable by the person draining it, which is the
+   worst possible auditor.
+
+`ChartContainer` gained `onRetry`, so every chart that passes it becomes recoverable in one
+line. `Fleet`, `AnalyticsPages`, `MaintenanceWindows`, `FleetTargeting` and
+`TransportationManagement` are wired.
+
+**What remains is 40 sites, and the reason is worth stating rather than apologising for.**
+Almost every one sits in a component with several queries, so wiring a retry means deciding
+*which* query the message describes. A retry wired to the wrong query is worse than none —
+it looks like it worked. The conversion script refuses to guess and reports those; the ratchet
+holds the line meanwhile.
+
+RULE 270 — a metric that the person improving it can satisfy without doing the work will be
+satisfied without the work, and not deliberately. Converting `<p>Failed to load…</p>` to
+`<ErrorState message="Failed to load…" />` felt like progress, passed the detector, and
+changed nothing for the user; sixteen sites went that way in one batch before the detector was
+tightened to look for the ESCAPE rather than the component. Write the check against the
+property the user experiences, not against the mechanism you happen to be introducing — and
+when you are both the author of the metric and the person being measured, assume you will find
+the loophole by accident.

@@ -42,6 +42,20 @@ that were right.**
 brought into compliance."* The tree has not been brought into compliance, and the comment has
 been true for long enough that it now describes a decision rather than a transition.
 
+**UPDATED 2026-08-19 (FS-767).** The job no longer runs `pre-commit/action` with `--all-files`.
+It now runs the hooks **against the files a change touches**, with `ruff-format` and `prettier`
+in `SKIP`. Two things forced that and neither settles the decision below:
+
+* The job had failed on **every run since it was added** — a 1,159-file, 65,682-insertion diff
+  is not something a CI job can ask for and be listened to. A gate that has been red for months
+  is not a strict gate, it is one nobody reads.
+* Even scoped to changed files, the formatters rewrite whole files: fixing one character in
+  `IntakeInbox.tsx` reformatted 2,139 lines of it, in another lane's active work. A lint fix
+  that hands somebody else a merge conflict is not a lint fix.
+
+So the hygiene hooks now pass and gate real work, and the tree-wide reformat is still the open
+question below — with the `SKIP` documented to be removed in the same change that answers it.
+
 **What making it blocking costs.** Measured 2026-08-08 by running `pre-commit run --all-files`
 on a clean tree: **972 files changed, 55,068 insertions, 40,118 deletions.** Of the Python
 half, `ruff format` alone would rewrite 570 files and leave 125 as they are. It touches every

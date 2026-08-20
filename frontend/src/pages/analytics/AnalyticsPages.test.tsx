@@ -137,8 +137,12 @@ describe('AssetHealth', () => {
 
   it('does not render a failed load as an empty estate', async () => {
     listAssets.mockRejectedValue(new Error('unreachable'))
-    const { container } = wrap(<AssetHealth />)
-    await waitFor(() => expect(container.textContent).toMatch(/failed|error|couldn/i))
+    wrap(<AssetHealth />)
+    // By ROLE, not by wording. This matched /failed|error|couldn/i, so rewording the copy
+    // to "could not be loaded" broke a test that is about whether the failure is ANNOUNCED
+    // — and an assertion that breaks when the words change, while passing if the announcement
+    // is silently dropped, is measuring the wrong thing.
+    await waitFor(() => expect(screen.getByRole('alert')).toBeInTheDocument())
     expect(screen.queryByText('CNC Mill #1')).not.toBeInTheDocument()
   })
 })
@@ -158,7 +162,7 @@ describe('PredictiveMaintenance (analytics)', () => {
     getUpcomingMaintenance.mockRejectedValue(new Error('unreachable'))
     wrap(<PredictiveMaintenance />)
     expect(
-      await screen.findByText(/Failed to load maintenance schedule/i),
+      await screen.findByText(/maintenance schedule could not be loaded/i),
     ).toBeInTheDocument()
     expect(
       screen.queryByText('No maintenance scheduled in the next 30 days.'),

@@ -54,13 +54,30 @@ def _job() -> str:
 
 
 class TestTheMeasurementIsReal:
-    def test_the_workflow_still_has_the_job(self):
+    def test_the_workflow_still_runs_the_hooks(self):
         """Vacuity. If the job were renamed, `_job()` would raise rather than return a slice
-        of some neighbouring job — but only because this asserts what the slice contains."""
-        assert "uses: pre-commit/action" in _job(), (
-            "the pre-commit job no longer runs the action, so the register's entry is about "
-            "a job that has changed shape"
+        of some neighbouring job — but only because this asserts what the slice contains.
+
+        ASKS FOR THE HOOKS, NOT FOR ONE MECHANISM (FS-767). This required
+        `uses: pre-commit/action`, and failed the day the job switched to running
+        `pre-commit run --files` directly — a change made because `--all-files` demanded a
+        1,159-file reformat and had therefore failed on every run since it was added. The
+        register's entry was still true; the guard was pinned to the implementation rather
+        than to the fact it exists to protect.
+        """
+        job = _job()
+        assert "pre-commit" in job and ("pre-commit run" in job or "pre-commit/action" in job), (
+            "the pre-commit job no longer runs the hooks at all, so the register's entry is "
+            "about a job that has changed shape"
         )
+
+    def test_the_formatters_are_still_the_open_question(self):
+        """The register's whole subject is the tree-wide reformat. If the formatters were
+        quietly dropped from the config — or silently un-SKIPped and the tree reformatted —
+        the entry would describe a decision nobody has to make any more."""
+        config = CONFIG.read_text()
+        for hook in ("ruff-format", "prettier"):
+            assert hook in config, f"{hook} left .pre-commit-config.yaml; the entry is stale"
 
     def test_the_slice_stops_at_the_next_job(self):
         """A slice that ran to the end of the file would find `continue-on-error` belonging

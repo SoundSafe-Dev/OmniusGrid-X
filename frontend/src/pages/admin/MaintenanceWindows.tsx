@@ -15,8 +15,7 @@ import {
   Input,
   Select,
   SkeletonTable,
-  Table,
-} from '../../components/ui';
+  Table, ErrorState } from '../../components/ui';
 import {
   useCreateMaintenanceWindow,
   useDisableMaintenanceWindow,
@@ -412,9 +411,9 @@ export const MaintenanceWindows: FC = () => {
         {windows.isLoading && !windows.data ? (
           <SkeletonTable rows={5} columns={6} />
         ) : windows.isError ? (
-          <div role="alert" className="p-6 text-status-alarm">
-            Failed to load maintenance windows.
-          </div>
+          <ErrorState message="Failed to load maintenance windows."
+            onRetry={() => windows.refetch()}
+            retrying={windows.isFetching} />
         ) : (windows.data ?? []).length === 0 ? (
           <div className="p-8 text-center text-sm text-opsgrid-text-secondary">
             No maintenance windows configured.

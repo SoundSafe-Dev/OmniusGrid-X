@@ -32,8 +32,16 @@ const SRC = join(process.cwd(), 'src');
 /** Failure copy, in every spelling the codebase actually uses. */
 const FAILURE = /(Failed to load|Unable to load|Error loading|Could not load|could not be loaded)/i;
 
-/** Anything that gives the user a way forward from the failure. */
-const ACTIONABLE = /<ErrorState|onRetry|<button|<Button|onClick|refetch\(/;
+/**
+ * Anything that gives the user a way forward from the failure.
+ *
+ * NOTE `<ErrorState` IS NOT ON THIS LIST, and that is deliberate. It was, briefly, and it
+ * made the ratchet gameable by exactly the person draining it: swapping
+ * `<p>Failed to load…</p>` for `<ErrorState message="Failed to load…" />` with no `onRetry`
+ * satisfies the detector and leaves the user precisely as stuck. The component is a means;
+ * the assertion is about the ESCAPE, so it looks for the escape.
+ */
+const ACTIONABLE = /onRetry|<button|<Button|onClick|refetch\(/;
 
 /**
  * A failure that says it is retrying itself, on a page that genuinely polls, is NOT a dead
@@ -66,6 +74,15 @@ function deadEnds(): string[] {
     const lines = source.split('\n');
     lines.forEach((line, i) => {
       if (!FAILURE.test(line)) return;
+      // NOT USER-FACING, so not a dead end (measured, not assumed):
+      //   * `console.error('Failed to load…')` is a log line — the user never sees it, and
+      //     rewriting it as a component would be nonsense.
+      //   * a comment or docstring quoting the copy, including this file's own prose and
+      //     ErrorState's, which the first version of the detector counted against itself.
+      const trimmed = line.trim();
+      if (/console\.(error|warn|log|debug)/.test(line)) return;
+      if (trimmed.startsWith('*') || trimmed.startsWith('//') || trimmed.startsWith('/*')) return;
+
       const window = lines.slice(Math.max(0, i - 6), i + 7).join('\n');
       if (ACTIONABLE.test(window)) return;
       if (SELF_HEALING.test(window) && POLLS.test(source)) return;
@@ -78,16 +95,23 @@ function deadEnds(): string[] {
 /**
  * Pinned 2026-08-19 at the measured value. **Only ever lower this.**
  *
- * 72 when this detector was first run in its final form, 67 after the operator-facing pages
- * (Alarms, Assets, AssetDetail ×2, and the asset alarms panel) gained a retry. The remainder
- * is a deliberate backlog rather than an oversight: converting sixty-odd JSX sites blind is
- * how a UX improvement becomes a regression, and each one needs its query's `refetch` wired
- * by hand.
+ * 72 → 67 → 40. The detector was sharpened twice on the way down, and each sharpening was a
+ * correction to the INSTRUMENT rather than progress:
+ *   - `console.error('Failed to load…')` is a log line the user never sees.
+ *   - a comment quoting the copy is not a failure state, including this file's own prose.
+ *   - `<ErrorState>` WITHOUT `onRetry` no longer counts as actionable. It did briefly, which
+ *     made the ratchet gameable by the person draining it: swapping a `<p>` for the component
+ *     satisfied the detector and left the user exactly as stuck.
+ *
+ * What remains is not an oversight. Almost every one sits in a component with several
+ * queries, so wiring a retry means deciding WHICH query the message describes — and a Retry
+ * wired to the wrong query is worse than none, because it looks like it worked. The
+ * conversion script refuses to guess and reports those; so should anyone draining the rest.
  *
  * Lower it as sites are converted. The third test below fails if you convert one and forget
  * to lower it — banking an improvement silently is how a ratchet stops ratcheting.
  */
-const DEAD_END_CEILING = 67;
+const DEAD_END_CEILING = 40;
 
 describe('failure states the user can act on', () => {
   it('finds failure messages at all', () => {

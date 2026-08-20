@@ -1,4 +1,5 @@
 import { FC, useState } from 'react'
+import { ErrorState } from '../../components/ui'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Brain, Plus, RefreshCw, Trash2, Zap, X, Database } from 'lucide-react'
 import { Card, Badge, Button, Input, Select, Table, SkeletonTable } from '../../components'
@@ -199,10 +200,7 @@ export const ERPIntegrationsPage: FC = () => {
             </Card>
           ))}
           {isError ? (
-            <p role="alert" className="text-status-alarm">
-              Could not load ERP integrations. This is a failed request — it does not mean
-              you have none configured.
-            </p>
+            <ErrorState message="Could not load ERP integrations. This is a failed request — it does not mean you have none configured." />
           ) : (integrations ?? []).length === 0 && (
             <p className="text-opsgrid-text-secondary">No ERP integrations yet. Add one to get started.</p>
           )}

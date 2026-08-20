@@ -39,7 +39,7 @@ import type {
   GeoLocation,
   MapFilterType
 } from '../../types';
-import { Button, Tooltip, TooltipTrigger, TooltipContent } from '../../components/ui';
+import { Button, Tooltip, TooltipTrigger, TooltipContent, ErrorState } from '../../components/ui';
 
 // Four outcomes, not three: exhausted, low, ample, and NOT REPORTED. The last was
 // previously indistinguishable from "low", because `null < 2` coerces to `0 < 2` — so a
@@ -331,7 +331,7 @@ export const TransportationManagement: FC = () => {
       {/* Fleet Summary from GeoTab */}
       {fleetSummaryError && (
         <div className="bg-opsgrid-panel border border-opsgrid-border rounded-lg p-4">
-          <p className="text-status-alarm text-sm">Failed to load GeoTab fleet status.</p>
+          <ErrorState message="Failed to load GeoTab fleet status." onRetry={() => refetchShipments()} />
         </div>
       )}
       {fleetSummary && (
@@ -370,7 +370,7 @@ export const TransportationManagement: FC = () => {
       {/* Delivery Efficiency */}
       {deliveryEfficiencyError && (
         <div className="bg-opsgrid-panel border border-opsgrid-border rounded-lg p-4">
-          <p className="text-status-alarm text-sm">Failed to load delivery efficiency metrics.</p>
+          <ErrorState message="Failed to load delivery efficiency metrics." onRetry={() => refetchShipments()} />
         </div>
       )}
       {deliveryEfficiency && (
@@ -813,7 +813,7 @@ export const TransportationManagement: FC = () => {
         <div className="space-y-6">
           {complianceSummaryError && (
             <div className="bg-opsgrid-panel border border-opsgrid-border rounded-lg p-4">
-              <p className="text-status-alarm text-sm">Failed to load compliance summary.</p>
+              <ErrorState message="Failed to load compliance summary." onRetry={() => refetchShipments()} />
             </div>
           )}
           {complianceSummary && (
@@ -1213,9 +1213,7 @@ const ShipmentDetailModal: FC<{
           )}
 
           {costsError && (
-            <p role="alert" className="text-sm text-status-alarm">
-              Could not load costs for this shipment.
-            </p>
+            <ErrorState message="Could not load costs for this shipment." />
           )}
           {costs && (
             <div className="bg-opsgrid-bg rounded-lg p-4">
