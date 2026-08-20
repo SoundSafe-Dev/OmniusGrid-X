@@ -18,6 +18,7 @@ import {
   Select,
   SkeletonTable,
   Table,
+  useDialog,
 } from '../../components/ui';
 import {
   useAssignFleetWorkcellSite,
@@ -350,12 +351,26 @@ export const FleetTargeting: FC = () => {
     );
   };
 
-  const confirmDeactivate = (
+  const { confirm } = useDialog();
+
+  const confirmDeactivate = async (
     kind: 'site' | 'tag' | 'group' | 'cohort',
     id: string,
     name: string
   ) => {
-    if (!window.confirm(`Deactivate ${kind} "${name}"?`)) return;
+    // `DialogProvider` exists precisely for this, and its own docstring says why the
+    // native one is wrong: `window.confirm` is unstyled, blocks the main thread, and is
+    // SUPPRESSED ENTIRELY in some embedded and webview contexts — where a destructive
+    // action then proceeds with no confirmation at all (FS-766).
+    if (
+      !(await confirm({
+        title: `Deactivate ${kind}?`,
+        message: `"${name}" will stop being applied to new rollouts.`,
+        destructive: true,
+        confirmLabel: 'Deactivate',
+      }))
+    )
+      return;
     const options = {
       onSuccess: () =>
         setFeedback({ tone: 'success' as const, message: `Deactivated ${name}.` }),

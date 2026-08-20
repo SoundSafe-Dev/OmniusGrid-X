@@ -14374,3 +14374,97 @@ neither of the components that make it so. Gaps are found by auditing scope; **w
 statements are found by re-reading things you have no reason to suspect — the glossary's
 "hash chaining prevents tampering" had been confidently false since it was written, and no
 audit of coverage would ever have surfaced it.
+
+---
+
+## FS-766 — UX friction, and the white screen it walked into
+
+The ask was seamlessness: find and remove UX friction. The friction was measured rather than
+guessed at, three classes were fixed, and the exercise then ran into something considerably
+larger than any of them.
+
+### What was measured
+
+| Class | Measured | Now |
+|---|---|---|
+| Failure states the user can act on | **3 of 68** offered any action | Shared `ErrorState`; the operator-facing pages converted, the rest ratcheted |
+| Mutations that confirm anything | **4 of 21** pages gave any feedback | `ToastProvider`; there was no non-blocking primitive at all |
+| Native `window.confirm` | 3 sites, beside a `DialogProvider` built to replace them | 0 |
+
+**65 of 68 failure states were a sentence in red and nothing else.** The cost is not the
+missing button: the only recovery left is a full page reload, which throws away filters, the
+selected time range, scroll position, and anything half-typed elsewhere on the page. A
+transient 502 on one panel cost the operator their whole working state — and `refetch` was
+sitting in react-query the entire time. The Alarms page said *"Check your connection and try
+again"* while offering no way to try again.
+
+**Nothing could confirm an action had happened.** `DialogProvider` offers a modal `alert()`,
+which is the wrong tool: it takes focus and demands a dismissal for something the user already
+knows they asked for, and a confirmation that interrupts gets dismissed unread. There was no
+non-blocking primitive, so seventeen pages simply said nothing — you acknowledge an alarm,
+the list refreshes on its ten-second poll anyway, and there is no way to tell your click
+landed. The natural response to that uncertainty is to click again, which is also why seven
+of those pages were double-submittable.
+
+### A detector that was about to make things worse
+
+The first version of the dead-end detector counted the four engine pages, which say
+*"Retrying automatically…"* — and every one of them carries a `refetchInterval`, checked
+rather than assumed. Those are not dead ends. Counting them would have inflated the number and
+then pressured somebody into adding a Retry button that duplicates a poll: **friction added in
+the name of removing it.** The detector now honours the claim only when the file genuinely
+polls, because a page that *says* it retries and does not is a worse dead end than one that
+says nothing, since the user waits.
+
+The remaining 67 are ratcheted rather than converted. Sixty-odd JSX sites cannot honestly be
+rewritten in one change — each needs its own query's `refetch` wired by hand — and a guard
+that fails until they all are is a guard somebody disables.
+
+### And then: the production bundle had been a white screen
+
+Driving the app to look at the new error state — rather than trusting the tests — the built
+bundle threw on load:
+
+    TypeError: Cannot read properties of undefined (reading 'createContext')
+
+`frontend/vite.config.ts` put React in its own manual chunk and everything depending on it in
+`vendor`. The two then imported each other:
+
+    react-vendor.js  imports -> vendor.js
+    vendor.js        imports -> react-vendor.js
+
+ES modules resolve a cycle by handing out partially-initialised bindings, so whichever
+evaluated first saw `undefined` for the other's exports. `vendor` won, reached
+`React.createContext` inside react-query, and threw. **The entire application was a white
+screen in any production build.**
+
+It was not mine. Confirmed by stashing the day's work and rebuilding: identical failure. And
+it is not a subtle degradation — it is the app not starting.
+
+**Why nothing caught it, which is the part worth keeping.** `vite build` exited 0. `tsc` was
+clean. 1,211 unit tests passed — they import source. The Playwright suite passed — its
+`webServer.command` is `npm run dev`, and the dev server does no manual chunking at all, so
+**the chunk graph that broke exists only in the artifact that ships and no test had ever
+loaded that artifact.** I had even built the production Docker image the day before and
+"verified" it by checking nginx returned 200 for `index.html`. It did. A 200 for a page that
+then throws on load.
+
+The fix is one line — keep React in the same chunk as its dependents, which removes the cycle
+while leaving the plotly/leaflet/charts splitting that the config exists for. The guard is
+`frontend/e2e/the-built-bundle-boots.spec.ts` with its own config pointing at `vite build && vite
+preview`: three shallow assertions — no page error, `#root` is not empty, something
+interactive is visible. Deliberately shallow, because this asks whether the bundle can execute
+at all, which is a question nobody was asking. Mutation-verified by reintroducing the exact
+chunk cycle; it fails.
+
+A separate config rather than a flag, because the dev-server suite is what people run while
+working and a build costs ten seconds — making the everyday suite slower is how a check gets
+skipped.
+
+RULE 269 — test the artifact you ship, not the one you develop against. Every check here was
+green while the production bundle white-screened: the build produced it, the type-checker read
+the source, the unit tests imported the source, and the end-to-end suite drove a dev server
+whose module graph is a different shape entirely. A bundler's output is a build ARTIFACT with
+its own failure modes — chunk cycles, load order, minifier assumptions — and none of them
+exist upstream of it. At least one check must load the thing that is actually deployed, and
+"the server returned 200" is not that check.

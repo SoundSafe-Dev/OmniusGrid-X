@@ -953,6 +953,25 @@ jobs:
         working-directory: ./frontend
         run: npx vite build
 
+      # AND THEN LOAD WHAT IT BUILT (FS-766).
+      #
+      # `vite build` exiting 0 says the bundle was produced, not that it runs. A manual-chunk
+      # cycle in vite.config.ts white-screened the entire application — react-vendor and
+      # vendor imported each other, ES modules handed out partially-initialised bindings, and
+      # `React.createContext` was undefined inside react-query — while this step passed, tsc
+      # was clean and 1,211 unit tests were green.
+      #
+      # Nothing caught it because nothing had ever loaded the artifact: the unit tests import
+      # source, and the Playwright suite below runs against `npm run dev`, which does no
+      # chunking at all. The chunk graph exists ONLY in dist/.
+      - name: Install Playwright browser (for the built-bundle smoke)
+        working-directory: ./frontend
+        run: npx playwright install --with-deps chromium
+
+      - name: The built bundle actually boots (blocking)
+        working-directory: ./frontend
+        run: npm run e2e:prod
+
   # --- task 2: frontend E2E smoke (Playwright) -----------------------------
   frontend-e2e:
     runs-on: ubuntu-latest

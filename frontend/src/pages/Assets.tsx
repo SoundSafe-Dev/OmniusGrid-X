@@ -4,7 +4,7 @@ import { Box, ChevronRight, X } from 'lucide-react'
 import { useQuery } from '@tanstack/react-query'
 import { useAssets } from '../hooks'
 import { assetsApi, workcellsApi } from '../api'
-import { Tooltip, TooltipTrigger, TooltipContent } from '../components/ui'
+import { Tooltip, TooltipTrigger, TooltipContent, ErrorState } from '../components/ui'
 
 const Assets: FC = () => {
   // FS-127: page through the FS-82 envelope. Page size comes from the limit the
@@ -40,7 +40,7 @@ const Assets: FC = () => {
     }),
     [skip, search, workcellId, assetTypeId, activeOnly],
   )
-  const { data: assetsData, isLoading, isError } = useAssets(params)
+  const { data: assetsData, isLoading, isError, refetch, isFetching } = useAssets(params)
 
   const { data: workcells } = useQuery({
     queryKey: ['workcells-for-filter'],
@@ -105,14 +105,13 @@ const Assets: FC = () => {
   // blank screen with no indication anything went wrong.
   if (isError) {
     return (
-      <div className="flex items-center justify-center h-64">
-        <div className="text-center">
-          <p className="text-status-alarm">Failed to load assets.</p>
-          <p className="text-sm text-opsgrid-text-secondary mt-1">
-            Check your connection and try again.
-          </p>
-        </div>
-      </div>
+      <ErrorState
+        variant="block"
+        message="Assets could not be loaded."
+        detail="Your search and filters are still applied — retrying will not clear them."
+        onRetry={() => refetch()}
+        retrying={isFetching}
+      />
     )
   }
 

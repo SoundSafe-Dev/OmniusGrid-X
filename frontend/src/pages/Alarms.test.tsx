@@ -26,10 +26,17 @@ vi.mock('../hooks', () => ({
   // The asset filter dropdown; empty is a valid fleet.
   useAssets: () => ({ data: { items: [], total: 0, hasMore: false } }),
 }))
-vi.mock('../components/ui', () => ({
+// A HAND-WRITTEN MODULE MOCK IS A SECOND IMPLEMENTATION, and it drifts (FS-766). This
+// listed three exports; the page then imported ErrorState and the suite failed with
+// "No ErrorState export is defined on the mock" — a real change reported as a mock defect.
+// ErrorState renders its retry control for real here, because the assertion below is about
+// whether the user can recover, and a stub would make that assertion meaningless.
+vi.mock('../components/ui', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../components/ui')>()),
   Tooltip: ({ children }: any) => <>{children}</>,
   TooltipTrigger: ({ children }: any) => children,
   TooltipContent: () => null,
+  useToast: () => ({ success: vi.fn(), error: vi.fn(), info: vi.fn() }),
 }))
 
 import Alarms from './Alarms'
@@ -42,7 +49,33 @@ describe('Alarms page states', () => {
   it('shows an error state (not a blank screen) when the fetch fails', () => {
     useAlarms.mockReturnValue({ data: undefined, isLoading: false, isError: true })
     renderAlarms()
-    expect(screen.getByText(/failed to load/i)).toBeInTheDocument()
+    expect(screen.getByRole('alert')).toHaveTextContent(/could not be loaded/i)
+  })
+
+  it('lets the operator retry without losing their filters', () => {
+    // THE ASSERTION THAT MATTERS (FS-766). The old copy said "Check your connection and
+    // try again" and offered no way to try again, so the only recovery was a reload —
+    // which discards the filters and time range on the page an operator opens BECAUSE
+    // something is wrong. Asserting the message alone passed happily against that.
+    const refetch = vi.fn()
+    useAlarms.mockReturnValue({
+      data: undefined, isLoading: false, isError: true, refetch, isFetching: false,
+    })
+    renderAlarms()
+
+    // `fireEvent`, matching the rest of this file rather than introducing a second
+    // interaction style for one assertion.
+    fireEvent.click(screen.getByRole('button', { name: /retry/i }))
+    expect(refetch).toHaveBeenCalledTimes(1)
+  })
+
+  it('disables the retry control while the retry is in flight', () => {
+    // Otherwise a slow backend collects one request per impatient click.
+    useAlarms.mockReturnValue({
+      data: undefined, isLoading: false, isError: true, refetch: vi.fn(), isFetching: true,
+    })
+    renderAlarms()
+    expect(screen.getByRole('button', { name: /retrying/i })).toBeDisabled()
   })
 
   it('shows the empty state when there are no alarms', () => {

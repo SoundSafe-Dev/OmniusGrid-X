@@ -5372,3 +5372,90 @@ precisely because unguarded ones rot — and the backend figure in that very blo
 357 below reality before this week. I had written the count and moved on. It is guarded now,
 in both directions, and it counts the default configuration deliberately: counting with
 `-m ddil` would let the stated number drift upward by 109 without anyone editing the README.
+
+---
+
+## Rule 269 — test the artifact you ship, not the one you develop against
+
+The task was UX friction. Measure it, fix the worst of it. Three classes came out of the
+measurement — 65 of 68 failure states offering the user nothing, 17 of 21 mutation pages
+confirming nothing, three native `window.confirm` calls sitting beside the `DialogProvider`
+built to replace them — and all three are real friction worth removing.
+
+Then I built the app and looked at it, because a UX change you have not seen is a guess.
+
+    TypeError: Cannot read properties of undefined (reading 'createContext')
+
+White screen. Not the page I was checking — the whole application.
+
+My first thought was that I had done it: I had just added a `ToastProvider`, which calls
+`createContext`. So I stashed the day's work and rebuilt. Identical failure. It had been like
+that before I arrived.
+
+    react-vendor.js  imports -> vendor.js
+    vendor.js        imports -> react-vendor.js
+
+`frontend/vite.config.ts` split React into its own manual chunk and left everything that depends on it
+— react-query, router, zustand — in `vendor`. Those two chunks import each other, and ES
+modules resolve a cycle by handing out partially-initialised bindings. Whichever evaluates
+first sees `undefined` for the other's exports. `vendor` won the race, reached
+`React.createContext` inside react-query, and threw before a single component mounted.
+
+### The part that is worth more than the fix
+
+The fix is one line. What took the time was understanding how this survived, because the
+answer indicts a set of checks I have spent weeks admiring:
+
+- **`vite build` exited 0.** It produced a bundle. It does not run it.
+- **`tsc --noEmit` was clean.** It reads TypeScript source. Chunking happens afterwards.
+- **1,211 unit tests passed.** They import source modules directly. There is no bundle.
+- **The Playwright end-to-end suite passed.** Its `webServer.command` is `npm run dev`, and
+  Vite's dev server serves modules one at a time with no manual chunking whatsoever. **The
+  chunk graph that broke does not exist in the thing the e2e suite drives.**
+- **I had built the production Docker image the day before** and verified it — by checking
+  that nginx returned `200` for `index.html`, which it did, and by curling a deep route to
+  confirm the SPA fallback worked, which it did. Both true. Both about the web server. The
+  page they served threw on load and I never opened it.
+
+Every one of those is a good check. Not one of them loads the artifact that ships.
+
+That is the shape: **a bundler's output is a build artifact with its own failure modes** —
+chunk cycles, evaluation order, minifier assumptions, tree-shaking a side effect somebody
+relied on — and none of them exist upstream of it. Testing the source proves things about the
+source. Testing the dev server proves things about a module graph that is deliberately shaped
+differently for iteration speed.
+
+It also rhymes with the rule about resource measurement: `curl -o /dev/null -w '%{http_code}'`
+answered a question I had not asked. I wanted "does the app work" and I measured "does the
+server respond", and 200 is a very convincing answer to the wrong question.
+
+### The guard
+
+`frontend/e2e/the-built-bundle-boots.spec.ts`, with its own config pointing at `vite build && vite
+preview`. Three assertions, all shallow on purpose: nothing throws on load, `#root` is not
+empty, and something interactive is visible. The last one matters — a static shell satisfies
+the second and is still a dead application.
+
+Shallow because this is not about features. The rest of the suite covers those against the dev
+server, which is the right place for them. This one asks a question nobody was asking: can the
+bundle execute at all.
+
+Mutation-verified in the only way that counts here — put the chunk cycle back and confirm it
+fails. It does.
+
+A separate config rather than a flag on the existing one, and that is a UX decision about the
+people running it: the dev-server suite is fast and is what somebody runs while working. A
+ten-second build in front of it is how a check quietly stops being run.
+
+### A footnote on the friction work itself
+
+One thing the measurement got wrong before it got it right. The first detector counted the four
+engine pages as dead ends. They say "Retrying automatically…" — and all four carry a
+`refetchInterval`, checked rather than assumed. They are not dead ends; waiting genuinely
+works.
+
+Counting them would have inflated the number and then pressured somebody into adding a Retry
+button that duplicates a poll. **Friction added in the name of removing it**, with a metric to
+justify it. The detector now honours that claim only where the file actually polls — because a
+page that says it is retrying and is not is the worst version of all three, since the user
+waits for something that will never happen.

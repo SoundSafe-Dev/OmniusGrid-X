@@ -12,6 +12,7 @@
  * believes a report has stopped will not chase it again.
  */
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { DialogProvider } from '../../components/ui'
 import { MemoryRouter } from 'react-router-dom'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { describe, expect, it, vi, beforeEach } from 'vitest'
@@ -55,7 +56,11 @@ const show = () => {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   return render(
     <QueryClientProvider client={qc}>
-      <MemoryRouter><ExportSchedules /></MemoryRouter>
+      {/* FS-766. The page confirms destructive actions through `DialogProvider` now
+          rather than `window.confirm`, and `useDialog` throws outside its provider on
+          purpose — a silent no-op would let a delete proceed unconfirmed. The test tree
+          therefore has to include it, exactly as `App.tsx` does. */}
+      <DialogProvider><MemoryRouter><ExportSchedules /></MemoryRouter></DialogProvider>
     </QueryClientProvider>,
   )
 }

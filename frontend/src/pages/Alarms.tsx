@@ -9,7 +9,7 @@ import {
   useClearAlarm,
   useAssets,
 } from '../hooks'
-import { Tooltip, TooltipTrigger, TooltipContent } from '../components/ui'
+import { Tooltip, TooltipTrigger, TooltipContent, ErrorState, useToast } from '../components/ui'
 import type { AlarmSeverity } from '../types'
 
 // The backend defaults to the last 24 hours when no time range is sent, so the range
@@ -57,7 +57,7 @@ const Alarms: FC = () => {
     [skip, severity, status, acked, assetId, startTime],
   )
 
-  const { data: alarmsData, isLoading, isError } = useAlarms(filters)
+  const { data: alarmsData, isLoading, isError, refetch, isFetching } = useAlarms(filters)
   const alarms = alarmsData?.items || []
   const total = alarmsData?.total ?? 0
   const limit = alarmsData?.limit || alarms.length || 1
@@ -100,6 +100,11 @@ const Alarms: FC = () => {
   const [noteFor, setNoteFor] = useState<string | null>(null)
   const [noteText, setNoteText] = useState('')
 
+  // FS-766. Acknowledging used to be silent on success: the row changed state and the
+  // ten-second poll also changes rows, so there was no way to tell your click had landed.
+  // The usual response to that uncertainty is clicking again.
+  const toast = useToast()
+
   const acknowledge = (alarm: any, comment?: string) => {
     setAckError(null)
     acknowledgeMutation.mutate(
@@ -112,6 +117,10 @@ const Alarms: FC = () => {
         onSuccess: () => {
           setNoteFor(null)
           setNoteText('')
+          toast.success(
+            'Alarm acknowledged',
+            alarm.message ? String(alarm.message).slice(0, 80) : undefined,
+          )
         },
       },
     )
@@ -151,15 +160,17 @@ const Alarms: FC = () => {
   // A failed fetch previously rendered the header over an empty list — a blank
   // screen with no error indication.
   if (isError) {
+    // The old copy said "Check your connection and try again" and gave no way to try
+    // again — the only recovery was a full reload, which discards the filters and the
+    // time range the operator had set. `refetch` retries this query alone (FS-766).
     return (
-      <div className="flex items-center justify-center h-64">
-        <div className="text-center">
-          <p className="text-status-alarm">Failed to load alarms.</p>
-          <p className="text-sm text-opsgrid-text-secondary mt-1">
-            Check your connection and try again.
-          </p>
-        </div>
-      </div>
+      <ErrorState
+        variant="block"
+        message="Alarms could not be loaded."
+        detail="Your filters and time range are still set — retrying will not lose them."
+        onRetry={() => refetch()}
+        retrying={isFetching}
+      />
     )
   }
 

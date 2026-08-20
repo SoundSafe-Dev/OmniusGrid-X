@@ -9,7 +9,7 @@ import { assetsApi, telemetryApi, alarmsApi } from '../api'
 // recharts chart, so importing one Badge through it would pull the whole fleet surface
 // into this page's module graph — the bundle-size trap the barrel's own comment warns
 // about, and it would also drag all of it into this page's test.
-import { Tooltip, TooltipTrigger, TooltipContent, Badge } from '../components/ui'
+import { Tooltip, TooltipTrigger, TooltipContent, Badge, ErrorState } from '../components/ui'
 import { RealtimeTelemetryChart, TelemetryHistoryChart } from '../components/charts'
 import { SensorPanels } from '../components/assets/SensorPanels'
 import { CommandPanel } from '../components/commands'
@@ -25,7 +25,7 @@ const AssetDetail: FC = () => {
   const { id } = useParams<{ id: string }>()
   const { isAdmin, isOperator } = useAuth()
 
-  const { data: asset, isLoading, isError } = useQuery({
+  const { data: asset, isLoading, isError, refetch, isFetching } = useQuery({
     queryKey: ['asset', id],
     queryFn: () => assetsApi.get(id!),
   })
@@ -70,13 +70,19 @@ const AssetDetail: FC = () => {
   if (isError) {
     return (
       <div className="text-center py-12">
-        <p className="text-status-alarm">Failed to load asset.</p>
-        <p className="text-sm text-opsgrid-text-secondary mt-1">
-          Check your connection and try again.
-        </p>
-        <Link to="/assets" className="text-opsgrid-primary hover:underline mt-4 inline-block">
-          Back to Assets
-        </Link>
+        <ErrorState
+          variant="block"
+          message="This asset could not be loaded."
+          onRetry={() => refetch()}
+          retrying={isFetching}
+        >
+          {/* The navigation escape stays. A retry helps a transient failure; a deleted or
+              renamed asset needs a way out, and offering only a retry would trap the user
+              on a page that will never load. */}
+          <Link to="/assets" className="text-opsgrid-primary hover:underline">
+            Back to Assets
+          </Link>
+        </ErrorState>
       </div>
     )
   }
@@ -394,7 +400,7 @@ const AssetDetail: FC = () => {
  * facts about a machine, and only one of them means walk away.
  */
 const AssetAlarmsPanel: FC<{ assetId: string }> = ({ assetId }) => {
-  const { data, isLoading, isError } = useQuery({
+  const { data, isLoading, isError, refetch, isFetching } = useQuery({
     queryKey: ['asset-alarms', assetId],
     queryFn: () => alarmsApi.list({ assetId, isActive: true, limit: 25 }),
     refetchInterval: 15000,
@@ -426,10 +432,12 @@ const AssetAlarmsPanel: FC<{ assetId: string }> = ({ assetId }) => {
       {isLoading && <p className="text-sm text-opsgrid-text-secondary">Loading alarms…</p>}
 
       {isError && (
-        <p className="text-sm text-status-alarm" role="alert">
-          Could not load alarms for this asset — this is a failed request, not a quiet
-          machine.
-        </p>
+        <ErrorState
+          message="Could not load alarms for this asset."
+          detail="This is a failed request, not a quiet machine."
+          onRetry={() => refetch()}
+          retrying={isFetching}
+        />
       )}
 
       {!isLoading && !isError && alarms.length === 0 && (

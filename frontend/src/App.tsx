@@ -6,7 +6,7 @@ import { Routes, Route } from 'react-router-dom'
 // it would pull those heavy libs into the initial bundle.
 import { AdminRoute, Layout, ProtectedRoute } from './components/layout'
 import { AcceptInvitation, Login } from './pages/auth'
-import { TooltipProvider, DialogProvider } from './components/ui'
+import { TooltipProvider, DialogProvider, ToastProvider } from './components/ui'
 import ErrorBoundary from './components/ErrorBoundary'
 
 // Route-level code splitting (task 4): each page is fetched on demand instead of
@@ -88,6 +88,7 @@ const App: FC = () => {
   return (
     <TooltipProvider>
       <DialogProvider>
+      <ToastProvider>
       <ErrorBoundary>
         <Suspense fallback={<RouteFallback />}>
           <Routes>
@@ -188,6 +189,7 @@ const App: FC = () => {
           </Routes>
         </Suspense>
       </ErrorBoundary>
+      </ToastProvider>
       </DialogProvider>
     </TooltipProvider>
   )

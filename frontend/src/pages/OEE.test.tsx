@@ -1,3 +1,7 @@
+// FS-766. Spread the real module rather than listing exports. A hand-written barrel mock is
+// a second implementation of `components/ui`, and it drifts the moment the page imports a
+// primitive the list does not name — three suites failed with "No ErrorState export is
+// defined on the mock", which reads as a mock defect and is actually a real change arriving.
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
@@ -54,7 +58,8 @@ vi.mock('../hooks/useAuth', () => ({ useAuth: () => ({ isAdmin: true }) }))
 vi.mock('../components/common', () => ({ ExportButton: () => null }))
 // The Radix tooltip needs a provider; pass-through keeps this test on the
 // click→expand behavior, not tooltip plumbing.
-vi.mock('../components/ui', () => ({
+vi.mock('../components/ui', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../components/ui')>()),
   Tooltip: ({ children }: any) => <>{children}</>,
   TooltipTrigger: ({ children }: any) => children,
   TooltipContent: () => null,

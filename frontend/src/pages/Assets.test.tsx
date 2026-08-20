@@ -1,3 +1,7 @@
+// FS-766. Spread the real module rather than listing exports. A hand-written barrel mock is
+// a second implementation of `components/ui`, and it drifts the moment the page imports a
+// primitive the list does not name — three suites failed with "No ErrorState export is
+// defined on the mock", which reads as a mock defect and is actually a real change arriving.
 import { fireEvent, render, screen } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 import { describe, expect, it, vi, beforeEach } from 'vitest'
@@ -13,7 +17,8 @@ vi.mock('../api', () => ({
   assetsApi: { getTypes: vi.fn().mockResolvedValue([{ id: 'ty1', name: 'Mill' }]) },
   workcellsApi: { list: vi.fn().mockResolvedValue([{ id: 'wc1', name: 'Cell A' }]) },
 }))
-vi.mock('../components/ui', () => ({
+vi.mock('../components/ui', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../components/ui')>()),
   Tooltip: ({ children }: any) => <>{children}</>,
   TooltipTrigger: ({ children }: any) => children,
   TooltipContent: () => null,
@@ -38,7 +43,19 @@ describe('Assets page states', () => {
   it('shows an error state (not a blank screen) when the fetch fails', () => {
     useAssets.mockReturnValue({ data: undefined, isLoading: false, isError: true })
     renderAssets()
-    expect(screen.getByText(/failed to load/i)).toBeInTheDocument()
+    expect(screen.getByRole('alert')).toHaveTextContent(/could not be loaded/i)
+  })
+
+  it('offers a retry rather than requiring a reload', () => {
+    // A reload is not a neutral recovery here: it clears the search box and the filter
+    // bar this page exists for (FS-766).
+    const refetch = vi.fn()
+    useAssets.mockReturnValue({
+      data: undefined, isLoading: false, isError: true, refetch, isFetching: false,
+    })
+    renderAssets()
+    fireEvent.click(screen.getByRole('button', { name: /retry/i }))
+    expect(refetch).toHaveBeenCalledTimes(1)
   })
 
   it('shows an empty state when there are no assets', () => {

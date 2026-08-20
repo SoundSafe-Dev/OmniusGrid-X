@@ -9,7 +9,9 @@ import {
 } from 'lucide-react';
 
 import { handleApiError } from '../../api';
-import { Badge, Button, Card, Input, Select } from '../../components/ui';
+import { Badge, Button, Card, Input, Select,
+  useDialog,
+} from '../../components/ui';
 import { useAuth } from '../../hooks/useAuth';
 import {
   useAgentRemoteOperation,
@@ -44,6 +46,7 @@ interface ActiveCommand {
 }
 
 export const AgentOperationsPanel: FC = () => {
+  const { confirm } = useDialog();
   const { isOperator } = useAuth();
   const inventory = useFleetInventory();
   const submit = useSubmitAgentRemoteOperation();
@@ -75,13 +78,18 @@ export const AgentOperationsPanel: FC = () => {
     submit.isPending ||
     Boolean(command.data && !TERMINAL_STATUSES.has(command.data.status));
 
-  const startOperation = (action: AgentRemoteOperationAction) => {
+  const startOperation = async (action: AgentRemoteOperationAction) => {
     if (!assetId) return;
+    // A collector restart interrupts data capture on a live machine, so it is confirmed —
+    // through the styled dialog rather than `window.confirm`, which some embedded contexts
+    // suppress entirely and would let the restart proceed unconfirmed (FS-766).
     if (
       action === 'collector_restart' &&
-      !window.confirm(
-        `Restart only the collector for "${selectedAsset?.name || assetId}"?`
-      )
+      !(await confirm({
+        title: 'Restart this collector?',
+        message: `Data capture for "${selectedAsset?.name || assetId}" pauses until it comes back.`,
+        confirmLabel: 'Restart collector',
+      }))
     ) {
       return;
     }

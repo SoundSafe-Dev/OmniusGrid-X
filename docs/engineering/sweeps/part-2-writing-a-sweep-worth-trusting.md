@@ -1956,6 +1956,15 @@ one of its findings. The habit that catches it:
      reason to suspect: a glossary entry saying "hash chaining prevents tampering" had been
      confidently false since it was written, and it makes the overclaim the control catalogue
      exists to avoid.
+
+269. **Test the artifact you ship, not the one you develop against.** A manual-chunk cycle in
+     `vite.config.ts` made `React.createContext` undefined inside react-query and
+     white-screened the entire production bundle — while `vite build` exited 0, `tsc` was
+     clean, 1,211 unit tests passed against the SOURCE, and the Playwright suite passed
+     against the DEV SERVER, which does no chunking and therefore cannot reproduce it. The
+     production Docker image had even been "verified" by checking nginx returned 200 for
+     `index.html`: a 200 for a page that throws on load. A bundler's output has failure modes
+     that do not exist upstream of it, so at least one check must load what is deployed.
 ---
 
 ## Open observations, not yet tickets

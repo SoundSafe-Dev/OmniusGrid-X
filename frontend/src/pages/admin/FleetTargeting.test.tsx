@@ -9,6 +9,7 @@
  * look identical on screen and mean opposite things.
  */
 import { render, screen, waitFor } from '@testing-library/react'
+import { DialogProvider } from '../../components/ui'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { MemoryRouter } from 'react-router-dom'
 import { describe, expect, it, vi, beforeEach } from 'vitest'
@@ -38,9 +39,15 @@ function show() {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   return render(
     <QueryClientProvider client={client}>
-      <MemoryRouter>
-        <FleetTargeting />
-      </MemoryRouter>
+      {/* FS-766. The page confirms destructive actions through `DialogProvider` now
+          rather than `window.confirm`, and `useDialog` throws outside its provider on
+          purpose — a silent no-op would let a delete proceed unconfirmed. The test tree
+          therefore has to include it, exactly as `App.tsx` does. */}
+      <DialogProvider>
+        <MemoryRouter>
+          <FleetTargeting />
+        </MemoryRouter>
+      </DialogProvider>
     </QueryClientProvider>,
   )
 }

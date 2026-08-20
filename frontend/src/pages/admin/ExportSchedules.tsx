@@ -1,7 +1,9 @@
 import { FC, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { CalendarClock, Pause, Play, Plus, Trash2 } from 'lucide-react';
-import { Card, Button, Badge, Table, SkeletonTable, Input } from '../../components/ui';
+import { Card, Button, Badge, Table, SkeletonTable, Input,
+  useDialog,
+} from '../../components/ui';
 import {
   exportSchedulesApi,
   ScheduledExport,
@@ -44,6 +46,7 @@ const TONE: Record<string, 'success' | 'error' | 'warning' | 'neutral'> = {
 };
 
 export const ExportSchedules: FC = () => {
+  const { confirm } = useDialog();
   const queryClient = useQueryClient();
   const [showCreate, setShowCreate] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
@@ -249,11 +252,17 @@ export const ExportSchedules: FC = () => {
                       variant="secondary"
                       size="sm"
                       className="ml-2"
-                      onClick={() => {
+                      onClick={async () => {
+                        // Styled, focus-managed, and — unlike `window.confirm` — not
+                        // silently suppressed in embedded/webview contexts, where the
+                        // delete would otherwise proceed unconfirmed (FS-766).
                         if (
-                          !window.confirm(
-                            `Delete the schedule "${schedule.name}"? Its definition is removed; pausing keeps it.`,
-                          )
+                          !(await confirm({
+                            title: 'Delete this schedule?',
+                            message: `"${schedule.name}" will be removed. Pausing it instead keeps the definition.`,
+                            destructive: true,
+                            confirmLabel: 'Delete schedule',
+                          }))
                         ) {
                           return;
                         }

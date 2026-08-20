@@ -41,7 +41,7 @@ vi.mock('../../components/fleet/GeoTabIntegration', () => ({
   ),
 }))
 
-import { TooltipProvider } from '../../components/ui'
+import { TooltipProvider, DialogProvider } from '../../components/ui'
 import { FleetOverview, OrganizationTree } from './FleetPages'
 
 // Shapes taken from the clients' declared return types, not invented: `workcellsApi.list`
@@ -77,7 +77,11 @@ const wrap = (ui: React.ReactElement) => {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   return render(
     <QueryClientProvider client={qc}>
-      <TooltipProvider>{ui}</TooltipProvider>
+      {/* FS-766. The page confirms destructive actions through `DialogProvider` now
+          rather than `window.confirm`, and `useDialog` throws outside its provider on
+          purpose — a silent no-op would let a delete proceed unconfirmed. The test tree
+          therefore has to include it, exactly as `App.tsx` does. */}
+      <DialogProvider><TooltipProvider>{ui}</TooltipProvider></DialogProvider>
     </QueryClientProvider>,
   )
 }

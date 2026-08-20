@@ -1,3 +1,7 @@
+// FS-766. Spread the real module rather than listing exports. A hand-written barrel mock is
+// a second implementation of `components/ui`, and it drifts the moment the page imports a
+// primitive the list does not name — three suites failed with "No ErrorState export is
+// defined on the mock", which reads as a mock defect and is actually a real change arriving.
 import { fireEvent, render, screen } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 import { describe, expect, it, vi, beforeEach } from 'vitest'
@@ -25,7 +29,8 @@ vi.mock('react-router-dom', async (orig) => ({
   useParams: () => ({ id: 'a1' }),
 }))
 vi.mock('../hooks/useAuth', () => ({ useAuth: () => ({ isAdmin: true, isOperator: true }) }))
-vi.mock('../components/ui', () => ({
+vi.mock('../components/ui', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../components/ui')>()),
   Tooltip: ({ children }: any) => <>{children}</>,
   TooltipTrigger: ({ children }: any) => children,
   TooltipContent: () => null,
@@ -59,8 +64,12 @@ describe('AssetDetail page states', () => {
   it('shows a distinct error state (not "not found") when the fetch fails', () => {
     assetResult.current = { data: undefined, isLoading: false, isError: true }
     renderPage()
-    expect(screen.getByText(/failed to load/i)).toBeInTheDocument()
+    expect(screen.getByRole('alert')).toHaveTextContent(/could not be loaded/i)
     expect(screen.queryByText(/not found/i)).not.toBeInTheDocument()
+    // Both escapes are present: retry for a transient failure, and a way out for an asset
+    // that will never load. Offering only the retry traps the user on a dead page.
+    expect(screen.getByRole('button', { name: /retry/i })).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: /back to assets/i })).toBeInTheDocument()
   })
 
   it('shows not-found when the asset genuinely does not exist', () => {
