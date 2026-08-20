@@ -3,7 +3,7 @@
 Findings that are **understood, reproduced, and deliberately not fixed** — because closing
 each one is a product or contract decision rather than a bug fix.
 
-**Seven when this page was written; five now.** Two closed on 2026-08-05:
+**Seven when this page was written; five closed, two open.** Two closed on 2026-08-05:
 
 * *A PDF page's text truncated at 20,000 characters, silently.* Left open on the belief that
   fixing it meant changing a return shape two consumers read. **The belief was wrong and
@@ -215,3 +215,52 @@ It also cost a self-inflicted outage: the same session's edit added
 three endpoints answered **500 on every call**. Nothing caught it until a real request did —
 now pinned by `TestTheSignalCanActuallyBeSent` in
 `backend/tests/test_capped_lists_cannot_grow.py`, which is an AST check costing milliseconds.
+
+---
+
+## 2. `audit_logs` grows without bound, and pruning it contradicts a control we plan to add
+
+**The state.** `audit_logs` (migration `009_audit_logs.sql`) has **no retention policy at all**.
+Its sibling `user_audit_logs` has one — `005_data_retention.sql:177`, 7 years for GDPR — and
+the raw `telemetry` hypertable is dropped after 7 days. `audit_logs` is neither: it is a plain
+table, so `add_retention_policy` does not even apply to it, and nothing else deletes from it.
+
+**Why it is not simply a bug to fix.** Three things pull in different directions:
+
+1. **The hash chain.** Migration `069_audit_hash_chain_is_verifiable.sql` makes each tenant's
+   rows a chain, each row hashing its predecessor's digest. Delete the oldest rows and the
+   earliest surviving row's `previous_hash` names a row that is gone — a verifier must then be
+   taught that a pruned prefix is a *root*, not a violation. FS-743's whole point was that "an
+   integrity control that always reports a violation is indistinguishable from one that never
+   reports anything"; a naive prune recreates exactly that.
+
+2. **OG-AU-004 plans to forbid deletion.** Its remediation note (due 2026-12-31) is
+   `REVOKE UPDATE, DELETE ON audit_logs` plus a WORM export — the tamper-*evidence* becoming
+   tamper-*resistance*. A retention job that deletes rows is the opposite change. Both are
+   defensible; they cannot both be built without deciding the order, and archive-then-delete
+   is the only sequence that satisfies both.
+
+3. **How long is required is a contract question**, not an engineering one. CMMC 3.3.1 asks
+   for a defined retention period without naming it; the customers here may carry longer
+   obligations under DFARS or a specific programme.
+
+**Why it is urgent rather than merely open.** The failure mode is circular and ends in the
+`critical` tier. Unbounded audit growth fills the volume; the audit write then fails; and
+`AuditWriteFailing` is severity **critical**. The control that records what happened is the
+one that ends the system. Until FS-781 nothing anywhere alerted on storage exhaustion at all,
+so the first symptom would have been the failure itself.
+
+**What was done instead of deciding.** FS-817 made the growth *visible*, which is not a
+decision: `pg_table_growth` in `infra/prometheus/postgres_queries.yaml` exports the table's
+size, `AuditLogTableGrowingUnbounded` pages at 20 GB, and `AuditLogGrowthAccelerating`
+projects 30 days ahead so the deadline arrives before the outage does.
+
+**What would close this.** A retention window with a stated basis; a WORM export that runs
+before any delete; a verifier that treats a pruned prefix as a chain root; and a decision on
+whether `REVOKE DELETE` lands before or after, since it makes the retention job impossible if
+it lands first.
+
+**Pinned by** `backend/tests/test_the_audit_table_growth_is_watched.py`, which asserts that
+`audit_logs` still has no retention policy (so closing this decision fails the test and forces
+this entry to be deleted) and that both alerts still exist.
+

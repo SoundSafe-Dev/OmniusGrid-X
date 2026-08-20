@@ -1086,6 +1086,47 @@ groups:
           summary: "Public TLS certificate expires in under 3 days"
           description: "{{ $labels.instance }} certificate expires in {{ $value | humanizeDuration }}. Renewal is now an incident."
 
+      # FS-817. `audit_logs` has NO retention policy — only `user_audit_logs` does — and it
+      # is a plain table, so `add_retention_policy` does not apply either. It grows without
+      # bound, and the loop closes on itself: unbounded audit growth fills the volume, the
+      # audit write then fails, and `AuditWriteFailing` below is severity CRITICAL. The
+      # control that records what happened is the one that ends the system.
+      #
+      # Whether to PRUNE it is a live decision — migration 069 makes each tenant's rows a
+      # hash chain, and OG-AU-004 plans `REVOKE UPDATE, DELETE` on this very table, which a
+      # retention job contradicts. Being able to SEE it coming is not a decision, and that
+      # is what these two rules are: a size ceiling, and a growth rate that says how long
+      # the current trajectory has left.
+      - alert: AuditLogTableGrowingUnbounded
+        expr: pg_table_growth_total_bytes{table_name="audit_logs"} > 21474836480
+        for: 1h
+        labels:
+          severity: high
+          team: data
+        annotations:
+          summary: "audit_logs has passed 20 GB with no retention policy"
+          description: >-
+            {{ $value | humanize1024 }}B of audit rows and nothing prunes them. See
+            FS-817: pruning needs the WORM export and a decision about OG-AU-004's planned
+            REVOKE DELETE, so this is a real deadline rather than a threshold to raise.
+
+      # 24h of history, not 7d: the window has to be one a promtool unit test can
+      # actually drive, and a rule nobody can drive true is the class this whole sprint
+      # has been closing. The capacity dashboard carries the longer-baseline forecast.
+      - alert: AuditLogGrowthAccelerating
+        expr: |
+          predict_linear(pg_table_growth_total_bytes{table_name="audit_logs"}[24h], 30 * 24 * 3600)
+          > 107374182400
+        for: 2h
+        labels:
+          severity: medium
+          team: data
+        annotations:
+          summary: "audit_logs is on track to exceed 100 GB within 30 days"
+          description: >-
+            Projected from the last 24 hours. Size tells you where you are; this tells
+            you how long you have.
+
       # FS-783. The counter exists precisely to expose a silent degraded mode — a
       # correlation job store that fell back to per-process memory because Redis did
       # not answer, so a job created on one worker is invisible to the next request —

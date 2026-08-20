@@ -371,3 +371,61 @@ tests:
       - eval_time: 30m
         alertname: CorrelationJobStoreDegraded
         exp_alerts: []
+
+  # ── The audit table nothing prunes (FS-817) ──────────────────────────────────────
+  #
+  # ONE-MINUTE input, deliberately. The first draft used a 1h interval and the alerts never
+  # fired: Prometheus's 5m lookback makes an hourly series stale for 55 minutes of every
+  # hour, so a `for:` clause can never accumulate. The rule was correct and the test was
+  # driving it wrong — which, undiagnosed, reads exactly like an unfirable alert.
+  - interval: 1m
+    name: an unbounded audit table pages before it fills the volume
+    input_series:
+      # 25 GiB, growing 1 GiB/day (745654 B/min).
+      - series: 'pg_table_growth_total_bytes{table_name="audit_logs"}'
+        values: '26843545600+745654x200'
+    alert_rule_test:
+      - eval_time: 30m
+        alertname: AuditLogTableGrowingUnbounded
+        exp_alerts: []            # under `for: 1h`, not yet
+      - eval_time: 90m
+        alertname: AuditLogTableGrowingUnbounded
+        exp_alerts:
+          - exp_labels:
+              severity: high
+              team: data
+              table_name: audit_logs
+            exp_annotations:
+              summary: "audit_logs has passed 20 GB with no retention policy"
+              description: "25.06GiB of audit rows and nothing prunes them. See FS-817: pruning needs the WORM export and a decision about OG-AU-004's planned REVOKE DELETE, so this is a real deadline rather than a threshold to raise."
+
+  - interval: 1m
+    name: growth on track to pass 100 GB in a month is a deadline
+    input_series:
+      # 30 GiB now, growing 3 GiB/day -> ~120 GiB in 30 days.
+      - series: 'pg_table_growth_total_bytes{table_name="audit_logs"}'
+        values: '32212254720+2236962x1800'
+    alert_rule_test:
+      - eval_time: 26h
+        alertname: AuditLogGrowthAccelerating
+        exp_alerts:
+          - exp_labels:
+              severity: medium
+              team: data
+              table_name: audit_logs
+            exp_annotations:
+              summary: "audit_logs is on track to exceed 100 GB within 30 days"
+              description: "Projected from the last 24 hours. Size tells you where you are; this tells you how long you have."
+
+  - interval: 1m
+    name: a small, flat audit table is quiet on both
+    input_series:
+      - series: 'pg_table_growth_total_bytes{table_name="audit_logs"}'
+        values: '1073741824x1800'
+    alert_rule_test:
+      - eval_time: 26h
+        alertname: AuditLogTableGrowingUnbounded
+        exp_alerts: []
+      - eval_time: 26h
+        alertname: AuditLogGrowthAccelerating
+        exp_alerts: []

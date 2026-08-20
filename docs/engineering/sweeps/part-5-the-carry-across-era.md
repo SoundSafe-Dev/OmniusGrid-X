@@ -5848,3 +5848,38 @@ know they were connected. Related to rule 39 (a comment records a fix, only a gu
 the next one), and to the FS-489 case where 47 e2e tests had never run because a collector
 pattern did not match their filenames.
 
+---
+
+## Rule 276 — choose windows a test can drive
+
+Two alerts were added for `audit_logs` growth (FS-817). The first draft of the second read:
+
+```yaml
+- alert: AuditLogGrowthAccelerating
+  expr: predict_linear(pg_table_growth_total_bytes{table_name="audit_logs"}[7d], 30*24*3600) > 107374182400
+  for: 6h
+```
+
+Faithful to the phenomenon — a table growing over weeks deserves a week-long baseline — and
+**impossible to unit-test at reasonable cost**. Driving it true needs seven days of samples;
+at the file's one-minute evaluation interval that is 10,080 input points for one series, and
+the `for: 6h` needs 360 more evaluations on top. Nobody writes that test, so the rule ships
+unverified. Which is exactly how the nine unfirable alerts of FS-774 got there: not by anyone
+deciding not to test them, but by each being slightly too awkward to test at the moment it was
+written.
+
+The window is now `[24h]` with `for: 2h` — 1,560 points, an ordinary test — and the
+seven-day baseline lives on the capacity dashboard, where being un-unit-testable costs
+nothing because a dashboard makes no claim that can silently fail.
+
+**And the corollary, which cost more time than the rule did.** The *first* test of the first
+alert fed the gauge at a one-hour interval and neither alert fired. The instinct is to
+suspect the rule. The rule was fine: Prometheus's default lookback is five minutes, so an
+hourly series is stale for fifty-five minutes of every hour, the alert flickers in and out of
+its pending state, and a `for:` clause can never accumulate. A perfectly good rule looked
+exactly like an unfirable one — in a sprint whose entire subject is unfirable rules, which is
+precisely when a false positive is most likely to be believed.
+
+So: when a test cannot drive a rule true, check the test's sampling interval against the
+lookback window before touching the rule.
+

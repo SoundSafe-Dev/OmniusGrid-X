@@ -14874,3 +14874,65 @@ allowed to skip, put the refusal in the suite — gated on an environment variab
 then assert from the suite that CI still sets it. The check and the thing checked then move
 together, and the failure mode becomes a red test rather than a silent narrowing.
 
+---
+
+## FS-817 — the audit table nobody prunes, and why not pruning it was the right call
+
+`audit_logs` has **no retention policy**. Its sibling `user_audit_logs` has one — 7 years for
+GDPR, `005_data_retention.sql:177` — and raw `telemetry` is dropped after 7 days. `audit_logs`
+is neither, and being a plain table rather than a hypertable, `add_retention_policy` does not
+even apply to it. Nothing else deletes from it either.
+
+**The failure is circular and lands on the critical tier.** Unbounded audit growth fills the
+volume; the audit write then fails; and `AuditWriteFailing` is severity `critical`. The control
+that records what happened is the one that ends the system. Until FS-781 added the PVC alerts,
+nothing anywhere alerted on storage exhaustion, so the first symptom would have been the
+failure itself.
+
+### Why the obvious fix is wrong
+
+Adding a retention policy looks like a five-line migration. Three things say otherwise:
+
+1. **The hash chain.** Migration 069 makes each tenant's rows a chain, each row hashing its
+   predecessor's digest. Delete the oldest rows and the earliest survivor's `previous_hash`
+   names a row that is gone. A verifier must be taught that a pruned prefix is a **root**, not
+   a violation — and FS-743 established the stakes exactly: "an integrity control that always
+   reports a violation is indistinguishable from one that never reports anything: both are
+   ignored within a week." A naive prune recreates the bug that migration existed to fix.
+
+2. **OG-AU-004 plans to make deletion impossible.** Its remediation note is
+   `REVOKE UPDATE, DELETE ON audit_logs` plus a WORM export — tamper-*evidence* becoming
+   tamper-*resistance*. A retention job is the opposite change. Both are defensible; only
+   archive-then-delete satisfies both, and only in that order.
+
+3. **How long is required is a contract question.** CMMC 3.3.1 asks for a defined period
+   without naming one, and these customers may carry longer obligations.
+
+### What was done instead
+
+The half that is *not* a decision: making it visible before it is an outage. `pg_table_growth`
+exports the table's size and live rows; `AuditLogTableGrowingUnbounded` pages at 20 GB; and
+`AuditLogGrowthAccelerating` projects 30 days ahead, so the deadline arrives before the volume
+does. Registered as open decision #2, pinned by
+`test_the_audit_table_growth_is_watched.py` — which **fails the day someone adds a retention
+policy**, telling them to delete the register entry and this file rather than leave a register
+outliving its item.
+
+### A note on the promtool test, which was wrong first
+
+The first draft of the unit test fed the size gauge at a 1-hour interval and neither alert
+fired. The rules were correct; the test was driving them wrong. Prometheus's 5-minute lookback
+makes an hourly series stale for 55 minutes of every hour, so a `for:` clause can never
+accumulate. Undiagnosed, that reads exactly like an unfirable alert — the class Wave 1 spent
+its whole length closing — and the reflex would have been to "fix" a working rule. The alert's
+own window was also lowered from 7 days to 24 hours **because** the 7-day version could not be
+driven true by any test of reasonable size, and a rule nobody can drive is the thing this
+sprint exists to stop shipping.
+
+RULE 276 — **choose windows a test can drive.** A rule over `[7d]` with `for: 6h` is honest
+about the phenomenon and impossible to unit-test at reasonable cost, so in practice it ships
+unverified — which is how the nine unfirable alerts of FS-774 got there. Prefer the shortest
+window that still answers the question, keep the longer baseline on a dashboard where being
+un-unit-testable costs nothing, and when a test cannot drive a rule true, suspect the test's
+sampling interval against Prometheus's 5-minute lookback before suspecting the rule.
+

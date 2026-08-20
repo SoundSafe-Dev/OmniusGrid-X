@@ -2020,6 +2020,15 @@ one of its findings. The habit that catches it:
      while the gate stayed green. Put the refusal in the suite, gated on an environment
      variable CI sets, and assert from the suite that CI still sets it. The check and the
      thing checked then move together.
+
+276. **Choose windows a test can drive.** A rule over `[7d]` with `for: 6h` is faithful to the
+     phenomenon and impossible to unit-test at reasonable cost, so it ships unverified — which
+     is how FS-774's nine unfirable alerts got there. Prefer the shortest window that still
+     answers the question and leave the longer baseline on a dashboard, where being
+     un-unit-testable costs nothing. And when a test cannot drive a rule true, suspect the
+     test's own sampling interval first: Prometheus's 5-minute lookback makes an hourly series
+     stale for 55 minutes of every hour, so a `for:` clause can never accumulate and a
+     perfectly good rule looks unfirable.
 ---
 
 ## Open observations, not yet tickets

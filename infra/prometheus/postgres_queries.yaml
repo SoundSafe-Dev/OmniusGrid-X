@@ -55,3 +55,47 @@ pg_connections:
     - limit_total:
         usage: "GAUGE"
         description: "Configured max_connections"
+
+# Table growth (FS-817). `audit_logs` has NO retention policy at all — only
+# `user_audit_logs` does (`005_data_retention.sql:177`, 7 years for GDPR) — and it is a
+# plain table, not a hypertable, so `add_retention_policy` does not apply to it either.
+#
+# It therefore grows without bound, and until FS-781 nothing anywhere alerted on storage
+# exhaustion. The loop closes on itself: unbounded audit growth fills the volume, the audit
+# write then fails, and `AuditWriteFailing` is severity CRITICAL. The control that proves
+# what happened is the one that ends the system.
+#
+# Whether to PRUNE it is a live decision rather than an oversight, and it is not ours to
+# take silently: migration 069 makes each tenant's rows a hash chain whose verification
+# would have to learn that a pruned prefix is a root and not a violation, and OG-AU-004's
+# remediation plans `REVOKE UPDATE, DELETE ON audit_logs` — which a retention job
+# contradicts. Archive-then-delete reconciles them; that is FS-817's real shape and it needs
+# the WORM export first.
+#
+# What is NOT a decision is being able to see it coming. These series make the growth
+# visible while the question is open.
+pg_table_growth:
+  query: |
+    SELECT
+      relname AS table_name,
+      pg_total_relation_size(c.oid)              AS total_bytes,
+      COALESCE(n_live_tup, 0)                    AS live_rows
+    FROM pg_class c
+    JOIN pg_namespace ns ON ns.oid = c.relnamespace
+    LEFT JOIN pg_stat_user_tables s ON s.relid = c.oid
+    WHERE ns.nspname = 'public'
+      AND c.relkind = 'r'
+      AND relname IN (
+        'audit_logs', 'user_audit_logs', 'telemetry', 'packml_states',
+        'error_events', 'session_messages'
+      )
+  metrics:
+    - table_name:
+        usage: "LABEL"
+        description: "Table whose growth is tracked"
+    - total_bytes:
+        usage: "GAUGE"
+        description: "Total on-disk size including indexes and TOAST"
+    - live_rows:
+        usage: "GAUGE"
+        description: "Estimated live tuples"
