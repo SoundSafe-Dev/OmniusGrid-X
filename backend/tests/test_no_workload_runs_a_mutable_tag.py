@@ -21,8 +21,24 @@ WHAT COUNTS AS PINNED. A `@sha256:` digest. A version tag is documentation, not 
 publishers move tags, and the only immutable reference a registry offers is the digest. The
 tag is kept alongside for readability precisely because a bare digest tells a reader nothing.
 
-WHAT IS EXEMPT, and why each is a decision rather than an oversight — see `DEPLOY_PINNED`
-and `NOT_DEPLOYED` below.
+AND THE OTHER HALF OF THE SUPPLY CHAIN. The first version of this file checked Kubernetes
+manifests only — which image RUNS — and said nothing about the Dockerfiles, which decide what
+is IN it. Every `FROM` in the repository was unpinned, and three named their image with **no
+tag at all**, resolving to `:latest`. So two builds of the same release could sit on different
+base images and "rebuild last month's release" was not a thing that could be done.
+
+Measured against the backend base with trivy on 2026-08-20: **6,139 vulnerabilities, 0
+CRITICAL, 193 HIGH of which 102 had a published fix.** That figure is why the image gate in
+`ci-cd.yml` blocks on CRITICAL rather than HIGH — at HIGH it would fail on its first run, on
+findings whose only remedy is a Red Hat base-image bump we do not control the cadence of.
+
+Pinning a base image trades floating-and-unreproducible for frozen-and-stale, so the pin comes
+with `tests/k8s/check_base_images_are_current.py`, run nightly: it compares each pinned digest
+against what its tag resolves to today and reports the drift. A pin without a bump process is
+the second problem wearing the first one's clothes.
+
+WHAT IS EXEMPT, and why each is a decision rather than an oversight — see `DEPLOY_PINNED`,
+`UNRESOLVABLE`, `NOT_DEPLOYED` and `OTHER_LANE_DOCKERFILES` below.
 """
 
 from __future__ import annotations
@@ -57,6 +73,17 @@ UNRESOLVABLE = {
         "comment already says 'pin a digest in production'. Closing this means building and "
         "publishing that image, then pinning it here — and the CNPG stack is applied in no "
         "environment today, so nothing is currently running on the floating tag."
+    ),
+}
+
+#: Dockerfiles belonging to another lane. Registered rather than edited, per the lane rule —
+#: and named here so the exemption is visible rather than achieved by the sweep not looking.
+OTHER_LANE_DOCKERFILES = {
+    "rag-inference/Dockerfile": (
+        "MLOps lane (HARSH). Still `FROM python:3.10-slim`, unpinned and a Python version "
+        "behind the rest of the platform. Already registered by "
+        "test_the_fips_claim_is_not_just_a_base_image.py, which records it as outside the "
+        "CUI path today. Pinning it is that lane's call, not this one's."
     ),
 }
 
@@ -102,6 +129,20 @@ def _images_in(node) -> list[str]:
     return out
 
 
+def _dockerfile_bases() -> list[tuple[str, str]]:
+    """(dockerfile, image reference) for every FROM in the repository."""
+    found = []
+    for path in sorted(REPO.rglob("Dockerfile*")):
+        if any(part in path.parts for part in ("node_modules", "venv", ".git")):
+            continue
+        relative = str(path.relative_to(REPO))
+        for line in path.read_text().splitlines():
+            match = re.match(r"^FROM\s+(\S+)", line)
+            if match:
+                found.append((relative, match.group(1)))
+    return found
+
+
 def _repo_of(image: str) -> str:
     return image.split("@")[0].rsplit(":", 1)[0] if ":" in image.split("@")[0] else image.split("@")[0]
 
@@ -114,6 +155,11 @@ def test_every_unresolvable_image_says_why(image: str):
 
 
 class TestTheMeasurementIsReal:
+    def test_it_found_the_dockerfile_bases(self):
+        bases = _dockerfile_bases()
+        assert len(bases) >= 6, f"only {len(bases)} FROM lines parsed: {bases}"
+        assert any("backend/Dockerfile" == p for p, _i in bases)
+
     def test_it_found_the_images(self):
         images = _image_references()
         assert len(images) >= 15, f"only {len(images)} image references parsed"
@@ -142,6 +188,46 @@ def test_no_deployed_workload_runs_a_mutable_tag():
         "to what was running' has no answer. Resolve the digest and write "
         "`image:tag@sha256:...` — the tag stays for readability, the digest is what "
         "Kubernetes enforces."
+    )
+
+
+def test_every_dockerfile_base_is_pinned_to_a_digest():
+    """The half this file originally missed. A manifest pin says which image runs; a
+    Dockerfile pin says what is inside it, and an unpinned FROM makes the build itself
+    unreproducible."""
+    offenders = [
+        f"{path}: {image}"
+        for path, image in _dockerfile_bases()
+        if "@sha256:" not in image and path not in OTHER_LANE_DOCKERFILES
+    ]
+    assert not offenders, (
+        "these Dockerfile base images are not pinned to a digest:\n  "
+        + "\n  ".join(offenders)
+        + "\n\nAn unpinned FROM means two builds of the same release can sit on different "
+        "base images, so a release cannot be rebuilt. Resolve the digest with "
+        "tests/k8s/check_base_images_are_current.py's helper and write "
+        "`FROM image@sha256:...`."
+    )
+
+
+def test_the_base_image_freshness_check_runs_somewhere():
+    """A digest pin with no bump process is frozen-and-stale rather than
+    floating-and-unreproducible — the same problem wearing different clothes, and quieter,
+    because nothing breaks while the CVE count climbs."""
+    nightly = (REPO / ".github" / "workflows" / "nightly-e2e.yml").read_text()
+    assert "check_base_images_are_current.py" in nightly, (
+        "nothing runs the base-image freshness check. Every FROM in this repository is "
+        "pinned, so without it the bases age out of security support silently."
+    )
+
+
+@pytest.mark.parametrize("dockerfile", sorted(OTHER_LANE_DOCKERFILES))
+def test_every_other_lane_dockerfile_still_exists(dockerfile: str):
+    """An exemption naming a file that has been deleted or renamed is an exemption nobody
+    revisits — and it silently widens to whatever takes that path next."""
+    assert (REPO / dockerfile).exists(), (
+        f"{dockerfile} is exempted from digest pinning but no longer exists. Delete the "
+        f"entry, or update it to the new path."
     )
 
 

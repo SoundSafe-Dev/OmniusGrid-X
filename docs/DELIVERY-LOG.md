@@ -15146,3 +15146,88 @@ sections as though they were true, because the document looks finished and the c
 entry moves. It also means the first person to open it during an incident discovers the gap
 at the worst possible moment. Mark the gaps in the document itself, not only in the tracker.
 
+---
+
+## FS-821 (continued) / FS-801 — verifying the gate, and the check the deploy could not make
+
+Two things were shipped in the previous slice with a caveat attached. Both caveats are now
+closed, and closing them found more.
+
+### The image gate: verified, and not vacuously
+
+FS-825 added an `exit-code` to the image scan, and the commit said plainly that it scans an
+image which only exists after the push, so its first real exercise would be the next CI run.
+That is an uncomfortable thing to leave in a supply-chain gate.
+
+Scanned instead with `trivy` against the exact base the Dockerfile uses, with the gate's exact
+settings — `--severity CRITICAL --ignore-unfixed --ignorefile .trivyignore`:
+
+| target | fixable CRITICAL | exit |
+|---|---|---|
+| `registry.access.redhat.com/ubi9/python-311` | 0 | **0 — passes** |
+| `backend/requirements.txt` | 0 | **0 — passes** |
+
+And the check that matters more, because a gate can pass by finding nothing at all:
+
+```
+6,139 vulnerabilities parsed in the base image
+      0 CRITICAL
+    193 HIGH      (102 with a published fix)
+   3735 MEDIUM
+   2211 LOW
+```
+
+The scanner is working and the policy is letting 6,139 findings through deliberately. **The
+102 fixable HIGHs are the vindication of the CRITICAL threshold** — the earlier commit
+justified it as avoiding "unfixable distro CVEs", and the real reason is stronger: a HIGH gate
+would have failed on its first run, on 102 findings whose only remedy is a Red Hat base-image
+bump nobody here controls the cadence of.
+
+### The finding that came out of it: no `FROM` was pinned either
+
+FS-821 pinned every image in the Kubernetes manifests — which image *runs*. It said nothing
+about the Dockerfiles, which decide what is *in* it. Every `FROM` in the repository was
+unpinned, and three named their image with **no tag at all**, resolving to `:latest`.
+
+So two builds of the same release could sit on different base images, and "rebuild last
+month's release" was not a thing that could be done. All six are now digest-pinned.
+
+**Pinning alone would have been a trade, not a fix.** A pin never moves, so the base ages out
+of security support silently — nothing breaks, the build stays green, and the CVE count
+climbs. `tests/k8s/check_base_images_are_current.py` runs nightly and compares each pinned
+digest against what its tag resolves to today. Nightly rather than per-PR on purpose: a base
+image moving is news about the world, not a defect in whichever pull request happens to be
+open, and a check that fails unrelated merges is a check people route around.
+
+### The deploy can now tell whether the data moved
+
+The previous slice wired the CNPG cutover into `overlays/production` and made the deploy refuse
+if the operator's CRDs are absent. The honest caveat was that the CRD check proves the
+*operator* exists and says nothing about whether the customer data was ever moved out of
+`base/timescaledb-statefulset.yaml`.
+
+That gap fails in the quietest possible way. A healthy but **empty** CNPG cluster accepts the
+connection; the migration Job builds the schema in it; the application answers 200; and every
+customer sees an empty product — while the probe-based availability SLI reports perfect
+health, because the system genuinely is up. Nothing crashes. No alert fires. The old data is
+still in the StatefulSet, so it is recoverable, but it is a total outage that every instrument
+reports as a successful deploy.
+
+`tests/k8s/preflight_cnpg_cutover.py` runs between the CNPG apply and the manifest build. It
+compares row counts in the three tables migrations cannot reconstruct — `organizations`,
+`users`, `assets` — and refuses if the new cluster is short.
+
+**Row counts rather than a marker**, deliberately. A marker file or an annotation records that
+somebody *intended* to migrate. The counts are the migration itself, whatever route it took —
+`pg_dump`/restore, `pg_basebackup`, or CNPG's import — and they also catch a cluster that has
+since lost its data to a deleted PVC or a bad restore, which a marker never would.
+
+RULE 280 — **a caveat in a commit message is a promise to come back.** Two slices shipped with
+"this is not verifiable locally" and "this still needs a human" attached. Both were honest and
+both were load-bearing: one was a supply-chain gate whose first real exercise would have been
+a production pipeline, the other a deploy that could destroy a customer's view of their own
+data. Written down, a caveat looks like diligence; left alone, it is a known gap with a note
+next to it. Come back within the same arc, and prefer converting "a human must remember" into
+a check the machine makes — the preflight above is nine kubectl calls, and it replaces a
+sentence in a README that everyone would have skipped.
+

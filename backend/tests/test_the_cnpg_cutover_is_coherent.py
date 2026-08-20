@@ -13,10 +13,19 @@ cutover is now three facts in three files and any one of them can move alone:
   2. every database client in the built output resolves to the pooler — no duplicates, no
      leftover `database-credentials` reference, no phantom container;
   3. the production deploy applies `database-ha` FIRST, and refuses outright if the
-     CloudNativePG CRDs are absent.
+     CloudNativePG CRDs are absent;
+  4. it then runs the DATA preflight, which refuses if the customer data was never moved
+     out of the legacy StatefulSet.
 
 Break (3) and the next production deploy points every pod at a Service that does not
 exist. Break (2) and the cutover looks wired and changes nothing.
+
+Break (4) and the failure is the quietest of the four: a healthy but EMPTY CNPG cluster
+accepts the connection, the migration Job builds the schema in it, the application answers
+200, and every customer sees an empty product — while the probe-based availability SLI
+reports perfect health, because the system genuinely is up. Nothing crashes; no alert fires.
+The CRD check cannot see this, because the operator being installed says nothing about
+whether anyone ran `pg_dump`.
 
 THE SECOND ONE IS NOT HYPOTHETICAL. The component's first draft used one shared patch
 naming `PLACEHOLDER` as the container, on the assumption that the patch *target* supplies
@@ -190,4 +199,29 @@ def test_the_production_deploy_applies_the_cnpg_stack_first():
         "the deploy does not fail when the CloudNativePG CRDs are absent. Rolling out "
         "against a missing pooler CrashLoopBackOffs the entire platform, which is a worse "
         "and far less legible outcome than a refused deploy."
+    )
+
+
+def test_the_production_deploy_checks_the_data_moved():
+    """The CRD check proves the OPERATOR exists. It says nothing about whether the customer
+    data was ever migrated — and an empty cluster fails silently rather than loudly."""
+    workflow = yaml.safe_load(WORKFLOW.read_text())
+    steps = workflow["jobs"]["deploy-production"]["steps"]
+    script = next(s for s in steps if s.get("name") == "Deploy to production")["run"]
+
+    assert "preflight_cnpg_cutover.py" in script, (
+        "the production deploy does not run the data preflight. The CRD check above it "
+        "only proves the operator is installed; an empty CNPG cluster passes that and then "
+        "serves every customer an empty product with the SLI reporting perfect health."
+    )
+    assert script.index("database-ha") < script.index("preflight_cnpg_cutover") < script.index(
+        "prod-manifests.yaml"
+    ), (
+        "the preflight must run AFTER database-ha is applied (so the cluster exists to be "
+        "inspected) and BEFORE the application manifests are built and applied (so it can "
+        "still stop the deploy)."
+    )
+    assert (REPO / "tests" / "k8s" / "preflight_cnpg_cutover.py").exists(), (
+        "the deploy calls tests/k8s/preflight_cnpg_cutover.py and the file is missing — the "
+        "step would fail at run time, on the deploy, which is the worst place to find out."
     )

@@ -2056,6 +2056,16 @@ one of its findings. The habit that catches it:
      is the difference between a draft someone finishes and a plan someone relies on. The
      temptation runs the other way, because a finished-looking document moves a compliance
      entry.
+
+280. **A caveat in a commit message is a promise to come back.** Two slices shipped with "not
+     verifiable locally" and "still needs a human" attached — one a supply-chain gate whose
+     first real exercise would have been a production pipeline, the other a deploy that could
+     serve every customer an empty database while the availability SLI reported perfect
+     health. Both notes were honest, and both were load-bearing. Written down a caveat reads
+     as diligence; left alone it is a known gap with a label on it. Close it inside the same
+     arc, and prefer converting "a human must remember" into a check the machine makes: the
+     cutover preflight is nine kubectl calls and it replaces a README sentence everyone would
+     have skipped.
 ---
 
 ## Open observations, not yet tickets

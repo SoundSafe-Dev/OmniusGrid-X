@@ -552,6 +552,23 @@ jobs:
             exit 1
           fi
 
+          # AND THE DATA MUST ALREADY BE THERE (FS-801). The CRD check above proves the
+          # operator exists; it says nothing about whether the customer data was ever
+          # moved out of base/timescaledb-statefulset.yaml into the new cluster.
+          #
+          # That gap fails silently and totally: a healthy but EMPTY CNPG cluster accepts
+          # the connection, the migration Job below builds the schema in it, the app
+          # answers 200, and every customer sees an empty product — while the
+          # probe-based availability SLI reports perfect health, because the system is
+          # up. Nothing crashes and no alert fires.
+          #
+          # This compares row counts in the tables migrations cannot reconstruct
+          # (organizations, users, assets) and refuses the deploy if the new cluster is
+          # short. Row counts rather than a marker: a marker records that somebody
+          # INTENDED to migrate, these are the migration itself — and they also catch a
+          # cluster that has since lost its data to a deleted PVC or a bad restore.
+          python3 tests/k8s/preflight_cnpg_cutover.py --namespace omniusgrid
+
           # Migrations must COMPLETE before the Deployments are updated — see the
           # staging job for the rationale (apply -k would roll pods onto the new
           # image while the migration is still running).

@@ -6005,3 +6005,55 @@ has no rota, and has no filing owner — sharper reasons for `partial` than "no 
 and each one actionable. An entry that only records the good news is how a control drifts to
 `implemented` while nothing changed on the ground.
 
+---
+
+## Rule 280 — a caveat in a commit message is a promise to come back
+
+Two slices in this arc shipped with an explicit caveat in the commit message. Both were
+honest. Both were load-bearing. Neither would have been noticed again.
+
+**"NOT VERIFIABLE LOCALLY."** FS-825 gave the container image scan an `exit-code` so it could
+finally fail a deploy — it had produced SARIF and exited 0 whatever it found, while both
+deploy jobs listed it in `needs:` and looked gated. The comment said, accurately, that it
+scans an image which only exists after the push, so its first real exercise would be the next
+CI run.
+
+Read that again as a sentence about a supply-chain gate: *we have made this able to block
+production deploys, and we do not know whether it passes.* The two outcomes are a gate that
+works, or a red pipeline on someone else's morning with a tempting one-line fix — delete the
+exit-code — sitting right there.
+
+Verifying it took one `trivy image` against the base the Dockerfile names, and produced more
+than a yes: 6,139 vulnerabilities parsed, 0 CRITICAL, **193 HIGH of which 102 fixable**. The
+gate passes, it is not passing over an empty set, and those 102 are a better justification for
+the CRITICAL threshold than the one the original commit gave.
+
+**"STILL NEEDS A HUMAN."** FS-801 wired the CNPG cutover into `overlays/production` and made
+the deploy refuse without the operator's CRDs. The caveat: the CRD check proves the *operator*
+exists and cannot tell whether the customer data was ever migrated.
+
+That is not a small remainder. A healthy but empty CNPG cluster accepts the connection, the
+migration Job builds the schema in it, the app answers 200, and every customer sees an empty
+product — while the probe-based SLI reports perfect health, because the system is up. It is a
+total outage that every instrument records as a successful deploy.
+
+The replacement is nine `kubectl` calls comparing row counts in `organizations`, `users` and
+`assets`. It took twenty minutes and it removes a sentence from a README that everybody would
+have skipped.
+
+### The generalisation
+
+A caveat is the most comfortable thing to write. It is true, it is candid, it demonstrates the
+author understood the limits of their own change — and it costs nothing, which is the problem.
+`grep -rn "needs a human\|not verifiable\|TODO" ` over your own recent commits is a
+surprisingly good backlog.
+
+Two rules of thumb that came out of these:
+
+- **Verify with a proxy rather than not at all.** The image could not be built here without
+  filling the disk, but its *base* could be pulled and scanned, and the base plus the
+  dependency manifest is where essentially every finding lives.
+- **Prefer a check to a note.** "Do not cut over until the data is migrated" in a README is a
+  hope. The same sentence as a preflight that exits 1 is a guarantee — and it keeps working
+  after everyone who read the README has forgotten it.
+

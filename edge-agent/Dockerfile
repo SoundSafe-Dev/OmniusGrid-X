@@ -7,7 +7,27 @@
 # allowed. The image makes FIPS possible, the host kernel makes it real, and only a runtime
 # probe can tell the two apart — which is what `REQUIRE_FIPS_MODE` does on the backend and
 # what `EDGE_REQUIRE_FIPS` does here.
-FROM registry.access.redhat.com/ubi9/python-311 AS wheel-builder
+# FS-821 (continued). BASE IMAGES ARE DIGEST-PINNED.
+#
+# Every FROM in this repository named an image with no digest, and three of them named it
+# with NO TAG EITHER — which resolves to `:latest`. So two builds of the same release could
+# be built on different base images, and "rebuild last month's release" was not a thing that
+# could be done.
+#
+# The k8s manifests were pinned first; Dockerfiles are the other half of the same supply
+# chain, and the half that decides what is IN the image rather than which image runs.
+#
+# Measured 2026-08-20 with trivy against this base: 6,139 vulnerabilities, of which 0
+# CRITICAL and 193 HIGH (102 with a published fix). That is why the image gate in
+# ci-cd.yml blocks on CRITICAL rather than HIGH — at HIGH it would fail on the first run,
+# on findings whose fix is a Red Hat base-image bump we do not control the cadence of.
+#
+# PINNING WITHOUT A BUMP PROCESS TRADES ONE PROBLEM FOR ANOTHER: floating and
+# unreproducible becomes frozen and stale. `.github/workflows/nightly-e2e.yml` runs
+# `check_base_images_are_current.py`, which compares each digest below against what the tag
+# resolves to today and fails when one has drifted — so the pin is deliberate and its
+# staleness is visible.
+FROM registry.access.redhat.com/ubi9/python-311@sha256:a0bdb55576fc5b8d6704279307817828ef027e1065533ceba133fe9516003a6c AS wheel-builder
 
 # UBI python images default to UID 1001, and `python -m build` writes an egg-info directory
 # beside the sources. On the Debian base this stage ran as root and the write was invisible;
@@ -25,7 +45,7 @@ COPY opsgrid_agent ./opsgrid_agent
 RUN python -m build --wheel --outdir /wheel
 
 
-FROM registry.access.redhat.com/ubi9/python-311
+FROM registry.access.redhat.com/ubi9/python-311@sha256:a0bdb55576fc5b8d6704279307817828ef027e1065533ceba133fe9516003a6c
 
 # Debian -> RHEL package names, and ONE PACKAGE IS DELIBERATELY MISSING.
 #

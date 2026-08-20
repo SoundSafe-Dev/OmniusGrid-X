@@ -131,3 +131,33 @@ jobs:
         working-directory: ./edge-agent
         run: pytest -m ddil -v
 
+  # --- FS-821: are the pinned base images still current? ---------------------
+  #
+  # Every `FROM` in this repository is pinned to a digest, which fixes
+  # reproducibility and creates the opposite problem: a pin never moves, so the
+  # base image ages out of security support silently. Nothing breaks, the build
+  # stays green, and the CVE count climbs.
+  #
+  # NIGHTLY, NOT PER-PR, and deliberately so. A base image moving is news about
+  # the world, not a defect in the pull request that happens to be open — failing
+  # an unrelated merge on it is how a check gets routed around. This reports it
+  # once a day, which is the cadence at which somebody can act on it.
+  #
+  # Measured when the pins were set: the backend base carried 6,139
+  # vulnerabilities — 0 CRITICAL, 193 HIGH of which 102 had a published fix.
+  # Those 102 are precisely what a stale pin accumulates.
+  base-image-freshness:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: |
+            /*
+            !/backend/dataset/
+          sparse-checkout-cone-mode: false
+      - name: Compare each pinned digest against its tag
+        # Not --strict: a registry outage is not a finding about this repository,
+        # and a nightly job that cries wolf on someone else's downtime stops
+        # being read. Unreachable registries are printed and tolerated; only a
+        # digest that has genuinely moved fails.
+        run: python3 tests/k8s/check_base_images_are_current.py
