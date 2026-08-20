@@ -32,6 +32,17 @@ route:
         severity: low
       receiver: 'null'
 
+    # FS-784. The dead-man's switch. `DeadMansSwitch` fires permanently and on purpose;
+    # its VALUE IS ITS SILENCE — an external watchdog on separate infrastructure alerts
+    # when this stops arriving. Every other rule goes quiet when Prometheus dies, which
+    # is indistinguishable from a healthy system.
+    - match:
+        severity: none
+      receiver: 'watchdog'
+      group_wait: 0s
+      group_interval: 1m
+      repeat_interval: 5m
+
 receivers:
   - name: 'default'
     slack_configs:
@@ -41,6 +52,11 @@ receivers:
         text: '{{ range .Alerts }}{{ .Annotations.summary }}{{ end }}'
 
   - name: 'null'
+
+  - name: 'watchdog'
+    webhook_configs:
+      - url_file: /etc/alertmanager/secrets/watchdog-heartbeat-url
+        send_resolved: false
 
   - name: 'pagerduty-critical'
     pagerduty_configs:
@@ -70,13 +86,60 @@ receivers:
         send_resolved: false
 
 inhibit_rules:
-  - source_match:
-      severity: 'critical'
-    target_match:
-      severity: 'high'
-    equal: ['alertname', 'cluster', 'service']
-  - source_match:
-      severity: 'high'
-    target_match:
-      severity: 'medium'
-    equal: ['alertname', 'cluster', 'service']
+  # FS-786. THE PREVIOUS TWO RULES COULD NEVER MATCH.
+  #
+  #     - source_match: {severity: critical}
+  #       target_match: {severity: high}
+  #       equal: ['alertname', 'cluster', 'service']
+  #
+  # `equal: ['alertname']` requires source and target to share an alertname — while the
+  # matchers require them to differ in severity. Every rule in alerts.yml hardcodes one
+  # severity, and all 70 alertnames are distinct, so no pair of alerts can ever satisfy
+  # both conditions. Both rules were structurally dead, and dead inhibition is invisible:
+  # it looks exactly like "nothing needed suppressing yet".
+  #
+  # Inhibition has to key on the SUBJECT the alerts share, not on their name. Each rule
+  # below names the specific cause/effect pair and the labels that identify the same
+  # thing — which is also why they are enumerated rather than generic: a blanket
+  # severity rule cannot express "this outage explains that symptom".
+
+  # A backend that is down explains every symptom measured through the backend.
+  - source_matchers: ['alertname="BackendAPIDown"']
+    target_matchers: ['alertname=~"APIHighErrorRate|APIErrorRateElevated|APILatencyP95High|SLOErrorBudgetFastBurn|SLOErrorBudgetSlowBurn|BackendMetricsMissing"']
+
+  # So does an unreachable one, from the probe's side.
+  - source_matchers: ['alertname="ProbeSignalMissing"']
+    target_matchers: ['alertname=~"SLOErrorBudgetFastBurn|SLOErrorBudgetSlowBurn|SLOErrorBudgetLow|SLOErrorBudgetExhausted"']
+
+  # A database that is down explains slow queries, idle transactions and connection
+  # pressure. Paging on all four is how an operator learns to ignore the channel.
+  - source_matchers: ['alertname="TimescaleDBDown"']
+    target_matchers: ['alertname=~"SlowDatabaseQueries|IdleInTransactionBackends|DatabaseConnectionsNearLimit"']
+
+  # A missing instrument explains the silence of everything built on it. Without this,
+  # DatabaseMetricsMissing and TimescaleDBDown page together for one cause.
+  - source_matchers: ['alertname="DatabaseMetricsMissing"']
+    target_matchers: ['alertname=~"TimescaleDBDown|SlowDatabaseQueries|IdleInTransactionBackends|DatabaseConnectionsNearLimit"']
+
+  - source_matchers: ['alertname="HostMetricsMissing"']
+    target_matchers: ['alertname=~"DiskSpaceCritical|HighMemoryUsage"']
+
+  # Escalation pairs: the critical tier of a threshold suppresses its warning tier, for
+  # the SAME object. `equal` is what makes it the same object — without it, a critical
+  # alert on one volume would silence the warning on every other.
+  - source_matchers: ['alertname="PersistentVolumeCritical"']
+    target_matchers: ['alertname="PersistentVolumeFillingUp"']
+    equal: ['namespace', 'persistentvolumeclaim']
+
+  - source_matchers: ['alertname="IngressCertificateExpiringCritical"']
+    target_matchers: ['alertname="IngressCertificateExpiringSoon"']
+    equal: ['instance']
+
+  - source_matchers: ['alertname="EdgeAgentCertExpiringSoon"']
+    target_matchers: ['alertname="EdgeAgentCertExpiryApproaching"']
+    equal: ['agent_id']
+
+  # An agent that is not reachable explains its stale buffer and heartbeat gauges.
+  - source_matchers: ['alertname="EdgeAgentUnreachable"']
+    target_matchers: ['alertname=~"EdgeAgentOffline|EdgeAgentBufferHigh|EdgeBufferStatsStale"']
+    equal: ['agent_id']

@@ -51,6 +51,18 @@ OVERLAP_THRESHOLD = 3
 #: compared them and found the overlap meaningful rather than accidental.
 DIFFERENT_QUESTIONS: Dict[frozenset, str] = {
     frozenset({
+        "test_registered_exporters_are_deployed.py::PROM_CONFIGS",
+        "test_the_alert_configs_would_actually_load.py::CONFIGS",
+    }): (
+        "Different files entirely; the overlap the detector sees is path components — "
+        "both live under infra/prometheus and infrastructure/k8s/monitoring. One names "
+        "the two PROMETHEUS configs (scrape jobs: does the series get collected), the "
+        "other the two ALERTMANAGER configs (routing: does the page get delivered). "
+        "Those failed independently and for unrelated reasons — a scrape job that never "
+        "existed, and a config Alertmanager refused to load — so a single list would "
+        "force one question's population onto the other's."
+    ),
+    frozenset({
         "test_every_alert_watches_a_series_something_exports.py::INFRA_EXPORTERS",
         "test_registered_exporters_are_deployed.py::EXPECTED_JOB",
     }): (

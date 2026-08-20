@@ -16,6 +16,12 @@ stringData:
   # Override in every real environment (kubectl create secret / sealed-secrets).
   slack-webhook-url: "https://hooks.slack.com/services/REPLACE/ME"
   pagerduty-service-key: "REPLACE_ME"
+  # FS-784. The dead-man's switch endpoint — an external heartbeat service on
+  # infrastructure that does NOT share a failure domain with this cluster. Pointing it
+  # at anything in-cluster defeats the purpose: the signal exists to be missed when the
+  # cluster is gone. Left as a placeholder that fails loudly rather than a URL that
+  # quietly accepts and discards.
+  watchdog-heartbeat-url: "https://REPLACE-ME.example.invalid/heartbeat"
 ---
 apiVersion: v1
 kind: Service

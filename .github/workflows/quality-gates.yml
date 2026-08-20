@@ -547,6 +547,32 @@ jobs:
         run: |
           promtool check config infra/prometheus/prometheus.yml
           promtool check config infrastructure/k8s/monitoring/prometheus-config.yml
+      # FS-787. promtool never looks at Alertmanager, so nothing validated the routing
+      # configuration — and the compose one was INVALID: `${SLACK_WEBHOOK_URL}` is not a
+      # URL, so Alertmanager exited at startup and the local stack has never had a
+      # notification path at all. Rules that fire and reach nobody are the most
+      # expensive kind, because every dashboard says the monitoring works.
+      - name: Install amtool
+        run: |
+          AM_VERSION=0.27.0
+          curl -sSL -o /tmp/am.tar.gz \
+            "https://github.com/prometheus/alertmanager/releases/download/v${AM_VERSION}/alertmanager-${AM_VERSION}.linux-amd64.tar.gz"
+          tar -xzf /tmp/am.tar.gz -C /tmp
+          sudo mv "/tmp/alertmanager-${AM_VERSION}.linux-amd64/amtool" /usr/local/bin/amtool
+          amtool --version
+      - name: Check Alertmanager configs (compose + in-cluster)
+        run: |
+          set -euo pipefail
+          # The compose config references its secrets by path; stage the repository's
+          # local-development defaults where the container mounts them so amtool
+          # resolves the same files Alertmanager will.
+          sudo mkdir -p /etc/alertmanager/secrets
+          sudo cp infra/prometheus/alertmanager-secrets/slack-webhook-url \
+                  infra/prometheus/alertmanager-secrets/pagerduty-service-key \
+                  infra/prometheus/alertmanager-secrets/watchdog-heartbeat-url \
+                  /etc/alertmanager/secrets/
+          amtool check-config infra/prometheus/alertmanager.yml
+          amtool check-config infrastructure/k8s/monitoring/alertmanager-config.yml
       - name: Run alert unit tests
         working-directory: ./infra/prometheus
         run: |

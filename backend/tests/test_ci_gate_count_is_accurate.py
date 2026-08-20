@@ -1,4 +1,4 @@
-"""The README's blocking-gate count must match the workflows.
+r"""The README's blocking-gate count must match the workflows.
 
 The README advertised "13 blocking gates" for long enough that the real number had
 reached 30. A count in prose has no way to notice that jobs were added, and a stale
@@ -11,6 +11,21 @@ and `load-test` as advisory when both had just been made blocking, because it gr
 to be advisory. A detector whose input includes prose about its own subject will confirm
 whatever the prose says. Comments are stripped before parsing here for exactly that
 reason.
+
+AND IT HAPPENED A THIRD TIME (FS-797). Job names were collected with
+
+    re.findall(r"^  ([a-z0-9][\w-]*):\s*$", text, re.M)
+
+— every two-space-indented key, which in a GitHub workflow includes the TRIGGERS under
+`on:`. `pull_request:` and `push:` were counted as jobs in both workflows, so the total
+ran four high: the README said **31 blocking** where 27 are defined, and the guard
+enforced that number against the parser that invented it. Precisely the failure this
+docstring already warned about, in a third disguise.
+
+The lesson took: this now parses the workflow as YAML and reads `jobs` by key. The
+structure is the authority on what a job is, and a regex over indentation is a guess
+about it. The vacuity test below cross-checks the two so a future regex cannot creep
+back in unnoticed.
 """
 
 from __future__ import annotations
@@ -33,9 +48,19 @@ def _strip_comments(text: str) -> str:
 
 
 def _jobs(workflow: Path) -> tuple[list[str], list[str]]:
-    """Return (blocking, advisory) job names for one workflow."""
+    """Return (blocking, advisory) job names for one workflow.
+
+    Job names come from the parsed `jobs` mapping. Advisory status is still read from
+    the comment-stripped TEXT rather than the parsed body, because `continue-on-error`
+    must be distinguished by INDENTATION — four spaces is the job itself, six or more is
+    a single step — and that distinction is flattened by the time PyYAML has built the
+    step list.
+    """
+    import yaml
+
     text = _strip_comments(workflow.read_text())
-    names = re.findall(r"^  ([a-z0-9][\w-]*):\s*$", text, re.M)
+    document = yaml.safe_load(workflow.read_text()) or {}
+    names = list((document.get("jobs") or {}).keys())
     blocking: list[str] = []
     advisory: list[str] = []
     for name in names:
@@ -116,6 +141,28 @@ def test_the_workflows_are_readable():
         assert (WORKFLOWS / name).exists(), f"{name} is gone; this guard checks nothing"
     blocking, advisory = _counts()
     assert blocking > 10, f"only {blocking} jobs parsed; the job-name regex has probably drifted"
+
+
+def test_no_trigger_is_counted_as_a_job():
+    """FS-797, pinned. The predecessor collected every two-space key, so the `on:`
+    triggers `pull_request:` and `push:` were counted as jobs — four phantom gates
+    across the two workflows, and the README was updated to match them."""
+    import yaml
+
+    for name in COUNTED:
+        document = yaml.safe_load((WORKFLOWS / name).read_text()) or {}
+        real = set((document.get("jobs") or {}).keys())
+        counted = set(_jobs(WORKFLOWS / name)[0]) | set(_jobs(WORKFLOWS / name)[1])
+        assert counted == real, (
+            f"{name}: counted {sorted(counted - real)} that are not jobs, and missed "
+            f"{sorted(real - counted)}. The count must come from the parsed `jobs` "
+            f"mapping, not from indentation."
+        )
+        triggers = document.get(True) or document.get("on") or {}
+        if isinstance(triggers, dict):
+            assert not (set(triggers) & counted), (
+                f"{name}: a workflow trigger is being counted as a job again."
+            )
 
 
 def test_readme_blocking_job_count_matches_the_workflows():
