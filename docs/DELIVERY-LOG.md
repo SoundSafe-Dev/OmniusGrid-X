@@ -15095,3 +15095,54 @@ agent. A register that lists what is excused, without asserting the excuse, conv
 finding into a permanent blind spot — and reads as diligence while doing it. Where an entry
 says *because X*, test X.
 
+---
+
+## FS-829 / FS-833 — the plan the runbooks were standing in for
+
+Eleven runbooks, communication templates, and a real worked incident with IoCs. What was
+missing is the thing none of them is: **a plan.**
+
+A runbook tells you how to restart a wedged worker. It does not say who declares an incident,
+who is allowed to, who talks to the customer, or what the 72-hour regulatory clock is attached
+to. `docs/runbooks/incident-response-plan.md` is that document. Three choices in it are
+deliberate:
+
+- **Severity is keyed to customer impact, not to which component broke.** A failed database is
+  SEV-1 if customers cannot use the product and SEV-3 if a standby took over and nobody
+  noticed. Severity tables keyed to components produce SEV-1s for healthy failovers, and then
+  get ignored.
+- **Any engineer may declare; only the IC may resolve.** A culture where declaring needs
+  permission produces incidents declared late, which is precisely what the notification
+  deadlines cannot absorb.
+- **The statutory clocks are stated separately** — GDPR Art. 33 and DFARS 252.204-7012, both
+  72 hours from *discovery*, both shorter than any customer-notification row above them, and
+  both previously captured in no document at all.
+
+Step 2 of the first fifteen minutes is *check the instrument before the system*: if
+`ProbeSignalMissing` is firing, no availability figure from that period is valid. That
+instruction only became meaningful this sprint — before FS-770 the SLI could not record a
+total outage, and before FS-789 "check the container logs" was not executable in production.
+
+### The runbook the alerts were already pointing at
+
+`storage-exhaustion.md` covers the PVC alerts, the audit-growth alerts and the two `node_*`
+alerts, none of which could fire before this sprint. It exists mostly for its **What not to
+do** section, because the two obvious ways to free space are both wrong:
+
+- **Deleting audit rows** breaks the per-tenant hash chain, so the verifier reports a permanent
+  tamper violation — which FS-743 established is indistinguishable from a control that reports
+  nothing.
+- **Adding a global retention policy on `telemetry`** drops chunks containing many tenants'
+  rows. That is the mistake FS-816 nearly shipped, and it is now blocked by a test.
+
+Under pressure, at 3am, both look like the obvious move. That is when a runbook earns its
+keep.
+
+RULE 279 — **a document that reads as operational and has never been exercised is worse than
+an obvious draft.** Every section of the incident plan that depends on a human who does not
+exist yet is marked 🔲 and listed again in a closing "what is not real yet" table: no on-call
+rota, no owner for the statutory filings, never rehearsed. The temptation is to write those
+sections as though they were true, because the document looks finished and the compliance
+entry moves. It also means the first person to open it during an incident discovers the gap
+at the worst possible moment. Mark the gaps in the document itself, not only in the tracker.
+

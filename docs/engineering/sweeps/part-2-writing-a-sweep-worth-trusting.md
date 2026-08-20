@@ -2047,6 +2047,15 @@ one of its findings. The habit that catches it:
      bundles ran whatever was last pushed. A register that lists what is excused without
      asserting the excuse converts a finding into a permanent blind spot, and reads as
      diligence while doing it. Where an entry says *because X*, test X.
+
+279. **A document that reads as operational and has never been exercised is worse than an
+     obvious draft.** An incident-response plan whose escalation path is `[PHONE]` and whose
+     72-hour statutory filing has no named owner will be opened for the first time during an
+     incident, and the gap discovered then. Marking each unfilled dependency in the document
+     itself — and repeating them in a closing "what is not real yet" table — costs nothing and
+     is the difference between a draft someone finishes and a plan someone relies on. The
+     temptation runs the other way, because a finished-looking document moves a compliance
+     entry.
 ---
 
 ## Open observations, not yet tickets

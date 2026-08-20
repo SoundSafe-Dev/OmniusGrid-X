@@ -47,6 +47,7 @@ groups:
         annotations:
           summary: "Disk space critically low"
           description: "{{ $labels.instance }} has less than 5% disk space remaining."
+          runbook_url: "https://github.com/SoundSafe-Dev/OmniusGrid-X/blob/main/docs/runbooks/storage-exhaustion.md"
 
       # HIGH: Backend API down
       - alert: BackendAPIDown
@@ -70,6 +71,7 @@ groups:
         annotations:
           summary: "High memory usage detected"
           description: "{{ $labels.instance }} memory usage is above 85%"
+          runbook_url: "https://github.com/SoundSafe-Dev/OmniusGrid-X/blob/main/docs/runbooks/storage-exhaustion.md"
 
   - name: opsgrid_data_quality
     rules:
@@ -1043,6 +1045,7 @@ groups:
         annotations:
           summary: "PVC {{ $labels.persistentvolumeclaim }} is over 85% full"
           description: "Volume {{ $labels.persistentvolumeclaim }} in {{ $labels.namespace }} is above 85%. See the disk-full runbook."
+          runbook_url: "https://github.com/SoundSafe-Dev/OmniusGrid-X/blob/main/docs/runbooks/storage-exhaustion.md"
 
       - alert: PersistentVolumeCritical
         expr: |
@@ -1060,6 +1063,7 @@ groups:
         annotations:
           summary: "PVC {{ $labels.persistentvolumeclaim }} is over 95% full"
           description: "Writes will begin failing shortly. This is the documented path from unbounded audit_logs growth to a critical AuditWriteFailing."
+          runbook_url: "https://github.com/SoundSafe-Dev/OmniusGrid-X/blob/main/docs/runbooks/storage-exhaustion.md"
 
       # FS-782. Edge mTLS certificate expiry has had an alert since FS-229; the
       # PUBLIC ingress certificate — the one whose expiry takes the product offline
@@ -1109,6 +1113,7 @@ groups:
             {{ $value | humanize1024 }}B of audit rows and nothing prunes them. See
             FS-817: pruning needs the WORM export and a decision about OG-AU-004's planned
             REVOKE DELETE, so this is a real deadline rather than a threshold to raise.
+          runbook_url: "https://github.com/SoundSafe-Dev/OmniusGrid-X/blob/main/docs/runbooks/storage-exhaustion.md"
 
       # 24h of history, not 7d: the window has to be one a promtool unit test can
       # actually drive, and a rule nobody can drive true is the class this whole sprint
@@ -1126,6 +1131,7 @@ groups:
           description: >-
             Projected from the last 24 hours. Size tells you where you are; this tells
             you how long you have.
+          runbook_url: "https://github.com/SoundSafe-Dev/OmniusGrid-X/blob/main/docs/runbooks/storage-exhaustion.md"
 
       # FS-783. The counter exists precisely to expose a silent degraded mode — a
       # correlation job store that fell back to per-process memory because Redis did

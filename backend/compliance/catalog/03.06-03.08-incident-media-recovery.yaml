@@ -23,6 +23,7 @@ controls:
       air-gapped: partial
     implemented_by:
       - docs/runbooks
+      - docs/runbooks/incident-response-plan.md
       - SECURITY-INCIDENT-2026-08-15.md
       - docs/runbooks/incident-communication-templates.md
       - docs/runbooks/leaked-key-rotation.md
@@ -45,6 +46,19 @@ controls:
         is unconfirmed. An open compromise with an unidentified credential is the first thing
         an assessor will read, and the date on this entry reflects that it should be closed
         before an assessment rather than after.
+        RAISED 2026-08-20 (FS-829): `docs/runbooks/incident-response-plan.md` now exists —
+        severity definitions keyed to CUSTOMER IMPACT rather than to which component broke,
+        the four roles, **declaration authority for any engineer**, notification cadence per
+        severity, and the two statutory 72-hour clocks (GDPR Art. 33 and DFARS 252.204-7012)
+        that were previously captured nowhere. It also carries an explicit "what is not real
+        yet" section, because an untested plan that reads as operational is worse than an
+        obvious draft.
+        STILL PARTIAL, and now for sharper reasons than "no plan exists": there is **no named
+        on-call rotation** (FS-830) so "who is IC at 3am" has no answer and the runbook index
+        still carries `[PHONE]`/`[EMAIL]` placeholders; **no owner for the 72-hour filings**,
+        which makes the deadline documented and unassignable; and the plan has **never been
+        exercised** (FS-929, OG-IR-003) so time-to-detect is unmeasured. The 2026-08-15
+        incident also remains open on credential rotation.
 
   - id: OG-IR-002
     title: Incidents are tracked, documented and reported to designated authorities

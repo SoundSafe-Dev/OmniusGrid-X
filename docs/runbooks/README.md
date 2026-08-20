@@ -40,6 +40,8 @@ OmniusGrid component failures. Start here during any incident.
 
 | Document | Purpose |
 |----------|---------|
+| [incident-response-plan.md](incident-response-plan.md) | **The plan** — severity, roles, declaration authority, notification deadlines including the 72-hour statutory clocks. Distinct from the runbooks below, which are recovery procedures (FS-829) |
+| [storage-exhaustion.md](storage-exhaustion.md) | Filling volumes, the unbounded `audit_logs` table, and the two things you must not do to free space (FS-833) |
 | [application-rollback.md](application-rollback.md) | Roll back a bad release on Docker Compose and Kubernetes |
 | [rto-rpo-checklist.md](rto-rpo-checklist.md) | Verify recovery met its RTO/RPO targets before closing the incident |
 | [incident-communication-templates.md](incident-communication-templates.md) | Copy-paste templates for internal, customer, and status-page comms |

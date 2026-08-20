@@ -285,6 +285,7 @@ tests:
             exp_annotations:
               summary: "PVC timescaledb-data is over 85% full"
               description: "Volume timescaledb-data in omniusgrid is above 85%. See the disk-full runbook."
+              runbook_url: "https://github.com/SoundSafe-Dev/OmniusGrid-X/blob/main/docs/runbooks/storage-exhaustion.md"
       - eval_time: 30m
         alertname: PersistentVolumeCritical
         exp_alerts:
@@ -296,6 +297,7 @@ tests:
             exp_annotations:
               summary: "PVC timescaledb-data is over 95% full"
               description: "Writes will begin failing shortly. This is the documented path from unbounded audit_logs growth to a critical AuditWriteFailing."
+              runbook_url: "https://github.com/SoundSafe-Dev/OmniusGrid-X/blob/main/docs/runbooks/storage-exhaustion.md"
 
   - interval: 1m
     name: a half-empty volume is quiet
@@ -398,6 +400,7 @@ tests:
             exp_annotations:
               summary: "audit_logs has passed 20 GB with no retention policy"
               description: "25.06GiB of audit rows and nothing prunes them. See FS-817: pruning needs the WORM export and a decision about OG-AU-004's planned REVOKE DELETE, so this is a real deadline rather than a threshold to raise."
+              runbook_url: "https://github.com/SoundSafe-Dev/OmniusGrid-X/blob/main/docs/runbooks/storage-exhaustion.md"
 
   - interval: 1m
     name: growth on track to pass 100 GB in a month is a deadline
@@ -416,6 +419,7 @@ tests:
             exp_annotations:
               summary: "audit_logs is on track to exceed 100 GB within 30 days"
               description: "Projected from the last 24 hours. Size tells you where you are; this tells you how long you have."
+              runbook_url: "https://github.com/SoundSafe-Dev/OmniusGrid-X/blob/main/docs/runbooks/storage-exhaustion.md"
 
   - interval: 1m
     name: a small, flat audit table is quiet on both

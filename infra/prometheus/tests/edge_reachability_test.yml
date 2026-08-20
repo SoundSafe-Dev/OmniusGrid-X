@@ -246,6 +246,7 @@ tests:
               team: "infrastructure"
             exp_annotations:
               description: "db-1 has less than 5% disk space remaining."
+              runbook_url: "https://github.com/SoundSafe-Dev/OmniusGrid-X/blob/main/docs/runbooks/storage-exhaustion.md"
               summary: "Disk space critically low"
 
   - interval: 1m

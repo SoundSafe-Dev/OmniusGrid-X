@@ -732,7 +732,7 @@ Status is stated **per deployment profile**. OmniusGrid ships to commercial clou
 
 **Owner.** security-operations
 
-**Assessment.** There are eleven runbooks, incident communication templates, and — unusually — a real worked incident: the 2026-08-15 supply-chain compromise is documented with IoCs, a restoration table, and a guard written afterwards to prevent the specific technique. That is stronger evidence of capability than an untested plan. It is PARTIAL for two reasons, and the second is uncomfortable: there is no formal Incident Response PLAN (the runbooks are recovery procedures, not a plan with roles, severity definitions and authority to declare), and **that incident is still open** — the credential used for the force-push was never identified, tokens are unrotated, and branch protection is unconfirmed. An open compromise with an unidentified credential is the first thing an assessor will read, and the date on this entry reflects that it should be closed before an assessment rather than after.
+**Assessment.** There are eleven runbooks, incident communication templates, and — unusually — a real worked incident: the 2026-08-15 supply-chain compromise is documented with IoCs, a restoration table, and a guard written afterwards to prevent the specific technique. That is stronger evidence of capability than an untested plan. It is PARTIAL for two reasons, and the second is uncomfortable: there is no formal Incident Response PLAN (the runbooks are recovery procedures, not a plan with roles, severity definitions and authority to declare), and **that incident is still open** — the credential used for the force-push was never identified, tokens are unrotated, and branch protection is unconfirmed. An open compromise with an unidentified credential is the first thing an assessor will read, and the date on this entry reflects that it should be closed before an assessment rather than after. RAISED 2026-08-20 (FS-829): `docs/runbooks/incident-response-plan.md` now exists — severity definitions keyed to CUSTOMER IMPACT rather than to which component broke, the four roles, **declaration authority for any engineer**, notification cadence per severity, and the two statutory 72-hour clocks (GDPR Art. 33 and DFARS 252.204-7012) that were previously captured nowhere. It also carries an explicit "what is not real yet" section, because an untested plan that reads as operational is worse than an obvious draft. STILL PARTIAL, and now for sharper reasons than "no plan exists": there is **no named on-call rotation** (FS-830) so "who is IC at 3am" has no answer and the runbook index still carries `[PHONE]`/`[EMAIL]` placeholders; **no owner for the 72-hour filings**, which makes the deadline documented and unassignable; and the plan has **never been exercised** (FS-929, OG-IR-003) so time-to-detect is unmeasured. The 2026-08-15 incident also remains open on credential rotation.
 
 **Planned completion.** 2026-11-30
 
@@ -741,6 +741,7 @@ Status is stated **per deployment profile**. OmniusGrid ships to commercial clou
 - `SECURITY-INCIDENT-2026-08-15.md`
 - `docs/runbooks`
 - `docs/runbooks/incident-communication-templates.md`
+- `docs/runbooks/incident-response-plan.md`
 - `docs/runbooks/leaked-key-rotation.md`
 
 **Evidence — automated tests, run on every build.**

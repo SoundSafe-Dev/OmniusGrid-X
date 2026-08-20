@@ -5976,3 +5976,32 @@ world, sitting inside a test file, and therefore checkable — usually in about 
 
 Where an entry says *because X*, test X.
 
+---
+
+## Rule 279 — an unexercised document that reads as operational is worse than an obvious draft
+
+`docs/runbooks/incident-response-plan.md` closes the documentation half of OG-IR-001. Writing
+it surfaced a temptation worth naming, because giving in to it is invisible and rewarded.
+
+The plan needs an on-call rotation. There isn't one — PagerDuty has a destination and no rota,
+and the runbook index still carries `[PHONE]` and `[EMAIL]` placeholders it admits "must be
+filled in before an incident". The plan needs an owner for the GDPR Art. 33 and DFARS
+252.204-7012 filings. There isn't one, and neither deadline was written down anywhere before
+this document.
+
+Both could have been written as though they were solved. A section headed "On-call rotation"
+describing how a rotation works reads as complete; the compliance entry moves from `partial`
+toward `implemented`; nobody notices until someone opens the document at 3am and finds that
+the escalation path is a placeholder.
+
+So each unfilled dependency is marked 🔲 **in the document**, and repeated in a closing table
+of what is not real yet. The cost is that the plan looks unfinished. That is the correct
+appearance: it *is* unfinished, and the reader who most needs to know is the one under
+pressure.
+
+The same reasoning runs through the compliance catalogue's remediation notes, which is why
+they are long. `OG-IR-001` now says a plan exists **and** that it has never been exercised,
+has no rota, and has no filing owner — sharper reasons for `partial` than "no plan exists",
+and each one actionable. An entry that only records the good news is how a control drifts to
+`implemented` while nothing changed on the ground.
+
