@@ -1,7 +1,12 @@
-# Grafana datasource — the in-cluster Prometheus (monitoring/prometheus.yaml).
-# k8s-specific: unlike infra/grafana/provisioning/datasources/datasources.yml
-# (compose), this declares only Prometheus — no Loki/TimescaleDB creds — so the
-# platform dashboard renders without a secret in git.
+# Grafana datasources — the in-cluster Prometheus and Loki (monitoring/*.yaml).
+#
+# FS-790. Loki is now declared here too. It was omitted because the cluster had no Loki
+# to point at, which is the deployment gap FS-789 closed; the original note below is
+# retained because its reasoning still holds for the one datasource still missing.
+#
+# k8s-specific: unlike infra/grafana/provisioning/datasources/datasources.yml (compose),
+# this declares no TimescaleDB datasource — that one needs database credentials, and a
+# secret in git is a worse problem than a missing panel.
 apiVersion: 1
 datasources:
   - name: Prometheus
@@ -13,3 +18,19 @@ datasources:
     jsonData:
       timeInterval: "15s"
       httpMethod: POST
+
+  # Logs. Without this the log aggregation deployed by logging.yaml has no query surface
+  # in the cluster's own Grafana, and "check the logs" still means shelling in.
+  - name: Loki
+    type: loki
+    access: proxy
+    url: http://loki:3100
+    editable: false
+    jsonData:
+      maxLines: 1000
+      # Turns a `trace_id=...` in a log line into a link to the trace. The backend emits
+      # it on every request via structlog, and it is the join between the three signals.
+      derivedFields:
+        - name: "trace_id"
+          matcherRegex: "trace_id=(\\w+)"
+          url: "$${__value.raw}"

@@ -13,14 +13,20 @@ OmniusGrid component failures. Start here during any incident.
 
 ## Runbook index
 
-| Scenario | Runbook | Severity | RTO target | RPO target |
-|----------|---------|----------|-----------|-----------|
-| TimescaleDB primary failure (primary → standby promotion) | [dr-timescaledb-failure.md](../deployment/dr-timescaledb-failure.md) | Critical | 15 min | 5 min |
-| Redpanda broker / cluster failure | [dr-redpanda-failure.md](../deployment/dr-redpanda-failure.md) | Critical | 10 min | 0 min |
-| Backend API crash | [dr-backend-crash.md](../deployment/dr-backend-crash.md) | High | 5 min | 0 min |
-| Network partition (split-brain) | [dr-network-partition.md](../deployment/dr-network-partition.md) | Critical | 30 min | 15 min |
-| Full data center outage | [dr-datacenter-outage.md](../deployment/dr-datacenter-outage.md) | Critical | 60 min | 15 min |
-| Application rollback (bad deploy) | [application-rollback.md](application-rollback.md) | High | 10 min | 0 min |
+> **RPO targets are TARGETS, not current capability (FS-799).** Every database-loss row
+> below has an actual RPO of **up to 24 hours** — a nightly `pg_dump`. The mechanisms the
+> checklist used to name (Patroni, WAL archiving, cross-region replication) are applied by
+> no kustomization. See [rto-rpo-checklist.md](rto-rpo-checklist.md) for the row-by-row
+> correction, and never quote the target column to a customer.
+
+| Scenario | Runbook | Severity | RTO target | RPO target | RPO today |
+|----------|---------|----------|-----------|-----------|-----------|
+| TimescaleDB primary failure (primary → standby promotion) | [dr-timescaledb-failure.md](../deployment/dr-timescaledb-failure.md) | Critical | 15 min | 5 min | **≤ 24 h** |
+| Redpanda broker / cluster failure | [dr-redpanda-failure.md](../deployment/dr-redpanda-failure.md) | Critical | 10 min | 0 min | 0 min (RF ≥ 3) |
+| Backend API crash | [dr-backend-crash.md](../deployment/dr-backend-crash.md) | High | 5 min | 0 min | 0 min (stateless) |
+| Network partition (split-brain) | [dr-network-partition.md](../deployment/dr-network-partition.md) | Critical | 30 min | 15 min | **≤ 24 h** if the DB is lost |
+| Full data center outage | [dr-datacenter-outage.md](../deployment/dr-datacenter-outage.md) | Critical | 60 min | 15 min | **≤ 24 h** |
+| Application rollback (bad deploy) | [application-rollback.md](application-rollback.md) | High | 10 min | 0 min | 0 min |
 
 > **Note on TimescaleDB & Redpanda runbooks:** the failover (primary → standby
 > promotion) and broker recovery/rebalance procedures already exist as the

@@ -5608,3 +5608,205 @@ And some failures should not offer a retry at all. `FleetRolloutDetail` merged "
 with "failed to load" into one sentence; they need opposite treatment, because a 404 will
 never succeed and a button that cannot work teaches the user the product is broken. Telling
 them apart was a better fix than wiring a retry to both.
+
+
+---
+
+## Class 101 — a metric that is declared, exported by nothing, and alerted on (FS-774)
+
+`prometheus_client` creates a metric object at import time, but emits **nothing** for it until
+a labelled child is observed. So a metric whose only write site sits behind a disabled feature
+flag is importable, present in the default registry, visible in the source — and absent from
+`/metrics` entirely.
+
+`opsgrid_http_requests_total` is written once, at `app/middleware/profiling.py:239`, five lines
+below:
+
+```python
+async def dispatch(self, request, call_next):
+    if not PROFILING_ENABLED:
+        return await call_next(request)
+```
+
+`PROFILING_ENABLED` defaults False and is set in no environment — not compose, not any
+kustomize overlay, not CI. Three alerts read that counter, one of them `APIHighErrorRate` at
+severity **critical**, and none had ever been capable of firing.
+
+**Why the existing sweep could not see it.** `test_every_alert_watches_a_series_something_
+exports` collects metric names by AST from `Counter(...)` / `Gauge(...)` constructor calls,
+which answers *is this declared* — precisely the question a disabled flag leaves true. Where
+to look: any metric whose write sites are all inside a function that early-returns on a
+module-level boolean. `test_no_alert_rides_on_a_disabled_feature_flag.py` now walks exactly
+that, holds the flag against every deployment surface, and keeps a `DIAGNOSTIC_ONLY` register
+for metrics that are deliberately profiling-only and must not be alerted on.
+
+---
+
+## Class 102 — a configuration that parses cleanly and its consumer refuses to load (FS-787)
+
+A YAML file has two audiences: a parser, and the program that gives the parsed structure
+meaning. A test can satisfy the first completely while the second rejects the file outright.
+
+`infra/prometheus/alertmanager.yml` carried `api_url: '${SLACK_WEBHOOK_URL}'`. PyYAML is
+content with that — it is a string. `test_alert_routing_coverage` loaded the document and
+verified every severity had a route, and passed. Alertmanager does not expand environment
+variables, so it read a URL whose scheme is empty:
+
+```
+$ amtool check-config infra/prometheus/alertmanager.yml
+FAILED: unsupported scheme "" for URL
+```
+
+An invalid config is a **startup failure**, not a degraded mode. The compose Alertmanager had
+therefore never run, and Prometheus had spent the file's whole life posting alerts to a
+container in a restart loop. The routing was impeccable; nothing was delivered.
+
+Where else the shape lives: any config validated by a parser rather than its consumer.
+`promtool check config`, `amtool check-config`, `kubeconform`, and loading the built frontend
+bundle each close one instance. The generalisation is rule 273.
+
+---
+
+## Class 103 — a documented target beside a mechanism that is applied nowhere (FS-799)
+
+`docs/runbooks/rto-rpo-checklist.md` published "RPO 5 min — Patroni failover + WAL archiving"
+and "RPO 15 min — cross-region replication + DNS failover". Naming the mechanism is normally a
+sign of rigour. Here all three named mechanisms are absent: Patroni lives in `legacy-patroni/`
+and no kustomization applies it, no `archive_mode` is set anywhere in `base/`, the deployed
+image ships no `pgbackrest`, and `overlays/dr/kustomization.yaml` states in its own header
+that it does not replicate data. The real figure is a nightly `pg_dump` — **up to 24 hours**,
+about 100× the claim.
+
+The distinguishing feature of this class is that **the correct value was already in the
+repository**: `database-backup-restore.md` says "RPO — up to 24 h (no point-in-time recovery)"
+in plain sight. Two documents disagreed, and the one an operator opens during an incident was
+the wrong one. So the sweep is not "find undocumented gaps" but "find two documents making
+different claims about the same quantity, and check which one a reader reaches first".
+
+Where to look: any table pairing a promise with an implementation. Deployment claims in a
+README, SLA figures, compliance assessments naming a control. The generalisation is rule 274.
+
+---
+
+## Rule 272 — a guard's reading of its input is part of the guard
+
+Found three times in one sitting (FS-774/775), and each time the assertion was correct.
+
+**A line-scan that skipped a quarter of the file.**
+`test_every_alert_watches_a_series_something_exports` exists to catch alerts over series
+nothing exports — it had already caught three by hand. It collected expressions with
+`re.search(r"expr:\s*(.+)", line)`, one line at a time. Thirteen of `alerts.yml`'s
+fifty-three expressions are YAML block scalars:
+
+```yaml
+      - alert: AssetOffline
+        expr: |
+          (
+            time() - opsgrid_asset_last_seen_timestamp_seconds > 300
+          )
+```
+
+The regex captured `"|"`. The metric names on the following lines were never examined, so a
+quarter of the file was outside a sweep that reported it clean — and two live defects were
+sitting in that quarter, including an asset-offline alert on an IIoT platform that could never
+fire.
+
+**An allowlist whose entries were unfalsifiable.** The same file split metrics into "exported
+by our code", verified by AST, and "provided by a deployed exporter", verified by *being
+listed*:
+
+```python
+INFRA_EXPORTERS = {
+    "node_": "node-exporter (infra/prometheus + k8s monitoring stack)",
+    "pg_":   "postgres exporter",
+```
+
+Neither existed in any environment. The register was doing the opposite of its job: a metric
+was waved through *because* it was named there, and being named there was the part nobody
+could check. `test_registered_exporters_are_deployed.py` now holds each prefix to a scrape job
+and a workload, and records separately — with reasons — the prefixes that genuinely cannot be
+traced to a manifest here.
+
+**Declared is not observed.** An AST sweep over `Counter(...)` / `Gauge(...)` calls answers
+"is this metric declared", which is exactly what a disabled feature flag leaves true.
+`opsgrid_http_requests_total` has one write site, five lines below
+`if not PROFILING_ENABLED: return`, and that flag defaults False and is set nowhere — so
+`APIHighErrorRate`, severity `critical`, had never been able to fire.
+`prometheus_client` omits a metric with no children from `/metrics` entirely.
+
+The generalisation is uncomfortable because it applies to good guards. Rule 165 says a sweep
+that examines nothing passes over an empty set; this is the harder version — a sweep that
+examines *most* of its population, and whose partial result is indistinguishable from a
+complete one. Assert the size and shape of what was read, and make every escape hatch answer
+to something.
+
+---
+
+## Rule 273 — parsing is not loading, and linting is not running
+
+Three instances, all in this repository, all with a green check beside them.
+
+| the check that passed | what it could not see |
+|---|---|
+| `promtool check rules` | every expression parsed; nine watched series nothing exported |
+| `test_alert_routing_coverage` (YAML parse) | Alertmanager **refuses to start** on the config |
+| `vite build` + `tsc` + 1,211 tests | the shipped bundle rendered a white screen |
+
+The middle one is the sharpest. The routing test loads `alertmanager.yml` with PyYAML and
+asserts every severity has a route — a question that is perfectly answerable about a document
+the consuming binary will not accept:
+
+```
+$ amtool check-config infra/prometheus/alertmanager.yml
+FAILED: unsupported scheme "" for URL
+```
+
+`${SLACK_WEBHOOK_URL}` is not a URL. Alertmanager exited at startup, so it had never run, and
+Prometheus had spent the life of the file posting alerts to a container in a restart loop. The
+routing was impeccable and nothing was ever delivered.
+
+A checker you wrote agrees with your model of the format. The tool that actually consumes it
+does not have to, and where the two differ, the tool is right. So: run the real consumer in CI
+whenever one exists — `amtool check-config`, `promtool test rules`, `kustomize build |
+kubeconform`, and a browser loading the built artifact. Each is cheap, and each answers a
+question no amount of parsing can.
+
+---
+
+## Rule 274 — when a document states a target beside its mechanism, check the mechanism
+
+`docs/runbooks/rto-rpo-checklist.md` is the document an operator opens *after* a recovery, to
+decide whether the incident can be closed. Its target table read:
+
+| Scenario | RTO target | RPO target | Mechanism |
+|---|---|---|---|
+| TimescaleDB primary failure | 15 min | 5 min | Patroni failover + WAL archiving |
+| Data center outage | 60 min | 15 min | Cross-region replication + DNS failover |
+
+Every mechanism named there is absent. Patroni lives in `legacy-patroni/` and no kustomization
+applies it. No `archive_mode` or `archive_command` is set anywhere in `base/`, and the deployed
+TimescaleDB image ships no `pgbackrest` binary — the backup CronJob's own header says so.
+`overlays/dr/kustomization.yaml` states outright that it does not create cross-region data
+replication. What runs is a nightly `pg_dump`, so the real RPO is **up to 24 hours**: the
+claim was out by roughly 100x.
+
+**The repository already contained the correct number.** `database-backup-restore.md` says
+"RPO — up to 24 h (no point-in-time recovery)" in plain sight. Two documents disagreed, and the
+one an operator reaches during an incident was the wrong one.
+
+The generalisation is the uncomfortable part. A bare figure in prose is treated with suspicion;
+everyone has seen a stale one. A figure with a mechanism beside it reads as the *output of a
+check* — somebody thought about this, here is how it works — and that is precisely why it
+propagates into slide decks and contracts unexamined. **The more a number looks verified, the
+more it needs verifying.**
+
+Two practical consequences:
+
+- Where a document names a mechanism, something should assert the mechanism exists.
+  `test_the_recovery_promise_matches_the_deployment.py` already does this for part of the DR
+  story; the RPO row was outside its scope.
+- Where the claim is customer-facing, publish **target and actual side by side** rather than
+  correcting the target down. The gap is the work item — FS-800..806 exists because of it — and
+  a document that silently replaces 5 minutes with 24 hours loses the fact that 15 minutes is
+  what was agreed.
+

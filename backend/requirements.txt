@@ -35,6 +35,10 @@ opentelemetry-exporter-otlp-proto-grpc==1.43.0
 opentelemetry-instrumentation-fastapi==0.64b0
 opentelemetry-instrumentation-httpx==0.64b0
 opentelemetry-instrumentation-sqlalchemy==0.64b0
+# FS-791. Without this the trace ENDS AT THE PRODUCER: the consumer's work begins a new,
+# unparented trace, so device -> Redpanda -> ingestion worker -> TimescaleDB — the path
+# IngestionDataLost and IngestionDeadLettering fire on — could not be followed end to end.
+opentelemetry-instrumentation-aiokafka==0.64b0
 
 # ML Inference (Gemma 4 needs torch>=2.4 + transformers 5.x)
 torch>=2.4.0

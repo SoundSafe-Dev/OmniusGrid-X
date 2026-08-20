@@ -39,7 +39,7 @@
 | [Documentation](#documentation) | The rest of `docs/` |
 
 **Engineering method.** The sweeps and guards in this repository follow a set of numbered
-rules, each written after a defect that a weaker check had missed. Rules 21–271 are recorded in
+rules, each written after a defect that a weaker check had missed. Rules 21–274 are recorded in
 `docs/engineering/defect-class-sweeps.md`, with the reasoning for each; the short list at the
 top of that file is what most people read.
 
@@ -171,6 +171,9 @@ docker-compose exec timescaledb psql -U omniusgrid -d omniusgrid \
 | Grafana | http://localhost:3001 | `admin` / `omniusgrid_admin` |
 | Prometheus | http://localhost:9090 | - |
 | Alertmanager | http://localhost:9093 | - |
+| Blackbox exporter | http://localhost:9115 | - |
+| node-exporter | http://localhost:9100/metrics | - |
+| postgres-exporter | http://localhost:9187/metrics | - |
 | Redpanda Console | http://localhost:9644 | - |
 
 ### Development Mode Authentication
@@ -825,7 +828,8 @@ flowchart TB
         TS[("TimescaleDB")]
         RP2["Redpanda"]
         RED["Redis"]
-        OBS["Prometheus · Grafana · Loki"]
+        OBS["Prometheus · Alertmanager · Grafana<br/>Loki + promtail · Jaeger"]
+        EXP["Exporters: blackbox · node<br/>postgres · kube-state-metrics"]
     end
 
     FEP -->|"HTTPS / WS · JWT"| API
@@ -836,7 +840,15 @@ flowchart TB
     B --> TS
     D -.-> RP2
     SVC -.-> OBS
+    EXP ==> OBS
+    EXP -. "probes from outside the process" .-> API
 ```
+
+**The `EXP` box is the correction.** Every availability and resource signal used to be
+exported by the thing being measured, and four of the exporters the alert rules named were
+deployed nowhere — so nine rules, three of them `critical`, watched series that did not
+exist. A probe that runs in a different process is the only one still reporting when the
+process it watches is gone.
 
 ### 3. Physical / deployment topology (offline-capable edge + cloud)
 
@@ -996,7 +1008,69 @@ also does on a ten-second poll, meaning there was no evidence at all.
 clearing the error on the next render: a failure that disappears while the user is reading it
 is how "I thought I clicked it" happens.
 
-### 6. Production reliability & operations
+### 6. How availability is measured, and what it could not see
+
+The other diagrams describe where data goes. This one describes how the platform judges
+**itself** — and the dotted path is the one that did not exist, which is why the SLO alerts
+were silent through a total outage.
+
+```mermaid
+flowchart LR
+    USER(("Customer"))
+
+    subgraph OUTSIDE["Measured from OUTSIDE the process"]
+        BB["blackbox-exporter<br/>probes /health/ready every 15s"]
+    end
+
+    subgraph APP["The system being measured"]
+        ING["Ingress · TLS · DNS"]
+        API["Backend<br/>exports http_requests_total"]
+    end
+
+    subgraph SLI["The SLI"]
+        REACH["probe_success<br/>reachable"]
+        SERVE["1 − 5xx ratio<br/>correctly served"]
+        AVAIL["job:slo_availability<br/>reachable × served"]
+        BUDGET["error budget<br/>28-day window"]
+    end
+
+    USER --> ING --> API
+    BB -. "from outside the cluster" .-> ING
+    BB ==> REACH
+    API ==> SERVE
+    REACH ==> AVAIL
+    SERVE ==> AVAIL
+    AVAIL ==> BUDGET
+    BUDGET --> PAGE["burn-rate alerts"]
+    REACH -. "absent()" .-> MISSING["ProbeSignalMissing<br/>cannot measure ≠ healthy"]
+
+    style BB stroke-dasharray: 5 5
+    style REACH stroke-dasharray: 5 5
+    style MISSING stroke-dasharray: 5 5
+```
+
+**Everything dashed is new (FS-769/770/771).** Before it, availability was `1 − 5xx ratio`
+alone — a quantity the backend reports about itself. When the backend dies it does not report
+zero requests; the series **ceases to exist**, and a ratio over an absent series yields no
+sample at all. Measured, not argued
+([`slo_outage_test.yml`](infra/prometheus/tests/slo_outage_test.yml)):
+
+| scenario | fast-burn alert |
+|---|---|
+| backend up, serving 100% 5xx | **fires** — the control |
+| backend gone for 70 minutes | **silent** |
+
+The alerting detected a *degraded* backend and was blind to a *dead* one. And the hole
+propagates: a monthly figure computed by averaging skips absent samples, so an outage is not
+averaged in as zero — it is **excluded from the window**, and the month reads ≈100%.
+
+The third dashed arrow matters as much as the other two. When the instrument itself is
+missing these rules produce **nothing** rather than guessing — no `or vector(1)`, which would
+recreate the original bug, and no `or vector(0)`, which would page forever on a stack that has
+not deployed the exporter. *"I cannot measure availability"* is a third state, and it pages
+under its own name.
+
+### 7. Production reliability & operations
 
 The Kubernetes stack (`infrastructure/k8s/`) is built for multi-pod, no-single-
 point-of-failure operation. Beyond the app Deployments, these are the enterprise
@@ -1006,8 +1080,8 @@ reliability layers (each with its own README):
 |---------|----------------|-------|
 | **Database HA** | 3-instance CloudNativePG — automatic failover, synchronous replication (RPO≈0), continuous WAL archiving to S3 for PITR, PgBouncer pooler. **These are the manifest's properties, not a running cluster's — PITR is not operational today.** The stack is applied only where the CNPG operator is installed and no current environment has it, so the live RPO is the nightly `pg_dump`'s: up to 24 h | [`database-ha/`](infrastructure/k8s/database-ha/) |
 | **Worker autoscaling** | KEDA scales ingestion / export / compliance workers on Redpanda consumer-group **lag** (export + compliance scale to zero when idle) | [`autoscaling/`](infrastructure/k8s/autoscaling/) |
-| **Observability** | Prometheus + Alertmanager + kube-state-metrics + Grafana, in-cluster; canonical alert rules shared with docker-compose; a "Platform / Infra" dashboard for HA-DB / autoscaling / backups | [`monitoring/`](infrastructure/k8s/monitoring/) |
-| **Distributed tracing** | otel-collector + Jaeger, now actually reachable: policies both directions, OTLP export wired on the API and all four workers, and probes on the collector's `health_check` extension. Previously deployed with NO NetworkPolicy in a default-deny namespace and no OTEL env on the backend — dead in Kubernetes AND in compose, with nothing erroring | [`otel-collector.yaml`](infrastructure/k8s/base/otel-collector.yaml) |
+| **Observability** | Prometheus + Alertmanager + kube-state-metrics + Grafana, in-cluster, plus **blackbox / node / postgres exporters and Loki + promtail** (FS-769/776/777/779/789). Those four were missing, and the absence was invisible: nine alert rules — three of them `critical` — watched series that no deployment produced, and **log aggregation existed for docker-compose only**, so every runbook step reading "check the container logs" was unexecutable in the cluster. Canonical alert rules shared with docker-compose; "Platform / Infra", **SLO overview, RED, and capacity/forecast** dashboards | [`monitoring/`](infrastructure/k8s/monitoring/) |
+| **Distributed tracing** | otel-collector + Jaeger, now actually reachable: policies both directions, OTLP export wired on the API and all four workers, and probes on the collector's `health_check` extension. **The workers never actually called `setup_tracing`** — it lives in `app/main.py` and nothing else invoked it — so all four emitted no spans of any kind; and aiokafka was uninstrumented, so a trace ENDED AT THE PRODUCER and the consumer's half began a new unparented trace. Both closed in FS-791, which makes device → Redpanda → worker → TimescaleDB followable end to end for the first time. Jaeger now persists to a volume (FS-792) instead of losing every trace on the restart an incident produces, and the collector **tail-samples** (FS-793) so what survives is what failed or was slow, not whatever the memory limit spared. Previously deployed with NO NetworkPolicy in a default-deny namespace and no OTEL env on the backend — dead in Kubernetes AND in compose, with nothing erroring | [`otel-collector.yaml`](infrastructure/k8s/base/otel-collector.yaml) |
 | **DR site** | `overlays/dr` — standby namespace, DR hostnames, cold-standby replicas. Makes the datacenter-outage runbook executable; data replication remains pgBackRest's job | [`overlays/dr/`](infrastructure/k8s/overlays/dr/) |
 | **ERP connectors** | SAP, Oracle, Dynamics, NetSuite, Infor, Epicor, Odoo, Intuit. Three could not be **imported** — SAP/Oracle needed `requests_oauthlib` and Dynamics needed `msal`, neither a declared dependency — so the factory resolved straight at an ImportError. All now load, authenticate over async OAuth2 client-credentials (NetSuite via OAuth 1.0a TBA), and paginate | [`erp_connectors/`](backend/app/services/erp_connectors/) |
 | **User & role management** | Admin-gated user CRUD at `/api/v1/users`, an ordered role vocabulary with a CHECK constraint, last-admin guards, and audit rows written in the same transaction as the change. Only `GET /users` existed before, which is why the admin UI was hard-disabled | [`user_management.py`](backend/app/api/user_management.py) |
@@ -1017,10 +1091,10 @@ reliability layers (each with its own README):
 | **Object storage** | Generated exports & compliance reports go to SeaweedFS (S3) so a worker on one pod and the API on another share one bucket — fixes cross-pod download | [`base/object-store.yaml`](infrastructure/k8s/base/object-store.yaml) |
 | **Secrets** | Sealed Secrets (encrypted, safe-in-git) **or** External Secrets Operator (Vault / AWS SM / GCP SM). Placeholder dev credentials are **enforced** out of both deployed environments — a blocking gate fails if one becomes reachable, or if the deploy stops filtering them | [`secrets/`](infrastructure/k8s/secrets/) |
 | **Referential integrity in tests** | SQLite ships with `PRAGMA foreign_keys=OFF`, so an in-memory test can insert a child before its parent, or against a parent nobody created, and pass. That is why none of 3,200 tests could see the ordering defect that killed the demo seed. **Foreign keys are now enforced for every SQLite engine in the suite** (a `connect` listener in `conftest.py`) and the whole suite passes with them on. Getting there cost 76 failures at the first measurement, 39 after eleven missing `relationship()` edges were added at the model level, and 0 after the last eight fixtures were converted — not one of which was a test bug. `Base` now has **no model carrying an FK column without a relationship**, so the unit of work can order every parent before its child; the two genuinely mutual pairs keep a one-sided exemption that is itself asserted | [`conftest.py`](backend/tests/conftest.py) |
-| **CI safety** | **14 blocking gates** on every branch push. Backend: `backend-realdb` (schema parity, tenant isolation + RLS, timestamp defaults — against an ephemeral TimescaleDB, because RLS and server defaults are both no-ops on SQLite), `backend-full` (**5,100+ tests** — the whole suite bar the Kafka e2e, which runs in its own job; the figure is a FLOOR asserted by `test_readme_test_count_is_not_stale.py`, because the exact number was written down once as 2,149 and was a thousand short within weeks), `backend-kafka-e2e` (container e2e in its own process), `migration-hygiene` (duplicate prefixes; and since FS-578 the suite also applies the whole chain to an empty database and **re-runs every migration at its own point in it** — the runner executes statements one at a time in autocommit, because continuous aggregates refuse a transaction block, so a file that fails halfway has committed its earlier statements and recorded nothing, and running it again is the only recovery there is. 22 files look non-idempotent to a text search; **4 are**, and none of them can be repaired — editing an applied migration is checksum drift). Kubernetes: `k8s-manifests` (build + kubeconform + placeholder-credential check, **per environment** — the stacks used to be validated one way and applied another, which is how staging never had monitoring applied at all; plus a namespace/scale-target lint, a replica-floor check against each autoscaler's declared minimum, a secret-source pairing over BOTH provisioning paths, and a check that the canonical README names every buildable tree), `netpol-simulate`, `k8s-smoke` (kind: real operator webhooks), `k8s-netpol` (kind + **Calico**: policies genuinely enforced, 19 allow/deny cases), `netpol-coverage` (every workload in a default-deny namespace has a policy in both directions — the gap that killed tracing). Plus `prometheus-rules` (lints `alerts.yml` + `slo_rules.yml`, checks **both** Prometheus configs, and runs the alert unit tests — **globbed, not listed**, and **all 51 rules are now provably FIRABLE** rather than merely well-formed — each driven true from a series the product publishes, each with a must-stay-quiet companion, and the `UNTESTED` set in `test_every_alert_rule_is_provably_firable.py` went 23 → 15 → **0** and is closed: `check rules` cannot tell a rule that fires from one that never can, which is how `EdgeAgentBufferHigh` stayed unfirable for its whole existence: they were six filenames written out, so a new one ran only if somebody remembered to edit the workflow, and an alert test that does not run is indistinguishable from one that passes), `frontend-e2e-authenticated` (stands up Postgres + migrations + demo data + uvicorn and asserts the dashboard shows **non-zero** data — an element-visibility check would have passed against the FS-191 tenancy bug), `supply-chain`, `repo-hygiene`, frontend unit + e2e. The edge agent's **109 DDIL scenarios** run nightly rather than per-PR (`pytest -m ddil`) because a 400,000-row drain measurement is not a per-PR concern — but the cross-repo parity guards that stop the agent and backend disagreeing about priority tiers or wire codecs are unmarked and gate every push | `.github/workflows/quality-gates.yml` |
+| **CI safety** | **27 blocking jobs and 1 advisory** on every branch push — the same figure the **DevOps** row of the capability table states, asserted by `test_ci_gate_count_is_accurate.py`. It read **14** here and **31** there until FS-797, when the guard was found counting the `on:` triggers `pull_request:` and `push:` as jobs. Backend: `backend-realdb` (schema parity, tenant isolation + RLS, timestamp defaults — against an ephemeral TimescaleDB, because RLS and server defaults are both no-ops on SQLite), `backend-full` (**5,100+ tests** — the whole suite bar the Kafka e2e, which runs in its own job; the figure is a FLOOR asserted by `test_readme_test_count_is_not_stale.py`, because the exact number was written down once as 2,149 and was a thousand short within weeks), `backend-kafka-e2e` (container e2e in its own process), `migration-hygiene` (duplicate prefixes; and since FS-578 the suite also applies the whole chain to an empty database and **re-runs every migration at its own point in it** — the runner executes statements one at a time in autocommit, because continuous aggregates refuse a transaction block, so a file that fails halfway has committed its earlier statements and recorded nothing, and running it again is the only recovery there is. 22 files look non-idempotent to a text search; **4 are**, and none of them can be repaired — editing an applied migration is checksum drift). Kubernetes: `k8s-manifests` (build + kubeconform + placeholder-credential check, **per environment** — the stacks used to be validated one way and applied another, which is how staging never had monitoring applied at all; plus a namespace/scale-target lint, a replica-floor check against each autoscaler's declared minimum, a secret-source pairing over BOTH provisioning paths, and a check that the canonical README names every buildable tree), `netpol-simulate`, `k8s-smoke` (kind: real operator webhooks), `k8s-netpol` (kind + **Calico**: policies genuinely enforced, 19 allow/deny cases), `netpol-coverage` (every workload in a default-deny namespace has a policy in both directions — the gap that killed tracing). Plus `prometheus-rules` (lints `alerts.yml` + `slo_rules.yml`, checks **both** Prometheus configs, and runs the alert unit tests — **globbed, not listed**, and **all 74 alert rules are now provably FIRABLE** rather than merely well-formed — each driven true from a series the product publishes, each with a must-stay-quiet companion, and the `UNTESTED` set in `test_every_alert_rule_is_provably_firable.py` went 23 → 15 → **0** and is closed — though FS-774 showed that firable is not the same as connected: a quarter of `alerts.yml` is written as YAML block scalars, and the sweep checking that each rule's metrics exist read `expr:` one line at a time, so it captured `"|"` and never examined them: `check rules` cannot tell a rule that fires from one that never can, which is how `EdgeAgentBufferHigh` stayed unfirable for its whole existence: they were six filenames written out, so a new one ran only if somebody remembered to edit the workflow, and an alert test that does not run is indistinguishable from one that passes), `frontend-e2e-authenticated` (stands up Postgres + migrations + demo data + uvicorn and asserts the dashboard shows **non-zero** data — an element-visibility check would have passed against the FS-191 tenancy bug), `supply-chain`, `repo-hygiene`, frontend unit + e2e. The edge agent's **109 DDIL scenarios** run nightly rather than per-PR (`pytest -m ddil`) because a 400,000-row drain measurement is not a per-PR concern — but the cross-repo parity guards that stop the agent and backend disagreeing about priority tiers or wire codecs are unmarked and gate every push | `.github/workflows/quality-gates.yml` |
 | **Load / failover testing** | Kafka ingestion load generator (drives KEDA scaling + DB writes) + a runbook for driving throughput and DB-failover-under-load | [`tests/load/`](tests/load/) |
 
-### 7. Page → API wiring
+### 8. Page → API wiring
 
 How each frontend page is wired to the backend (primary endpoints; all under
 `/api/v1`, JWT-gated, live updates over `/ws`):
@@ -2333,7 +2407,7 @@ today, start at [`docs/erp/README.md`](docs/erp/README.md) instead.
 - [Delivery log](docs/DELIVERY-LOG.md) - Every slice delivered, verbatim, with the reasoning recorded against each: what was believed before, what turned out to be true, and what the difference cost. Moved out of this file on 2026-08-02, where it had grown to a third of the document. Most recently: the three defects that made `scripts/seed_demo_data.py` fail on every fresh database it had ever met, why none of 3,200 tests could see them (**SQLite does not enforce foreign keys by default**), and the four found only by *looking at* a running page — a heading rendered at its own background colour, an Activate control measured at 1.04:1, a float artifact beside a dollar figure, and a raw uuid in the column an operator reads to go and find a trailer
 - [ERP integration architecture](docs/erp/ARCHITECTURE.md) - The eight vendors and their protocols, the middleware, the endpoint list, and ERP-to-operational correlation. To *work on* a connector, start at [docs/erp/README.md](docs/erp/README.md) instead
 - [Correlation-AI training dataset](docs/CORRELATION-DATASET.md) - Statistics and worked single- and multi-domain scenarios, and how they feed Kanban and alerting
-- [OmniusGrid Glossary](OMNIUSGRID_GLOSSARY.md) - Backend & Frontend combined terminology reference — **650+ terms** (671 counted on 2026-08-19; stated as a floor for the same reason the test-count floor is one). Now covers DDIL, the pre-certification programme, FIPS, the interaction/feedback model, and the method vocabulary the guards are written in
+- [OmniusGrid Glossary](OMNIUSGRID_GLOSSARY.md) - Backend & Frontend combined terminology reference — **650+ terms** (696 counted on 2026-08-20; stated as a floor for the same reason the test-count floor is one). Now covers DDIL, the pre-certification programme, FIPS, the interaction/feedback model, the method vocabulary the guards are written in, and the SLO/SLI vocabulary FS-769..798 introduced — error budget, burn rate, blackbox probe, `absent()` alert, dead man's switch, inert alert, flag-gated metric, tail sampling
 - [Intake Cross-Correlation](docs/INTAKE_CROSS_CORRELATION.md) - PDF/DOCX/image parsing, shared key detection, cross-file correlation
 - [Correlation AI Engine](docs/CORRELATION_AI_ENGINE.md) - Cross-domain AI analysis, synthetic data generation, Gemma 4 fine-tuning — and **"Current state"**, which records that the model and its LoRA are deliberately unloaded, what the honest fallback returns, and the check to run when switching it back on
 - [Hybrid Architecture](HYBRID_ARCHITECTURE.md) - Human-in-the-Loop + Lights Out modes
@@ -2343,7 +2417,7 @@ today, start at [`docs/erp/README.md`](docs/erp/README.md) instead.
 **Engineering practice**
 - [Open decisions](docs/engineering/open-decisions.md) - Six findings that are understood, reproduced and deliberately NOT fixed, because closing each is a product or contract decision rather than a bug fix: a PDF page truncated at 20,000 characters with no flag, 38 registries created that nothing can populate, eleven capped lists that cannot say they were capped, and three more. Every entry is pinned by a test and names what would have to change; they lived in test docstrings, which is the right place for the reasoning and the wrong place for the decision, because a docstring is read by whoever next edits that file and none of these will be closed by that person
 - [Defect-class sweeps](docs/engineering/defect-class-sweeps.md) — index, plus five parts under
-  [docs/engineering/sweeps/](docs/engineering/sweeps/) since the document passed 7,000 lines. The one hundred numbered classes of "code that looks wired and cannot work" found so far, what each sweep found (including the ones that came back clean), which mutation-tested guard keeps each closed, and one hundred and forty-eight rules for writing a sweep worth trusting — including the one class no test could have caught, because contrast is not a dimension a suite has an opinion about — most of them paid for by a detector that was wrong first, including one that reported zero offenders while three pages were broken, one that compared a baseline against itself, and **one that reported a class clean while it contained a feature returning 422 on every call since the day it was written**
+  [docs/engineering/sweeps/](docs/engineering/sweeps/) since the document passed 7,000 lines. The one hundred and three numbered classes of "code that looks wired and cannot work" found so far, what each sweep found (including the ones that came back clean), which mutation-tested guard keeps each closed, and one hundred and forty-eight rules for writing a sweep worth trusting — including the one class no test could have caught, because contrast is not a dimension a suite has an opinion about — most of them paid for by a detector that was wrong first, including one that reported zero offenders while three pages were broken, one that compared a baseline against itself, and **one that reported a class clean while it contained a feature returning 422 on every call since the day it was written**
 - [Large assets](docs/engineering/large-assets.md) - Why `backend/dataset` is 1.5 GB on disk but only 41 MB packed, why it must not be deleted (the generator sets no seed, so it is generated but NOT reproducible), and the `make lean` / sparse-checkout recipes that keep it off your disk and out of all 28 CI checkouts
 - [The API contract gate](docs/engineering/api-contract-gate.md) - The schemathesis job that drives all 550 documented operations, why it could never finish (every component fast, the whole impossible — a per-example event loop plus a retry path with no backoff), the four independent faults that each alone would have stopped it, why it blocks as a *ratchet* on a measured floor rather than demanding a green suite, and what it has found since — including an audit trail that had never recorded a single row, and thirteen identical unbounded `skip` declarations of which it could only ever have reported one, which is why the fix is a shared bound and a sweep rather than the one endpoint that happened to fail — and `POST /api/v1/user/goals`, which raised `TypeError` on every call since it was written because `str(UUID())` has no zero-argument form, so the whole goals feature was dead behind an endpoint that looked wired and any test that called it once with anything would have caught it
 - [The test quarantine](docs/engineering/test-quarantine.md) - What CI is allowed not to run, and the register that gives every exclusion an owner, a diagnosis and an expiry — including the staleness half that fails when a quarantined test starts passing. Records the 2026-07-30 release of four entries, and the rule it earned: before accepting that a quarantined test is another lane's problem, check whether the code under it is *running* — "the test is broken" and "the feature is unbuilt" look identical from the list and have opposite consequences

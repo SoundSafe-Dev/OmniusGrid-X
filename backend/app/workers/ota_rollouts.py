@@ -12,6 +12,8 @@ from app.services.command_executor import command_executor
 from app.services.rollout_orchestrator import rollout_orchestrator
 from app.workers.health_server import start_health_server
 
+from app.core.tracing import setup_worker_tracing
+
 logger = structlog.get_logger()
 
 
@@ -73,4 +75,12 @@ async def run(
 
 if __name__ == "__main__":
     logger.info("ota_rollout_worker_starting")
+    # FS-791. Instrument BEFORE the event loop starts: the instrumentor patches the
+    # aiokafka client CLASS, and a consumer constructed first is never traced.
+    #
+    # This process emitted no spans at all until now — `setup_tracing` lives in
+    # app/main.py and no worker ever called it, so the consumer half of every
+    # telemetry message, and every database write these workers make, were absent
+    # from tracing entirely. That is the path IngestionDataLost fires on.
+    setup_worker_tracing(service="omniusgrid-ota-rollout-worker")
     asyncio.run(run())

@@ -1,0 +1,70 @@
+# Promtail scrape configuration for Kubernetes (FS-789).
+#
+# WHY A SECOND FILE. Its sibling `promtail.yml` uses `docker_sd_configs`, which discovers
+# nothing in a cluster. Loki and promtail existed for **docker-compose only** — grepping
+# infrastructure/k8s/ for `loki|promtail|fluent` returned zero — so every runbook step
+# that says "check the container logs" was unexecutable in production. That includes the
+# one `alerts.yml` links from `WorkerCrashLooping`, whose entire remedy is reading the
+# logs of the previous run.
+#
+# The two files are deliberately separate rather than templated: service discovery is the
+# one part that genuinely differs between the environments, and a shared file with two
+# discovery blocks would ship each environment a block that silently matches nothing —
+# which is how the compose Prometheus ended up with permanently-DOWN targets (see the
+# note at infra/prometheus/prometheus.yml:69). The pipeline stages below are identical to
+# the compose file's on purpose, so a log line looks the same in both.
+
+server:
+  http_listen_port: 9080
+  grpc_listen_port: 0
+
+positions:
+  filename: /run/promtail/positions.yaml
+
+clients:
+  - url: http://loki:3100/loki/api/v1/push
+
+scrape_configs:
+  - job_name: kubernetes-pods
+    kubernetes_sd_configs:
+      - role: pod
+    pipeline_stages:
+      # Container runtimes wrap each line in CRI format before the app's JSON begins.
+      - cri: {}
+      # structlog emits JSON; lift the fields the runbooks filter on.
+      - json:
+          expressions:
+            level: level
+            msg: event
+            request_id: request_id
+            organization_id: organization_id
+            trace_id: trace_id
+      # LABELLED, not just parsed: `level` is bounded and is what an operator filters by
+      # at 3am. `request_id`, `organization_id` and `trace_id` are deliberately NOT
+      # labels — they are unbounded, and a label per request is how a Loki index dies.
+      # They stay in the line, where LogQL can still match them.
+      - labels:
+          level:
+    relabel_configs:
+      # Only this product's namespaces. Without this, promtail ships kube-system too and
+      # the ingestion-rate limit is spent on logs nobody reads.
+      - source_labels: [__meta_kubernetes_namespace]
+        action: keep
+        regex: omniusgrid(-staging)?
+
+      - source_labels: [__meta_kubernetes_pod_node_name]
+        target_label: node
+      - source_labels: [__meta_kubernetes_namespace]
+        target_label: namespace
+      - source_labels: [__meta_kubernetes_pod_name]
+        target_label: pod
+      - source_labels: [__meta_kubernetes_pod_container_name]
+        target_label: container
+      - source_labels: [__meta_kubernetes_pod_label_app_kubernetes_io_name]
+        target_label: app
+      # The path promtail actually tails.
+      - source_labels:
+          [__meta_kubernetes_pod_uid, __meta_kubernetes_pod_container_name]
+        target_label: __path__
+        separator: /
+        replacement: /var/log/pods/*$1/*.log

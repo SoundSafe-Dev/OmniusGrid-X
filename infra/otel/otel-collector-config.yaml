@@ -1,5 +1,6 @@
 # OpenTelemetry Collector config (task 14).
-# Receives OTLP spans (from the backend when OTEL_ENABLED) and exports to Jaeger.
+# Receives OTLP spans (from the backend and the four workers when OTEL_ENABLED) and
+# exports to Jaeger.
 receivers:
   otlp:
     protocols:
@@ -9,11 +10,71 @@ receivers:
         endpoint: 0.0.0.0:4318
 
 processors:
-  batch: {}
   memory_limiter:
     check_interval: 1s
     limit_percentage: 80
     spike_limit_percentage: 20
+
+  # ── Tail sampling (FS-793) ────────────────────────────────────────────────────────
+  #
+  # Every span was previously kept. That is not a sampling strategy, it is the absence
+  # of one, and it fails in the direction nobody notices: under load the collector hits
+  # its memory limit and starts dropping spans ARBITRARILY — so the traces lost are the
+  # ones produced during the incident, which are the only ones anybody wants.
+  #
+  # TAIL sampling, not head: the decision is made once the trace is complete, so it can
+  # be made on whether the trace turned out to be interesting. Head sampling has to
+  # decide at the first span, before the error exists.
+  #
+  # The policies are OR'd. A trace is kept if ANY matches.
+  tail_sampling:
+    # How long to hold a trace's spans before deciding. Must exceed the slowest request
+    # worth keeping, or a slow trace is judged on its first few spans — the failure mode
+    # that quietly discards exactly the latency outliers `APILatencyP95High` fires on.
+    decision_wait: 30s
+    num_traces: 50000
+    expected_new_traces_per_sec: 200
+    policies:
+      # 1. Anything that failed. Never sampled away, at any rate.
+      - name: errors
+        type: status_code
+        status_code:
+          status_codes: [ERROR]
+
+      # 2. Anything slow. 2s is APILatencyP95High's threshold, so the traces that
+      #    explain a latency alert are the traces that survive to be looked at.
+      - name: slow
+        type: latency
+        latency:
+          threshold_ms: 2000
+
+      # 3. The ingestion path, always. Low volume per trace and it is where
+      #    IngestionDataLost / IngestionDeadLettering fire — the one path where a
+      #    missing trace means an unanswerable question about lost customer data.
+      - name: ingestion
+        type: string_attribute
+        string_attribute:
+          key: service.name
+          values: ["omniusgrid-ingestion-worker"]
+
+      # 4. Anything explicitly marked for keeping, so a debugging session can force
+      #    retention without redeploying the collector.
+      - name: forced
+        type: boolean_attribute
+        boolean_attribute:
+          key: sampling.force_keep
+
+      # 5. A baseline of ordinary successful traces, so p50 behaviour is still visible.
+      #    Without this the only traces retained are the pathological ones and there is
+      #    nothing to compare them against.
+      - name: baseline
+        type: probabilistic
+        probabilistic:
+          sampling_percentage: 5
+
+  # AFTER tail_sampling in the pipeline: batching before the sampler would force it to
+  # hold batches rather than traces, and the sampler needs whole traces to decide.
+  batch: {}
 
 exporters:
   otlp/jaeger:
@@ -22,8 +83,14 @@ exporters:
       insecure: true
 
 service:
+  # FS-793. Without this the collector's own health is invisible: a collector dropping
+  # spans because it is over its memory limit reports nothing, and looks identical to a
+  # quiet system.
+  telemetry:
+    metrics:
+      address: 0.0.0.0:8888
   pipelines:
     traces:
       receivers: [otlp]
-      processors: [memory_limiter, batch]
+      processors: [memory_limiter, tail_sampling, batch]
       exporters: [otlp/jaeger]

@@ -9,14 +9,34 @@ lost.
 
 ## Targets by scenario
 
-| Scenario | RTO target | RPO target | Mechanism |
-|----------|-----------|-----------|-----------|
-| Backend API crash | 5 min | 0 min | Stateless restart |
-| Application rollback | 10 min | 0 min | Image/revision rollback |
-| Redpanda broker failure | 10 min | 0 min | Replication factor ≥ 3 |
-| TimescaleDB primary failure | 15 min | 5 min | Patroni failover + WAL archiving |
-| Network partition | 30 min | 15 min | Partition heal + resync |
-| Data center outage | 60 min | 15 min | Cross-region replication + DNS failover |
+> **CORRECTED 2026-08-20 (FS-799). Three of these rows named a mechanism that does not
+> exist**, and the gap was roughly 100×: the table claimed an RPO of 5 minutes where the
+> real figure is **up to 24 hours**.
+>
+> | claimed | mechanism named | reality |
+> |---|---|---|
+> | RPO 5 min | "Patroni failover + WAL archiving" | Patroni lives in `legacy-patroni/`, which **no kustomization applies**. No `archive_mode` or `archive_command` is set anywhere in `base/`, and the deployed image ships no `pgbackrest` binary |
+> | RPO 15 min | "Cross-region replication + DNS failover" | `overlays/dr/kustomization.yaml` states in its own header that it **does NOT create cross-region data replication** |
+> | RPO 15 min (partition) | "Partition heal + resync" | There is no resync mechanism; recovery is the same nightly dump |
+>
+> What actually runs is a nightly `pg_dump -Fc` to S3
+> ([database-backup-restore.md](database-backup-restore.md)). **RPO is up to 24 hours for
+> every database-loss scenario**, and RTO is *unmeasured* — the restore drill exists but
+> has never been timed.
+>
+> These numbers are corrected here **before** the mechanisms are built, not after, because
+> this table is where an SLA number gets quoted from. Closing the gap to the agreed
+> RPO of 15 minutes is FS-800–806; measuring RTO is FS-808–810. The target column below
+> is what we are building toward; the **Actual today** column is what may be promised.
+
+| Scenario | RTO target | RPO target | **Actual today** | Mechanism today |
+|----------|-----------|-----------|------------------|-----------------|
+| Backend API crash | 5 min | 0 min | as stated | Stateless restart |
+| Application rollback | 10 min | 0 min | as stated | Image/revision rollback |
+| Redpanda broker failure | 10 min | 0 min | as stated *if* RF ≥ 3 | Replication factor ≥ 3 |
+| TimescaleDB primary failure | 15 min | 5 min | **RTO unmeasured · RPO up to 24 h** | Restore last nightly `pg_dump` |
+| Network partition | 30 min | 15 min | **RPO up to 24 h** if the database is lost | Partition heal; no resync exists |
+| Data center outage | 60 min | 15 min | **RTO unmeasured · RPO up to 24 h** | Rebuild from the nightly dump; `overlays/dr` starts pods, not data |
 
 ## Step 1 — Record incident timing
 

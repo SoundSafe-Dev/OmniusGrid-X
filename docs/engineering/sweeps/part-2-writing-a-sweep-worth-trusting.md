@@ -1981,6 +1981,36 @@ one of its findings. The habit that catches it:
      sweep had been emptied once before by a line break. A guard keyed on syntax follows the
      syntax, not the defect. After a refactor, run the guards that scan for the construct you
      moved and read the number they report, not the pass.
+
+272. **A guard's reading of its input is part of the guard.** Three sweeps in this repository
+     asserted the right thing about a silently narrowed population: one matched `expr:` per
+     line, so a quarter of `alerts.yml` — every YAML block scalar — was never read; one waved
+     metrics through an allowlist naming exporters that were deployed nowhere; one collected
+     metric names from constructor calls, which answers "is this declared" and not "is this
+     ever written". Nine alerts could not fire, three of them `critical`, and all three sweeps
+     were green. A sweep that examines less than it believes reports exactly what a clean one
+     reports. Assert the size and shape of what was actually read, and when a sweep has an
+     escape hatch, hold the escapes to a fact.
+
+273. **Parsing is not loading, and linting is not running.** `promtool check rules` proved
+     every alert expression parsed while nine of them watched series nothing exported. A
+     YAML-parsing routing test passed over an Alertmanager config the binary refuses to start
+     on — `${SLACK_WEBHOOK_URL}` is not a URL, so the process exited and no alert had ever
+     been delivered. `vite build`, `tsc` and 1,211 tests passed over a bundle that rendered a
+     white screen. Where the real consumer can render its own verdict — `amtool check-config`,
+     `promtool test rules`, loading the built artifact — run that consumer in CI. A checker
+     you wrote agrees with your model of the format; the tool that actually reads it does not
+     have to.
+
+274. **When a document states a target beside the mechanism that delivers it, check the
+     mechanism.** The DR checklist claimed an RPO of 5 minutes via "Patroni failover + WAL
+     archiving" and 15 minutes via "cross-region replication". Patroni is applied by no
+     kustomization, no `archive_command` is set anywhere, and the DR overlay says in its own
+     header that it does not replicate data — the real figure is 24 hours, about 100x out. A
+     bare number ages quietly and everyone distrusts it; a number with a named mechanism reads
+     as verified and is the one that gets quoted, so it needs the check more, not less. Where
+     the claim is customer-facing, publish the measured value beside the target rather than
+     replacing it: the gap is the work item, and deleting the target loses it.
 ---
 
 ## Open observations, not yet tickets

@@ -22,6 +22,10 @@ resources:
   # of them `critical` — referenced series that no deployment in this repository
   # produced; these are what make the register's claims true.
   - exporters.yaml
+  # FS-789/790. Loki + promtail. These shipped for docker-compose only, so every runbook
+  # step that says "check the container logs" was unexecutable in the cluster — including
+  # the one WorkerCrashLooping links to, whose whole remedy is reading them.
+  - logging.yaml
   - grafana.yaml
   - networkpolicies.yaml
 
@@ -45,6 +49,15 @@ configMapGenerator:
   - name: postgres-exporter-queries
     files:
       - queries.yaml=../../../infra/prometheus/postgres_queries.yaml
+  # Loki's config is shared with compose; promtail's is NOT — service discovery is the
+  # one part that genuinely differs, and a shared file would ship each environment a
+  # discovery block matching nothing.
+  - name: loki-config
+    files:
+      - loki.yml=../../../infra/loki/loki.yml
+  - name: promtail-config
+    files:
+      - promtail.yml=../../../infra/loki/promtail-k8s.yml
   # Grafana provisioning: datasource + dashboard provider (local), and the
   # platform dashboard from the canonical infra/grafana tree (single source).
   - name: grafana-datasources

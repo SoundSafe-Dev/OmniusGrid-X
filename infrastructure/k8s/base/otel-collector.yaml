@@ -31,11 +31,45 @@ data:
           http:
             endpoint: 0.0.0.0:4318
     processors:
-      batch: {}
       memory_limiter:
         check_interval: 1s
         limit_percentage: 80
         spike_limit_percentage: 20
+      # FS-793. Keeping every span is not a sampling strategy, it is the absence of
+      # one, and it fails in the direction nobody notices: under load the collector
+      # reaches its memory limit and drops spans ARBITRARILY, so the traces lost are
+      # the ones produced during the incident. Mirrors
+      # infra/otel/otel-collector-config.yaml; the two are kept in step deliberately
+      # so a trace looks the same in both environments.
+      tail_sampling:
+        decision_wait: 30s
+        num_traces: 50000
+        expected_new_traces_per_sec: 200
+        policies:
+          - name: errors
+            type: status_code
+            status_code:
+              status_codes: [ERROR]
+          - name: slow
+            type: latency
+            latency:
+              threshold_ms: 2000
+          - name: ingestion
+            type: string_attribute
+            string_attribute:
+              key: service.name
+              values: ["omniusgrid-ingestion-worker"]
+          - name: forced
+            type: boolean_attribute
+            boolean_attribute:
+              key: sampling.force_keep
+          - name: baseline
+            type: probabilistic
+            probabilistic:
+              sampling_percentage: 5
+      # After the sampler: batching first would make it hold batches rather than
+      # whole traces, and it needs whole traces to decide.
+      batch: {}
     exporters:
       otlp/jaeger:
         endpoint: jaeger:4317
@@ -52,7 +86,7 @@ data:
       pipelines:
         traces:
           receivers: [otlp]
-          processors: [memory_limiter, batch]
+          processors: [memory_limiter, tail_sampling, batch]
           exporters: [otlp/jaeger]
 ---
 apiVersion: apps/v1
@@ -154,8 +188,19 @@ spec:
       port: 4318
       targetPort: 4318
 ---
+# FS-792. A STATEFULSET WITH A VOLUME, not a Deployment with in-memory storage.
+#
+# `all-in-one` defaults to memory storage, so every trace was lost on restart — and a
+# restart is exactly what an incident produces. Yesterday's outage could not be
+# investigated today, which makes tracing useful for live debugging only, at the moment
+# when nobody has time to look.
+#
+# Badger on a PVC rather than Elasticsearch or Cassandra: single-node, no extra
+# operator, and it turns "gone on restart" into "retained for a week". That is a floor,
+# not an endorsement — a multi-replica trace backend is FS-859's neighbour and is
+# recorded there rather than implied here.
 apiVersion: apps/v1
-kind: Deployment
+kind: StatefulSet
 metadata:
   name: jaeger
   namespace: omniusgrid
@@ -164,6 +209,7 @@ metadata:
     app.kubernetes.io/component: tracing
     app.kubernetes.io/part-of: omniusgrid
 spec:
+  serviceName: jaeger
   replicas: 1
   selector:
     matchLabels:
@@ -187,19 +233,30 @@ spec:
           image: jaegertracing/all-in-one:1.60
           securityContext:
             allowPrivilegeEscalation: false
-            # NOT read-only: all-in-one uses in-memory (badger) storage that writes
-            # to a working directory. Forcing a read-only rootfs here would
-            # crash-loop the pod, so it is left writable deliberately rather than
-            # copied from the other workloads. Recorded as accepted debt — a real
-            # deployment should move to a persistent backend, at which point the
-            # rootfs can be locked down.
-            readOnlyRootFilesystem: false
+            # NOW read-only. The note here used to say badger "writes to a working
+            # directory" so the rootfs had to stay writable, and closed with "a real
+            # deployment should move to a persistent backend, at which point the rootfs
+            # can be locked down". FS-792 is that change: badger's writes go to the
+            # mounted PVC, so nothing needs to write to the image any more.
+            readOnlyRootFilesystem: true
             capabilities:
               drop:
                 - ALL
           env:
             - name: COLLECTOR_OTLP_ENABLED
               value: "true"
+            - name: SPAN_STORAGE_TYPE
+              value: "badger"
+            # EPHEMERAL=false is the whole point: left at its default, badger writes to a
+            # temp directory and the persistence is nominal.
+            - name: BADGER_EPHEMERAL
+              value: "false"
+            - name: BADGER_DIRECTORY_VALUE
+              value: "/badger/data"
+            - name: BADGER_DIRECTORY_KEY
+              value: "/badger/key"
+            - name: BADGER_SPAN_STORE_TTL
+              value: "168h"
           ports:
             - name: ui
               containerPort: 16686
@@ -229,6 +286,17 @@ spec:
             initialDelaySeconds: 20
             periodSeconds: 30
             failureThreshold: 3
+          volumeMounts:
+            - name: badger
+              mountPath: /badger
+  volumeClaimTemplates:
+    - metadata:
+        name: badger
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 20Gi
 ---
 apiVersion: v1
 kind: Service

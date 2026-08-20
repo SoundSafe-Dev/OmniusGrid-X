@@ -14645,3 +14645,178 @@ noticed, and that check exists because the same sweep had already been emptied o
 break. A guard keyed on syntax follows the syntax, not the defect — so after a refactor, run
 the guards that scan for the construct you just moved, and read the number they report rather
 than the pass.
+
+---
+
+## FS-769..798 — the SLA instrument, and nine alerts that could never fire
+
+Wave 1 of the FS-769..968 sprint. The driver is a contractual SLA for critical-infrastructure
+customers, and the first question is not "what should we promise" but "can the instrument
+record a breach". It could not.
+
+### The availability SLI was structurally incapable of recording an outage
+
+`slo_rules.yml` computed availability from `http_requests_total` — a series the backend
+exports about **itself**. When the backend dies it does not report zero requests; the series
+ceases to exist, and a ratio over an absent series produces no sample at all.
+
+Measured with promtool rather than reasoned about (`infra/prometheus/tests/slo_outage_test.yml`):
+
+| scenario | `SLOErrorBudgetFastBurn` |
+|---|---|
+| backend up, serving 100% 5xx | **fires** (control) |
+| backend gone, 70 minutes | **silent** |
+| backend gone, 70 minutes | `SLOErrorBudgetSlowBurn` also **silent** |
+
+The two alerts guarding the availability SLO detected a *degraded* backend and were blind to
+a *dead* one. And the hole propagates: a monthly figure computed by averaging skips absent
+samples, so the outage is not averaged in as zero — it is excluded from the window, and the
+month reads ≈100%.
+
+Availability is now `probe_success × (1 − 5xx_ratio)`, where the probe comes from a blackbox
+exporter **in a different process**, which is the entire reason it still reports — reporting
+0 — when the backend is gone.
+
+**The second half matters as much as the first.** When the instrument itself is missing these
+rules produce *nothing* rather than guessing. There is no `or vector(1)`, which would recreate
+the original bug, and no `or vector(0)`, which would page forever on a stack that has not
+deployed the exporter. "I cannot measure availability" is a third state, and it is handled
+where it belongs: `ProbeSignalMissing` and `BackendMetricsMissing` page on `absent()`.
+
+Adds 28-day windows and error-budget-remaining. The longest window in the repository was 6h,
+so nothing here could answer the only availability question a customer ever asks.
+
+### Nine alerts that could never fire — three of them `critical`
+
+| alert | severity | why it was inert |
+|---|---|---|
+| `TimescaleDBDown` | critical | `up{job="timescaledb"}` — no such scrape job in either config |
+| `DiskSpaceCritical` | critical | `node_*` — no node-exporter anywhere |
+| `APIHighErrorRate` | critical | metric written only behind a flag that is off everywhere |
+| `HighMemoryUsage` | high | `node_*` — no node-exporter anywhere |
+| `AssetOffline` | medium | `opsgrid_asset_last_seen_timestamp_seconds` — nothing exported it |
+| `SlowDatabaseQueries` | low | a metric name no exporter produces, **and** `rate()` over a gauge |
+| `APIErrorRateElevated`, `APILatencyP95High` | warning | same flag-gated metric |
+| `WorkerDown`, `EdgeAgentUnreachable` | high | job labels that exist only in compose — inert in k8s **only** |
+
+`opsgrid_http_requests_total` has exactly one write site, `profiling.py:239`, five lines below
+`if not PROFILING_ENABLED: return`. That flag defaults False and is set in no environment, so
+the counter has never been incremented — and `prometheus_client` omits a childless metric from
+`/metrics` entirely.
+
+### Three blind spots in the guards that were supposed to catch exactly this
+
+The guards were good. Each failed in *how it read its input*, not in what it asserted.
+
+1. **Line-scanning YAML.** `test_every_alert_watches_a_series_something_exports` matched
+   `expr:\s*(.+)` per line, so the **13 of 53** expressions written as block scalars (`expr: |`)
+   were captured as the literal string `"|"`. A quarter of the file was invisible to the sweep
+   whose entire purpose is noticing alerts over series nothing exports — and two live defects
+   were sitting in that quarter.
+
+2. **An allowlist nobody could check.** `INFRA_EXPORTERS` waved metrics through by naming a
+   "deployed exporter we name". node-exporter and postgres-exporter were deployed **nowhere**.
+   Adding a prefix silenced the sweep, and the naming was precisely the unfalsifiable part.
+
+3. **Declared is not observed.** An AST sweep over `Counter(...)` calls answers "is this
+   metric declared", which a disabled feature flag leaves perfectly true.
+
+### The notification path did not exist at all
+
+`amtool check-config` on the compose Alertmanager:
+
+```
+FAILED: unsupported scheme "" for URL
+```
+
+`${SLACK_WEBHOOK_URL}` is not a URL, so the configuration is **invalid and Alertmanager
+exits**. It has never started. Prometheus has been posting to `alertmanager:9093` — a
+container in a restart loop — for the whole life of the file, so the local stack has had
+rules, dashboards, and no notification path whatsoever. `test_alert_routing_coverage` passed
+throughout, because it parses the YAML and asks whether each severity has a route: a question
+perfectly answerable about a config that will not load. **Parsing is not loading.**
+
+Both inhibit rules were also structurally dead in both configs: `equal: ['alertname']`
+requires source and target to share a name while the matchers require them to differ in
+severity, and every rule hardcodes one severity across 70+ distinct alertnames.
+
+### Neither CI-job number was right, and the guard produced one of them
+
+The compliance catalogue said **23** blocking CI jobs; the README said **31**. The guard meant
+to stop that number going stale collected job names with a regex over two-space-indented keys
+— which in a GitHub workflow also matches the `on:` triggers. `pull_request:` and `push:` were
+counted as jobs in each workflow: four phantom gates. The README had been updated to match the
+parser's own error, and the SSP is generated from the catalogue, so three documents carried
+three numbers and none of them was **27 blocking + 1 advisory**.
+
+That file's docstring already recorded being bitten by a confounded detector twice. This is the
+third.
+
+### Also delivered
+
+Log aggregation in Kubernetes (Loki + promtail existed for **compose only**, so every runbook
+step reading "check the container logs" — including the one `WorkerCrashLooping` links to —
+was unexecutable in production). aiokafka tracing and **worker tracing at all**: `setup_tracing`
+was called from `app/main.py` and nowhere else, so the four worker processes emitted no spans
+of any kind. Jaeger moved from in-memory to a PVC, because a restart is what an incident
+produces and yesterday's outage could not be investigated today. Tail sampling, so the traces
+kept are the ones that failed or were slow rather than whichever survived the memory limit.
+PVC-fullness alerts (kube-state-metrics was scraped and **no rule used it**, so nothing
+anywhere alerted on storage exhaustion), public-certificate expiry, a dead-man's switch, and
+alerts on Prometheus and Alertmanager themselves. RED and capacity/forecast dashboards.
+`docs/engineering/uptime-commitment.md`, which states plainly which of its four numbers the
+system does not yet meet.
+
+RULE 272 — **a guard's reading of its input is part of the guard.** Every one of the three
+blind spots above was a correct assertion applied to a silently narrowed population: a
+line-scan that skipped block scalars, an allowlist whose entries were unverifiable, an AST
+sweep that could see a declaration but not a write. A sweep that examines less than it
+believes reports exactly what a clean one reports. When adding a sweep, assert the size and
+shape of what it actually read — and when a sweep has an escape hatch, something must hold the
+escapes to a fact.
+
+RULE 273 — **parsing is not loading, and linting is not running.** `promtool check rules`
+proved every alert expression parsed while nine of them could never fire; a YAML-parsing
+routing test passed over an Alertmanager config the binary refuses to start on; `vite build`
+and 1,211 tests passed over a bundle that was a white screen. Where a real binary can render
+its own verdict — `amtool check-config`, `promtool test rules`, loading the built artifact —
+run that binary in CI. A checker you wrote agrees with your model of the format; the tool that
+consumes it does not have to.
+
+---
+
+## FS-799 — the RPO in the runbooks was wrong by about 100×
+
+First item of Wave 2, done here because it is a documentation correction and the document is
+where an SLA number gets quoted from.
+
+`docs/runbooks/rto-rpo-checklist.md` published a target table naming the mechanism behind each
+number. Three rows named a mechanism that does not exist:
+
+| claimed | mechanism named | what is actually there |
+|---|---|---|
+| RPO **5 min** | "Patroni failover + WAL archiving" | Patroni lives in `legacy-patroni/`, applied by **no kustomization**. No `archive_mode` or `archive_command` anywhere in `base/`. The deployed image ships no `pgbackrest` binary |
+| RPO **15 min** | "Cross-region replication + DNS failover" | `overlays/dr/kustomization.yaml` says in its own header that it **does NOT create cross-region data replication** |
+| RPO **15 min** (partition) | "Partition heal + resync" | No resync mechanism exists; recovery is the same nightly dump |
+
+What runs is a nightly `pg_dump -Fc` to S3. **The real RPO is up to 24 hours** for every
+database-loss scenario, and RTO is *unmeasured* — the restore drill exists and has never been
+timed.
+
+The repository already knew this. `docs/runbooks/database-backup-restore.md` states "RPO — up
+to 24 h (no point-in-time recovery)" in its second table, and the backup CronJob's own header
+records that the image has no pgbackrest and no archive_command. Two documents, one of them
+correct, and the one an operator reaches during an incident was the wrong one.
+
+Both are now corrected with an **Actual today** column beside the target, and the runbook index
+carries a note saying the target column must never be quoted to a customer. Corrected
+**before** the mechanisms are built rather than after, because the failure mode is not an
+engineer being confused — it is a number reaching a contract.
+
+RULE 274 — **when a document states a target beside the mechanism that delivers it, check the
+mechanism.** A bare number ages quietly and everybody knows to distrust it. A number with a
+named mechanism reads as *verified*, and is the version that gets quoted — so it needs a
+matching check more than a bare one does, not less. Where the claim is customer-facing, publish
+the measured value alongside the target rather than replacing it: the gap is the work item, and
+deleting the target loses it.
+

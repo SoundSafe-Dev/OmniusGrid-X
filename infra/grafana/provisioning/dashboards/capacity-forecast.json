@@ -1,0 +1,334 @@
+{
+  "uid": "capacity-forecast",
+  "title": "Capacity & Forecast",
+  "tags": [
+    "opsgrid",
+    "capacity",
+    "planning"
+  ],
+  "editable": false,
+  "schemaVersion": 39,
+  "refresh": "1m",
+  "time": {
+    "from": "now-7d",
+    "to": "now"
+  },
+  "annotations": {
+    "list": []
+  },
+  "templating": {
+    "list": [
+      {
+        "name": "datasource",
+        "label": "Data source",
+        "type": "datasource",
+        "query": "prometheus",
+        "current": {
+          "text": "Prometheus",
+          "value": "Prometheus"
+        },
+        "hide": 0
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "title": "Database connections used vs limit",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 0,
+        "y": 0
+      },
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "pg_connections_used",
+          "legendFormat": "in use"
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "pg_connections_limit_total",
+          "legendFormat": "max_connections"
+        }
+      ],
+      "description": "FS-839. The HPA allows 20 backend replicas plus KEDA workers against a Postgres default of 100 connections, and the application pool is unset. This is the panel that says how close that arithmetic already is."
+    },
+    {
+      "id": 2,
+      "title": "Volume fullness",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 12,
+        "y": 0
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "(kube_persistentvolumeclaim_resource_requests_storage_bytes - on(namespace, persistentvolumeclaim) kubelet_volume_stats_available_bytes) / on(namespace, persistentvolumeclaim) kube_persistentvolumeclaim_resource_requests_storage_bytes",
+          "legendFormat": "{{persistentvolumeclaim}}"
+        }
+      ],
+      "description": "Nothing anywhere alerted on storage exhaustion until FS-781, while audit_logs has no retention policy at all (FS-817). Those two facts meet here."
+    },
+    {
+      "id": 3,
+      "title": "Days until each volume is full (7d trend)",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 0,
+        "y": 7
+      },
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "predict_linear(kubelet_volume_stats_available_bytes[7d], 0) / clamp_min(kubelet_volume_stats_available_bytes, 1)",
+          "legendFormat": "{{persistentvolumeclaim}}"
+        }
+      ],
+      "description": "THE FORECAST. Fullness tells you where you are; this tells you how long you have. A volume at 60% and falling fast needs action before one at 80% and flat."
+    },
+    {
+      "id": 4,
+      "title": "Autoscaling headroom",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 12,
+        "y": 7
+      },
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "kube_horizontalpodautoscaler_status_current_replicas",
+          "legendFormat": "{{horizontalpodautoscaler}} current"
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "kube_horizontalpodautoscaler_spec_max_replicas",
+          "legendFormat": "{{horizontalpodautoscaler}} max"
+        }
+      ],
+      "description": "An HPA pinned at max is not scaled \u2014 it is out of room, and every further request queues."
+    },
+    {
+      "id": 5,
+      "title": "Node memory and disk pressure",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 0,
+        "y": 14
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)",
+          "legendFormat": "{{instance}} memory"
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "1 - (node_filesystem_avail_bytes / node_filesystem_size_bytes)",
+          "legendFormat": "{{instance}} disk"
+        }
+      ],
+      "description": "These series did not exist in any environment until FS-776/777, so the two alerts that read them had never been able to fire."
+    },
+    {
+      "id": 6,
+      "title": "Prometheus cardinality",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 12,
+        "y": 14
+      },
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "prometheus_tsdb_head_series",
+          "legendFormat": "active series"
+        }
+      ],
+      "description": "How a Prometheus dies \u2014 and it dies during the incident that produced the labels. PrometheusCardinalityHigh watches this."
+    },
+    {
+      "id": 7,
+      "title": "Fleet growth",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 0,
+        "y": 21
+      },
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "count(opsgrid_asset_last_seen_timestamp_seconds)",
+          "legendFormat": "assets reporting"
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "count(edge_agent_up)",
+          "legendFormat": "agents known"
+        }
+      ],
+      "description": "The denominator behind every per-asset cost. The asset series is new in FS-774 \u2014 the AssetOffline alert had watched it for months and nothing exported it."
+    },
+    {
+      "id": 8,
+      "title": "Telemetry ingest rate",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 12,
+        "y": 21
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "sum(rate(http_requests_total[5m]))",
+          "legendFormat": "API req/s"
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "sum(rate(edge_buffer_dead_lettered_total[5m]))",
+          "legendFormat": "edge dead-letters/s"
+        }
+      ]
+    }
+  ]
+}

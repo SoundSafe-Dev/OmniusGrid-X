@@ -19,6 +19,8 @@ from app.services.export_delivery import (
 )
 from app.services.export_processor import export_processor
 
+from app.core.tracing import setup_worker_tracing
+
 logger = structlog.get_logger()
 
 def _health_port():
@@ -231,4 +233,12 @@ async def run() -> None:
 
 
 if __name__ == "__main__":
+    # FS-791. Instrument BEFORE the event loop starts: the instrumentor patches the
+    # aiokafka client CLASS, and a consumer constructed first is never traced.
+    #
+    # This process emitted no spans at all until now — `setup_tracing` lives in
+    # app/main.py and no worker ever called it, so the consumer half of every
+    # telemetry message, and every database write these workers make, were absent
+    # from tracing entirely. That is the path IngestionDataLost fires on.
+    setup_worker_tracing(service="omniusgrid-export-worker")
     asyncio.run(run())

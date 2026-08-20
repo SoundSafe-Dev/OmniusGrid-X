@@ -1,0 +1,199 @@
+# Log aggregation for Kubernetes (FS-789/790).
+#
+# Loki and promtail shipped in docker-compose only. Grepping infrastructure/k8s/ for
+# `loki|promtail|fluent` returned zero, so in the cluster there was no log aggregation at
+# all — `kubectl logs` against a pod that has already been replaced returns nothing, and
+# a crash-looping pod's previous run is exactly the case the runbooks send you to read.
+#
+# `alerts.yml` links a runbook from `WorkerCrashLooping` whose remedy is "check the
+# container logs from the previous run". That instruction was not executable in the only
+# environment where the alert can fire.
+#
+# Single-replica Loki with a PVC and filesystem storage, matching the compose topology.
+# That is a deliberate floor, not a recommendation: it makes the runbooks executable
+# today, and the object-storage/HA version is FS-859 alongside Prometheus long-term
+# storage. Recorded here so nobody mistakes it for a finished answer.
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: loki
+  namespace: omniusgrid
+  labels:
+    app.kubernetes.io/name: loki
+    app.kubernetes.io/part-of: omniusgrid
+spec:
+  selector:
+    app.kubernetes.io/name: loki
+  ports:
+    - name: http
+      port: 3100
+      targetPort: http
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: loki
+  namespace: omniusgrid
+  labels:
+    app.kubernetes.io/name: loki
+    app.kubernetes.io/part-of: omniusgrid
+spec:
+  serviceName: loki
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: loki
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: loki
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        fsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: loki
+          image: grafana/loki:2.9.8
+          args: ["-config.file=/etc/loki/loki.yml"]
+          ports:
+            - name: http
+              containerPort: 3100
+          volumeMounts:
+            - {name: config, mountPath: /etc/loki, readOnly: true}
+            - {name: data, mountPath: /loki}
+          resources:
+            requests: {cpu: 100m, memory: 256Mi}
+            limits: {memory: 1Gi}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          readinessProbe:
+            httpGet: {path: /ready, port: http}
+            initialDelaySeconds: 20
+          livenessProbe:
+            httpGet: {path: /ready, port: http}
+            initialDelaySeconds: 60
+      volumes:
+        - name: config
+          configMap:
+            name: loki-config
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 50Gi
+
+---
+# ── promtail ────────────────────────────────────────────────────────────────────────
+# A DaemonSet: pod logs live on the node's filesystem, so one collector per node is the
+# only shape that sees all of them.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: promtail
+  namespace: omniusgrid
+  labels:
+    app.kubernetes.io/name: promtail
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: omniusgrid-promtail
+  labels:
+    app.kubernetes.io/name: promtail
+rules:
+  # list/watch only, and only pods: promtail needs to know which pod owns a log file on
+  # disk. It reads no secrets and mutates nothing.
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: omniusgrid-promtail
+  labels:
+    app.kubernetes.io/name: promtail
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: omniusgrid-promtail
+subjects:
+  - kind: ServiceAccount
+    name: promtail
+    namespace: omniusgrid
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: promtail
+  namespace: omniusgrid
+  labels:
+    app.kubernetes.io/name: promtail
+    app.kubernetes.io/part-of: omniusgrid
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: promtail
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: promtail
+    spec:
+      serviceAccountName: promtail
+      # Control-plane nodes too: a control-plane component's logs are the ones you need
+      # when the cluster itself is the problem.
+      tolerations:
+        - operator: Exists
+      securityContext:
+        runAsUser: 0          # /var/log/pods is root-owned
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: promtail
+          image: grafana/promtail:2.9.8
+          args: ["-config.file=/etc/promtail/promtail.yml"]
+          env:
+            - name: HOSTNAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+          ports:
+            - name: http
+              containerPort: 9080
+          volumeMounts:
+            - {name: config,    mountPath: /etc/promtail, readOnly: true}
+            - {name: positions, mountPath: /run/promtail}
+            - {name: pods,      mountPath: /var/log/pods, readOnly: true}
+            - {name: containers, mountPath: /var/lib/docker/containers, readOnly: true}
+          resources:
+            requests: {cpu: 50m, memory: 128Mi}
+            limits: {memory: 512Mi}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          readinessProbe:
+            httpGet: {path: /ready, port: http}
+            initialDelaySeconds: 10
+      volumes:
+        - name: config
+          configMap:
+            name: promtail-config
+        - name: positions
+          emptyDir: {}
+        - name: pods
+          hostPath: {path: /var/log/pods}
+        - name: containers
+          hostPath: {path: /var/lib/docker/containers}
