@@ -15231,3 +15231,75 @@ next to it. Come back within the same arc, and prefer converting "a human must r
 a check the machine makes — the preflight above is nine kubectl calls, and it replaces a
 sentence in a README that everyone would have skipped.
 
+---
+
+## FS-802..806 — point-in-time recovery, proven rather than described
+
+`database-backup-restore.md` carried a section headed **"Restoring PITR (not yet done)"**, and
+every DR runbook describing a pgBackRest restore pointed at a repository nothing wrote to.
+FS-799 then found the RPO table promising 5 minutes via a mechanism no kustomization applies,
+when the real figure was 24 hours.
+
+FS-800 set `archive_timeout` — the parameter that actually bounds RPO, and which was unset, so
+Postgres archived a WAL segment only when it FILLED (16 MB) and a quiet system left its tail
+unarchived for hours. FS-801 made the application talk to the CNPG cluster at all. Both are
+configuration. What was still missing is evidence that a recovery to a chosen instant returns
+the data.
+
+### The drill
+
+Proven by hand first, then encoded. `test_pitr_recovers_to_a_point_in_time_realdb.py` runs a
+real Postgres with continuous archiving, takes a base backup, records a timestamp, then
+performs the mistake we are recovering from — a `DELETE` nobody meant to run, and a write
+after it:
+
+```
+live database after the mistake      ->  1 row  ("after the mistake")
+recovered to a timestamp before it   ->  2 rows ("before", "also before")
+```
+
+The destroyed rows come back and the write made after the target does not. About 8 seconds.
+
+It asserts the property that matters rather than "the restore completed" — **a restore that
+returns *a* database is not a restore that returns *the* database as it was at 14:32**, and
+only the second is what an RPO is a claim about. Mutation-verified by moving the recovery
+target past the mistake, which makes it fail.
+
+It drives `docker` directly rather than testcontainers, because PITR requires stopping the
+server and restarting it against a restored data directory, and the testcontainers postgres
+image runs postgres as PID 1 — stopping it kills the container. A second test asserts the CNPG
+cluster still declares all three prerequisites (WAL archiving, a base-backup schedule,
+`archive_timeout`), because any one going missing leaves a repository that recovers nothing,
+silently.
+
+### The repository's own guard stopped the write-up over-claiming
+
+Rewriting the runbook to say PITR was proven failed
+`test_the_recovery_promise_matches_the_deployment.py`, which pairs the promise against the
+deployment and computes whether PITR is *actually available*:
+
+```
+deployed: False
+why: base/ still ships the single-pod TimescaleDB StatefulSet, so the CNPG cutover
+     has not happened and the deployed database has no WAL archive
+```
+
+That is correct, and the distinction it forced is the most useful thing in this slice.
+**Proven in a drill and available in production are different claims**, and a document that
+blurs them sends an operator to a recovery they cannot perform. The section now leads with the
+status — mechanism proven, not yet available in any environment, every environment still on
+the nightly dump at RPO 24 hours — and the guard requires the qualifier to appear on *every
+line* that mentions PITR, because the operator reads the sentence they landed on, not the
+section.
+
+The qualifier comes off automatically the day `base/` stops shipping the single pod: the same
+guard then fails in the other direction, on the grounds that under-promising after the
+capability lands sends an operator to a slower recovery during an incident.
+
+RULE 281 — **"we tested it" and "it is available" are different claims, and documentation
+collapses them by default.** The drill here is real, repeatable and mutation-verified, and PITR
+remains unavailable in every environment because no cutover has happened. Writing "PITR is
+proven" would have been true and would have been read as "PITR is available" by the one person
+who matters — someone recovering an outage at 3am. State the capability and the availability
+separately, and put the availability first.
+

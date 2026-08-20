@@ -2066,6 +2066,14 @@ one of its findings. The habit that catches it:
      arc, and prefer converting "a human must remember" into a check the machine makes: the
      cutover preflight is nine kubectl calls and it replaces a README sentence everyone would
      have skipped.
+
+281. **"We tested it" and "it is available" are different claims, and documentation collapses
+     them by default.** The PITR drill is real, repeatable and mutation-verified; PITR is
+     available in no environment, because the CNPG cutover has not happened. "PITR is proven"
+     would have been true and would have been read as "PITR is available" by the one reader
+     who matters — someone recovering an outage at 3am. State capability and availability
+     separately and put availability first. Where a guard pairs a promise against the
+     deployment, let it decide which one you are allowed to write.
 ---
 
 ## Open observations, not yet tickets

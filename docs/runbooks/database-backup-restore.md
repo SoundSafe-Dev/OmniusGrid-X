@@ -8,7 +8,7 @@
 | **Manifest** | `infrastructure/k8s/base/db-backup-cronjob.yaml` (CronJob `db-backup`) |
 | **Schedule** | 02:00 UTC daily, `concurrencyPolicy: Forbid` |
 | **Location** | `s3://$BACKUP_S3_BUCKET/postgres/YYYY/MM/DD/HHMMSS.pgc`, SSE-AES256 |
-| **RPO** | Up to 24 h (no point-in-time recovery) |
+| **RPO** | **Up to 24 h — no point-in-time recovery is available in any environment yet.** Every environment runs the legacy StatefulSet's nightly dump. The CNPG stack would give ≈0 for a lost primary and ≤5 min for a lost site, but that needs a cutover that has not happened; the mechanism is proven by `test_pitr_recovers_to_a_point_in_time_realdb.py` (FS-802..806) |
 | **RTO** | **Floor measured 2026-08-20 (FS-810): 0.75 s** to restore a migrated schema in the drill. That is a floor, not the production figure — CI hardware, a near-empty database — but it is now measured on every run with a 120 s ceiling, so the restore path cannot silently become slow. The production number needs a game day against a real dump (FS-925); the documented target is 60 min for a full rebuild |
 | **Verified by** | `backend/tests/test_backup_restore_drill.py`, in the blocking `backend-realdb` gate |
 
@@ -16,7 +16,9 @@
 in `infrastructure/k8s/legacy-patroni/`, which CI never applies, so every DR
 runbook describing a pgBackRest restore was pointing at a repository nothing
 wrote to. Treat any pgBackRest instructions in the `docs/deployment/dr-*.md`
-runbooks as **not yet operational** — see "Restoring PITR" below.
+runbooks as **not yet operational** — see "Point-in-time recovery" below, which
+distinguishes a PITR mechanism that is proven in a drill but **not yet available** in any
+environment from the legacy StatefulSet's nightly dump, which is what actually runs.
 
 ## Required secret
 
@@ -69,7 +71,81 @@ fail on `relation "schema_migrations" does not exist`.
 It does **not** exercise S3, the CronJob's own scheduling, or the credentials.
 Run a real end-to-end restore from an actual S3 object at least quarterly.
 
-## Restoring PITR (not yet done)
+## Point-in-time recovery — proven in a drill, not yet available in any environment
+
+**Status 2026-08-20 (FS-802..806): the mechanism is proven in a drill; PITR is NOT YET
+available in any environment, because no environment has been cut over to CloudNativePG.**
+
+Those are two different statements and the distinction is the whole section. What changed is
+that point-in-time recovery is **not yet available** rather than undescribed: the mechanism
+is now tested, and it requires a cutover that has not happened. During an incident today, on any running
+environment, **you have the nightly logical dump and nothing else**: RPO up to 24 hours.
+
+```bash
+# Establish which database you are actually on before reading further.
+kubectl get cluster.postgresql.cnpg.io -n omniusgrid   # present -> PITR would be available
+kubectl get statefulset timescaledb -n omniusgrid      # present -> nightly dump only
+```
+
+### What the drill proves
+
+`backend/tests/test_pitr_recovers_to_a_point_in_time_realdb.py` runs on every real-DB pass and
+demonstrates recovery to a chosen instant against a real Postgres — base backup, continuous
+WAL archiving, replay to a target time. It asserts the property that matters rather than "the
+restore completed":
+
+```
+live database after a mistaken DELETE  ->  1 row  ("after the mistake")
+recovered to a timestamp before it     ->  2 rows ("before", "also before")
+```
+
+The destroyed rows come back and the write made after the target does not. About 8 seconds.
+
+**What it does not prove, stated so it is not read as more than it is.** It archives with `cp`
+to a local directory, not barman to object storage, and it runs against a container rather
+than the deployed stack. It establishes that the Postgres mechanics work and that our
+understanding of them is correct. Restoring from a real S3 object is **FS-809, still
+outstanding**. And a passing drill is not a deployed capability — see the status line above.
+
+### What the CNPG cluster is configured to do, once it is what runs
+
+Continuous WAL archiving to object storage, weekly base backups (`ScheduledBackup
+omniusgrid-db-weekly`), and `archive_timeout: 5min` — the parameter that actually bounds the
+number. Without it Postgres archives a segment only when it FILLS (16 MB), so on a quiet
+system the tail of the log would sit unarchived for hours and the RPO would be unbounded
+however good the rest of the configuration looked.
+
+Two different figures, which the runbooks used to conflate — **both would apply only after a
+cutover**:
+
+| failure | RPO, post-cutover | why |
+|---|---|---|
+| the primary instance | ≈ 0 | `minSyncReplicas: 1` — a standby confirmed every acknowledged commit; the archive is not read at all |
+| the whole cluster, or the site | ≤ 5 min | the archive is the only surviving copy, so the bound is `archive_timeout` |
+
+Recovery would be a **new** Cluster bootstrapped from the backup, never an edit to the live
+one:
+
+```yaml
+spec:
+  bootstrap:
+    recovery:
+      source: omniusgrid-db
+      recoveryTarget:
+        targetTime: "2026-08-20 14:32:00+00"
+```
+
+The drill's second test asserts the cluster still declares all three prerequisites — WAL
+archiving, a base-backup schedule, and `archive_timeout` — because any one going missing
+leaves a repository that would recover nothing, silently.
+
+### Until then: the legacy StatefulSet
+
+`base/timescaledb-statefulset.yaml` is what every environment runs, and it has no WAL archive.
+The route below was written for it and remains the only option there. It is superseded by
+CNPG rather than wrong.
+
+#### The pgBackRest route (superseded by CNPG)
 
 Point-in-time recovery needs pgBackRest, which the deployed stack cannot
 currently run: `timescale/timescaledb:latest-pg15` ships no `pgbackrest` binary

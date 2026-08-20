@@ -6057,3 +6057,49 @@ Two rules of thumb that came out of these:
   hope. The same sentence as a preflight that exits 1 is a guarantee — and it keeps working
   after everyone who read the README has forgotten it.
 
+---
+
+## Rule 281 — "we tested it" and "it is available" are different claims
+
+The PITR drill (FS-802..806) is as good as a drill gets. It runs a real Postgres with
+continuous archiving, takes a base backup, performs a mistaken `DELETE`, recovers to a
+timestamp before it, and asserts that the destroyed rows come back and the later write does
+not. It is mutation-verified: move the recovery target past the mistake and it fails.
+
+Writing that up, the natural sentence is *"point-in-time recovery is proven"*. It is true.
+
+`test_the_recovery_promise_matches_the_deployment.py` refused it:
+
+```
+deployed: False
+why: base/ still ships the single-pod TimescaleDB StatefulSet, so the CNPG cutover
+     has not happened and the deployed database has no WAL archive
+```
+
+Also true, and it is the one an operator needs. Every environment runs a nightly `pg_dump`.
+During an incident today there is no recovery to a minute, however many drills pass.
+
+**The two claims collapse into each other in prose and nowhere else.** In a test suite they are
+obviously distinct — one is a passing test, the other is a fact about a manifest. In a runbook
+they become the same sentence, and the reader most affected is the one with the least time to
+notice: somebody at 3am who reads "PITR is proven", looks for a recovery target, and does not
+find one.
+
+That guard is worth studying as a shape. It does not ask what the documents say; it *computes*
+whether the capability exists, from the manifests, and then decides which sentence the
+documents are permitted to contain. It fires in both directions — the qualifier must be there
+while `base/` ships the single pod, and must be *gone* the moment it does not, because
+under-promising after a capability lands sends an operator to a slower recovery just as
+effectively.
+
+And it matches per line, not per document, with an explicit vocabulary of qualifying phrases —
+"not yet", "not available", "requires", "opt-in", "has not happened". Its own comment says
+why: a looser pattern would let "PITR is not optional" pass, and *the operator reads the
+sentence, not the sentiment*. Three separate rewrites of the section were rejected before one
+passed, each for a real reason — an unqualified heading, and a qualifier that had wrapped onto
+the following line.
+
+The general form: **state the capability and its availability separately, and put availability
+first.** Where a guard can pair a promise against the deployment, let it decide which sentence
+you are allowed to write.
+

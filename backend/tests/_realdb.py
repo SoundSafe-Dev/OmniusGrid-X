@@ -39,6 +39,35 @@ def realdb_required() -> bool:
     return os.getenv(REQUIRE_ENV, "").strip().lower() in {"1", "true", "yes"}
 
 
+def require_docker() -> None:
+    """Require a working Docker daemon, or skip — unless this environment forbids skipping.
+
+    Separate from `require_testcontainers` because the PITR drill drives `docker` directly:
+    point-in-time recovery needs the server STOPPED and restarted against a restored data
+    directory, and testcontainers' postgres image runs postgres as PID 1, so stopping it
+    kills the container.
+    """
+    import shutil
+    import subprocess
+
+    available = bool(shutil.which("docker")) and (
+        subprocess.run(["docker", "info"], capture_output=True).returncode == 0
+    )
+    if available:
+        return
+    if realdb_required():
+        raise RuntimeError(
+            f"{REQUIRE_ENV}=1 but no working Docker daemon is reachable. This suite proves "
+            f"point-in-time recovery against a real Postgres; skipping it here would report "
+            f"a green gate for a claim nobody tested."
+        )
+    pytest.skip(
+        f"no Docker daemon — real-DB suite skipped. Set {REQUIRE_ENV}=1 to make this a "
+        f"failure instead.",
+        allow_module_level=True,
+    )
+
+
 def require_testcontainers() -> None:
     """Import testcontainers, or skip — unless this environment forbids skipping.
 
