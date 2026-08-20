@@ -90,6 +90,29 @@ edge_agent_cert_expiry_seconds = Gauge(
     ["agent_id"],
 )
 
+# FS-774. `AssetOffline` — "Asset {{ $labels.asset_name }} hasn't been seen for 5
+# minutes" — has watched `opsgrid_asset_last_seen_timestamp_seconds` since the rules
+# were written, and NOTHING HAS EVER EXPORTED IT. On a platform whose purpose is
+# telling an operator that a machine stopped reporting, that alert could not fire.
+#
+# It survived `test_every_alert_watches_a_series_something_exports` because the rule
+# is a YAML block scalar and the sweep line-scanned for `expr:`, capturing "|" and
+# never reading the expression. Thirteen of fifty-three rules sat in that blind spot.
+#
+# The quantity itself was never missing: `workers/ingestion.py:376` maintains
+# `assets.last_seen` on every reading. What was missing was publishing it, which the
+# fleet sweep now does per org — the same restart-survivable, DB-derived shape
+# `edge_agent_last_heartbeat` uses, and for the same reason (a gauge written only on
+# arrival cannot represent an absence).
+#
+# `asset_name` is a label because the alert's description interpolates it. That is one
+# extra label on a per-asset series and it is bounded by the fleet, not by traffic.
+opsgrid_asset_last_seen_timestamp_seconds = Gauge(
+    "opsgrid_asset_last_seen_timestamp_seconds",
+    "Unix timestamp of the most recent telemetry reading from an asset",
+    ["asset_id", "asset_name"],
+)
+
 
 def update_fleet_metrics(agent_id: str, health: Dict[str, Any], live: str) -> None:
     """Publish per-agent gauges from a heartbeat payload."""

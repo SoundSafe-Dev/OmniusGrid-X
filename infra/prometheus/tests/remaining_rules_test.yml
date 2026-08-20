@@ -72,28 +72,36 @@ tests:
     - eval_time: 6m
       alertname: IngestionLagHigh
       exp_alerts: []
-  # --- transactions whose max duration is climbing 50s per second ----------------------
+  # --- a transaction that has been open for 45 seconds ---------------------------------
+  #
+  # FS-779. Rewritten with GAUGE semantics. The rule was `rate(<gauge>[5m]) > 30`, which
+  # is meaningless — `rate` is for counters — and the series it named
+  # (`postgresql_stat_activity_max_tx_duration`) is one no exporter produces. Both
+  # cases below passed anyway, and the "quiet" case passed for an especially misleading
+  # reason: its input climbed 60s per minute, which as a RATE is 1/s and stayed under
+  # the threshold, while as the duration it actually represents it was fifteen minutes
+  # of one transaction held open — the exact condition the alert exists to catch.
   - interval: 1m
     input_series:
-    - series: postgresql_stat_activity_max_tx_duration{instance="timescaledb:9187"}
-      values: 0+3000x30
+    - series: pg_stat_activity_max_tx_duration{datname="omniusgrid"}
+      values: 45x30
     alert_rule_test:
     - eval_time: 15m
       alertname: SlowDatabaseQueries
       exp_alerts:
       - exp_labels:
           alertname: SlowDatabaseQueries
-          instance: timescaledb:9187
+          datname: omniusgrid
           severity: low
           team: data
         exp_annotations:
           summary: Slow database queries detected
-          description: Queries taking longer than 30 seconds
-  # --- a database whose transactions finish --------------------------------------------
+          description: The longest open transaction on omniusgrid has been running over 30 seconds.
+  # --- a database whose transactions finish promptly -----------------------------------
   - interval: 1m
     input_series:
-    - series: postgresql_stat_activity_max_tx_duration{instance="timescaledb:9187"}
-      values: 0+60x30
+    - series: pg_stat_activity_max_tx_duration{datname="omniusgrid"}
+      values: 2x30
     alert_rule_test:
     - eval_time: 15m
       alertname: SlowDatabaseQueries
@@ -232,13 +240,13 @@ tests:
   # --- every request landing in the 2.5-5s bucket --------------------------------------
   - interval: 1m
     input_series:
-    - series: opsgrid_http_request_duration_seconds_bucket{le="1"}
+    - series: http_request_duration_seconds_bucket{le="1"}
       values: 0+0x30
-    - series: opsgrid_http_request_duration_seconds_bucket{le="2.5"}
+    - series: http_request_duration_seconds_bucket{le="2.5"}
       values: 0+0x30
-    - series: opsgrid_http_request_duration_seconds_bucket{le="5"}
+    - series: http_request_duration_seconds_bucket{le="5"}
       values: 0+600x30
-    - series: opsgrid_http_request_duration_seconds_bucket{le="+Inf"}
+    - series: http_request_duration_seconds_bucket{le="+Inf"}
       values: 0+600x30
     alert_rule_test:
     - eval_time: 12m
@@ -255,13 +263,13 @@ tests:
   # --- requests inside one second ------------------------------------------------------
   - interval: 1m
     input_series:
-    - series: opsgrid_http_request_duration_seconds_bucket{le="1"}
+    - series: http_request_duration_seconds_bucket{le="1"}
       values: 0+600x30
-    - series: opsgrid_http_request_duration_seconds_bucket{le="2.5"}
+    - series: http_request_duration_seconds_bucket{le="2.5"}
       values: 0+600x30
-    - series: opsgrid_http_request_duration_seconds_bucket{le="5"}
+    - series: http_request_duration_seconds_bucket{le="5"}
       values: 0+600x30
-    - series: opsgrid_http_request_duration_seconds_bucket{le="+Inf"}
+    - series: http_request_duration_seconds_bucket{le="+Inf"}
       values: 0+600x30
     alert_rule_test:
     - eval_time: 12m

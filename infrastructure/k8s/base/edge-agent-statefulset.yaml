@@ -30,6 +30,9 @@ spec:
         prometheus.io/scrape: "true"
         prometheus.io/port: "9108"
         prometheus.io/path: "/metrics"
+        # FS-780. Matches the compose job name so `EdgeAgentUnreachable` — which keys
+        # on up{job=~"edge-agent.*|opsgrid-edge-agent"} — is not inert in-cluster.
+        prometheus.io/job: "opsgrid-edge-agent"
     spec:
       securityContext:
         runAsNonRoot: true

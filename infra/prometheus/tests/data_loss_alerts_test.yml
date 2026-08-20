@@ -140,7 +140,13 @@ tests:
   # AVAILABILITY. `up == 0` is the easiest expression to break with a job-label typo, and a rule watching a job nothing scrapes is permanently silent.
   - interval: 1m
     input_series:
-      - series: 'up{job="timescaledb"}'
+      # FS-778: the rule now reads pg_up (postgres_exporter's own connect verdict).
+      # It used to read up{job="timescaledb"}, and no such scrape job has ever existed
+      # in either Prometheus config — so the series was absent, `== 0` matched nothing,
+      # and the database-down alert was inert. THIS TEST PASSED ANYWAY, because a
+      # promtool test hand-writes its input series: it proved the rule fires GIVEN the
+      # series, never that anything produces it.
+      - series: 'pg_up'
         values: '0x10'
     alert_rule_test:
       - eval_time: 3m
@@ -148,7 +154,6 @@ tests:
         exp_alerts:
           -
             exp_labels:
-              job: timescaledb
               severity: critical
               team: infrastructure
             exp_annotations:
@@ -159,7 +164,7 @@ tests:
   # MUST STAY QUIET: TimescaleDBDown on a healthy series.
   - interval: 1m
     input_series:
-      - series: 'up{job="timescaledb"}'
+      - series: 'pg_up'
         values: '1x10'
     alert_rule_test:
       - eval_time: 3m

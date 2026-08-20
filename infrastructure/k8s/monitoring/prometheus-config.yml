@@ -131,6 +131,45 @@ scrape_configs:
       - source_labels: [__meta_kubernetes_namespace]
         target_label: namespace
 
+  # Synthetic probes (FS-769). node-exporter and postgres-exporter are discovered by
+  # the generic `kubernetes-pods` job below via their prometheus.io/job annotations;
+  # blackbox is different because Prometheus does not scrape the TARGET, it asks the
+  # exporter to probe it — hence the relabel dance and a static target list.
+  #
+  # Two targets on purpose. The in-cluster Service probe answers "is the app alive";
+  # the external ingress probe answers "can a customer reach it". They disagree
+  # exactly when the ingress, DNS or certificate is the problem, which is the class no
+  # in-process metric can see.
+  - job_name: 'blackbox-http'
+    metrics_path: /probe
+    params:
+      module: [http_2xx_insecure]
+    scrape_interval: 15s
+    static_configs:
+      - targets:
+          - http://backend:8000/health/ready
+        labels: {probe_target: backend_ready}
+      - targets:
+          - http://backend:8000/health/live
+        labels: {probe_target: backend_live}
+      - targets:
+          - http://frontend:80/
+        labels: {probe_target: frontend}
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: __param_target
+      - source_labels: [__param_target]
+        target_label: instance
+      - target_label: __address__
+        replacement: blackbox-exporter:9115
+
+  # The exporter's own health. Without it, a dead blackbox-exporter and a healthy
+  # system are the same observation: no probe_success series either way.
+  # ProbeSignalMissing pages on precisely that.
+  - job_name: 'blackbox-exporter'
+    static_configs:
+      - targets: ['blackbox-exporter:9115']
+
   # Generic pod discovery: any pod annotated with prometheus.io/scrape: "true"
   # is scraped at its declared prometheus.io/port and prometheus.io/path. Lets a
   # new worker opt into scraping with two annotations and no config change here.
@@ -164,6 +203,23 @@ scrape_configs:
         regex: '([^:]+)(?::\d+)?;(\d+)'
         replacement: '${1}:${2}'
         target_label: __address__
+      # FS-780. A pod may DECLARE its job name, and both environments then agree.
+      #
+      # Without this, every annotated pod in the cluster lands under
+      # `job="kubernetes-pods"`, while compose gives the same processes
+      # `job="opsgrid-workers"` and `job="opsgrid-edge-agent"` from static_configs.
+      # Two alert rules keyed off those job names — `WorkerDown` and
+      # `EdgeAgentUnreachable` — therefore matched nothing in Kubernetes and were
+      # silently disabled in the only environment that matters, while firing correctly
+      # in local development, which is the worst possible place for the difference.
+      #
+      # Fixing it here rather than widening the two expressions: a regex over
+      # `kubernetes-pods` would have swept in the backend and every future annotated
+      # pod, so `WorkerDown` would have started firing for things that are not workers.
+      - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_job]
+        action: replace
+        target_label: job
+        regex: (.+)
       - source_labels: [__meta_kubernetes_namespace]
         target_label: namespace
       - source_labels: [__meta_kubernetes_pod_name]

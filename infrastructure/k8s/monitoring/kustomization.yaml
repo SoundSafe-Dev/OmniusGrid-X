@@ -18,6 +18,10 @@ resources:
   - prometheus.yaml
   - alertmanager.yaml
   - kube-state-metrics.yaml
+  # FS-769/776/777/779. blackbox + node + postgres exporters. Nine alert rules — three
+  # of them `critical` — referenced series that no deployment in this repository
+  # produced; these are what make the register's claims true.
+  - exporters.yaml
   - grafana.yaml
   - networkpolicies.yaml
 
@@ -32,6 +36,15 @@ configMapGenerator:
   - name: alertmanager-config
     files:
       - alertmanager.yml=alertmanager-config.yml
+  # Blackbox probe modules and postgres_exporter's custom queries, both pulled from
+  # infra/prometheus so compose and the cluster probe identically and name the same
+  # metrics. Same single-source reasoning as the alert rules above.
+  - name: blackbox-config
+    files:
+      - config.yml=../../../infra/prometheus/blackbox.yml
+  - name: postgres-exporter-queries
+    files:
+      - queries.yaml=../../../infra/prometheus/postgres_queries.yaml
   # Grafana provisioning: datasource + dashboard provider (local), and the
   # platform dashboard from the canonical infra/grafana tree (single source).
   - name: grafana-datasources

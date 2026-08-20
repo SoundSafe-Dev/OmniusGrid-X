@@ -5,15 +5,20 @@ rule_files:
 
 evaluation_interval: 1m
 
+# FS-774. These fed `opsgrid_http_requests_total`, whose only write site sits below
+# `if not PROFILING_ENABLED: return` — a flag that defaults False and is enabled in no
+# environment. The counter has never been incremented anywhere, so APIHighErrorRate
+# (CRITICAL) could not fire; this file passed throughout by writing the series by hand.
+# The rules now read the family RequestContextMiddleware writes unconditionally.
 tests:
   # ---------------------------------------------------------------------------
   # 50% of traffic is 5xx -> APIHighErrorRate must fire after its 5m window.
   # ---------------------------------------------------------------------------
   - interval: 1m
     input_series:
-      - series: 'opsgrid_http_requests_total{method="GET",endpoint="/api/v1/x",status="500"}'
+      - series: 'http_requests_total{method="GET",status_class="5xx"}'
         values: '0+50x20'
-      - series: 'opsgrid_http_requests_total{method="GET",endpoint="/api/v1/x",status="200"}'
+      - series: 'http_requests_total{method="GET",status_class="2xx"}'
         values: '0+50x20'
     alert_rule_test:
       - eval_time: 12m
@@ -32,7 +37,7 @@ tests:
   # ---------------------------------------------------------------------------
   - interval: 1m
     input_series:
-      - series: 'opsgrid_http_requests_total{method="GET",endpoint="/api/v1/x",status="200"}'
+      - series: 'http_requests_total{method="GET",status_class="2xx"}'
         values: '0+100x20'
     alert_rule_test:
       - eval_time: 12m

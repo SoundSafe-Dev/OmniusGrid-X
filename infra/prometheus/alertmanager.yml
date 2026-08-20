@@ -45,6 +45,24 @@ route:
         severity: low
       receiver: 'null'
 
+    # FS-784. The dead-man's switch. `DeadMansSwitch` fires permanently and on purpose;
+    # it must NOT reach a human channel, and it must not fall through to the catch-all,
+    # which would post to #opsgrid-general every repeat_interval forever.
+    #
+    # Its value is entirely in the negative: an external watchdog (a cron on different
+    # infrastructure, or a hosted heartbeat service) watches for this notification to
+    # STOP. Every other rule in alerts.yml goes quiet when Prometheus dies, which is
+    # indistinguishable from a healthy system — this is the one signal whose silence
+    # means something.
+    #
+    # `repeat_interval` is short because the watchdog's own dead-time is bounded by it.
+    - match:
+        severity: none
+      receiver: 'watchdog'
+      group_wait: 0s
+      group_interval: 1m
+      repeat_interval: 5m
+
 receivers:
   - name: 'default'
     slack_configs:
@@ -54,6 +72,15 @@ receivers:
         text: '{{ range .Alerts }}{{ .Annotations.summary }}{{ end }}'
 
   - name: 'null'
+
+  # FS-784. Point this at the external heartbeat URL for the environment (Dead Man's
+  # Snitch, Healthchecks.io, or a self-hosted watchdog). Left as a webhook with no URL
+  # in the repository because the endpoint is per-environment and secret-bearing; the
+  # deploy-time templating that resolves ${SLACK_WEBHOOK_URL} resolves this too.
+  - name: 'watchdog'
+    webhook_configs:
+      - url: '${WATCHDOG_HEARTBEAT_URL}'
+        send_resolved: false
 
   - name: 'pagerduty-critical'
     pagerduty_configs:

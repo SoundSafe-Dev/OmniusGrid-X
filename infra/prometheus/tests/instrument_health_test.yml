@@ -1,0 +1,373 @@
+# Unit tests for the instrument-health and capacity rules (FS-771/778/779/781/782/783/784).
+#
+# Every rule here exists because this sprint found NINE alerts that could never fire,
+# three of them severity `critical`. The lesson is not "add more alerts" — it is that a
+# rule which lints, deploys and stays quiet is indistinguishable from one that works.
+# So each rule below is driven TRUE at least once, and given at least one must-stay-quiet
+# case, because a rule that fires unconditionally is the same failure wearing the
+# opposite sign.
+
+rule_files:
+  - ../alerts.yml
+
+evaluation_interval: 1m
+
+tests:
+  # ── absent(): the only construct that distinguishes silence from health ───────────
+  - interval: 1m
+    name: the availability probe going missing pages
+    input_series:
+      # Deliberately NOT probe_success. absent() is tested by what is not here; a
+      # promtool test needs some series to advance the clock, so an unrelated one does.
+      - series: 'up{job="prometheus"}'
+        values: '1x30'
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: ProbeSignalMissing
+        exp_alerts:
+          # absent() carries the matcher's labels through onto the alert, which is
+          # useful: the page names which probe target stopped reporting.
+          - exp_labels:
+              severity: critical
+              team: platform
+              job: blackbox-http
+              probe_target: backend_ready
+            exp_annotations:
+              summary: "The availability probe is not reporting"
+              description: "No probe_success series for backend_ready. Availability cannot be computed, so the SLO burn-rate alerts are silent — which is NOT the same as healthy. Check the blackbox-exporter target before trusting any SLO number."
+              runbook_url: "https://github.com/SoundSafe-Dev/OmniusGrid-X/blob/main/docs/runbooks/README.md"
+      - eval_time: 20m
+        alertname: BackendMetricsMissing
+        exp_alerts:
+          - exp_labels: {severity: high, team: backend}
+            exp_annotations:
+              summary: "The backend is exporting no request metrics"
+              description: "http_requests_total is absent. Either the backend is down (check BackendAPIDown / ProbeSignalMissing) or /metrics has stopped being scraped. The error-ratio half of the SLI is blind until this returns."
+      - eval_time: 20m
+        alertname: HostMetricsMissing
+        exp_alerts:
+          - exp_labels: {severity: high, team: infrastructure}
+            exp_annotations:
+              summary: "node-exporter is not reporting"
+              description: "DiskSpaceCritical and HighMemoryUsage depend on node_* and cannot fire while this is absent. Both spent their whole lives in exactly this state."
+      - eval_time: 20m
+        alertname: DatabaseMetricsMissing
+        exp_alerts:
+          - exp_labels: {severity: high, team: data}
+            exp_annotations:
+              summary: "postgres-exporter is not reporting"
+              description: "TimescaleDBDown, SlowDatabaseQueries and DatabaseConnectionsNearLimit are all blind while this is absent."
+
+  # THE MUST-STAY-QUIET HALF. An absent() rule that fires while the series is present
+  # would page permanently and be silenced within a week, which is how a monitoring
+  # stack becomes decorative.
+  - interval: 1m
+    name: present instruments do not page
+    input_series:
+      - series: 'probe_success{job="blackbox-http", probe_target="backend_ready"}'
+        values: '1x30'
+      - series: 'http_requests_total{status_class="2xx"}'
+        values: '0+10x30'
+      - series: 'node_filesystem_avail_bytes{instance="node1"}'
+        values: '1000000x30'
+      - series: 'pg_up'
+        values: '1x30'
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: ProbeSignalMissing
+        exp_alerts: []
+      - eval_time: 20m
+        alertname: BackendMetricsMissing
+        exp_alerts: []
+      - eval_time: 20m
+        alertname: HostMetricsMissing
+        exp_alerts: []
+      - eval_time: 20m
+        alertname: DatabaseMetricsMissing
+        exp_alerts: []
+
+  # ── The database-down alert that was inert in both environments ──────────────────
+  - interval: 1m
+    name: pg_up going to zero pages, and a healthy database does not
+    input_series:
+      - series: 'pg_up'
+        values: '1x10 0x30'
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: TimescaleDBDown
+        exp_alerts: []
+      - eval_time: 30m
+        alertname: TimescaleDBDown
+        exp_alerts:
+          - exp_labels: {severity: critical, team: infrastructure}
+            exp_annotations:
+              summary: "TimescaleDB is down"
+              description: "TimescaleDB has been down for more than 1 minute. All data ingestion is halted."
+              runbook_url: "https://github.com/SoundSafe-Dev/OmniusGrid-X/blob/main/docs/deployment/dr-timescaledb-failure.md"
+
+  # ── Database health: the rule whose metric name was fictional ────────────────────
+  - interval: 1m
+    name: a long-running transaction pages on the real metric name
+    input_series:
+      - series: 'pg_stat_activity_max_tx_duration{datname="omniusgrid"}'
+        values: '45x40'
+      - series: 'pg_stat_activity_idle_in_transaction_count{datname="omniusgrid"}'
+        values: '9x40'
+      - series: 'pg_connections_used'
+        values: '90x40'
+      - series: 'pg_connections_limit_total'
+        values: '100x40'
+    alert_rule_test:
+      - eval_time: 30m
+        alertname: SlowDatabaseQueries
+        exp_alerts:
+          - exp_labels: {severity: low, team: data, datname: omniusgrid}
+            exp_annotations:
+              summary: "Slow database queries detected"
+              description: "The longest open transaction on omniusgrid has been running over 30 seconds."
+      - eval_time: 30m
+        alertname: IdleInTransactionBackends
+        exp_alerts:
+          - exp_labels: {severity: medium, team: data, datname: omniusgrid}
+            exp_annotations:
+              summary: "Backends idle in transaction"
+              description: "9 backends on omniusgrid are holding a transaction open while idle."
+      - eval_time: 30m
+        alertname: DatabaseConnectionsNearLimit
+        exp_alerts:
+          - exp_labels: {severity: high, team: data}
+            exp_annotations:
+              summary: "Postgres connection usage above 80%"
+              description: "90% of max_connections is in use. New backends will be refused at 100%."
+
+  - interval: 1m
+    name: a healthy database is quiet on all three
+    input_series:
+      - series: 'pg_stat_activity_max_tx_duration{datname="omniusgrid"}'
+        values: '0.4x40'
+      - series: 'pg_stat_activity_idle_in_transaction_count{datname="omniusgrid"}'
+        values: '1x40'
+      - series: 'pg_connections_used'
+        values: '20x40'
+      - series: 'pg_connections_limit_total'
+        values: '100x40'
+    alert_rule_test:
+      - eval_time: 30m
+        alertname: SlowDatabaseQueries
+        exp_alerts: []
+      - eval_time: 30m
+        alertname: IdleInTransactionBackends
+        exp_alerts: []
+      - eval_time: 30m
+        alertname: DatabaseConnectionsNearLimit
+        exp_alerts: []
+
+  # ── The alerting pipeline watching itself ────────────────────────────────────────
+  - interval: 1m
+    name: the dead mans switch fires permanently, on purpose
+    input_series:
+      - series: 'up{job="prometheus"}'
+        values: '1x30'
+    alert_rule_test:
+      - eval_time: 1m
+        alertname: DeadMansSwitch
+        exp_alerts:
+          - exp_labels: {severity: none, team: platform}
+            exp_annotations:
+              summary: "Alerting pipeline heartbeat"
+              description: "Always firing, on purpose. Routed to the `watchdog` receiver in alertmanager.yml. If this stops arriving, the monitoring stack itself is down and every other alert in this file is silent for the wrong reason."
+      - eval_time: 25m
+        alertname: DeadMansSwitch
+        exp_alerts:
+          - exp_labels: {severity: none, team: platform}
+            exp_annotations:
+              summary: "Alerting pipeline heartbeat"
+              description: "Always firing, on purpose. Routed to the `watchdog` receiver in alertmanager.yml. If this stops arriving, the monitoring stack itself is down and every other alert in this file is silent for the wrong reason."
+
+  - interval: 1m
+    name: losing every alertmanager is critical
+    input_series:
+      - series: 'prometheus_notifications_alertmanagers_discovered'
+        values: '1x10 0x30'
+      - series: 'prometheus_notifications_errors_total'
+        values: '0+2x40'
+      - series: 'prometheus_rule_evaluation_failures_total'
+        values: '0+1x40'
+      - series: 'prometheus_tsdb_head_series'
+        values: '2000000x40'
+      - series: 'up{job="opsgrid-workers", worker="ingestion"}'
+        values: '0x40'
+    alert_rule_test:
+      - eval_time: 35m
+        alertname: AlertmanagerUnreachable
+        exp_alerts:
+          - exp_labels: {severity: critical, team: platform}
+            exp_annotations:
+              summary: "Prometheus has no Alertmanager"
+              description: "Rules still evaluate, but nothing can be delivered. Every page is being dropped."
+      - eval_time: 35m
+        alertname: AlertNotificationsFailing
+        exp_alerts:
+          - exp_labels: {severity: critical, team: platform}
+            exp_annotations:
+              summary: "Alert notifications are failing to send"
+              description: "Prometheus is producing alerts that Alertmanager is not accepting."
+      - eval_time: 35m
+        alertname: PrometheusRuleEvaluationFailing
+        exp_alerts:
+          - exp_labels: {severity: high, team: platform}
+            exp_annotations:
+              summary: "Prometheus rule evaluations are failing"
+              description: "A recording or alerting rule is erroring; the series it produces are stale or absent."
+      - eval_time: 35m
+        alertname: PrometheusCardinalityHigh
+        exp_alerts:
+          - exp_labels: {severity: medium, team: platform}
+            exp_annotations:
+              summary: "Prometheus head series above 1.5M"
+              description: "2M active series. Investigate a new high-cardinality label before ingestion stalls."
+      - eval_time: 35m
+        alertname: PrometheusTargetsDown
+        exp_alerts:
+          - exp_labels: {severity: medium, team: platform, job: opsgrid-workers}
+            exp_annotations:
+              summary: "Scrape targets are down for job opsgrid-workers"
+              description: "1 target(s) in job opsgrid-workers have been unscrapable for 10 minutes."
+
+  - interval: 1m
+    name: a healthy alerting pipeline is quiet
+    input_series:
+      - series: 'prometheus_notifications_alertmanagers_discovered'
+        values: '1x40'
+      - series: 'prometheus_notifications_errors_total'
+        values: '0x40'
+      - series: 'prometheus_rule_evaluation_failures_total'
+        values: '0x40'
+      - series: 'prometheus_tsdb_head_series'
+        values: '250000x40'
+      - series: 'up{job="opsgrid-workers", worker="ingestion"}'
+        values: '1x40'
+    alert_rule_test:
+      - eval_time: 35m
+        alertname: AlertmanagerUnreachable
+        exp_alerts: []
+      - eval_time: 35m
+        alertname: AlertNotificationsFailing
+        exp_alerts: []
+      - eval_time: 35m
+        alertname: PrometheusRuleEvaluationFailing
+        exp_alerts: []
+      - eval_time: 35m
+        alertname: PrometheusCardinalityHigh
+        exp_alerts: []
+      - eval_time: 35m
+        alertname: PrometheusTargetsDown
+        exp_alerts: []
+
+  # ── Storage exhaustion: nothing anywhere alerted on this ─────────────────────────
+  - interval: 1m
+    name: a filling volume pages before writes start failing
+    input_series:
+      # 100 GiB requested, 4 GiB free -> 96% used.
+      - series: 'kube_persistentvolumeclaim_resource_requests_storage_bytes{namespace="omniusgrid", persistentvolumeclaim="timescaledb-data"}'
+        values: '107374182400x40'
+      - series: 'kubelet_volume_stats_available_bytes{namespace="omniusgrid", persistentvolumeclaim="timescaledb-data"}'
+        values: '4294967296x40'
+    alert_rule_test:
+      - eval_time: 30m
+        alertname: PersistentVolumeFillingUp
+        exp_alerts:
+          - exp_labels:
+              severity: high
+              team: infrastructure
+              namespace: omniusgrid
+              persistentvolumeclaim: timescaledb-data
+            exp_annotations:
+              summary: "PVC timescaledb-data is over 85% full"
+              description: "Volume timescaledb-data in omniusgrid is above 85%. See the disk-full runbook."
+      - eval_time: 30m
+        alertname: PersistentVolumeCritical
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              team: infrastructure
+              namespace: omniusgrid
+              persistentvolumeclaim: timescaledb-data
+            exp_annotations:
+              summary: "PVC timescaledb-data is over 95% full"
+              description: "Writes will begin failing shortly. This is the documented path from unbounded audit_logs growth to a critical AuditWriteFailing."
+
+  - interval: 1m
+    name: a half-empty volume is quiet
+    input_series:
+      - series: 'kube_persistentvolumeclaim_resource_requests_storage_bytes{namespace="omniusgrid", persistentvolumeclaim="timescaledb-data"}'
+        values: '107374182400x40'
+      - series: 'kubelet_volume_stats_available_bytes{namespace="omniusgrid", persistentvolumeclaim="timescaledb-data"}'
+        values: '53687091200x40'
+    alert_rule_test:
+      - eval_time: 30m
+        alertname: PersistentVolumeFillingUp
+        exp_alerts: []
+      - eval_time: 30m
+        alertname: PersistentVolumeCritical
+        exp_alerts: []
+
+  # ── The public certificate, whose expiry takes every customer offline at once ────
+  #
+  # promtool's clock starts at 0, so `probe_ssl_earliest_cert_expiry - time()` is just
+  # the series value at these eval times: 2 days of life left.
+  - interval: 1m
+    name: a certificate two days from expiry is an incident
+    input_series:
+      - series: 'probe_ssl_earliest_cert_expiry{job="blackbox-http", instance="https://api.example.com/health/ready"}'
+        values: '172800x200'
+    alert_rule_test:
+      - eval_time: 90m
+        alertname: IngressCertificateExpiringCritical
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              team: infrastructure
+              job: blackbox-http
+              instance: "https://api.example.com/health/ready"
+            exp_annotations:
+              summary: "Public TLS certificate expires in under 3 days"
+              description: "https://api.example.com/health/ready certificate expires in 1d 22h 30m 0s. Renewal is now an incident."
+
+  - interval: 1m
+    name: a certificate with a year left is quiet
+    input_series:
+      - series: 'probe_ssl_earliest_cert_expiry{job="blackbox-http", instance="https://api.example.com/health/ready"}'
+        values: '31536000x200'
+    alert_rule_test:
+      - eval_time: 90m
+        alertname: IngressCertificateExpiringSoon
+        exp_alerts: []
+      - eval_time: 90m
+        alertname: IngressCertificateExpiringCritical
+        exp_alerts: []
+
+  # ── The degraded mode that had a counter and no watcher ──────────────────────────
+  - interval: 1m
+    name: the correlation job store falling back to process memory pages
+    input_series:
+      - series: 'opsgrid_correlation_job_store_degraded_total'
+        values: '0+3x40'
+    alert_rule_test:
+      - eval_time: 30m
+        alertname: CorrelationJobStoreDegraded
+        exp_alerts:
+          - exp_labels: {severity: high, team: backend}
+            exp_annotations:
+              summary: "Correlation job store has fallen back to process memory"
+              description: "Redis did not answer, so job state is per-process. With more than one API worker, a client polling its job id will intermittently be told the job does not exist."
+
+  - interval: 1m
+    name: a healthy correlation job store is quiet
+    input_series:
+      - series: 'opsgrid_correlation_job_store_degraded_total'
+        values: '7x40'
+    alert_rule_test:
+      - eval_time: 30m
+        alertname: CorrelationJobStoreDegraded
+        exp_alerts: []

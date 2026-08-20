@@ -39,11 +39,12 @@ from sqlalchemy import select, text
 from app.core.config import settings
 from app.db.database import AsyncSessionLocal
 from app.db.edge_fleet_models import EdgeAgentStatus
-from app.db.models import Organization
+from app.db.models import Asset, Organization
 from app.services.edge_fleet import (
     agent_liveness,
     edge_agent_last_heartbeat,
     edge_agent_up,
+    opsgrid_asset_last_seen_timestamp_seconds,
 )
 
 logger = structlog.get_logger()
@@ -120,6 +121,35 @@ class EdgeFleetSweep:
                         last_seen.timestamp()
                     )
                 refreshed += 1
+
+            # FS-774. The same question asked of ASSETS rather than agents, and for the
+            # alert that had no series at all. One agent serves many assets, so an
+            # online agent whose PLC stopped answering is invisible to every
+            # `edge_agent_*` gauge — which is the failure an operator most needs told.
+            #
+            # Inactive assets are skipped deliberately: a decommissioned machine has a
+            # last_seen that only ages, and publishing it would page forever.
+            async with AsyncSessionLocal() as session:
+                await session.execute(
+                    text("SELECT set_config('app.current_org_id', :org_id, true)"),
+                    {"org_id": str(org_id)},
+                )
+                assets = (
+                    await session.execute(
+                        select(Asset).where(
+                            Asset.is_active.is_(True), Asset.last_seen.isnot(None)
+                        )
+                    )
+                ).scalars().all()
+            for asset in assets:
+                seen = (
+                    asset.last_seen
+                    if asset.last_seen.tzinfo
+                    else asset.last_seen.replace(tzinfo=timezone.utc)
+                )
+                opsgrid_asset_last_seen_timestamp_seconds.labels(
+                    asset_id=str(asset.id), asset_name=asset.name
+                ).set(seen.timestamp())
         return refreshed
 
 

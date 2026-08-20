@@ -49,6 +49,15 @@ INFRA_EXPORTERS = {
     "http_request_duration_": "request-context middleware latency histogram family",
     "scrape_": "Prometheus per-scrape synthetics",
     "keda_": "KEDA operator metrics (infrastructure/k8s/autoscaling)",
+    # FS-769. The availability SLI's primary input. Deployed as `blackbox-exporter` in
+    # docker-compose.yml and infrastructure/k8s/monitoring/blackbox-exporter.yaml, and
+    # scraped by the `blackbox-http` job in both Prometheus configs. It runs in a
+    # separate process from the backend on purpose: that is the only reason
+    # `probe_success` still reports — reporting 0 — when the backend is gone.
+    "probe_": "blackbox-exporter (scrape job 'blackbox-http', compose + k8s monitoring)",
+    # Per-volume usage, published by the kubelet alongside cAdvisor. Paired with
+    # kube-state-metrics' requested-size series to give PVC fullness.
+    "kubelet_": "kubelet volume stats (scraped with cAdvisor via the kubelet)",
 }
 
 #: PromQL syntax that the identifier regex also matches. Functions and keywords, not
@@ -101,25 +110,55 @@ def _label_names(expr: str) -> set[str]:
     return labels
 
 
+def _rules() -> list[tuple[str, str]]:
+    r"""(rule name, full expression) for every rule in alerts.yml.
+
+    PARSED AS YAML, NOT LINE-SCANNED (FS-774). The previous implementation matched
+    `expr:\s*(.+)` per line, so an expression written as a YAML block scalar —
+
+        expr: |
+          sum(rate(opsgrid_http_requests_total{status=~"5.."}[5m]))
+            / sum(rate(opsgrid_http_requests_total[5m])) > 0.05
+
+    — was captured as the literal string "|" and its metric names were never examined.
+    THIRTEEN OF FIFTY-THREE expressions, a quarter of the file, were invisible to the
+    sweep whose entire purpose is to notice alerts over series nothing exports. Two
+    real defects had been sitting in that blind spot since the rules were written:
+
+      * `AssetOffline` watches `opsgrid_asset_last_seen_timestamp_seconds`, which
+        nothing in either codebase exports — the asset-offline alert, on an IIoT
+        platform, could never fire.
+      * `SlowDatabaseQueries` watches `postgresql_stat_activity_max_tx_duration`. There
+        is no postgres_exporter deployed, and the name is not even the one it would
+        export if there were (`pg_stat_activity_max_tx_duration`), so the rule would
+        stay inert through the very deployment that was supposed to fix it.
+
+    This is rule 165 turned on the sweep itself: it was passing over a quarter of its
+    population, and a sweep that silently narrows reads exactly like a clean one.
+    """
+    import yaml
+
+    doc = yaml.safe_load(ALERTS.read_text())
+    found: list[tuple[str, str]] = []
+    for group in doc.get("groups", []):
+        for rule in group.get("rules", []):
+            name = rule.get("alert") or rule.get("record") or "?"
+            expr = rule.get("expr")
+            if isinstance(expr, str):
+                found.append((name, expr))
+    return found
+
+
 def _referenced_metrics() -> dict[str, list[str]]:
     """metric name -> alert names referencing it, from every expr in alerts.yml."""
-    text = ALERTS.read_text()
     refs: dict[str, list[str]] = {}
-    current_alert = "?"
-    for line in text.splitlines():
-        alert_match = re.search(r"-\s*alert:\s*(\w+)", line)
-        if alert_match:
-            current_alert = alert_match.group(1)
-        expr_match = re.search(r"expr:\s*(.+)", line)
-        if not expr_match:
-            continue
-        expr = expr_match.group(1)
+    for name, expr in _rules():
         labels = _label_names(expr)
         stripped = re.sub(r'"[^"]*"', "", expr)  # label values and annotations
         for ident in set(re.findall(r"[a-zA-Z_][a-zA-Z0-9_]{3,}", stripped)):
             if ident in PROMQL_NOISE or ident in labels:
                 continue
-            refs.setdefault(ident, []).append(current_alert)
+            refs.setdefault(ident, []).append(name)
     return refs
 
 
@@ -147,6 +186,23 @@ class TestTheMeasurementIsReal:
         refs = _referenced_metrics()
         assert len(refs) >= 25, f"only {len(refs)} metric references parsed from alerts.yml"
         assert "edge_agent_last_heartbeat_timestamp_seconds" in refs
+
+    def test_it_reads_multi_line_expressions(self):
+        """THE BLIND SPOT, pinned (FS-774). A quarter of this file's expressions are YAML
+        block scalars, and the line-scanning predecessor captured them as the string
+        "|" — so the sweep reported a clean population while never looking at thirteen
+        rules, two of which were broken. A regression here is silent by construction:
+        the sweep keeps passing, over less."""
+        multi = [(n, e) for n, e in _rules() if "\n" in e.strip()]
+        assert len(multi) >= 10, (
+            f"only {len(multi)} multi-line expressions parsed — expected ~13. The YAML "
+            f"parse has regressed to line-scanning and the sweep is quietly narrower."
+        )
+        # A metric that appears ONLY inside a block scalar must be reachable.
+        refs = _referenced_metrics()
+        assert "opsgrid_notification_delivery_failures_total" in refs or any(
+            "opsgrid_" in e for _n, e in multi
+        ), "no block-scalar metric name reached _referenced_metrics()"
 
     def test_it_would_catch_the_fs695_shape(self):
         """POSITIVE CONTROL: a metric name nothing exports must come back unbacked. This

@@ -1,14 +1,70 @@
-# SLO recording rules + multi-window burn-rate alerts (task 16).
-# SLIs derive from http_requests_total / http_request_duration_seconds emitted by
-# the backend request-context middleware. Target: 99.9% availability (0.1% budget).
+# SLO recording rules + multi-window burn-rate alerts.
+#
+# Target: 99.9% availability over a 28-day rolling window (0.1% error budget ≈ 40m19s).
+#
+# ─────────────────────────────────────────────────────────────────────────────────────
+# FS-770. WHAT WAS WRONG, AND IT WAS THE WHOLE INSTRUMENT.
+#
+# The availability SLI was built entirely on `http_requests_total`, which the backend
+# exports about ITSELF. So the ratio measured how the backend was behaving only while
+# the backend was alive to say so. When it died the series did not fall to zero, it
+# CEASED TO EXIST, and `sum(rate(...)) / clamp_min(sum(rate(...)), 1e-9)` over an
+# absent series returns no sample at all.
+#
+# Measured, not argued — infra/prometheus/tests/slo_outage_test.yml:
+#
+#     backend up, 100% 5xx  ....  SLOErrorBudgetFastBurn FIRES      (control)
+#     backend gone, 70 min  ....  SLOErrorBudgetFastBurn SILENT     (the defect)
+#     backend gone, 70 min  ....  SLOErrorBudgetSlowBurn SILENT
+#
+# The two alerts guarding the availability SLO detected a DEGRADED backend and were
+# blind to a DEAD one. And the hole propagates: an availability figure computed as
+# `avg_over_time(...[28d])` skips absent samples, so the outage is not averaged in as
+# zero — it is excluded from the month entirely, and the SLA reads ~100%.
+#
+# THE FIX has two halves, and the second matters as much as the first:
+#
+#   1. The primary SLI is now `probe_success` from the blackbox exporter, which runs in
+#      a different process from the backend and therefore still reports — reporting 0 —
+#      when the backend is gone.
+#
+#   2. When the instrument itself is missing, these rules produce NOTHING rather than
+#      guessing. There is no `or vector(1)` here, which would recreate the original bug,
+#      and no `or vector(0)`, which would page forever on a stack that has not deployed
+#      the exporter. "I cannot measure availability" is a distinct state from "it is
+#      down", and it is handled where it belongs: ProbeSignalMissing and
+#      BackendMetricsMissing in alerts.yml both page on `absent()`.
+# ─────────────────────────────────────────────────────────────────────────────────────
+
 groups:
   - name: opsgrid_slo_sli
     interval: 30s
     rules:
+      # ── Reachability, measured from outside the process ───────────────────────────
+      #
+      # Fraction of probes in the window that succeeded. Absent only if the blackbox
+      # exporter itself is not scraped, which ProbeSignalMissing pages on.
+      - record: job:slo_probe_success:ratio5m
+        expr: avg(avg_over_time(probe_success{job="blackbox-http", probe_target="backend_ready"}[5m]))
+
+      - record: job:slo_probe_success:ratio30m
+        expr: avg(avg_over_time(probe_success{job="blackbox-http", probe_target="backend_ready"}[30m]))
+
+      - record: job:slo_probe_success:ratio1h
+        expr: avg(avg_over_time(probe_success{job="blackbox-http", probe_target="backend_ready"}[1h]))
+
+      - record: job:slo_probe_success:ratio6h
+        expr: avg(avg_over_time(probe_success{job="blackbox-http", probe_target="backend_ready"}[6h]))
+
+      # ── Correctness, measured from inside ─────────────────────────────────────────
+      #
       # Request rate (all backend HTTP).
       - record: job:http_requests:rate5m
         expr: sum(rate(http_requests_total[5m]))
-      # Error ratio over several windows (5xx / total) — the availability SLI.
+
+      # Server-side 5xx ratio. `clamp_min` is retained DELIBERATELY and is correct for
+      # the case it was written for — an idle but healthy backend, where 0/0 would
+      # otherwise be NaN. It was never the bug; relying on this ratio ALONE was.
       - record: job:http_errors:ratio5m
         expr: |
           sum(rate(http_requests_total{status_class="5xx"}[5m]))
@@ -25,19 +81,89 @@ groups:
         expr: |
           sum(rate(http_requests_total{status_class="5xx"}[6h]))
           / clamp_min(sum(rate(http_requests_total[6h])), 1e-9)
-      # Availability SLI (1 - error ratio) and p99 latency SLI.
+
+      # ── The composite availability SLI ────────────────────────────────────────────
+      #
+      # reachable × correctly-served. Both factors are label-free aggregates so they
+      # multiply without vector matching.
+      #
+      #   backend dead      → probe 0     → availability 0    (the case that was invisible)
+      #   backend all-5xx   → probe 1, errors 1 → availability 0
+      #   backend idle+well → probe 1, errors 0 → availability 1
+      #
+      # `or on() vector(...)` is used ONLY on the error factor, and only to cover the
+      # window in which the backend is down: the probe has already scored that interval
+      # 0, and without the fallback the product would go absent again — the exact bug.
+      # It cannot mask a live failure, because a live backend exports the counter.
       - record: job:slo_availability:ratio5m
-        expr: 1 - job:http_errors:ratio5m
+        expr: |
+          job:slo_probe_success:ratio5m
+          * (1 - (job:http_errors:ratio5m or on() vector(0)))
+      - record: job:slo_availability:ratio30m
+        expr: |
+          job:slo_probe_success:ratio30m
+          * (1 - (job:http_errors:ratio30m or on() vector(0)))
+      - record: job:slo_availability:ratio1h
+        expr: |
+          job:slo_probe_success:ratio1h
+          * (1 - (job:http_errors:ratio1h or on() vector(0)))
+      - record: job:slo_availability:ratio6h
+        expr: |
+          job:slo_probe_success:ratio6h
+          * (1 - (job:http_errors:ratio6h or on() vector(0)))
+
+      # Unavailability, the quantity the burn-rate alerts actually compare. Stated as
+      # its own series so a rule reads as "how fast is budget being spent" rather than
+      # as an error-ratio expression that silently omits reachability.
+      - record: job:slo_unavailability:ratio5m
+        expr: 1 - job:slo_availability:ratio5m
+      - record: job:slo_unavailability:ratio30m
+        expr: 1 - job:slo_availability:ratio30m
+      - record: job:slo_unavailability:ratio1h
+        expr: 1 - job:slo_availability:ratio1h
+      - record: job:slo_unavailability:ratio6h
+        expr: 1 - job:slo_availability:ratio6h
+
+      # Latency SLI.
       - record: job:http_latency:p99_5m
         expr: histogram_quantile(0.99, sum by (le) (rate(http_request_duration_seconds_bucket[5m])))
+
+  # ── The contractual window (FS-772/773) ──────────────────────────────────────────
+  #
+  # The longest window that existed before this was 6h, so no rule in the repository
+  # could answer the only availability question a customer ever asks: "what was it
+  # this month". Evaluated every 5 minutes rather than every 30s — a 28-day range over
+  # a 30s series is ~80k samples per evaluation, cheap enough once but not sixty times
+  # an hour.
+  - name: opsgrid_slo_window_28d
+    interval: 5m
+    rules:
+      - record: job:slo_availability:ratio28d
+        expr: avg_over_time(job:slo_availability:ratio5m[28d])
+
+      # Error budget REMAINING, as a fraction of the 0.1% allowance.
+      #   1.0  → untouched
+      #   0.0  → exactly exhausted
+      #  <0.0  → the SLO is already missed for this window, and by how much
+      - record: job:slo_error_budget_remaining:ratio28d
+        expr: 1 - ((1 - job:slo_availability:ratio28d) / 0.001)
+
+      # The same thing in the unit an incident review argues in: minutes of downtime
+      # still affordable this window. 28d = 40320 minutes; 0.1% of that is 40.32.
+      - record: job:slo_error_budget_remaining:minutes28d
+        expr: job:slo_error_budget_remaining:ratio28d * 40.32
 
   - name: opsgrid_slo_burn_rate
     rules:
       # Fast burn: 14.4x budget over 1h AND 5m (page) — budget gone in ~2 days.
+      #
+      # Now computed from `job:slo_unavailability:*`, which includes reachability. The
+      # previous expression used the 5xx ratio alone, which is why a dead backend never
+      # tripped it.
       - alert: SLOErrorBudgetFastBurn
         expr: |
-          job:http_errors:ratio1h > (14.4 * 0.001)
-          and job:http_errors:ratio5m > (14.4 * 0.001)
+          job:slo_unavailability:ratio1h > (14.4 * 0.001)
+          and job:slo_unavailability:ratio5m > (14.4 * 0.001)
         for: 2m
         labels:
           severity: high
@@ -45,12 +171,14 @@ groups:
           slo: availability
         annotations:
           summary: "Availability error budget burning fast"
-          description: "5xx ratio >14.4x the 99.9% budget over 1h+5m; budget exhausts in ~2 days."
+          description: "Unavailability >14.4x the 99.9% budget over 1h+5m; budget exhausts in ~2 days."
+          runbook_url: "https://github.com/SoundSafe-Dev/OmniusGrid-X/blob/main/docs/runbooks/README.md"
+
       # Slow burn: 6x budget over 6h AND 30m (ticket).
       - alert: SLOErrorBudgetSlowBurn
         expr: |
-          job:http_errors:ratio6h > (6 * 0.001)
-          and job:http_errors:ratio30m > (6 * 0.001)
+          job:slo_unavailability:ratio6h > (6 * 0.001)
+          and job:slo_unavailability:ratio30m > (6 * 0.001)
         for: 15m
         labels:
           severity: medium
@@ -58,4 +186,35 @@ groups:
           slo: availability
         annotations:
           summary: "Availability error budget burning slowly"
-          description: "5xx ratio >6x the 99.9% budget over 6h+30m; investigate before budget depletes."
+          description: "Unavailability >6x the 99.9% budget over 6h+30m; investigate before budget depletes."
+          runbook_url: "https://github.com/SoundSafe-Dev/OmniusGrid-X/blob/main/docs/runbooks/README.md"
+
+      # The budget is gone. Distinct from a burn rate: this is the state in which the
+      # contractual commitment for the window has already been missed, and the
+      # response is commercial (notification, credit) as well as technical.
+      - alert: SLOErrorBudgetExhausted
+        expr: job:slo_error_budget_remaining:ratio28d <= 0
+        for: 10m
+        labels:
+          severity: high
+          team: platform
+          slo: availability
+        annotations:
+          summary: "28-day availability error budget is exhausted"
+          description: >-
+            Rolling 28-day availability has fallen below 99.9%. The SLA commitment for
+            this window is missed; see docs/engineering/uptime-commitment.md for the
+            customer-notification and credit path.
+          runbook_url: "https://github.com/SoundSafe-Dev/OmniusGrid-X/blob/main/docs/runbooks/README.md"
+
+      - alert: SLOErrorBudgetLow
+        expr: job:slo_error_budget_remaining:ratio28d < 0.25
+        for: 30m
+        labels:
+          severity: medium
+          team: platform
+          slo: availability
+        annotations:
+          summary: "Less than 25% of the 28-day error budget remains"
+          description: "Under 25% of the availability budget is left for this window; hold risky deploys."
+          runbook_url: "https://github.com/SoundSafe-Dev/OmniusGrid-X/blob/main/docs/runbooks/README.md"

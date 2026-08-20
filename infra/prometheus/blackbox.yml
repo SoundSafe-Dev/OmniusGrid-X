@@ -1,0 +1,66 @@
+# Blackbox exporter modules (FS-769).
+#
+# WHY THIS EXISTS. Every availability signal in this repository was, until now,
+# exported BY THE THING BEING MEASURED. `http_requests_total` comes from the backend's
+# own middleware, so when the backend dies the series does not go to zero — it stops
+# existing, and a ratio built on it stops producing samples. Proven with promtool in
+# infra/prometheus/tests/slo_outage_test.yml: seventy minutes of total outage, and
+# neither SLO burn-rate alert fires.
+#
+# A blackbox probe runs in a DIFFERENT process from the thing it measures, so its
+# `probe_success` series is still there — and reads 0 — precisely when the backend is
+# gone. That property, not the HTTP request itself, is the point.
+
+modules:
+  # Unauthenticated liveness. The probe an SLA is computed from: it asks only whether
+  # the ingress terminates TLS and the app answers, which is the narrowest question
+  # that still fails when the system is down.
+  http_2xx:
+    prober: http
+    timeout: 5s
+    http:
+      valid_http_versions: ["HTTP/1.1", "HTTP/2.0"]
+      valid_status_codes: [200]
+      method: GET
+      follow_redirects: false
+      preferred_ip_protocol: ip4
+      # A probe that accepts any certificate cannot detect the expiry it is also
+      # relied on to catch (see IngressCertificateExpiringSoon).
+      tls_config:
+        insecure_skip_verify: false
+
+  # Same, for a plain-HTTP internal target (compose, and the in-cluster Service probe
+  # that distinguishes "the app is down" from "the ingress is down").
+  http_2xx_insecure:
+    prober: http
+    timeout: 5s
+    http:
+      valid_http_versions: ["HTTP/1.1", "HTTP/2.0"]
+      valid_status_codes: [200]
+      method: GET
+      follow_redirects: false
+      preferred_ip_protocol: ip4
+      tls_config:
+        insecure_skip_verify: true
+
+  # An AUTHENTICATED read path. `/health` can answer while every real query fails —
+  # it touches no tenant data and no RLS policy. This module carries a long-lived
+  # probe credential (BLACKBOX_PROBE_TOKEN) so the SLI covers a request that actually
+  # reaches Postgres through the tenant session.
+  http_2xx_authenticated:
+    prober: http
+    timeout: 10s
+    http:
+      valid_http_versions: ["HTTP/1.1", "HTTP/2.0"]
+      valid_status_codes: [200]
+      method: GET
+      follow_redirects: false
+      preferred_ip_protocol: ip4
+      bearer_token_file: /etc/blackbox/probe-token
+      tls_config:
+        insecure_skip_verify: true
+
+  # TCP connect, for the broker and database listeners.
+  tcp_connect:
+    prober: tcp
+    timeout: 5s

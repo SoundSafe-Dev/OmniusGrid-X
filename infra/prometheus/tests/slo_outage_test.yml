@@ -1,0 +1,153 @@
+# FS-770. The availability SLI must record an outage it cannot see from inside.
+#
+# THE ORIGINAL DEFECT, reproduced here as the CONTROL that used to pass and now fails:
+# every availability signal was exported by the backend about itself, so a dead backend
+# produced no series rather than a series reading zero. Both burn-rate alerts stayed
+# silent through seventy minutes of total outage while firing correctly for a backend
+# that was up and serving 100% 5xx — they detected degradation and were blind to death.
+#
+# `probe_success` comes from the blackbox exporter, a separate process, so it is still
+# there — and reads 0 — exactly when the backend is gone.
+
+rule_files:
+  - ../slo_rules.yml
+
+evaluation_interval: 1m
+
+tests:
+  # ── THE CASE THAT WAS INVISIBLE ────────────────────────────────────────────────────
+  # 30 minutes healthy, then the backend dies: its counters stop existing and the probe
+  # starts failing. This test is the whole point of the file.
+  - interval: 1m
+    name: a total backend outage is recorded as unavailability
+    input_series:
+      - series: 'http_requests_total{status_class="2xx"}'
+        values: '0+10x30 _x90'
+      - series: 'http_requests_total{status_class="5xx"}'
+        values: '0+0x30 _x90'
+      - series: 'probe_success{job="blackbox-http", probe_target="backend_ready"}'
+        values: '1x30 0x90'
+
+    promql_expr_test:
+      # Healthy: reachable and no errors.
+      - expr: job:slo_availability:ratio5m
+        eval_time: 25m
+        exp_samples:
+          - labels: '{__name__="job:slo_availability:ratio5m"}'
+            value: 1
+
+      # 70 minutes into the outage. THIS RETURNED NO SAMPLE AT ALL before the fix.
+      - expr: job:slo_availability:ratio5m
+        eval_time: 100m
+        exp_samples:
+          - labels: '{__name__="job:slo_availability:ratio5m"}'
+            value: 0
+
+      - expr: job:slo_unavailability:ratio1h
+        eval_time: 100m
+        exp_samples:
+          - labels: '{__name__="job:slo_unavailability:ratio1h"}'
+            value: 1
+
+    alert_rule_test:
+      # The assertion that failed before: a dead backend must page.
+      - eval_time: 100m
+        alertname: SLOErrorBudgetFastBurn
+        exp_alerts:
+          - exp_labels:
+              severity: high
+              team: platform
+              slo: availability
+            exp_annotations:
+              summary: "Availability error budget burning fast"
+              description: "Unavailability >14.4x the 99.9% budget over 1h+5m; budget exhausts in ~2 days."
+              runbook_url: "https://github.com/SoundSafe-Dev/OmniusGrid-X/blob/main/docs/runbooks/README.md"
+
+      - eval_time: 100m
+        alertname: SLOErrorBudgetSlowBurn
+        exp_alerts:
+          - exp_labels:
+              severity: medium
+              team: platform
+              slo: availability
+            exp_annotations:
+              summary: "Availability error budget burning slowly"
+              description: "Unavailability >6x the 99.9% budget over 6h+30m; investigate before budget depletes."
+              runbook_url: "https://github.com/SoundSafe-Dev/OmniusGrid-X/blob/main/docs/runbooks/README.md"
+
+  # ── THE CASE THAT ALREADY WORKED, which the fix must not break ─────────────────────
+  - interval: 1m
+    name: a reachable backend serving only 5xx still burns budget
+    input_series:
+      - series: 'http_requests_total{status_class="2xx"}'
+        values: '0+0x120'
+      - series: 'http_requests_total{status_class="5xx"}'
+        values: '0+10x120'
+      - series: 'probe_success{job="blackbox-http", probe_target="backend_ready"}'
+        values: '1x120'
+    promql_expr_test:
+      - expr: job:slo_availability:ratio5m
+        eval_time: 100m
+        exp_samples:
+          - labels: '{__name__="job:slo_availability:ratio5m"}'
+            value: 0
+    alert_rule_test:
+      - eval_time: 100m
+        alertname: SLOErrorBudgetFastBurn
+        exp_alerts:
+          - exp_labels: {severity: high, team: platform, slo: availability}
+            exp_annotations:
+              summary: "Availability error budget burning fast"
+              description: "Unavailability >14.4x the 99.9% budget over 1h+5m; budget exhausts in ~2 days."
+              runbook_url: "https://github.com/SoundSafe-Dev/OmniusGrid-X/blob/main/docs/runbooks/README.md"
+
+  # ── AN IDLE BUT HEALTHY BACKEND IS NOT AN OUTAGE ───────────────────────────────────
+  # The case `clamp_min` was written for, and the reason it is still in the file. At 3am
+  # a healthy system serves no requests; that must read as 1, not as NaN and not as 0.
+  # A "fix" that made a quiet night look like downtime would burn the budget nightly.
+  - interval: 1m
+    name: an idle healthy backend reads as fully available
+    input_series:
+      - series: 'http_requests_total{status_class="2xx"}'
+        values: '500x120'
+      - series: 'http_requests_total{status_class="5xx"}'
+        values: '0x120'
+      - series: 'probe_success{job="blackbox-http", probe_target="backend_ready"}'
+        values: '1x120'
+    promql_expr_test:
+      - expr: job:slo_availability:ratio5m
+        eval_time: 100m
+        exp_samples:
+          - labels: '{__name__="job:slo_availability:ratio5m"}'
+            value: 1
+    alert_rule_test:
+      - eval_time: 100m
+        alertname: SLOErrorBudgetFastBurn
+        exp_alerts: []
+      - eval_time: 100m
+        alertname: SLOErrorBudgetSlowBurn
+        exp_alerts: []
+
+  # ── A PARTIAL OUTAGE COMPOSES ──────────────────────────────────────────────────────
+  # Probe succeeding half the time, no 5xx from the half that answers: availability is
+  # 0.5, not 1. This is the shape of a crash-looping or half-scheduled deployment, and
+  # the old instrument scored it 1.0 because the replicas that answered answered well.
+  - interval: 1m
+    name: intermittent reachability is scored on the reachability, not the survivors
+    input_series:
+      - series: 'http_requests_total{status_class="2xx"}'
+        values: '0+10x120'
+      - series: 'http_requests_total{status_class="5xx"}'
+        values: '0+0x120'
+      - series: 'probe_success{job="blackbox-http", probe_target="backend_ready"}'
+        values: '1 0 1 0 1 0 1 0 1 0 1 0 1 0 1 0 1 0 1 0 1 0 1 0 1 0 1 0 1 0 1 0 1 0 1 0 1 0 1 0 1 0 1 0 1 0 1 0 1 0 1 0 1 0 1 0 1 0 1 0 1 0 1 0 1 0 1 0 1 0 1 0 1 0 1 0 1 0 1 0 1 0 1 0 1 0 1 0 1 0 1 0 1 0 1 0 1 0 1 0 1 0 1 0 1 0 1 0 1 0 1 0 1 0 1 0 1 0 1 0 1'
+    promql_expr_test:
+      - expr: job:slo_probe_success:ratio5m
+        eval_time: 100m
+        exp_samples:
+          # 0.6, not 0.5: a 5m lookback over a 1m series covers six points, and an
+          # alternating series is never exactly half over an even window. The claim
+          # under test is that it lands strictly between 0 and 1 — the old instrument
+          # scored this shape 1.0.
+          - labels: '{__name__="job:slo_probe_success:ratio5m"}'
+            value: 0.6

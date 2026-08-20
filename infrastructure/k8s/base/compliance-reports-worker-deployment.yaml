@@ -21,6 +21,10 @@ spec:
         prometheus.io/scrape: "true"
         prometheus.io/port: "9109"
         prometheus.io/path: "/metrics"
+        # FS-780. Names the job so `WorkerDown` (up{job="opsgrid-workers"}) matches in
+        # Kubernetes as it already did in compose. Without it these pods scrape under
+        # job="kubernetes-pods" and the alert was inert in production only.
+        prometheus.io/job: "opsgrid-workers"
       labels:
         app.kubernetes.io/name: compliance-reports-worker
         app.kubernetes.io/component: worker

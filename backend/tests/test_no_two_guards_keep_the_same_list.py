@@ -51,6 +51,42 @@ OVERLAP_THRESHOLD = 3
 #: compared them and found the overlap meaningful rather than accidental.
 DIFFERENT_QUESTIONS: Dict[frozenset, str] = {
     frozenset({
+        "test_every_alert_watches_a_series_something_exports.py::INFRA_EXPORTERS",
+        "test_registered_exporters_are_deployed.py::EXPECTED_JOB",
+    }): (
+        "Keyed by the same metric prefixes ON PURPOSE, and the second exists precisely "
+        "because the first could not be checked. INFRA_EXPORTERS is an ALLOWLIST: naming "
+        "a prefix there tells the alert sweep to stop asking whether anything exports it. "
+        "EXPECTED_JOB is the opposite — it names the scrape job that must exist for that "
+        "claim to be true. Two of the register's claims were false when this pair was "
+        "written (node-exporter and postgres-exporter were deployed nowhere, leaving two "
+        "CRITICAL alerts inert), so deriving one from the other would restore exactly the "
+        "unfalsifiability that let that happen. The shared keys are the join, not a copy "
+        "— and test_every_prefix_is_classified asserts the two stay in step (FS-775)."
+    ),
+    frozenset({
+        "test_every_alert_watches_a_series_something_exports.py::INFRA_EXPORTERS",
+        "test_registered_exporters_are_deployed.py::NOT_OURS_TO_DEPLOY",
+    }): (
+        "Same join, opposite half. NOT_OURS_TO_DEPLOY records the prefixes that CANNOT be "
+        "traced to a manifest in this repository — Prometheus synthetics, the kubelet, "
+        "operator-installed metrics — each with the reason. Keeping the unverifiable set "
+        "explicit and small is the whole point; folding it into INFRA_EXPORTERS would make "
+        "'checked' and 'excused' indistinguishable again."
+    ),
+    frozenset({
+        "test_registered_exporters_are_deployed.py::EXPECTED_JOB",
+        "test_registered_exporters_are_deployed.py::EXPECTED_DEPLOYMENT",
+    }): (
+        "One file, two failure modes that are genuinely independent. A scrape job with no "
+        "workload behind it is a permanently-DOWN target; a workload with no scrape job is "
+        "a process burning resources that nothing reads. Both produce no series and look "
+        "identical from the alert's side, and only a subset of prefixes have a workload in "
+        "this repository at all — kube-state-metrics has no compose service, and the "
+        "Prometheus-synthesised families have neither. Merging them would force a single "
+        "answer onto two questions with different populations."
+    ),
+    frozenset({
         "test_edge_ingest_quarantine_retention.py::GOOD",
         "test_the_uplink_framing_survives_a_mixed_fleet.py::READING",
     }): (

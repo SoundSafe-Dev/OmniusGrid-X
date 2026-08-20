@@ -43,6 +43,55 @@ scrape_configs:
       - targets: ['edge-agent-sim:9108']
     metrics_path: '/metrics'
 
+  # Host metrics (FS-776/777). DiskSpaceCritical and HighMemoryUsage read node_* and
+  # nothing exported it in any environment; both were inert.
+  - job_name: 'node-exporter'
+    static_configs:
+      - targets: ['node-exporter:9100']
+
+  # Database metrics (FS-779). Feeds SlowDatabaseQueries and the connection-headroom
+  # series FS-839 sizes the application pool against.
+  - job_name: 'postgres-exporter'
+    static_configs:
+      - targets: ['postgres-exporter:9187']
+
+  # Synthetic probes (FS-769). The `blackbox-exporter` job below scrapes the exporter's
+  # OWN metrics; this job asks it to probe targets. The relabel dance is the standard
+  # blackbox pattern: the target address becomes a URL parameter, and the exporter's
+  # address becomes the scrape address.
+  #
+  # These probes are the only availability signal that survives the backend dying. The
+  # SLI in slo_rules.yml is built on `probe_success` for exactly that reason.
+  - job_name: 'blackbox-http'
+    metrics_path: /probe
+    params:
+      module: [http_2xx_insecure]
+    scrape_interval: 15s
+    static_configs:
+      - targets:
+          - http://backend:8000/health/live
+        labels: {probe_target: backend_live}
+      - targets:
+          - http://backend:8000/health/ready
+        labels: {probe_target: backend_ready}
+      - targets:
+          - http://frontend:80/
+        labels: {probe_target: frontend}
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: __param_target
+      - source_labels: [__param_target]
+        target_label: instance
+      - target_label: __address__
+        replacement: blackbox-exporter:9115
+
+  # The exporter's own health. Without this, a dead blackbox-exporter looks identical
+  # to a healthy system: no probe_success series either way. Paired with the
+  # ProbeSignalMissing alert in alerts.yml.
+  - job_name: 'blackbox-exporter'
+    static_configs:
+      - targets: ['blackbox-exporter:9115']
+
   # Redpanda metrics
   - job_name: 'redpanda'
     static_configs:

@@ -1,0 +1,234 @@
+# Exporters that make nine previously-inert alert rules real (FS-769/776/777/779).
+#
+# THE PATTERN THIS FIXES. Every availability and resource signal in this stack was
+# exported by the process being measured, or by an exporter that was never deployed:
+#
+#   DiskSpaceCritical  (CRITICAL)  node_filesystem_*        no node-exporter, anywhere
+#   HighMemoryUsage    (HIGH)      node_memory_*            no node-exporter, anywhere
+#   TimescaleDBDown    (CRITICAL)  up{job="timescaledb"}    no such scrape job, ever
+#   SlowDatabaseQueries            postgresql_stat_*        a name no exporter produces
+#   SLO burn-rate x2               http_requests_total      absent when the backend dies
+#
+# All five linted, deployed, and could not fire. The alert-rule register listed
+# node-exporter and postgres-exporter as "deployed exporters we name" — a claim this
+# file is what makes true. backend/tests/test_registered_exporters_are_deployed.py now
+# holds the register to the manifests so the claim cannot rot back into a hope.
+
+---
+# ── blackbox-exporter ───────────────────────────────────────────────────────────────
+# Probes the app from OUTSIDE its own process. This is the only availability signal
+# that still reports — reporting 0 — when the backend is gone, which is precisely the
+# outage the SLI could not previously record.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: blackbox-exporter
+  namespace: omniusgrid
+  labels:
+    app.kubernetes.io/name: blackbox-exporter
+    app.kubernetes.io/part-of: omniusgrid
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: blackbox-exporter
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: blackbox-exporter
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65534
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: blackbox-exporter
+          image: prom/blackbox-exporter:v0.25.0
+          args:
+            - --config.file=/etc/blackbox_exporter/config.yml
+          ports:
+            - name: http
+              containerPort: 9115
+          volumeMounts:
+            - name: config
+              mountPath: /etc/blackbox_exporter
+              readOnly: true
+          resources:
+            requests: {cpu: 10m, memory: 32Mi}
+            limits: {memory: 128Mi}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          livenessProbe:
+            httpGet: {path: /-/healthy, port: http}
+            initialDelaySeconds: 5
+          readinessProbe:
+            httpGet: {path: /-/healthy, port: http}
+            initialDelaySeconds: 5
+      volumes:
+        - name: config
+          configMap:
+            name: blackbox-config
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: blackbox-exporter
+  namespace: omniusgrid
+  labels:
+    app.kubernetes.io/name: blackbox-exporter
+spec:
+  selector:
+    app.kubernetes.io/name: blackbox-exporter
+  ports:
+    - name: http
+      port: 9115
+      targetPort: http
+
+---
+# ── node-exporter ───────────────────────────────────────────────────────────────────
+# A DaemonSet, because "is this NODE out of disk" is a per-node question and a single
+# replica would answer it for one machine while the alert claims to cover the cluster.
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: node-exporter
+  namespace: omniusgrid
+  labels:
+    app.kubernetes.io/name: node-exporter
+    app.kubernetes.io/part-of: omniusgrid
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: node-exporter
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: node-exporter
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9100"
+        prometheus.io/path: "/metrics"
+        prometheus.io/job: "node-exporter"
+    spec:
+      hostPID: true
+      hostNetwork: true
+      # Runs on control-plane nodes too: a control-plane node filling its disk takes
+      # the cluster with it, and excluding it is how that becomes invisible.
+      tolerations:
+        - operator: Exists
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65534
+      containers:
+        - name: node-exporter
+          image: prom/node-exporter:v1.8.2
+          args:
+            - --path.procfs=/host/proc
+            - --path.sysfs=/host/sys
+            - --path.rootfs=/host/root
+            - --collector.filesystem.mount-points-exclude=^/(dev|proc|sys|var/lib/docker/.+|var/lib/kubelet/pods/.+)($|/)
+          ports:
+            - name: metrics
+              containerPort: 9100
+              hostPort: 9100
+          resources:
+            requests: {cpu: 10m, memory: 32Mi}
+            limits: {memory: 128Mi}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - {name: proc,   mountPath: /host/proc, readOnly: true}
+            - {name: sys,    mountPath: /host/sys,  readOnly: true}
+            - {name: rootfs, mountPath: /host/root, readOnly: true, mountPropagation: HostToContainer}
+      volumes:
+        - {name: proc,   hostPath: {path: /proc}}
+        - {name: sys,    hostPath: {path: /sys}}
+        - {name: rootfs, hostPath: {path: /}}
+
+---
+# ── postgres-exporter ───────────────────────────────────────────────────────────────
+# Queries are declared in infra/prometheus/postgres_queries.yaml so the metric names
+# are a fact about this repository. `SlowDatabaseQueries` named a series no exporter
+# has ever produced; relying on an upstream default collector set is how a rule goes
+# silently inert one major version later.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: postgres-exporter
+  namespace: omniusgrid
+  labels:
+    app.kubernetes.io/name: postgres-exporter
+    app.kubernetes.io/part-of: omniusgrid
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: postgres-exporter
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: postgres-exporter
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9187"
+        prometheus.io/path: "/metrics"
+        prometheus.io/job: "postgres-exporter"
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65534
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: postgres-exporter
+          image: quay.io/prometheuscommunity/postgres-exporter:v0.15.0
+          env:
+            # SPLIT FORM, not the `url` key. That secret value is SQLAlchemy's async
+            # DSN (`postgresql+asyncpg://…`), and libpq does not understand the
+            # `+asyncpg` scheme — the exporter would fail to connect, export nothing,
+            # and leave TimescaleDBDown inert in exactly the way this file exists to
+            # fix. DATA_SOURCE_URI/USER/PASS sidesteps the scheme entirely.
+            #
+            # Reuses the application's own credentials. A read-only monitoring role
+            # would be better and belongs with the least-privilege work in OG-AC-003;
+            # a second identity today means a second secret nothing rotates.
+            - name: DATA_SOURCE_URI
+              value: "timescaledb:5432/omniusgrid?sslmode=disable"
+            - name: DATA_SOURCE_USER
+              valueFrom:
+                secretKeyRef:
+                  name: database-credentials
+                  key: username
+            - name: DATA_SOURCE_PASS
+              valueFrom:
+                secretKeyRef:
+                  name: database-credentials
+                  key: password
+            - name: PG_EXPORTER_EXTEND_QUERY_PATH
+              value: /etc/postgres_exporter/queries.yaml
+          ports:
+            - name: metrics
+              containerPort: 9187
+          volumeMounts:
+            - name: queries
+              mountPath: /etc/postgres_exporter
+              readOnly: true
+          resources:
+            requests: {cpu: 10m, memory: 32Mi}
+            limits: {memory: 128Mi}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+      volumes:
+        - name: queries
+          configMap:
+            name: postgres-exporter-queries

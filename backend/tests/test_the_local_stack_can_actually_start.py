@@ -119,12 +119,65 @@ class TestPrometheusCanStart:
         )
 
 
+def _address_replacement(job: dict) -> str | None:
+    """The `__address__` a relabel rule rewrites every target to, if any.
+
+    This is the blackbox pattern: the scrape address is the exporter, and the nominal
+    `targets` are what the exporter is asked to probe.
+    """
+    for rule in job.get("relabel_configs") or []:
+        if rule.get("target_label") == "__address__" and rule.get("replacement"):
+            return str(rule["replacement"])
+    return None
+
+
+def _probe_host(target: str) -> str:
+    """Hostname of a probe target, which may be a bare host:port or a full URL."""
+    from urllib.parse import urlparse
+
+    if "://" in target:
+        return urlparse(target).hostname or target
+    return target.split(":")[0]
+
+
 class TestEveryScrapeTargetIsRealAndScrapedOnce:
     def test_each_static_target_names_a_compose_service(self):
         compose = _compose()
         known = _service_names_and_aliases(compose)
         problems = []
         for job in _prom().get("scrape_configs") or []:
+            # FS-769. A BLACKBOX-STYLE JOB INVERTS THE MEANING OF `targets`.
+            #
+            # Prometheus does not scrape a probe target; it scrapes the EXPORTER and
+            # passes the target as a URL parameter, with a relabel rule rewriting
+            # `__address__` to the exporter's address. So `targets` holds probe URLs
+            # like `http://backend:8000/health/ready`, and splitting those on ":"
+            # yields the host "http", which is not a compose service and never will be.
+            #
+            # Both halves still need checking, and for different failures: the exporter
+            # must exist or the job is permanently down, and each probe destination
+            # must exist or the probe reports a failure that is the checker's fault
+            # rather than the system's — the worse of the two, because it looks like a
+            # real outage and would burn error budget the SLI is computed from.
+            rewritten = _address_replacement(job)
+            if rewritten is not None:
+                host = rewritten.split(":")[0]
+                if host not in known and host not in {"localhost", "127.0.0.1"}:
+                    problems.append(
+                        f"job {job['job_name']!r} relabels __address__ to {rewritten!r}, "
+                        f"which is no compose service"
+                    )
+                for static in job.get("static_configs") or []:
+                    for target in static.get("targets") or []:
+                        host = _probe_host(str(target))
+                        if host in {"localhost", "127.0.0.1"} or host in known:
+                            continue
+                        problems.append(
+                            f"job {job['job_name']!r} probes {target!r}, whose host "
+                            f"{host!r} is no compose service"
+                        )
+                continue
+
             for static in job.get("static_configs") or []:
                 for target in static.get("targets") or []:
                     host = str(target).split(":")[0]

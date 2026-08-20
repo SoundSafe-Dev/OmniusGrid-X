@@ -408,6 +408,70 @@ services:
     networks:
       - omniusgrid-network
 
+  # postgres_exporter - database metrics (FS-779)
+  #
+  # `SlowDatabaseQueries` referenced `postgresql_stat_activity_max_tx_duration`, which
+  # no exporter has ever produced, in a stack where no postgres exporter was deployed
+  # either. Two independent reasons the rule could not fire, and it had a passing
+  # promtool test throughout — promtool hand-writes its input series.
+  #
+  # Queries are declared in infra/prometheus/postgres_queries.yaml so the metric names
+  # are a fact about this repository rather than about an upstream default collector
+  # set that changes between major versions.
+  postgres-exporter:
+    image: quay.io/prometheuscommunity/postgres-exporter:v0.15.0
+    container_name: omniusgrid-postgres-exporter
+    environment:
+      - DATA_SOURCE_NAME=postgresql://${POSTGRES_USER:-omniusgrid}:${POSTGRES_PASSWORD:-omniusgrid}@timescaledb:5432/${POSTGRES_DB:-omniusgrid}?sslmode=disable
+      - PG_EXPORTER_EXTEND_QUERY_PATH=/etc/postgres_exporter/queries.yaml
+    volumes:
+      - ./infra/prometheus/postgres_queries.yaml:/etc/postgres_exporter/queries.yaml:ro
+    ports:
+      - "9187:9187"
+    depends_on:
+      - timescaledb
+    networks:
+      - omniusgrid-network
+
+  # node-exporter - host metrics (FS-776/777)
+  #
+  # `DiskSpaceCritical` (CRITICAL) and `HighMemoryUsage` (HIGH) both read `node_*` and
+  # there was no node-exporter in ANY environment, so the two alerts guarding the
+  # resource exhaustion that ends this system were inert everywhere. Deployed rather
+  # than deleted: FS-817 shows audit_logs growing without a retention policy, and disk
+  # exhaustion is the documented way that becomes an outage.
+  node-exporter:
+    image: prom/node-exporter:v1.8.2
+    container_name: omniusgrid-node-exporter
+    command:
+      - '--path.rootfs=/host'
+    pid: host
+    volumes:
+      - /:/host:ro,rslave
+    ports:
+      - "9100:9100"
+    networks:
+      - omniusgrid-network
+
+  # Blackbox exporter - synthetic probes (FS-769)
+  #
+  # Runs in its own container ON PURPOSE. Every other availability signal in this
+  # stack is exported by the process being measured, so a dead backend produces no
+  # series at all rather than a series reading zero — and a ratio over a missing
+  # series simply stops, which is why both SLO burn-rate alerts were silent through
+  # a total outage (infra/prometheus/tests/slo_outage_test.yml).
+  blackbox-exporter:
+    image: prom/blackbox-exporter:v0.25.0
+    container_name: omniusgrid-blackbox
+    volumes:
+      - ./infra/prometheus/blackbox.yml:/etc/blackbox_exporter/config.yml
+    command:
+      - '--config.file=/etc/blackbox_exporter/config.yml'
+    ports:
+      - "9115:9115"
+    networks:
+      - omniusgrid-network
+
   # Prometheus - Metrics collection
   prometheus:
     image: prom/prometheus:latest
