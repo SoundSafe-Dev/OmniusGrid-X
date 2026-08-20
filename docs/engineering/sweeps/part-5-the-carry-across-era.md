@@ -5810,3 +5810,41 @@ Two practical consequences:
   a document that silently replaces 5 minutes with 24 hours loses the fact that 15 minutes is
   what was agreed.
 
+---
+
+## Rule 275 — a preflight beside a test is weaker than a precondition inside it
+
+Eleven modules in `backend/tests/` began with:
+
+```python
+pytest.importorskip("testcontainers")
+```
+
+and the `backend-realdb` job ran, several steps earlier:
+
+```yaml
+- run: python -c "import testcontainers.postgres; print('testcontainers OK')"
+```
+
+That preflight is well-reasoned and it works. What it cannot survive is an edit to itself. It
+protects those eleven suites only while that step exists, in that job, under that name, before
+the pytest invocation — and the tests carry no memory whatsoever of the requirement. Rename it,
+reorder it, move the suites into a different job, and every one of them skips silently while
+`pytest` exits 0 and the tick stays green.
+
+The consequence is not abstract. `test_backup_restore_drill.py` is in that list, and its own
+docstring explains that the drill exists so the nightly backup does not become "the same kind
+of fiction". A drill that skips is that fiction one level up — and the number it backs is a
+customer-facing RPO.
+
+**The fix is to move the requirement into the thing being required.** `require_testcontainers()`
+skips on a laptop and raises when `REQUIRE_REALDB=1`; CI sets that variable; and a guard
+asserts CI still sets it. Now the failure mode of removing the protection is a red test rather
+than a quieter suite.
+
+The general shape: whenever a guarantee lives *next to* the code it guards rather than *in* it,
+ask what happens when the two are separated — because they will be, by someone who does not
+know they were connected. Related to rule 39 (a comment records a fix, only a guard prevents
+the next one), and to the FS-489 case where 47 e2e tests had never run because a collector
+pattern did not match their filenames.
+

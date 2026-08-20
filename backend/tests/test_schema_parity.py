@@ -18,7 +18,9 @@ import re
 
 import pytest
 
-pytest.importorskip("testcontainers")
+
+from tests._realdb import require_testcontainers
+require_testcontainers()  # FS-808: skips on a laptop, FAILS when REQUIRE_REALDB=1
 
 from app.db.models import Base  # noqa: E402
 

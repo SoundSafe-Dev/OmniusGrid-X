@@ -14,7 +14,9 @@ from __future__ import annotations
 
 import pytest
 
-pytest.importorskip("testcontainers")
+
+from tests._realdb import require_testcontainers
+require_testcontainers()  # FS-808: skips on a laptop, FAILS when REQUIRE_REALDB=1
 
 from tests._lane_failures import GET_FAILURES  # noqa: E402
 from tests.route_walk import http_paths  # noqa: E402

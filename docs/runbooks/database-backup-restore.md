@@ -9,7 +9,7 @@
 | **Schedule** | 02:00 UTC daily, `concurrencyPolicy: Forbid` |
 | **Location** | `s3://$BACKUP_S3_BUCKET/postgres/YYYY/MM/DD/HHMMSS.pgc`, SSE-AES256 |
 | **RPO** | Up to 24 h (no point-in-time recovery) |
-| **RTO** | Restore time of one dump — measure it during the next drill |
+| **RTO** | **Floor measured 2026-08-20 (FS-810): 0.75 s** to restore a migrated schema in the drill. That is a floor, not the production figure — CI hardware, a near-empty database — but it is now measured on every run with a 120 s ceiling, so the restore path cannot silently become slow. The production number needs a game day against a real dump (FS-925); the documented target is 60 min for a full rebuild |
 | **Verified by** | `backend/tests/test_backup_restore_drill.py`, in the blocking `backend-realdb` gate |
 
 **There were no backups at all before this.** The only pgBackRest CronJob lives

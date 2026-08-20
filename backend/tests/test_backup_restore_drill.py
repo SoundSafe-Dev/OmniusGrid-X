@@ -25,11 +25,33 @@ postgres:15-alpine backup image ships.
 
 from __future__ import annotations
 
+import time
+
 import pytest
 
-pytest.importorskip("testcontainers")
+
+from tests._realdb import require_testcontainers
+require_testcontainers()  # FS-808: skips on a laptop, FAILS when REQUIRE_REALDB=1
 
 RESTORE_DB = "restore_drill"
+
+# FS-810. THE DRILL WAS NEVER TIMED, and RTO is a contractual number.
+#
+# `docs/runbooks/database-backup-restore.md` says of RTO: "Restore time of one dump —
+# measure it during the next drill". Every drill since has restored correctly and measured
+# nothing, so the RTO column of rto-rpo-checklist.md has been an aspiration beside three
+# RPO figures that FS-799 has just finished correcting by a factor of a hundred.
+#
+# The stopwatch below is not itself the answer — this restores a migrated-but-small
+# schema on CI hardware, and production is neither. What it does give is a FLOOR that
+# cannot silently regress: if restoring a near-empty database starts taking minutes, no
+# amount of production tuning reaches a 60-minute RTO for a real one. The number is
+# written to the drill's output so a game day (FS-925) has something to compare against.
+#
+# Deliberately generous. A ceiling tight enough to be interesting on a laptop would flake
+# on a shared runner, and a flaky gate gets disabled — which is how the measurement would
+# be lost for the second time.
+RESTORE_SECONDS_CEILING = 120.0
 
 # Tables whose row counts must survive the round-trip. Deliberately concrete:
 # a dump that "succeeds" but restores an empty schema would otherwise pass.
@@ -76,15 +98,31 @@ def test_dump_restores_into_an_empty_database(pg_container):
     # the same property here so the two stay in step.
     _exec(container, "pg_restore", "--list", "/tmp/drill.pgc")
 
-    # 2. Restore into a fresh database.
+    # 2. Restore into a fresh database — TIMED (FS-810).
     _exec(container, "dropdb", "-U", "omniusgrid", "--if-exists", RESTORE_DB)
     _exec(container, "createdb", "-U", "omniusgrid", RESTORE_DB)
     # pg_restore exits non-zero on benign notices for extensions it cannot
     # recreate as a non-superuser, so tolerate a partial exit and verify by
     # comparing the data instead.
+    started = time.monotonic()
     container.exec(
         ["pg_restore", "-U", "omniusgrid", "-d", RESTORE_DB, "--no-owner",
          "--no-acl", "/tmp/drill.pgc"]
+    )
+    restore_seconds = time.monotonic() - started
+
+    # Printed, not just asserted. `pytest -s` and the CI log then carry a number a game
+    # day can be compared against, rather than only the fact that nothing broke.
+    print(
+        f"\n[FS-810] restore of {len(CHECKED_TABLES)} checked tables took "
+        f"{restore_seconds:.2f}s (ceiling {RESTORE_SECONDS_CEILING:.0f}s)"
+    )
+    assert restore_seconds < RESTORE_SECONDS_CEILING, (
+        f"restoring a migrated-but-small database took {restore_seconds:.1f}s, over the "
+        f"{RESTORE_SECONDS_CEILING:.0f}s floor. This is not the production RTO — it is the "
+        f"number below which production cannot possibly go, and the documented RTO target "
+        f"is 60 minutes for a full data-centre rebuild. A regression here means the "
+        f"restore path itself has become slow, not that the data grew."
     )
 
     # 3. The restored database must match the source.

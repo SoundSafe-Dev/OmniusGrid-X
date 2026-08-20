@@ -286,6 +286,19 @@ jobs:
         run: python -c "import testcontainers.postgres; print('testcontainers OK')"
       - name: Real-DB guard suite
         working-directory: ./backend
+        env:
+          # FS-808. Turns every real-DB suite's `importorskip` into a hard failure.
+          #
+          # Eleven modules skip themselves when testcontainers is unimportable — correct
+          # on a laptop without Docker, wrong here, where a skip and a pass are the same
+          # exit code and the same green tick. The sharpest of them is
+          # test_backup_restore_drill.py, whose own docstring says "a backup nobody
+          # restores is not a backup": a drill that silently skips is that same fiction
+          # one level up, with the gate reporting success.
+          #
+          # The preflight step above catches a missing dependency. This catches the
+          # preflight being renamed or dropped, which is the edit nobody reviews closely.
+          REQUIRE_REALDB: "1"
         # testcontainers talks to the host Docker daemon (present on
         # ubuntu-latest); each spun container migrates the schema via
         # scripts/migrate.py, so this is a true fresh-chain parity check.

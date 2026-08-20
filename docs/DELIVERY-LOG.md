@@ -14820,3 +14820,57 @@ matching check more than a bare one does, not less. Where the claim is customer-
 the measured value alongside the target rather than replacing it: the gap is the work item, and
 deleting the target loses it.
 
+---
+
+## FS-808 / FS-810 — the drill that could skip, and the number it never produced
+
+Two defects in the same file, and both are about a gate that reports success without doing
+the work.
+
+### A skipped gate and a passing gate are the same green tick
+
+Eleven test modules opened with `pytest.importorskip("testcontainers")`. That is correct on a
+laptop — the real-DB suites need Docker, and a developer without it should not be blocked. It
+is wrong in CI, where `pytest` exits 0 whether a suite ran or skipped itself.
+
+The sharpest of the eleven is `test_backup_restore_drill.py`, whose own docstring says of the
+nightly backup: *"this drill is what stops it from becoming the same kind of fiction: a backup
+nobody restores is not a backup."* **A drill that silently skips is that fiction one level up**
+— the gate is green and nobody has restored anything. And the claim it backs is the
+customer-facing RPO that FS-799 has just finished correcting by a factor of a hundred.
+
+There *was* a preflight: `backend-realdb` runs `import testcontainers.postgres` and fails the
+job if it is missing. That covers the case it was written for. It does not cover the preflight
+being renamed, reordered or dropped in a workflow edit — after which all eleven suites skip and
+the job stays green, which is precisely the failure the preflight exists to prevent, one level
+of indirection out. **A guarantee that lives beside the tests is only as durable as the file it
+lives in.**
+
+`tests/_realdb.py` now provides `require_testcontainers()`: skips on a laptop, raises when
+`REQUIRE_REALDB=1`. CI sets it, and `test_the_realdb_suites_cannot_silently_skip.py` asserts CI
+still sets it — so removing it is itself a test failure, which is the property the preflight
+lacked. Both branches were proven by faking the import failure, not by uninstalling anything.
+
+### The drill had never been timed
+
+`database-backup-restore.md` said of RTO: *"Restore time of one dump — measure it during the
+next drill."* Every drill since restored correctly and measured nothing, so the RTO column of
+the checklist was an aspiration sitting beside three RPO figures that turned out to be wrong.
+
+The restore step is now timed on every run. **0.75 s** for a migrated schema, with a 120 s
+ceiling.
+
+That number is deliberately described as a *floor*, not an RTO: CI hardware, a near-empty
+database, and production is neither. What it buys is a regression barrier — if restoring an
+almost-empty database starts taking minutes, no amount of production tuning reaches a
+60-minute RTO for a real one. The ceiling is generous on purpose; one tight enough to be
+interesting on a laptop would flake on a shared runner, and a flaky gate gets disabled, which
+is how the measurement would be lost a second time.
+
+RULE 275 — **a preflight beside a test is weaker than a precondition inside it.** A CI step
+that checks a dependency protects the tests only while that step exists, in that job, under
+that name; the tests themselves carry no memory of the requirement. Where a suite must not be
+allowed to skip, put the refusal in the suite — gated on an environment variable CI sets — and
+then assert from the suite that CI still sets it. The check and the thing checked then move
+together, and the failure mode becomes a red test rather than a silent narrowing.
+

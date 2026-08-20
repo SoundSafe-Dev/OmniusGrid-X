@@ -7,7 +7,7 @@ drivers arriving at the same door, and nothing exercised it.
 WHY THIS RUNS ON IN-MEMORY SQLITE. The overlap test is a SQL expression — three ORed
 range comparisons — so checking it by reading the code proves nothing about what the
 database does with it. Every other harness that could run it is gated on
-`pytest.importorskip("testcontainers")` and skips wherever Docker is absent, which is most
+`require_testcontainers()  # FS-808: skips on a laptop, FAILS when REQUIRE_REALDB=1` and skips wherever Docker is absent, which is most
 developer machines. `Base.metadata.create_all` on SQLite is the same schema `make demo`
 builds, so these run everywhere and the predicate is executed rather than reasoned about.
 
@@ -35,6 +35,8 @@ from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 
 import pytest
+
+from tests._realdb import require_testcontainers
 import pytest_asyncio
 from sqlalchemy.ext.asyncio import async_sessionmaker
 

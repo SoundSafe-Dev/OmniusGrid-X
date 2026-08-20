@@ -16,7 +16,7 @@ that the excluded tests encoded unbuilt behaviour dissolved the moment somebody 
 An expiry is what makes somebody check.
 
 WHY THIS FILE HAS NO DATABASE FIXTURE, which is the whole design. Both walks are gated on
-`pytest.importorskip("testcontainers")` and skip wherever Docker is absent — including
+`require_testcontainers()  # FS-808: skips on a laptop, FAILS when REQUIRE_REALDB=1` and skip wherever Docker is absent — including
 every developer machine without it. An expiry that only fires when Docker is available is
 an expiry that does not fire. This reads the registry as data and runs everywhere.
 
@@ -32,6 +32,8 @@ import datetime
 
 import pytest
 
+
+from tests._realdb import require_testcontainers
 from tests._lane_failures import GET_FAILURES, WRITE_FAILURES
 
 ALL_ENTRIES = [

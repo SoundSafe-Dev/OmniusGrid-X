@@ -2011,6 +2011,15 @@ one of its findings. The habit that catches it:
      as verified and is the one that gets quoted, so it needs the check more, not less. Where
      the claim is customer-facing, publish the measured value beside the target rather than
      replacing it: the gap is the work item, and deleting the target loses it.
+
+275. **A preflight beside a test is weaker than a precondition inside it.** Eleven real-DB
+     suites skipped themselves when testcontainers was unimportable, and a CI step imported it
+     first so the job would fail — protection that lasts exactly as long as that step keeps
+     its name and its place in that job. The tests carried no memory of the requirement, so a
+     workflow edit could have made all eleven vanish, including the backup restore drill,
+     while the gate stayed green. Put the refusal in the suite, gated on an environment
+     variable CI sets, and assert from the suite that CI still sets it. The check and the
+     thing checked then move together.
 ---
 
 ## Open observations, not yet tickets

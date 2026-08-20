@@ -34,11 +34,13 @@ from __future__ import annotations
 from uuid import uuid4
 
 import pytest
+
+from tests._realdb import require_testcontainers
 import pytest_asyncio
 
 pytestmark = pytest.mark.asyncio
 
-pytest.importorskip("testcontainers")
+require_testcontainers()  # FS-808: skips on a laptop, FAILS when REQUIRE_REALDB=1
 
 FIRST, LAST, PHONE = "Dale", "Kowalski", "+1-313-555-0142"
 

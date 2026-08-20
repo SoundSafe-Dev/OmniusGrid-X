@@ -34,9 +34,9 @@ lost.
 | Backend API crash | 5 min | 0 min | as stated | Stateless restart |
 | Application rollback | 10 min | 0 min | as stated | Image/revision rollback |
 | Redpanda broker failure | 10 min | 0 min | as stated *if* RF ≥ 3 | Replication factor ≥ 3 |
-| TimescaleDB primary failure | 15 min | 5 min | **RTO unmeasured · RPO up to 24 h** | Restore last nightly `pg_dump` |
+| TimescaleDB primary failure | 15 min | 5 min | **RTO: restore-path floor 0.75 s (FS-810), end-to-end untimed · RPO up to 24 h** | Restore last nightly `pg_dump` |
 | Network partition | 30 min | 15 min | **RPO up to 24 h** if the database is lost | Partition heal; no resync exists |
-| Data center outage | 60 min | 15 min | **RTO unmeasured · RPO up to 24 h** | Rebuild from the nightly dump; `overlays/dr` starts pods, not data |
+| Data center outage | 60 min | 15 min | **RTO: restore-path floor 0.75 s (FS-810), end-to-end untimed · RPO up to 24 h** | Rebuild from the nightly dump; `overlays/dr` starts pods, not data |
 
 ## Step 1 — Record incident timing
 

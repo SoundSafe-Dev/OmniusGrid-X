@@ -29,10 +29,12 @@ import uuid
 
 import pytest
 
+
+from tests._realdb import require_testcontainers
 from tests._lane_failures import WRITE_FAILURES
 from tests.route_walk import http_paths
 
-pytest.importorskip("testcontainers")
+require_testcontainers()  # FS-808: skips on a laptop, FAILS when REQUIRE_REALDB=1
 
 #: `(method, path)` whose 5xx is owned by another lane, mirroring the GET walk's list.
 #:
