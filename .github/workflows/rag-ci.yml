@@ -1,0 +1,83 @@
+# Standalone RAG CI (workstream B): a reusable workflow so this same job can
+# be called from quality-gates.yml (per-PR, today) and dropped into ci-cd.yml
+# later with a single `uses: ./.github/workflows/rag-ci.yml` line — no job
+# body to duplicate or drift between the two, and no risk to ci-cd.yml's
+# existing convergence-conflict-avoidance posture (see quality-gates.yml's
+# header comment for why that split exists in the first place).
+#
+# BLOCKING. Runs backend/tests/test_rag_*.py against a real Postgres + Qdrant.
+# Every file in the suite was read, not just grepped: each qdrant/seaweedfs/
+# rag-inference mention is either a monkeypatched fixture (get_document_store/
+# get_vector_store swapped for an in-memory fake), a literal string assertion
+# ("qdrant unreachable" as a fake error message), a static check against
+# docker-compose.yml/k8s manifests (test_rag_indexing_topology.py), or just
+# `pytest.importorskip("qdrant_client")` to confirm the package installs
+# (test_rag_vector_delete_scoping.py records the filter handed to a stub
+# client — it never opens a socket). None of them need a live rag-inference
+# or LLM, so that stack stays out of this job entirely — the nightly job in
+# nightly-e2e.yml (`rag-eval-nightly`) boots it for real against
+# scripts/verify_rag_e2e.py + tests/rag_eval instead.
+#
+# qdrant is still booted as a live service (cheap: its image's default
+# entrypoint runs the server with no extra args, same as docker-compose.yml
+# gives it) so a future test that DOES want a real client has one for free.
+# seaweedfs is deliberately NOT booted here: its image has no default CMD —
+# it needs `server -dir=/data -s3 ...` passed as the container command, and
+# GitHub Actions' `services:` schema has no field to supply one (only
+# image/env/ports/volumes/options, and `options` can't append args after the
+# image). Nothing in this suite touches it live anyway, so this isn't a
+# coverage gap.
+name: RAG CI
+
+on:
+  workflow_call:
+
+jobs:
+  rag-unit:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: timescale/timescaledb:latest-pg15
+        env:
+          POSTGRES_USER: test
+          POSTGRES_PASSWORD: test
+          POSTGRES_DB: omniusgrid_test
+        options: >-
+          --health-cmd pg_isready --health-interval 10s
+          --health-timeout 5s --health-retries 5
+        ports: ['5432:5432']
+      qdrant:
+        image: qdrant/qdrant:v1.12.4
+        ports: ['6333:6333', '6334:6334']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+      - name: Install backend dependencies
+        working-directory: ./backend
+        run: pip install -r requirements-dev.txt
+      - name: RAG unit/integration tests
+        working-directory: ./backend
+        env:
+          # pg_container's TEST_DATABASE_URL escape hatch (conftest.py) points
+          # the session-scoped fixture at this service instead of spinning up
+          # testcontainers; the fixture runs the real migration chain
+          # (scripts/migrate.py) against it itself, so no separate migrate
+          # step is needed here.
+          TEST_DATABASE_URL: postgresql://test:test@localhost:5432/omniusgrid_test
+          QDRANT_URL: http://localhost:6333
+        run: |
+          pytest -q \
+            tests/test_rag_documents_migration.py \
+            tests/test_rag_documents_storage_unavailable.py \
+            tests/test_rag_index_queue.py \
+            tests/test_rag_indexing_topology.py \
+            tests/test_rag_indexing_worker.py \
+            tests/test_rag_ingest_async_api.py \
+            tests/test_rag_ingest_quota.py \
+            tests/test_rag_ingestion_split.py \
+            tests/test_rag_query_stream.py \
+            tests/test_rag_upload_limit.py \
+            tests/test_rag_vector_delete_scoping.py

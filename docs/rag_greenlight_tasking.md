@@ -147,12 +147,27 @@ reading the runner, not assumed.
 **Update, same day:** `rag-inference` has since been added to `ci-cd.yml`'s
 `build-images` matrix (alongside `backend`/`frontend`/`edge-agent`), so there
 is now a built image for any future k8s deploy step to reference. Also added:
-a `rag-unit` job in `quality-gates.yml` running the 11 `backend/tests/test_rag_*.py`
-files against `postgres` + `qdrant` services (via the `TEST_DATABASE_URL`
-escape hatch). This is **not redundant** with `ci-cd.yml`'s `lint-and-test` —
-that workflow only triggers on push/PR to `main`, so a feature branch with no
-open PR got zero RAG-unit coverage until now; `quality-gates.yml` triggers on
-`feature/**` pushes directly. No Docker layer / model-weight caching was added
+a `rag-unit` job running the 11 `backend/tests/test_rag_*.py` files against
+`postgres` + `qdrant` services (via the `TEST_DATABASE_URL` escape hatch).
+This is **not redundant** with `ci-cd.yml`'s `lint-and-test` — that workflow
+only triggers on push/PR to `main`, so a feature branch with no open PR got
+zero RAG-unit coverage until now; `quality-gates.yml` triggers on
+`feature/**` pushes directly.
+
+**Update, 2026-08-21 — deduplicated + made standalone:** the first pass at
+this landed two overlapping jobs (a blocking `rag-unit` and an advisory
+`rag-unit-tests`, both running nearly the same suite against separate
+ephemeral Postgres DBs — the latter had also picked up
+`test_idempotency_coverage.py`, an unrelated FS-103 test, by mistake).
+Deduplicated to one. The surviving job's body now lives in its own reusable
+workflow, `.github/workflows/rag-ci.yml` (`on: workflow_call`), and
+`quality-gates.yml` calls it via `uses: ./.github/workflows/rag-ci.yml`. This
+makes it a one-line addition to wire the identical job into `ci-cd.yml`
+later — no job body to duplicate or drift between the two — without touching
+`ci-cd.yml`'s existing convergence-conflict-avoidance posture (see that
+file's own header comment) by actually adding to it now.
+
+No Docker layer / model-weight caching was added
 for `rag-eval-nightly`, so each nightly run pays the ~5GB BGE weight download
 fresh; flagged as a known cost, not solved (weights live in a named Docker
 volume, not a bind mount, so `actions/cache` can't target them directly
