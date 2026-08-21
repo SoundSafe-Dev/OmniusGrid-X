@@ -131,6 +131,7 @@ groups:
         annotations:
           summary: "Backends idle in transaction"
           description: "{{ $value }} backends on {{ $labels.datname }} are holding a transaction open while idle."
+          runbook_url: "https://github.com/SoundSafe-Dev/OmniusGrid-X/blob/main/docs/runbooks/noisy-tenant.md"
 
       # Connection headroom (FS-839). The HPA scales the backend to 20 replicas against
       # a Postgres default of 100 connections; this is the series that says how close
@@ -144,6 +145,7 @@ groups:
         annotations:
           summary: "Postgres connection usage above 80%"
           description: "{{ $value | humanizePercentage }} of max_connections is in use. New backends will be refused at 100%."
+          runbook_url: "https://github.com/SoundSafe-Dev/OmniusGrid-X/blob/main/docs/runbooks/noisy-tenant.md"
 
   - name: opsgrid_edge_agents
     rules:
@@ -363,6 +365,7 @@ groups:
         annotations:
           summary: "Edge agent certificate expiring"
           description: "Agent {{ $labels.agent_id }} cert expires in < 2 days; rotation may be failing"
+          runbook_url: "https://github.com/SoundSafe-Dev/OmniusGrid-X/blob/main/docs/runbooks/certificate-expiry.md"
   - name: opsgrid_api
     rules:
       # CRITICAL: 5xx error ratio over 5% sustained — likely a broken deploy or
@@ -682,7 +685,7 @@ groups:
         annotations:
           summary: "Sustained authentication failures"
           description: "More than 5 failed logins per second over 5 minutes. The metric is deliberately not labelled by user or IP (that would let an enumeration attack create unbounded series), so identify the source from the access logs or the audit trail."
-          runbook_url: "https://github.com/SoundSafe-Dev/OmniusGrid-X/blob/main/docs/runbooks/error-triage.md"
+          runbook_url: "https://github.com/SoundSafe-Dev/OmniusGrid-X/blob/main/docs/runbooks/noisy-tenant.md"
 
       # WARNING: most login attempts are failing. Catches a broken auth dependency
       # — an expired SSO signing key, an unreachable Redis behind the limiter —
@@ -701,7 +704,7 @@ groups:
         annotations:
           summary: "Over half of login attempts are failing"
           description: "The failure RATIO exceeds 50% for 10 minutes. On a quiet deployment a broken auth path produces a low absolute failure rate, so the ratio is what surfaces it. Check the SSO signing keys, the auth limiter's Redis, and recent auth deploys."
-          runbook_url: "https://github.com/SoundSafe-Dev/OmniusGrid-X/blob/main/docs/runbooks/error-triage.md"
+          runbook_url: "https://github.com/SoundSafe-Dev/OmniusGrid-X/blob/main/docs/runbooks/noisy-tenant.md"
 
       # HIGH: a client certificate is close to expiry. `edge_agent_cert_expiring`
       # already covers the 2-day emergency; this is the 14-day window where
@@ -715,7 +718,7 @@ groups:
         annotations:
           summary: "Edge agent certificate expires within 14 days"
           description: "Agent {{ $labels.agent_id }} has under 14 days of certificate validity. Rotate now; at under 2 days EdgeAgentCertExpiringSoon escalates this to high."
-          runbook_url: "https://github.com/SoundSafe-Dev/OmniusGrid-X/blob/main/scripts/certificate-rotation.sh"
+          runbook_url: "https://github.com/SoundSafe-Dev/OmniusGrid-X/blob/main/docs/runbooks/certificate-expiry.md"
 
   # Realtime delivery. The dashboard and alarm views are WebSocket-driven, so a
   # silent collapse here looks like "nothing is happening in the factory".
@@ -1078,6 +1081,7 @@ groups:
         annotations:
           summary: "Public TLS certificate expires in under 14 days"
           description: "{{ $labels.instance }} certificate expires in {{ $value | humanizeDuration }}."
+          runbook_url: "https://github.com/SoundSafe-Dev/OmniusGrid-X/blob/main/docs/runbooks/certificate-expiry.md"
 
       - alert: IngressCertificateExpiringCritical
         expr: |
@@ -1089,6 +1093,7 @@ groups:
         annotations:
           summary: "Public TLS certificate expires in under 3 days"
           description: "{{ $labels.instance }} certificate expires in {{ $value | humanizeDuration }}. Renewal is now an incident."
+          runbook_url: "https://github.com/SoundSafe-Dev/OmniusGrid-X/blob/main/docs/runbooks/certificate-expiry.md"
 
       # FS-811. The backup bucket is not immutable, so a compromised backup credential can
       # erase every backup you have — including the old versions.

@@ -132,6 +132,7 @@ tests:
             exp_annotations:
               summary: "Backends idle in transaction"
               description: "9 backends on omniusgrid are holding a transaction open while idle."
+              runbook_url: "https://github.com/SoundSafe-Dev/OmniusGrid-X/blob/main/docs/runbooks/noisy-tenant.md"
       - eval_time: 30m
         alertname: DatabaseConnectionsNearLimit
         exp_alerts:
@@ -139,6 +140,7 @@ tests:
             exp_annotations:
               summary: "Postgres connection usage above 80%"
               description: "90% of max_connections is in use. New backends will be refused at 100%."
+              runbook_url: "https://github.com/SoundSafe-Dev/OmniusGrid-X/blob/main/docs/runbooks/noisy-tenant.md"
 
   - interval: 1m
     name: a healthy database is quiet on all three
@@ -335,6 +337,7 @@ tests:
             exp_annotations:
               summary: "Public TLS certificate expires in under 3 days"
               description: "https://api.example.com/health/ready certificate expires in 1d 22h 30m 0s. Renewal is now an incident."
+              runbook_url: "https://github.com/SoundSafe-Dev/OmniusGrid-X/blob/main/docs/runbooks/certificate-expiry.md"
 
   - interval: 1m
     name: a certificate with a year left is quiet

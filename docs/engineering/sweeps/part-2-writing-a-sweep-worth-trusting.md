@@ -2094,6 +2094,16 @@ one of its findings. The habit that catches it:
      `db-migrate` with no policy at all, which would have timed out
      `kubectl wait --for=condition=complete job/prod-db-migrate` on every production deploy.
      The absence of a complaint is evidence about the checker, not about the code.
+
+284. **A runbook's most valuable content is the constraint, not the procedure.** The commands
+     are usually recoverable from memory under pressure; the facts that change what you do are
+     not. An expired edge certificate cannot renew itself, because renewal happens over the
+     link it can no longer authenticate on. A plain `get_db` on a FORCE-RLS table returns zero
+     rows and raises nothing, so an empty result is a tenancy bug rather than an empty table.
+     The audit log covers 18 route templates of ~546, so a missing row proves nothing. There
+     is no per-tenant rate limit to raise. Each is invisible from the code an engineer would
+     naturally open first and would otherwise be discovered mid-incident. Put the constraints
+     above the steps.
 ---
 
 ## Open observations, not yet tickets

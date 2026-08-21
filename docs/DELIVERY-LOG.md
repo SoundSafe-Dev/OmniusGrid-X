@@ -15492,3 +15492,94 @@ minutes and found a production deploy that could not have worked. **The absence 
 is evidence about the checker, not about the code** — and the moment you notice you are doing a
 gate's job by hand is the cheapest moment you will ever get to check its population.
 
+---
+
+## FS-834..837 — the four missing runbooks
+
+The runbook set covered component failures — a database down, a broker down, a worker wedged.
+It had nothing for the four situations where the *system* is working and something has gone
+badly wrong anyway. Each of these is written against what this codebase actually is, not
+against a generic checklist, and in three of the four the most useful content is a constraint
+that would otherwise be discovered mid-incident.
+
+### Certificate expiry — two incidents sharing a word
+
+`IngressCertificate*` and `EdgeAgentCert*` differ in every respect that matters. An expired
+ingress certificate is every customer at once; an expired edge certificate is one device that
+buffers and backfills. SEV-1 versus SEV-3, and the runbook leads with the table that separates
+them.
+
+Two things worth knowing before the alert fires:
+
+- **The ingress alert reads `probe_ssl_earliest_cert_expiry`** — what a customer's handshake
+  sees, not what cert-manager believes it issued. Those diverge exactly when the controller is
+  still serving the old certificate from a valid renewed Secret, which is the confusing case.
+- **An expired edge certificate is not self-healing.** Renewal happens over the uplink, and an
+  agent whose certificate has expired cannot authenticate to ask for a new one. So the runbook
+  says: plot the expiry *distribution* first. A handful spread over weeks is maintenance; a
+  cliff is a fleet-wide outage with a date on it, because certificates issued in one enrolment
+  campaign expire together.
+
+### Tenant-isolation breach — do not start by reading the endpoint
+
+SEV-1 **on suspicion**, because the GDPR Art. 33 and DFARS clocks start at discovery. The
+diagnostic order is deliberately not "read the code":
+
+1. `SELECT rolbypassrls FROM pg_roles WHERE rolname = current_user` — if that is true, every
+   RLS policy in the schema is decorative and everything below means something different. It
+   is an open question in `api-contract-gate.md` and it is one query.
+2. Was `app.current_org_id` set? A plain `get_db` on a FORCE-RLS table reads **zero rows and
+   raises nothing**. `test_tenant_session_guard.py`'s header records the incident this runbook
+   exists for: the first MFA check read `user_mfa` on an untenanted session, matched zero rows
+   for every user, and **login stopped enforcing the second factor while returning 200**.
+   Zero rows read as "no MFA configured".
+
+And the honest limit on scoping: the audit middleware captures **18 route templates out of
+~546**, so absence of an audit row is not evidence nothing was read. Better known at hour one
+than at hour seventy.
+
+### A bad deploy wrote bad data — rolling back does not undo the writes
+
+The ordering is the content: **stop, measure, then choose the narrowest instrument.** Four
+options ranked by how much good data they destroy — correct in place, recompute from raw
+telemetry (retained 90 days per tenant since FS-816, so most of it is reconstructible without
+a restore), PITR into a *side* database to diff against, and a full restore last.
+
+"Recover to a new cluster, never over production" is the step that matters. It turns an
+all-or-nothing choice into a diff, which is what lets you keep the legitimate writes from
+tenants who had nothing to do with the bad deploy. And it carries the qualifier the other
+documents carry: PITR is proven and **not available in any environment yet**, so today the
+equivalent is restoring the nightly dump into a scratch database.
+
+### A noisy tenant — every containment option is blunt, and the runbook says so first
+
+This one leads with what is missing, because reaching for a knob that does not exist is the
+default failure mode:
+
+- **rate limits key on the token's `sub`** — the user id — so a tenant's budget scales with
+  its user count, and a service account is limited as though it were one person typing;
+- **there are no quotas at all**: `quota`, `max_assets`, `tenant_limit`, `plan_limit` return
+  zero hits across the backend.
+
+So containment is: find and stop the specific job, cancel the queries (`pg_cancel_backend`
+before `pg_terminate_backend`, which just makes the client retry), shed by priority tier, and
+only then block the tenant — which is a customer-affecting decision that starts its own
+notification clock. The closing table names FS-842..845 and 860..864, because if this happens
+twice it is not an incident, it is a missing feature.
+
+### Also
+
+Eight alerts now carry `runbook_url`s pointing at these — including `AuthBruteForceSuspected`
+and `AuthFailureRatioHigh`, which previously sent an operator to error triage. Removing a
+duplicated annotation key uncovered a live pointer to `scripts/certificate-rotation.sh`, now
+referenced from the runbook with the warning its own header implies: it writes to `/certs` and
+expects to run somewhere those paths mean something.
+
+RULE 284 — **a runbook's most valuable content is the constraint, not the procedure.** The
+commands in these four are unremarkable and mostly recoverable from memory. What is not is that
+an expired edge certificate cannot renew itself, that a plain `get_db` on a FORCE-RLS table
+returns zero rows silently, that the audit log covers 18 routes of 546, and that there is no
+per-tenant rate limit to raise. Each is a fact that changes what you *do*, is invisible from
+the code you would naturally open first, and would otherwise be learned at the worst possible
+moment. Write the constraints at the top, above the steps.
+

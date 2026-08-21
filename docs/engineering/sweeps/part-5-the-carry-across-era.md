@@ -6197,3 +6197,45 @@ code.** Any moment you find yourself hand-writing the thing a gate is supposed t
 the cheapest opportunity you will ever have to check that gate's population — you are already
 holding the counterexample.
 
+---
+
+## Rule 284 — a runbook's most valuable content is the constraint, not the procedure
+
+Writing the four missing runbooks (FS-834..837) made something obvious in hindsight: the
+*commands* in each are unremarkable. `kubectl rollout undo`. `pg_cancel_backend`.
+`openssl s_client`. An engineer under pressure can reconstruct most of them, and the ones they
+cannot they will find in a minute.
+
+What they cannot reconstruct, and will not find, are the facts that change what they *do*:
+
+- **An expired edge-agent certificate cannot renew itself.** Renewal happens over the uplink,
+  and the agent needs the certificate to authenticate. So renewal must happen *before* expiry;
+  after it, recovery is re-enrolment and possibly a site visit. An engineer who does not know
+  this waits for a self-healing that is never coming.
+- **A plain `get_db` on a FORCE-RLS table returns zero rows and raises nothing.** So during a
+  tenancy investigation, an empty result is evidence of a *bug*, not of an empty table. The
+  MFA incident in `test_tenant_session_guard.py`'s header is exactly this: zero rows read as
+  "no MFA configured", and login stopped enforcing the second factor while returning 200.
+- **The audit log covers 18 route templates out of ~546.** So the absence of an audit row is
+  not evidence that nothing was read — and a breach notification written on the assumption
+  that it is would be wrong in the direction that matters.
+- **There is no per-tenant rate limit.** The limiter keys on the user id, so a noisy tenant's
+  budget scales with its user count. An engineer looking for the knob will not find it, and
+  the time spent looking is time the platform is degraded.
+
+Each is invisible from the code you would naturally open first. Each is knowable only by
+having gone looking — in a test's docstring, a middleware's key function, a compliance
+catalogue's remediation note. And each one arrives, if it arrives at all, at the moment it is
+most expensive to learn.
+
+So: **put the constraints above the steps.** Two of these four runbooks open with a table or a
+paragraph that says what is *not* possible, before any command appears — the certificate one
+separates two incidents that share a word, and the noisy-tenant one says plainly that every
+containment option is blunt and why. That ordering is not stylistic. It is the difference
+between a document that helps and a document that is read for thirty seconds and abandoned for
+`kubectl`.
+
+A corollary worth stating: this is only writable by someone who has just been through the
+code. A runbook written from the outside contains the procedure, because the procedure is what
+is visible from the outside.
+

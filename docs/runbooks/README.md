@@ -42,6 +42,10 @@ OmniusGrid component failures. Start here during any incident.
 |----------|---------|
 | [incident-response-plan.md](incident-response-plan.md) | **The plan** — severity, roles, declaration authority, notification deadlines including the 72-hour statutory clocks. Distinct from the runbooks below, which are recovery procedures (FS-829) |
 | [storage-exhaustion.md](storage-exhaustion.md) | Filling volumes, the unbounded `audit_logs` table, and the two things you must not do to free space (FS-833) |
+| [certificate-expiry.md](certificate-expiry.md) | Ingress vs edge-agent certificates — the same word, two different incidents with different blast radii (FS-834) |
+| [tenant-isolation-breach.md](tenant-isolation-breach.md) | One organisation may have seen another's data. SEV-1 on suspicion, not confirmation — the 72-hour clocks start at discovery (FS-835) |
+| [bad-deploy-wrote-bad-data.md](bad-deploy-wrote-bad-data.md) | Rolling back the code does not undo the writes. Stop, measure, then choose the narrowest instrument (FS-836) |
+| [noisy-tenant.md](noisy-tenant.md) | One tenant degrading the platform — and why every containment option is blunt (FS-837) |
 | [application-rollback.md](application-rollback.md) | Roll back a bad release on Docker Compose and Kubernetes |
 | [rto-rpo-checklist.md](rto-rpo-checklist.md) | Verify recovery met its RTO/RPO targets before closing the incident |
 | [incident-communication-templates.md](incident-communication-templates.md) | Copy-paste templates for internal, customer, and status-page comms |

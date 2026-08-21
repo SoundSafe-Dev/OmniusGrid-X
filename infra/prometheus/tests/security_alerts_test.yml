@@ -44,7 +44,7 @@ tests:
             exp_annotations:
               summary: "Sustained authentication failures"
               description: "More than 5 failed logins per second over 5 minutes. The metric is deliberately not labelled by user or IP (that would let an enumeration attack create unbounded series), so identify the source from the access logs or the audit trail."
-              runbook_url: "https://github.com/SoundSafe-Dev/OmniusGrid-X/blob/main/docs/runbooks/error-triage.md"
+              runbook_url: "https://github.com/SoundSafe-Dev/OmniusGrid-X/blob/main/docs/runbooks/noisy-tenant.md"
 
   # A trickle of failures — someone mistyping a password — must not page.
   - interval: 1m
@@ -75,7 +75,7 @@ tests:
             exp_annotations:
               summary: "Over half of login attempts are failing"
               description: "The failure RATIO exceeds 50% for 10 minutes. On a quiet deployment a broken auth path produces a low absolute failure rate, so the ratio is what surfaces it. Check the SSO signing keys, the auth limiter's Redis, and recent auth deploys."
-              runbook_url: "https://github.com/SoundSafe-Dev/OmniusGrid-X/blob/main/docs/runbooks/error-triage.md"
+              runbook_url: "https://github.com/SoundSafe-Dev/OmniusGrid-X/blob/main/docs/runbooks/noisy-tenant.md"
 
   # A HEALTHY busy system: mostly successes. The ratio must stay quiet even though
   # the absolute number of failures is far higher than in the trickle case above.
@@ -163,7 +163,7 @@ tests:
             exp_annotations:
               summary: "Edge agent certificate expires within 14 days"
               description: "Agent agent-7 has under 14 days of certificate validity. Rotate now; at under 2 days EdgeAgentCertExpiringSoon escalates this to high."
-              runbook_url: "https://github.com/SoundSafe-Dev/OmniusGrid-X/blob/main/scripts/certificate-rotation.sh"
+              runbook_url: "https://github.com/SoundSafe-Dev/OmniusGrid-X/blob/main/docs/runbooks/certificate-expiry.md"
 
   # A freshly rotated certificate must not page.
   - interval: 1m
