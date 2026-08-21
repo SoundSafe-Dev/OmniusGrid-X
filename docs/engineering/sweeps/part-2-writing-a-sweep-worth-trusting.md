@@ -2084,6 +2084,16 @@ one of its findings. The habit that catches it:
      failure it is meant to survive and then check the artefact lives somewhere that failure
      does not reach. Applies equally to a backup bucket in the account that was compromised,
      and to a runbook stored only in the cluster it describes.
+
+283. **When you write the thing a gate should have demanded of you, ask why it did not.** Four
+     new CronJobs needed egress policies and the NetworkPolicy coverage gate said nothing,
+     because `WORKLOAD_KINDS` held only Deployment, StatefulSet and DaemonSet — every
+     scheduled job in the platform sat outside its population while it printed "every workload
+     is covered". Writing the four policies would have been correct and insufficient: the next
+     job would ship cut off the same way. Widening the population took minutes and found
+     `db-migrate` with no policy at all, which would have timed out
+     `kubectl wait --for=condition=complete job/prod-db-migrate` on every production deploy.
+     The absence of a complaint is evidence about the checker, not about the code.
 ---
 
 ## Open observations, not yet tickets

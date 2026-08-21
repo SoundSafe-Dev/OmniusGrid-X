@@ -141,13 +141,48 @@ spec:
               args:
                 - |
                   set -euo pipefail
+
+                  # FS-815. SIZE ANOMALY, checked BEFORE upload.
+                  #
+                  # The dump container already runs `test -s` and `pg_restore --list`, which
+                  # catch an empty or corrupt file. Neither catches the case that actually
+                  # happens: a dump that is well-formed, restorable, and a fraction of
+                  # yesterday's — a schema dropped by a bad migration, a `--schema` flag left
+                  # in, a tenant deleted. That file passes every existing check and is a
+                  # backup of a database that has already lost the data.
+                  #
+                  # Compared against the most recent previous object rather than a fixed
+                  # floor: a real database grows, so any constant is either immediately
+                  # obsolete or so loose it catches nothing.
+                  SIZE=$(wc -c < /backup/dump.pgc)
+                  PREV=$(aws s3 ls "s3://${BACKUP_S3_BUCKET}/postgres/" --recursive \
+                           | sort | tail -1 | awk '{print $3}')
+                  if [ -n "${PREV:-}" ] && [ "$PREV" -gt 0 ] 2>/dev/null; then
+                    # 50%: loose enough to survive a large deletion or a retention run,
+                    # tight enough that a lost schema shows. Deliberately not tighter —
+                    # a backup job that cries wolf gets disabled, and then there are no
+                    # backups at all, which is the outcome this whole file exists to avoid.
+                    FLOOR=$(( PREV / 2 ))
+                    echo "size $SIZE bytes; previous $PREV; floor $FLOOR"
+                    if [ "$SIZE" -lt "$FLOOR" ]; then
+                      echo "REFUSING: this dump is less than half the previous one." >&2
+                      echo "  It is well-formed and restorable — pg_restore --list passed —" >&2
+                      echo "  which is why the existing checks let it through. Something has" >&2
+                      echo "  removed data from the source, or the dump was taken with a" >&2
+                      echo "  narrower scope. Investigate BEFORE this replaces good history." >&2
+                      exit 1
+                    fi
+                  else
+                    echo "size $SIZE bytes; no previous object to compare against"
+                  fi
+
                   STAMP="$(date -u +%Y/%m/%d/%H%M%S)"
                   KEY="s3://${BACKUP_S3_BUCKET}/postgres/${STAMP}.pgc"
                   aws s3 cp /backup/dump.pgc "$KEY" --sse AES256 --only-show-errors
                   # Read it back: a cp that "succeeds" against a misconfigured
                   # bucket policy must not be reported as a good backup.
                   aws s3 ls "$KEY"
-                  echo "uploaded $KEY"
+                  echo "uploaded $KEY ($SIZE bytes)"
               volumeMounts:
                 - name: backup-scratch
                   mountPath: /backup

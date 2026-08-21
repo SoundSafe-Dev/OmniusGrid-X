@@ -15420,3 +15420,75 @@ behind COMPLIANCE mode, including what it costs.
 
 All seven mermaid diagrams render under `mermaid-cli`.
 
+---
+
+## FS-812..815 — three stores nothing backed up, and the Job that could not reach the database
+
+Until this slice the only backup in the platform was the nightly `pg_dump`. Three other
+stateful services held data and none of them was backed up at all.
+
+### They are not the same problem
+
+Treating them as one would have produced two jobs nobody needs and missed the one that
+matters. What each actually holds decides what a backup of it should even be:
+
+| store | what is in it | what a backup should be |
+|---|---|---|
+| **Redis** | `FeatureFlagService` is a "Redis-backed feature flag store" with **no database fallback** — Redis is the store of record. Plus idempotency keys and job state, both short-lived and reconstructible | dump the keyspace. It is persistent (`appendonly` on a PVC) so a restart is safe; a lost PVC loses every flag, and flags gate production behaviour |
+| **SeaweedFS** | compliance reports (regulatory evidence), the RAG document library, generated exports. `replicas: 1` | sync the objects out. Durable customer-facing artefacts with no replication and no copy |
+| **Redpanda** | telemetry in flight | **the configuration, not the messages.** Consumers persist the data and an agent that cannot deliver buffers and backfills — the conservation law holds across the gap. What is *not* reconstructible is partition counts, retention and consumer groups |
+
+Each job also refuses a plausible-looking empty result: an RDB with `DBSIZE` of zero, a sync
+that pulled no objects, a config capture with no topic sections. All three look exactly like a
+successful backup of an empty system.
+
+### FS-815: the size anomaly `test -s` cannot catch
+
+The dump container already runs `test -s` and `pg_restore --list`, which catch an empty or
+corrupt file. Neither catches the case that actually happens: **a dump that is well-formed,
+restorable, and a fraction of yesterday's** — a schema dropped by a bad migration, a `--schema`
+flag left in, a tenant deleted. That file passes every existing check and is a faithful backup
+of a database which has already lost the data.
+
+Compared against the most recent previous object rather than a fixed floor, because a real
+database grows and any constant is either immediately obsolete or so loose it catches nothing.
+The threshold is 50% and deliberately not tighter: a backup job that cries wolf gets disabled,
+and then there are no backups at all.
+
+### And the finding that came out of widening a gate
+
+The four new CronJobs needed NetworkPolicies. Adding them raised a better question — why had
+nothing *told* me? `check_netpol_coverage.py` walked only Deployments, StatefulSets and
+DaemonSets. **Every scheduled job in the platform was outside its population**, while it
+printed "every workload is covered in both directions".
+
+A CronJob's pod template is one level deeper (`spec.jobTemplate.spec.template`), which is
+presumably why it was skipped — and is exactly the kind of reason a sweep silently narrows.
+
+Adding `CronJob` and `Job` took the checked population from **13 to 19** and immediately found
+a pre-existing break: **`db-migrate` had no NetworkPolicy of any kind.** Under
+`default-deny-all` its pod cannot open a connection, so `scripts/migrate.py` cannot reach the
+database and the Job never completes — and `deploy-production` runs
+
+```
+kubectl wait --for=condition=complete job/prod-db-migrate --timeout=300s
+```
+
+before applying anything else. **Every production deploy would have timed out there.** It has
+gone unnoticed because staging deploys are behind an opt-in variable and production deploys
+only run on a tag.
+
+Ingress is exempted for batch kinds — nothing dials a pod that runs once and exits — but
+egress is not, and the asymmetry is the point rather than a convenience: outbound is the
+direction batch work fails in, and a blanket exemption in both directions would have hidden
+all five findings.
+
+RULE 283 — **when you write the thing a gate should have demanded of you, ask why it did not.**
+Four CronJobs needed egress policies and the coverage gate was silent, because CronJob was not
+in `WORKLOAD_KINDS`. Adding the policies would have been a complete, correct, entirely
+insufficient fix: the next scheduled job would have shipped cut off in exactly the same way,
+and the gate would have gone on reporting full coverage. Widening the population took five
+minutes and found a production deploy that could not have worked. **The absence of a complaint
+is evidence about the checker, not about the code** — and the moment you notice you are doing a
+gate's job by hand is the cheapest moment you will ever get to check its population.
+

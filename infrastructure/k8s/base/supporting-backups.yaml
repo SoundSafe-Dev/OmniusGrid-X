@@ -1,0 +1,337 @@
+# Backups for everything that is not Postgres (FS-812/813/814).
+#
+# Until now the ONLY backup in the platform was the nightly `pg_dump`. Three other stateful
+# services held data and none of them was backed up at all.
+#
+# THEY ARE NOT ALL THE SAME PROBLEM, and treating them as one would produce two jobs nobody
+# needs and miss the thing that matters. What each actually holds decides what a backup of it
+# should even be:
+#
+#   Redis        `FeatureFlagService` is a "Redis-backed feature flag store" with NO database
+#                fallback — Redis is the store of record. It is persistent (`appendonly yes`
+#                on a PVC) so a restart is safe, but a lost PVC or a lost cluster loses every
+#                flag, and flags gate behaviour in production. Also holds idempotency keys and
+#                job state, both short-lived and reconstructible. -> dump the keyspace.
+#
+#   SeaweedFS    Compliance reports (regulatory evidence), the RAG document library, and
+#                generated exports. `replicas: 1`. This is durable customer-facing artefact
+#                storage with no replication and no copy. -> sync the objects out.
+#
+#   Redpanda     Telemetry in flight. The DATA has low backup value: consumers write it to
+#                TimescaleDB, and an edge agent that cannot deliver buffers and backfills —
+#                the conservation law (`produced == sent + buffered + dead_lettered + dropped
+#                + expired`) holds across the gap. What is NOT reconstructible is the topic
+#                CONFIGURATION: partition counts, retention, consumer groups. Losing that
+#                means guessing during a rebuild. -> export the config, not the messages.
+#
+# All three write into the same S3 bucket as the database dump, so they inherit its versioning
+# and Object Lock — which is the control that survives a compromised credential, and is
+# verified weekly by `backup-immutability-check`.
+---
+# ── Redis: the feature-flag store of record ─────────────────────────────────────────
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: redis-backup
+  labels:
+    app.kubernetes.io/name: redis-backup
+    app.kubernetes.io/component: backup
+spec:
+  schedule: "30 2 * * *"         # after db-backup at 02:00, so they do not contend
+  timeZone: "Etc/UTC"
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 3600
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      activeDeadlineSeconds: 1800
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/name: redis-backup
+        spec:
+          restartPolicy: Never
+          automountServiceAccountToken: false
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 65532
+            runAsGroup: 65532
+            fsGroup: 65532
+            seccompProfile:
+              type: RuntimeDefault
+          initContainers:
+            - name: dump
+              image: redis:7-alpine@sha256:ff02b58f971e7d7d156a1267e283fcbbeee91773b6aa36c49dac28ecfe28eadf
+              imagePullPolicy: IfNotPresent
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities: { drop: ["ALL"] }
+              command: ["/bin/sh", "-c"]
+              args:
+                - |
+                  set -euo pipefail
+                  # --rdb asks the server for a point-in-time snapshot over the wire. It does
+                  # not need access to the server's own dump file or its PVC, which is what
+                  # lets this run as an ordinary client in its own pod.
+                  redis-cli -h redis -p 6379 --rdb /backup/redis.rdb
+                  test -s /backup/redis.rdb
+                  # An RDB that exists but holds no keys is the failure mode worth catching:
+                  # it looks exactly like a successful backup of an empty Redis, and the
+                  # feature-flag store being empty is a real incident rather than a quiet one.
+                  KEYS=$(redis-cli -h redis -p 6379 DBSIZE | tr -dc '0-9')
+                  echo "redis dump ok: $(wc -c < /backup/redis.rdb) bytes, $KEYS keys"
+                  test "$KEYS" -gt 0
+              volumeMounts:
+                - { name: scratch, mountPath: /backup }
+              resources:
+                requests: { cpu: "50m", memory: "128Mi" }
+                limits:   { cpu: "500m", memory: "512Mi" }
+          containers:
+            - name: upload
+              image: amazon/aws-cli:2.17.0@sha256:643507c10ada7964ca6157b3d799f030b90577643da9955d319a77399ed80d73
+              imagePullPolicy: IfNotPresent
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities: { drop: ["ALL"] }
+              env:
+                - name: AWS_ACCESS_KEY_ID
+                  valueFrom: { secretKeyRef: { name: backup-credentials, key: aws-access-key-id } }
+                - name: AWS_SECRET_ACCESS_KEY
+                  valueFrom: { secretKeyRef: { name: backup-credentials, key: aws-secret-access-key } }
+                - name: AWS_DEFAULT_REGION
+                  valueFrom: { secretKeyRef: { name: backup-credentials, key: region } }
+                - name: BACKUP_S3_BUCKET
+                  valueFrom: { secretKeyRef: { name: backup-credentials, key: bucket } }
+              command: ["/bin/sh", "-c"]
+              args:
+                - |
+                  set -euo pipefail
+                  KEY="s3://${BACKUP_S3_BUCKET}/redis/$(date -u +%Y/%m/%d/%H%M%S).rdb"
+                  aws s3 cp /backup/redis.rdb "$KEY" --sse AES256 --only-show-errors
+                  aws s3 ls "$KEY"
+                  echo "uploaded $KEY"
+              volumeMounts:
+                - { name: scratch, mountPath: /backup, readOnly: true }
+                - { name: aws-cache, mountPath: /tmp }
+              resources:
+                requests: { cpu: "50m", memory: "128Mi" }
+                limits:   { cpu: "500m", memory: "512Mi" }
+          volumes:
+            - name: scratch
+              emptyDir: { sizeLimit: 2Gi }
+            - name: aws-cache
+              emptyDir: { sizeLimit: 64Mi }
+---
+# ── SeaweedFS: compliance reports, documents, exports ───────────────────────────────
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: object-store-backup
+  labels:
+    app.kubernetes.io/name: object-store-backup
+    app.kubernetes.io/component: backup
+spec:
+  schedule: "0 3 * * *"
+  timeZone: "Etc/UTC"
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 3600
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      # Longer than the others: this syncs objects rather than writing one file, and the
+      # corpus grows. Still bounded, so a hung sync cannot hold the slot indefinitely.
+      activeDeadlineSeconds: 14400
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/name: object-store-backup
+        spec:
+          restartPolicy: Never
+          automountServiceAccountToken: false
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 65532
+            runAsGroup: 65532
+            seccompProfile:
+              type: RuntimeDefault
+          containers:
+            - name: sync
+              image: amazon/aws-cli:2.17.0@sha256:643507c10ada7964ca6157b3d799f030b90577643da9955d319a77399ed80d73
+              imagePullPolicy: IfNotPresent
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities: { drop: ["ALL"] }
+              env:
+                - name: AWS_ACCESS_KEY_ID
+                  valueFrom: { secretKeyRef: { name: backup-credentials, key: aws-access-key-id } }
+                - name: AWS_SECRET_ACCESS_KEY
+                  valueFrom: { secretKeyRef: { name: backup-credentials, key: aws-secret-access-key } }
+                - name: AWS_DEFAULT_REGION
+                  valueFrom: { secretKeyRef: { name: backup-credentials, key: region } }
+                - name: BACKUP_S3_BUCKET
+                  valueFrom: { secretKeyRef: { name: backup-credentials, key: bucket } }
+                # The SOURCE store's credentials, kept distinct from the destination's. The
+                # `s3-credentials` secret is what the application already uses to write these
+                # objects, so reading them back needs no new secret and no new grant.
+                - name: SEAWEED_ACCESS_KEY_ID
+                  valueFrom: { secretKeyRef: { name: s3-credentials, key: access-key } }
+                - name: SEAWEED_SECRET_ACCESS_KEY
+                  valueFrom: { secretKeyRef: { name: s3-credentials, key: secret-key } }
+                - name: SEAWEED_ENDPOINT_URL
+                  value: "http://seaweedfs:8333"
+                - name: SEAWEED_BUCKET
+                  value: "omniusgrid-exports"
+              command: ["/bin/sh", "-c"]
+              args:
+                - |
+                  set -euo pipefail
+                  # Two different endpoints in one job: read from the in-cluster SeaweedFS,
+                  # write to the real bucket. `--profile` keeps the two credential sets from
+                  # colliding — the source is not the destination and must not inherit its
+                  # keys.
+                  aws configure set aws_access_key_id     "$SEAWEED_ACCESS_KEY_ID"     --profile src
+                  aws configure set aws_secret_access_key "$SEAWEED_SECRET_ACCESS_KEY" --profile src
+                  DEST="s3://${BACKUP_S3_BUCKET}/object-store/$(date -u +%Y/%m/%d)"
+
+                  # Copy through the pod rather than server-side: the two stores are
+                  # different implementations and SeaweedFS does not support a cross-account
+                  # server-side copy from AWS.
+                  aws --profile src --endpoint-url "$SEAWEED_ENDPOINT_URL" \
+                      s3 sync "s3://${SEAWEED_BUCKET}" /scratch --only-show-errors
+                  COUNT=$(find /scratch -type f | wc -l | tr -d ' ')
+                  echo "pulled $COUNT objects from ${SEAWEED_BUCKET}"
+                  # An empty source is either a genuinely empty store or a misconfigured
+                  # endpoint, and uploading nothing would report success for both.
+                  test "$COUNT" -gt 0
+                  aws s3 sync /scratch "$DEST" --sse AES256 --only-show-errors
+                  echo "synced $COUNT objects to $DEST"
+              volumeMounts:
+                - { name: scratch, mountPath: /scratch }
+                - { name: aws-cache, mountPath: /tmp }
+              resources:
+                requests: { cpu: "100m", memory: "256Mi" }
+                limits:   { cpu: "1000m", memory: "1Gi" }
+          volumes:
+            - name: scratch
+              emptyDir: { sizeLimit: 50Gi }
+            - name: aws-cache
+              emptyDir: { sizeLimit: 64Mi }
+---
+# ── Redpanda: the configuration, not the messages ───────────────────────────────────
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: redpanda-config-backup
+  labels:
+    app.kubernetes.io/name: redpanda-config-backup
+    app.kubernetes.io/component: backup
+spec:
+  # Weekly. Topic configuration changes on deploys, not continuously, and a daily copy of an
+  # unchanged file is noise in a bucket that keeps every version under Object Lock.
+  schedule: "0 5 * * 1"
+  timeZone: "Etc/UTC"
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 3600
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      activeDeadlineSeconds: 900
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/name: redpanda-config-backup
+        spec:
+          restartPolicy: Never
+          automountServiceAccountToken: false
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 65532
+            runAsGroup: 65532
+            fsGroup: 65532
+            seccompProfile:
+              type: RuntimeDefault
+          initContainers:
+            - name: describe
+              # The SAME image base/redpanda-statefulset.yaml runs, digest and all: it ships
+              # `rpk`, it is already pinned, and reusing it avoids introducing a second
+              # registry (docker.redpanda.com needs auth even for a manifest HEAD, so its
+              # digest cannot be resolved by the nightly freshness check).
+              image: redpandadata/redpanda:latest@sha256:9a47c1f8d6736f98fa2616f6f0b715c051cb0bdac1a1176e38321bf45a5b572d
+              imagePullPolicy: IfNotPresent
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities: { drop: ["ALL"] }
+              command: ["/bin/sh", "-c"]
+              args:
+                - |
+                  set -euo pipefail
+                  BROKER="redpanda:9092"
+                  {
+                    echo "# redpanda configuration, captured $(date -u +%FT%TZ)"
+                    echo "## cluster"
+                    rpk cluster info --brokers "$BROKER"
+                    echo "## topics"
+                    rpk topic list --brokers "$BROKER"
+                    for t in $(rpk topic list --brokers "$BROKER" -f '%n' 2>/dev/null); do
+                      echo "### $t"
+                      rpk topic describe "$t" --brokers "$BROKER" -p -c
+                    done
+                    echo "## consumer groups"
+                    rpk group list --brokers "$BROKER"
+                  } > /backup/redpanda-config.txt
+                  test -s /backup/redpanda-config.txt
+                  # A file containing only the header means every rpk call failed — which
+                  # looks like a successful backup of a cluster with no topics.
+                  grep -q "### " /backup/redpanda-config.txt
+                  echo "captured $(grep -c '^### ' /backup/redpanda-config.txt) topics"
+              volumeMounts:
+                - { name: scratch, mountPath: /backup }
+              resources:
+                requests: { cpu: "50m", memory: "128Mi" }
+                limits:   { cpu: "500m", memory: "512Mi" }
+          containers:
+            - name: upload
+              image: amazon/aws-cli:2.17.0@sha256:643507c10ada7964ca6157b3d799f030b90577643da9955d319a77399ed80d73
+              imagePullPolicy: IfNotPresent
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities: { drop: ["ALL"] }
+              env:
+                - name: AWS_ACCESS_KEY_ID
+                  valueFrom: { secretKeyRef: { name: backup-credentials, key: aws-access-key-id } }
+                - name: AWS_SECRET_ACCESS_KEY
+                  valueFrom: { secretKeyRef: { name: backup-credentials, key: aws-secret-access-key } }
+                - name: AWS_DEFAULT_REGION
+                  valueFrom: { secretKeyRef: { name: backup-credentials, key: region } }
+                - name: BACKUP_S3_BUCKET
+                  valueFrom: { secretKeyRef: { name: backup-credentials, key: bucket } }
+              command: ["/bin/sh", "-c"]
+              args:
+                - |
+                  set -euo pipefail
+                  KEY="s3://${BACKUP_S3_BUCKET}/redpanda/$(date -u +%Y/%m/%d)/config.txt"
+                  aws s3 cp /backup/redpanda-config.txt "$KEY" --sse AES256 --only-show-errors
+                  aws s3 ls "$KEY"
+                  echo "uploaded $KEY"
+              volumeMounts:
+                - { name: scratch, mountPath: /backup, readOnly: true }
+                - { name: aws-cache, mountPath: /tmp }
+              resources:
+                requests: { cpu: "50m", memory: "128Mi" }
+                limits:   { cpu: "300m", memory: "256Mi" }
+          volumes:
+            - name: scratch
+              emptyDir: { sizeLimit: 128Mi }
+            - name: aws-cache
+              emptyDir: { sizeLimit: 64Mi }

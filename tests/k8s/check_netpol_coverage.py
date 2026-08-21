@@ -45,12 +45,41 @@ try:
 except ImportError:  # pragma: no cover
     sys.exit("pyyaml is required: pip install pyyaml")
 
-WORKLOAD_KINDS = {"Deployment", "StatefulSet", "DaemonSet"}
+#: Kinds that put a pod in the namespace and therefore need a policy in a default-deny one.
+#:
+#: CronJob AND Job WERE MISSING (FS-812..815), and the omission is the interesting part: the
+#: gate reported "every workload is covered in both directions" over a population that
+#: excluded every scheduled job in the platform. Four backup CronJobs were about to ship with
+#: no egress policy at all — they would have started, been unable to reach Redis, SeaweedFS,
+#: Redpanda or S3, and failed every night. That is the "deployed-but-dead" class this
+#: repository already records against otel-collector and jaeger, arriving by a different
+#: route: not a missing policy nobody wrote, but a missing policy nobody could be told about.
+#:
+#: A CronJob's pod template is one level deeper (`spec.jobTemplate.spec.template`), which is
+#: presumably why it was skipped — and is exactly the kind of reason a sweep silently narrows.
+WORKLOAD_KINDS = {"Deployment", "StatefulSet", "DaemonSet", "CronJob", "Job"}
 
 # Workloads that legitimately need no policy of their own, with the reason. An
 # exemption must be justified here rather than silently skipped — the whole point
 # of this gate is that silence is the failure mode.
 EXEMPT: Dict[str, str] = {}
+
+#: Kinds exempt from the INGRESS half only, with the reason.
+#:
+#: Nothing dials a batch pod. A CronJob or Job exists to run once and exit; no Service selects
+#: it, no probe reaches it, no client connects to it. Demanding an ingress policy would
+#: produce an empty rule per job that reads as an oversight and teaches a reader nothing.
+#:
+#: EGRESS IS STILL REQUIRED FOR THEM, and that asymmetry is the point rather than a
+#: convenience. Outbound is the direction batch work actually fails in, and widening this
+#: gate to include CronJob and Job immediately found five workloads cut off that way — four
+#: new backup jobs and, worse, the pre-existing `db-migrate` Job, whose failure would have
+#: timed out `kubectl wait --for=condition=complete job/prod-db-migrate` on every production
+#: deploy. A blanket kind-based exemption in BOTH directions would have hidden all five.
+EXEMPT_INGRESS_KINDS: Dict[str, str] = {
+    "CronJob": "nothing connects to a scheduled job; it dials out and exits",
+    "Job": "nothing connects to a run-once job; it dials out and exits",
+}
 
 
 def _labels_match(selector: Dict[str, Any], labels: Dict[str, str]) -> bool:
@@ -100,9 +129,14 @@ def main() -> int:
         meta = doc.get("metadata") or {}
         ns = meta.get("namespace", "default")
         if kind in WORKLOAD_KINDS:
-            template = (
-                (doc.get("spec") or {}).get("template") or {}
-            ).get("metadata") or {}
+            spec = doc.get("spec") or {}
+            # A CronJob nests its pod template one level deeper than everything else.
+            pod = (
+                ((spec.get("jobTemplate") or {}).get("spec") or {}).get("template")
+                if kind == "CronJob"
+                else spec.get("template")
+            ) or {}
+            template = pod.get("metadata") or {}
             workloads.append((kind, meta.get("name", "?"), ns, template.get("labels") or {}))
         elif kind == "NetworkPolicy":
             policies.append(doc)
@@ -148,13 +182,15 @@ def main() -> int:
                     covering[direction].append(pmeta.get("name"))
 
         for direction in ("Ingress", "Egress"):
+            if direction == "Ingress" and kind in EXEMPT_INGRESS_KINDS:
+                continue
             if not covering[direction]:
                 failures.append(
                     f"{kind}/{name} (ns={ns}) has NO {direction} policy — "
                     f"default-deny-all applies, so this workload is cut off in "
                     f"that direction and will fail silently"
                 )
-        if covering["Ingress"] and covering["Egress"]:
+        if (covering["Ingress"] or kind in EXEMPT_INGRESS_KINDS) and covering["Egress"]:
             print(
                 f"  OK      {kind}/{name}: "
                 f"in={','.join(sorted(set(covering['Ingress'])))} "

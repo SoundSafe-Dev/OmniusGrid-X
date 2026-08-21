@@ -20,6 +20,11 @@ resources:
   # object-locked. Separate from db-backup on purpose: an unprotected bucket must not
   # stop backups happening, and must not make DatabaseBackupStale fire.
   - backup-immutability-cronjob.yaml
+  # FS-812/813/814. The three stateful services that were backed up by nothing:
+  # Redis (the feature-flag store of record), SeaweedFS (compliance reports, documents,
+  # exports, replicas: 1) and Redpanda's topic CONFIGURATION — not its messages, which
+  # consumers persist and edge agents backfill.
+  - supporting-backups.yaml
   - timescaledb-statefulset.yaml
   - redpanda-statefulset.yaml
   - redis-statefulset.yaml

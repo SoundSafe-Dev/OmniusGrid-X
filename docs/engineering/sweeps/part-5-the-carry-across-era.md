@@ -6145,3 +6145,55 @@ survive, then check the artefact is somewhere that failure does not reach.** It 
 question, it takes a minute, and nothing else in the system will ask it for you — a review
 looks at whether the backup runs, not at where it lands.
 
+---
+
+## Rule 283 — when you write what a gate should have demanded, ask why it did not
+
+Four new backup CronJobs (FS-812..815) needed NetworkPolicies, because the namespace is
+`default-deny-all`. That much was obvious while writing them. The useful question came a
+moment later: **the coverage gate had not asked for them.**
+
+`tests/k8s/check_netpol_coverage.py` exists precisely to catch a workload cut off by
+default-deny — its own message says such a workload "will fail silently", and this repository
+already records otel-collector and jaeger shipping deployed-but-dead for exactly that reason.
+It reported:
+
+```
+checked 13 workload(s) in default-deny namespace(s) ['omniusgrid']
+OK: every workload is covered in both directions
+```
+
+Both sentences were true and the first one is the problem. `WORKLOAD_KINDS` held
+`{"Deployment", "StatefulSet", "DaemonSet"}`. Every CronJob and Job in the platform was
+outside the population — and a CronJob's pod template is one level deeper
+(`spec.jobTemplate.spec.template`), which is very likely why it was skipped in the first
+place. A structural inconvenience became a silent narrowing.
+
+**Writing the four policies would have been a complete fix and an insufficient one.** The
+symptom would be gone, the gate would still be blind, and the next scheduled job would ship
+cut off in exactly the same way — with `OK: every workload is covered` printed above it.
+
+Widening the set to include `CronJob` and `Job` took the population from 13 to 19 and
+immediately produced this:
+
+```
+* Job/db-migrate (ns=omniusgrid) has NO Egress policy — default-deny-all applies
+```
+
+The migration Job had no NetworkPolicy of any kind. Under default-deny it cannot open a
+connection, `scripts/migrate.py` cannot reach the database, the Job never completes, and
+`deploy-production` waits on `kubectl wait --for=condition=complete job/prod-db-migrate
+--timeout=300s` before applying anything else. **Every production deploy would have timed out
+there** — unnoticed because staging deploys sit behind an opt-in variable and production
+deploys only run on a tag.
+
+One asymmetry is worth copying. Ingress is exempted for `CronJob` and `Job` — nothing dials a
+pod that runs once and exits — and egress is not. A blanket kind-based exemption in both
+directions would have been easier and would have hidden all five findings; the exemption is
+scoped to the direction that genuinely cannot fail.
+
+The general form: **the absence of a complaint is evidence about the checker, not about the
+code.** Any moment you find yourself hand-writing the thing a gate is supposed to demand is
+the cheapest opportunity you will ever have to check that gate's population — you are already
+holding the counterexample.
+

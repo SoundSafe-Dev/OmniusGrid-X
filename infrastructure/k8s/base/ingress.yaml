@@ -633,6 +633,250 @@ spec:
         - protocol: TCP
           port: 443
 ---
+# Egress for the migration Job (FS-812, found by widening the coverage gate).
+#
+# `db-migrate` had NO NetworkPolicy of any kind. Under `default-deny-all` its pod cannot open
+# a connection, so `scripts/migrate.py` cannot reach the database and the Job never completes —
+# and `deploy-production` runs `kubectl wait --for=condition=complete job/prod-db-migrate
+# --timeout=300s` before applying anything else. **Every production deploy would have timed
+# out there.**
+#
+# It went unnoticed because `check_netpol_coverage.py` walked only Deployments, StatefulSets
+# and DaemonSets: the Job was outside the gate's population, so the gate reported "every
+# workload is covered in both directions" while this one was not covered at all. Adding
+# CronJob and Job to that set found it immediately.
+#
+# Egress only. Nothing connects TO a migration Job, so an ingress policy would be noise — but
+# the gate asks for both directions by default, so it is listed in EXEMPT_INGRESS with this
+# reasoning rather than given an empty rule that looks like an oversight.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-db-migrate-egress
+  namespace: omniusgrid
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: db-migrate
+  policyTypes:
+    - Egress
+  egress:
+    # Cluster DNS resolution (kube-dns in kube-system).
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    # The database, by any of the three routes it may be reached through: the base
+    # StatefulSet, the CNPG cluster directly, and the PgBouncer pooler the cnpg-pooler
+    # component repoints DATABASE_URL at. Listing all three means adopting the HA database
+    # does not require editing this policy; before those stacks exist the selectors match
+    # nothing.
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: timescaledb
+        - podSelector:
+            matchLabels:
+              cnpg.io/cluster: omniusgrid-db
+        - podSelector:
+            matchLabels:
+              cnpg.io/poolerName: omniusgrid-db-pooler-rw
+      ports:
+        - protocol: TCP
+          port: 5432
+---
+# Egress for the four backup CronJobs (FS-811..815).
+#
+# THESE WERE ALMOST SHIPPED WITHOUT POLICIES, and the coverage gate would not have caught it:
+# `check_netpol_coverage.py` walked only Deployments, StatefulSets and DaemonSets, so a
+# CronJob in a default-deny namespace was outside its population entirely. The pods would have
+# started, been unable to reach anything, and failed every night — the "deployed-but-dead"
+# class this repository already records against otel-collector and jaeger, arriving by a
+# different route. The checker now includes CronJob and Job.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-backup-immutability-check-egress
+  namespace: omniusgrid
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: backup-immutability-check
+  policyTypes:
+    - Egress
+  egress:
+    # Cluster DNS resolution (kube-dns in kube-system).
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    # S3 upload. Cannot be narrowed to a podSelector (it is off-cluster); scope it
+    # with a bucket policy / VPC endpoint rather than here.
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              - 10.0.0.0/8
+              - 172.16.0.0/12
+              - 192.168.0.0/16
+      ports:
+        - protocol: TCP
+          port: 443
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-redis-backup-egress
+  namespace: omniusgrid
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: redis-backup
+  policyTypes:
+    - Egress
+  egress:
+    # Cluster DNS resolution (kube-dns in kube-system).
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    # Redis — the `--rdb` snapshot source.
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: redis
+      ports:
+        - protocol: TCP
+          port: 6379
+    # S3 upload. Cannot be narrowed to a podSelector (it is off-cluster); scope it
+    # with a bucket policy / VPC endpoint rather than here.
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              - 10.0.0.0/8
+              - 172.16.0.0/12
+              - 192.168.0.0/16
+      ports:
+        - protocol: TCP
+          port: 443
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-object-store-backup-egress
+  namespace: omniusgrid
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: object-store-backup
+  policyTypes:
+    - Egress
+  egress:
+    # Cluster DNS resolution (kube-dns in kube-system).
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    # SeaweedFS S3 API — the sync source.
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: seaweedfs
+      ports:
+        - protocol: TCP
+          port: 8333
+    # S3 upload. Cannot be narrowed to a podSelector (it is off-cluster); scope it
+    # with a bucket policy / VPC endpoint rather than here.
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              - 10.0.0.0/8
+              - 172.16.0.0/12
+              - 192.168.0.0/16
+      ports:
+        - protocol: TCP
+          port: 443
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-redpanda-config-backup-egress
+  namespace: omniusgrid
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: redpanda-config-backup
+  policyTypes:
+    - Egress
+  egress:
+    # Cluster DNS resolution (kube-dns in kube-system).
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    # Redpanda's Kafka API — rpk reads topic and group configuration.
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: redpanda
+      ports:
+        - protocol: TCP
+          port: 9092
+    # S3 upload. Cannot be narrowed to a podSelector (it is off-cluster); scope it
+    # with a bucket policy / VPC endpoint rather than here.
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              - 10.0.0.0/8
+              - 172.16.0.0/12
+              - 192.168.0.0/16
+      ports:
+        - protocol: TCP
+          port: 443
+---
 # SeaweedFS object store (base/object-store.yaml). Under default-deny-all it
 # needs both an ingress allow-list (who may reach the S3 API on 8333) and its own
 # egress (DNS). Reached by the backend + export/compliance workers for the S3
