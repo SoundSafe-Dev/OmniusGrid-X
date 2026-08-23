@@ -295,12 +295,29 @@ def _uuid_values(value: Any) -> list[UUID]:
     return [UUID(str(item)) for item in values]
 
 
-def _membership_exists(model: Any, id_column: Any, ids: list[UUID], org_id: UUID) -> Any:
+def _membership_exists(
+    membership_model: Any,
+    resource_model: Any,
+    membership_resource_id: Any,
+    ids: list[UUID],
+    org_id: UUID,
+) -> Any:
     return exists(
-        select(1).where(
-            model.asset_id == Asset.id,
-            model.organization_id == org_id,
-            id_column.in_(ids),
+        select(1)
+        .select_from(membership_model)
+        .join(
+            resource_model,
+            and_(
+                resource_model.id == membership_resource_id,
+                resource_model.organization_id == membership_model.organization_id,
+            ),
+        )
+        .where(
+            membership_model.asset_id == Asset.id,
+            membership_model.organization_id == org_id,
+            resource_model.organization_id == org_id,
+            resource_model.id.in_(ids),
+            resource_model.is_active.is_(True),
         )
     )
 
@@ -310,53 +327,33 @@ def _compile_predicate(node: dict[str, Any], org_id: UUID, now: datetime) -> Any
     operator = node["operator"]
     value = node["value"]
 
-    if field == "tag":
+    if field in {"tag", "group"}:
         ids = _uuid_values(value)
-        clauses = [
-            exists(
-                select(1)
-                .select_from(AssetFleetTag)
-                .join(
-                    FleetTag,
-                    and_(
-                        FleetTag.id == AssetFleetTag.tag_id,
-                        FleetTag.organization_id == AssetFleetTag.organization_id,
-                    ),
-                )
-                .where(
-                    AssetFleetTag.asset_id == Asset.id,
-                    AssetFleetTag.organization_id == org_id,
-                    FleetTag.id == tag_id,
-                    FleetTag.is_active.is_(True),
-                )
+        membership_model, resource_model, membership_resource_id = (
+            (AssetFleetTag, FleetTag, AssetFleetTag.tag_id)
+            if field == "tag"
+            else (AssetFleetGroup, FleetGroup, AssetFleetGroup.group_id)
+        )
+        if operator == "any":
+            return _membership_exists(
+                membership_model,
+                resource_model,
+                membership_resource_id,
+                ids,
+                org_id,
             )
-            for tag_id in ids
-        ]
-        return and_(*clauses) if operator == "all" else or_(*clauses)
-
-    if field == "group":
-        ids = _uuid_values(value)
-        clauses = [
-            exists(
-                select(1)
-                .select_from(AssetFleetGroup)
-                .join(
-                    FleetGroup,
-                    and_(
-                        FleetGroup.id == AssetFleetGroup.group_id,
-                        FleetGroup.organization_id == AssetFleetGroup.organization_id,
-                    ),
+        return and_(
+            *(
+                _membership_exists(
+                    membership_model,
+                    resource_model,
+                    membership_resource_id,
+                    [resource_id],
+                    org_id,
                 )
-                .where(
-                    AssetFleetGroup.asset_id == Asset.id,
-                    AssetFleetGroup.organization_id == org_id,
-                    FleetGroup.id == group_id,
-                    FleetGroup.is_active.is_(True),
-                )
+                for resource_id in ids
             )
-            for group_id in ids
-        ]
-        return and_(*clauses) if operator == "all" else or_(*clauses)
+        )
 
     if field == "site_id":
         ids = _uuid_values(value)

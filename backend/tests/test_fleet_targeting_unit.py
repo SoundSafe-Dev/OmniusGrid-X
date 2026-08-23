@@ -153,6 +153,74 @@ def test_semver_query_compiles_to_bound_sqlalchemy_expression():
     assert "agent_version_valid" in sql
 
 
+@pytest.mark.parametrize(
+    ("field", "membership_table", "resource_table"),
+    [
+        ("tag", "asset_fleet_tags", "fleet_tags"),
+        ("group", "asset_fleet_groups", "fleet_groups"),
+    ],
+)
+def test_membership_any_compiles_one_tenant_scoped_active_exists(
+    field,
+    membership_table,
+    resource_table,
+):
+    resource_ids = [uuid4(), uuid4(), uuid4()]
+    query = normalize_query(
+        {
+            "field": field,
+            "operator": "any",
+            "value": [str(value) for value in resource_ids],
+        }
+    )
+    compiled = select(Asset.id).where(
+        compile_query(query, uuid4())
+    ).compile(dialect=postgresql.dialect())
+    sql = str(compiled)
+
+    assert sql.count("EXISTS") == 1
+    assert f"FROM {membership_table} JOIN {resource_table}" in sql
+    assert f"{membership_table}.organization_id" in sql
+    assert f"{resource_table}.organization_id" in sql
+    assert f"{resource_table}.is_active IS true" in sql
+    membership_id_sets = [
+        value
+        for value in compiled.params.values()
+        if isinstance(value, list)
+    ]
+    assert len(membership_id_sets) == 1
+    assert {str(value) for value in membership_id_sets[0]} == {
+        str(value) for value in resource_ids
+    }
+
+
+@pytest.mark.parametrize("field", ["tag", "group"])
+def test_membership_all_compiles_one_exists_per_required_resource(field):
+    resource_ids = [uuid4(), uuid4()]
+    query = normalize_query(
+        {
+            "field": field,
+            "operator": "all",
+            "value": [str(value) for value in resource_ids],
+        }
+    )
+    compiled = select(Asset.id).where(
+        compile_query(query, uuid4())
+    ).compile(dialect=postgresql.dialect())
+
+    assert str(compiled).count("EXISTS") == len(resource_ids)
+    membership_id_sets = [
+        value
+        for value in compiled.params.values()
+        if isinstance(value, list)
+    ]
+    assert len(membership_id_sets) == len(resource_ids)
+    assert all(len(values) == 1 for values in membership_id_sets)
+    assert {str(values[0]) for values in membership_id_sets} == {
+        str(value) for value in resource_ids
+    }
+
+
 def test_selector_requires_exactly_one_supported_form():
     asset_ids = [uuid4(), uuid4()]
     normalized = normalize_selector(

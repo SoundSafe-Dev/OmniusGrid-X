@@ -728,6 +728,91 @@ async def test_metadata_crud_assignments_are_tenant_and_role_scoped(
 
 
 @pytest.mark.asyncio
+async def test_membership_queries_preserve_any_all_active_and_tenant_scope(
+    fleet_client_a,
+    fleet_client_b,
+    admin_sync_url,
+    seeded_orgs,
+):
+    client_a = fleet_client_a
+    client_b = fleet_client_b
+    assets = _seed_assets(admin_sync_url, seeded_orgs)
+    release_id = _seed_published_agent_release(admin_sync_url, seeded_orgs)
+
+    async def create_resources(client, resource: str, label: str) -> list[str]:
+        resource_ids: list[str] = []
+        for suffix in ("One", "Two"):
+            response = await client.post(
+                f"/api/v1/fleet/{resource}",
+                json={"name": f"{label} {suffix}"},
+            )
+            assert response.status_code == 201, response.text
+            resource_ids.append(response.json()["id"])
+        return resource_ids
+
+    tag_ids = await create_resources(client_a, "tags", "Membership tag")
+    group_ids = await create_resources(client_a, "groups", "Membership group")
+    foreign_tag_id = (await create_resources(client_b, "tags", "Foreign tag"))[0]
+    foreign_group_id = (await create_resources(client_b, "groups", "Foreign group"))[0]
+
+    for resource, resource_ids in (("tags", tag_ids), ("groups", group_ids)):
+        for resource_id, asset_id in (
+            (resource_ids[0], assets["asset_a1"]),
+            (resource_ids[1], assets["asset_a1"]),
+            (resource_ids[1], assets["asset_a2"]),
+        ):
+            response = await client_a.put(
+                f"/api/v1/fleet/{resource}/{resource_id}/assets/{asset_id}"
+            )
+            assert response.status_code == 200, response.text
+
+    async def preview(field: str, operator: str, resource_ids: list[str]):
+        return await client_a.post(
+            "/api/v1/fleet/target-previews",
+            json={
+                "release_id": str(release_id),
+                "selector": {
+                    "query": {
+                        "field": field,
+                        "operator": operator,
+                        "value": resource_ids,
+                    }
+                },
+            },
+        )
+
+    resources = (
+        ("tag", "tags", tag_ids, foreign_tag_id),
+        ("group", "groups", group_ids, foreign_group_id),
+    )
+    for field, resource, resource_ids, foreign_resource_id in resources:
+        any_response = await preview(field, "any", resource_ids)
+        assert any_response.status_code == 201, any_response.text
+        assert set(any_response.json()["asset_ids"]) == {
+            str(assets["asset_a1"]),
+            str(assets["asset_a2"]),
+        }
+
+        all_response = await preview(field, "all", resource_ids)
+        assert all_response.status_code == 201, all_response.text
+        assert all_response.json()["asset_ids"] == [str(assets["asset_a1"])]
+
+        deactivate = await client_a.delete(
+            f"/api/v1/fleet/{resource}/{resource_ids[0]}"
+        )
+        assert deactivate.status_code == 200, deactivate.text
+        assert deactivate.json()["is_active"] is False
+
+        unavailable_detail = f"one or more referenced {field} values are unavailable"
+        inactive_response = await preview(field, "any", [resource_ids[0]])
+        foreign_response = await preview(field, "any", [foreign_resource_id])
+        assert inactive_response.status_code == 422, inactive_response.text
+        assert foreign_response.status_code == 422, foreign_response.text
+        assert inactive_response.json()["detail"] == unavailable_detail
+        assert foreign_response.json()["detail"] == unavailable_detail
+
+
+@pytest.mark.asyncio
 async def test_dynamic_cohort_stale_preview_and_exact_multi_asset_rollout(
     fleet_client_a,
     admin_sync_url,
