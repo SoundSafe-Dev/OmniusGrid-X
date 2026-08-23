@@ -35,6 +35,7 @@ from .. import metrics
 from ..analytics import pipeline as analytics_pipeline
 # Relative import: rename-agnostic, like the adapter/metrics seam.
 from ..quality import QualityAction, QualityConfig, QualityPipeline
+from ..resilience import ExponentialBackoff
 
 logger = structlog.get_logger()
 
@@ -56,6 +57,10 @@ IMMEDIATE_FORWARD_ENABLED = False
 CROSS_CUTTING_KEYS = frozenset({"quality", "packml", "alerts", "oee"})
 
 COLLECTOR_HEALTH_STATES = frozenset({"starting", "healthy", "degraded", "stopped"})
+
+SUPERVISOR_RETRY_INITIAL_SECONDS = 5.0
+SUPERVISOR_RETRY_CAP_SECONDS = 60.0
+SUPERVISOR_RETRY_MULTIPLIER = 2.0
 
 
 @dataclass
@@ -133,6 +138,8 @@ class UnifiedCollectorCoordinator:
         #: whole life) or an offline broker writes one warning per message.
         self._forward_failing = False
         self._restart_locks: Dict[str, asyncio.Lock] = {}
+        self._supervisor_stop_event = asyncio.Event()
+        self._supervision_status: Dict[str, Dict[str, Any]] = {}
     
     def register_collector(self, config: CollectorConfig):
         """Register a collector configuration"""
@@ -163,6 +170,7 @@ class UnifiedCollectorCoordinator:
         """Start all registered collectors"""
         logger.info("starting_all_collectors", count=len(self.configs))
         self._running = True
+        self._supervisor_stop_event.clear()
         
         # Start collectors concurrently (up to max_concurrent)
         semaphore = asyncio.Semaphore(self.max_concurrent)
@@ -253,42 +261,88 @@ class UnifiedCollectorCoordinator:
             return False
     
     async def _run_collector(self, asset_id: str, collector: Any):
-        """Run a collector and handle restarts"""
-        restart_count = 0
-        max_restarts = 10
-        
-        while self._running and restart_count < max_restarts:
-            try:
-                await collector.start()
-                # A CLEAN RETURN IS STILL A RESTART (FS-501). Only the `except` branch
-                # counted and slept, so a `start()` that RETURNS rather than raises spun this
-                # loop as fast as the scheduler allowed, for the life of the process — no
-                # counter moving, no delay, nothing in the log. A collector that exits
-                # normally on a closed connection is the ordinary case, not an exotic one.
-                restart_count += 1
-                logger.warning(
-                    "collector_returned",
+        """Run a collector until explicit stop, backing off after every exit."""
+        attempt = 0
+        backoff = ExponentialBackoff(
+            initial=SUPERVISOR_RETRY_INITIAL_SECONDS,
+            cap=SUPERVISOR_RETRY_CAP_SECONDS,
+            multiplier=SUPERVISOR_RETRY_MULTIPLIER,
+        )
+
+        try:
+            while self._running:
+                attempt += 1
+                previous = self._supervision_status.get(asset_id, {})
+                self._supervision_status[asset_id] = {
+                    "state": "running",
+                    "attempts": attempt,
+                    "last_outcome": previous.get("last_outcome"),
+                    "next_retry_seconds": None,
+                }
+                try:
+                    await collector.start()
+                    if not self._running:
+                        break
+                    # A clean return is still a failed supervision attempt: a
+                    # long-lived collector should only return after explicit stop.
+                    outcome = "returned"
+                    logger.warning(
+                        "collector_returned",
+                        asset_id=asset_id,
+                        restart_count=attempt,
+                        note="start() returned without raising; treating as a restart",
+                    )
+                except Exception as error:
+                    if not self._running:
+                        break
+                    outcome = "crashed"
+                    logger.error(
+                        "collector_crashed",
+                        asset_id=asset_id,
+                        error=str(error),
+                        restart_count=attempt,
+                    )
+
+                if not self._running:
+                    break
+
+                delay = backoff.next_delay()
+                self._supervision_status[asset_id] = {
+                    "state": "backing_off",
+                    "attempts": attempt,
+                    "last_outcome": outcome,
+                    "next_retry_seconds": delay,
+                }
+                logger.info(
+                    "collector_restart_backoff",
                     asset_id=asset_id,
-                    restart_count=restart_count,
-                    note="start() returned without raising; treating as a restart",
+                    restart_count=attempt,
+                    outcome=outcome,
+                    delay_seconds=delay,
                 )
-                await asyncio.sleep(5)
-            except Exception as e:
-                restart_count += 1
-                logger.error(
-                    "collector_crashed",
-                    asset_id=asset_id,
-                    error=str(e),
-                    restart_count=restart_count
-                )
-                await asyncio.sleep(5)  # Delay before restart
-        
-        if restart_count >= max_restarts:
-            logger.error(
-                "collector_max_restarts",
-                asset_id=asset_id,
-                max_restarts=max_restarts
+                if not await self._wait_for_supervisor_retry(delay):
+                    break
+        finally:
+            previous = self._supervision_status.get(asset_id, {})
+            self._supervision_status[asset_id] = {
+                "state": "stopped",
+                "attempts": previous.get("attempts", attempt),
+                "last_outcome": previous.get("last_outcome"),
+                "next_retry_seconds": None,
+            }
+
+    async def _wait_for_supervisor_retry(self, delay: float) -> bool:
+        """Wait for the retry delay, waking immediately when stop is requested."""
+        if not self._running or self._supervisor_stop_event.is_set():
+            return False
+        try:
+            await asyncio.wait_for(
+                self._supervisor_stop_event.wait(),
+                timeout=delay,
             )
+        except asyncio.TimeoutError:
+            return self._running
+        return False
     
     async def _on_collector_message(self, message: Dict):
         """Handle message from any collector"""
@@ -511,6 +565,10 @@ class UnifiedCollectorCoordinator:
                             task is not None
                             and not task.done()
                             and collector_status.get("healthy") is not False
+                            and (
+                                collector_status.get("supervision", {}).get("state")
+                                != "backing_off"
+                            )
                         ),
                     )
 
@@ -521,6 +579,7 @@ class UnifiedCollectorCoordinator:
         """Stop all collectors"""
         logger.info("stopping_all_collectors")
         self._running = False
+        self._supervisor_stop_event.set()
         
         # Cancel health monitor
         if self._health_check_task:
@@ -657,6 +716,10 @@ class UnifiedCollectorCoordinator:
         if collector is not None and hasattr(collector, "_connected"):
             status["connected"] = bool(getattr(collector, "_connected"))
 
+        supervision = self._supervision_status.get(asset_id)
+        if supervision:
+            status["supervision"] = dict(supervision)
+
         health = getattr(collector, "health_status", None)
         if callable(health):
             health = health()
@@ -710,6 +773,7 @@ class UnifiedCollectorCoordinator:
             'degraded_collectors': sum(
                 1 for status in collector_status.values()
                 if status.get('healthy') is False
+                or status.get('supervision', {}).get('state') == 'backing_off'
             ),
             'collectors': collector_status,
         }
