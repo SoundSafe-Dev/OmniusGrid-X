@@ -24,9 +24,27 @@ errors_total = Counter(
     ["asset_id", "collector_type"],
 )
 
+poll_failures_total = Counter(
+    "edge_collector_poll_failures_total",
+    "Collector poll failures by bounded operational class",
+    ["asset_id", "collector_type", "failure_class"],
+)
+
+poll_recoveries_total = Counter(
+    "edge_collector_poll_recoveries_total",
+    "Collector poll recovery transitions",
+    ["asset_id", "collector_type"],
+)
+
+poll_consecutive_failures = Gauge(
+    "edge_collector_poll_consecutive_failures",
+    "Current consecutive collector poll failures",
+    ["asset_id", "collector_type"],
+)
+
 connection_state = Gauge(
     "edge_collector_connection_state",
-    "Collector liveness as seen by the coordinator (1=active, 0=down)",
+    "Collector health as seen by the coordinator (1=healthy/active, 0=degraded/down)",
     ["asset_id", "collector_type"],
 )
 
@@ -47,6 +65,49 @@ def record_message(
 
 def record_error(asset_id: str, collector_type: str) -> None:
     errors_total.labels(asset_id=asset_id, collector_type=collector_type).inc()
+
+
+POLL_FAILURE_CLASSES = frozenset({"transport", "http_status", "decode", "unexpected"})
+
+
+def record_poll_failure(
+    asset_id: str,
+    collector_type: str,
+    failure_class: str,
+    consecutive_failures: int,
+) -> None:
+    """Record one poll failure without accepting unbounded metric labels."""
+    bounded_class = (
+        failure_class if failure_class in POLL_FAILURE_CLASSES else "unexpected"
+    )
+    poll_failures_total.labels(
+        asset_id=asset_id,
+        collector_type=collector_type,
+        failure_class=bounded_class,
+    ).inc()
+    poll_consecutive_failures.labels(
+        asset_id=asset_id,
+        collector_type=collector_type,
+    ).set(max(0, consecutive_failures))
+    set_connection_state(asset_id, collector_type, up=False)
+
+
+def record_poll_success(
+    asset_id: str,
+    collector_type: str,
+    *,
+    recovered: bool,
+) -> None:
+    poll_consecutive_failures.labels(
+        asset_id=asset_id,
+        collector_type=collector_type,
+    ).set(0)
+    set_connection_state(asset_id, collector_type, up=True)
+    if recovered:
+        poll_recoveries_total.labels(
+            asset_id=asset_id,
+            collector_type=collector_type,
+        ).inc()
 
 
 def set_connection_state(asset_id: str, collector_type: str, up: bool) -> None:

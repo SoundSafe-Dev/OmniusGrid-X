@@ -55,6 +55,8 @@ IMMEDIATE_FORWARD_ENABLED = False
 
 CROSS_CUTTING_KEYS = frozenset({"quality", "packml", "alerts", "oee"})
 
+COLLECTOR_HEALTH_STATES = frozenset({"starting", "healthy", "degraded", "stopped"})
+
 
 @dataclass
 class CollectorConfig:
@@ -498,12 +500,18 @@ class UnifiedCollectorCoordinator:
                     total=len(self.configs)
                 )
 
-                # Publish per-collector liveness (1=active task, 0=down).
+                # Publish task liveness plus collector-specific health. A live
+                # HTTP poll task can still be degraded if every request fails.
                 for aid, cfg in self.configs.items():
                     task = self.collector_tasks.get(aid)
+                    collector_status = self._collector_runtime_status(aid, cfg)
                     metrics.set_connection_state(
                         aid, cfg.collector_type,
-                        up=task is not None and not task.done(),
+                        up=(
+                            task is not None
+                            and not task.done()
+                            and collector_status.get("healthy") is not False
+                        ),
                     )
 
             except Exception as e:
@@ -632,12 +640,12 @@ class UnifiedCollectorCoordinator:
 
             raise RuntimeError("collector did not become ready")
 
-    def get_collector_status(self, asset_id: str) -> Dict[str, Any]:
-        """Return bounded lifecycle state for one configured collector."""
-
-        config = self.configs.get(asset_id)
-        if config is None:
-            raise KeyError(asset_id)
+    def _collector_runtime_status(
+        self,
+        asset_id: str,
+        config: CollectorConfig,
+    ) -> Dict[str, Any]:
+        """Combine task liveness with bounded collector-specific health."""
         task = self.collector_tasks.get(asset_id)
         collector = self.collectors.get(asset_id)
         status = {
@@ -648,10 +656,50 @@ class UnifiedCollectorCoordinator:
         }
         if collector is not None and hasattr(collector, "_connected"):
             status["connected"] = bool(getattr(collector, "_connected"))
+
+        health = getattr(collector, "health_status", None)
+        if callable(health):
+            health = health()
+        if isinstance(health, dict):
+            state = health.get("state")
+            if isinstance(state, str) and state in COLLECTOR_HEALTH_STATES:
+                status["state"] = state
+            if "healthy" in health:
+                healthy = health.get("healthy")
+                if healthy is None or isinstance(healthy, bool):
+                    status["healthy"] = healthy
+            failures = health.get("consecutive_failures")
+            if isinstance(failures, int) and not isinstance(failures, bool):
+                status["consecutive_failures"] = max(0, failures)
+            for field in ("last_success_at", "last_failure_at"):
+                if field not in health:
+                    continue
+                value = health.get(field)
+                if value is None or isinstance(value, str):
+                    status[field] = value[:64] if isinstance(value, str) else None
+            if "last_failure_class" in health:
+                failure_class = health.get("last_failure_class")
+                if failure_class is None or (
+                    isinstance(failure_class, str)
+                    and failure_class in metrics.POLL_FAILURE_CLASSES
+                ):
+                    status["last_failure_class"] = failure_class
         return status
+
+    def get_collector_status(self, asset_id: str) -> Dict[str, Any]:
+        """Return bounded lifecycle state for one configured collector."""
+
+        config = self.configs.get(asset_id)
+        if config is None:
+            raise KeyError(asset_id)
+        return self._collector_runtime_status(asset_id, config)
     
     def get_status(self) -> Dict[str, Any]:
         """Get status of all collectors"""
+        collector_status = {
+            asset_id: self._collector_runtime_status(asset_id, config)
+            for asset_id, config in self.configs.items()
+        }
         return {
             'running': self._running,
             'total_collectors': len(self.configs),
@@ -659,15 +707,9 @@ class UnifiedCollectorCoordinator:
                 1 for t in self.collector_tasks.values()
                 if not t.done()
             ),
-            'collectors': {
-                asset_id: {
-                    'type': config.collector_type,
-                    'enabled': config.enabled,
-                    'running': (
-                        asset_id in self.collector_tasks and
-                        not self.collector_tasks[asset_id].done()
-                    )
-                }
-                for asset_id, config in self.configs.items()
-            }
+            'degraded_collectors': sum(
+                1 for status in collector_status.values()
+                if status.get('healthy') is False
+            ),
+            'collectors': collector_status,
         }

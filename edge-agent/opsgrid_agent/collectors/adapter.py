@@ -119,6 +119,14 @@ class CoordinatorCollectorAdapter:
     def running(self) -> bool:
         return self._collector.running
 
+    @property
+    def health_status(self) -> Dict[str, Any]:
+        """Forward bounded inner-collector health when it is available."""
+        status = getattr(self._collector, "health_status", None)
+        if callable(status):
+            status = status()
+        return dict(status) if isinstance(status, dict) else {}
+
 
 def coordinator_adapter(inner_cls: type) -> type:
     """Build a coordinator-compatible adapter class for a BaseCollector subclass.
