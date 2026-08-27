@@ -205,7 +205,11 @@ async def query_stream(
                 async for delta in tokens:
                     yield _sse("delta", {"content": delta})
             except Exception as exc:  # LLM connection dropped mid-stream
-                yield _sse("error", {"detail": str(exc)})
+                # Some exceptions (e.g. httpx's *Timeout family) stringify to
+                # "" - fall back to the type name so the client never gets an
+                # empty detail. Confirmed live: an Ollama cold-load exceeding
+                # LLM_TIMEOUT raises httpx.ReadTimeout with str(exc) == "".
+                yield _sse("error", {"detail": str(exc) or type(exc).__name__})
                 return
         yield _sse("done", {})
 
