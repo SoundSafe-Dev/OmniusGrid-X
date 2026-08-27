@@ -3,8 +3,8 @@
 Branch `feature/RAG-Compliance-Doc-Pipeline` @ `b0f2ebd4` (local, not pushed).
 Replaces the earlier FS-665 re-scope doc, which had grown into a long running
 log; this is a snapshot instead. History is in git — see `git log` on this
-branch for the full trail, or `docs/rag_thunder_restore.md` /
-`docs/RAG_DEVELOPMENT.md` §8 for verification detail.
+branch for the full trail, or `docs/RAG_DEVELOPMENT.md` §8 for verification
+detail.
 
 ## Done
 

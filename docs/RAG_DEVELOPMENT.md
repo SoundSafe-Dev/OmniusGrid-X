@@ -510,9 +510,8 @@ inline) — **PASS**, plus the RAG unit/queue suite (61/62 — the 1 failure is
 confirmed scratch-DB pollution, not code) and the full `rag_eval` suite
 (121/127, matching the pre-async baseline's 3 known content-quality misses
 plus one new, unrelated `LLM_TIMEOUT` tail-latency finding on the
-non-streaming `/query` route — see `docs/rag_thunder_restore.md`'s
-2026-08-27 snapshot notes for detail). This proves the application-level
-async+worker interaction end to end for the first time.
+non-streaming `/query` route). This proves the application-level async+worker
+interaction end to end for the first time.
 
 **What this does NOT prove:** Thunder runs the worker as a bare native
 process, not inside `omniusgrid-rag`'s namespace topology — so the
