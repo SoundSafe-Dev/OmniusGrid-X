@@ -499,11 +499,30 @@ index → retrieve → cleanup pass via `scripts/verify_rag_e2e.py` passed on a 
 which needs Ollama on the host and is unrelated to the RAG stack.
 
 That run predates async ingestion. It exercised a backend that indexed inline,
-so it proves nothing about the `rag-indexing-worker` Deployment, its
+so it proved nothing about the `rag-indexing-worker` Deployment, its
 NetworkPolicy egress, or the claim/finalize path — none of which existed then.
-**Treat the k8s RAG deployment as unverified until `verify_rag_e2e.py` is re-run
-against a cluster that includes the worker.** The compose path is the gate for
-that: prove it there first (§7.4), then k8s.
+
+**Update, 2026-08-27 — the compose-path half of this gate is now closed, the
+k8s-cluster half is not.** `verify_rag_e2e.py` re-ran on a live Thunder box
+(`feature/RAG-Compliance-Doc-Pipeline` @ `14e16b2f`) with the real async
+`rag-indexing-worker` process in the loop (queued→indexed via the worker, not
+inline) — **PASS**, plus the RAG unit/queue suite (61/62 — the 1 failure is
+confirmed scratch-DB pollution, not code) and the full `rag_eval` suite
+(121/127, matching the pre-async baseline's 3 known content-quality misses
+plus one new, unrelated `LLM_TIMEOUT` tail-latency finding on the
+non-streaming `/query` route — see `docs/rag_thunder_restore.md`'s
+2026-08-27 snapshot notes for detail). This proves the application-level
+async+worker interaction end to end for the first time.
+
+**What this does NOT prove:** Thunder runs the worker as a bare native
+process, not inside `omniusgrid-rag`'s namespace topology — so the
+NetworkPolicy egress question, cross-namespace DNS resolution, and the
+Deployment/manifest wiring itself are still exactly as unverified as before.
+**Treat the k8s RAG deployment as unverified until `verify_rag_e2e.py` is
+re-run against an actual cluster (kind or otherwise) that includes the
+worker Deployment** — that step still needs to happen before trusting the
+k8s manifests, and per the header of `scripts/thunder_bootstrap.sh`, Thunder
+cannot be that cluster (no image builds, no real k8s).
 
 ### 8.1 Known issues (unfixed)
 
@@ -569,15 +588,17 @@ throwaway local cluster and were applied live with `kubectl patch` / piped `sed`
 
 ### 8.4 Next steps
 
-0. **Re-verify end to end with the worker in the loop** — compose first
-   (`./scripts/rag.sh verify`), then kind. Everything below is downstream of
-   knowing the async path actually works against live infrastructure.
+0. **Re-verify end to end with the worker in the loop** — compose/native-stack
+   half **done 2026-08-27** (see §8 update above). **kind (or another real
+   cluster) still not done** — everything below is downstream of proving the
+   async path against an actual k8s cluster, not just compose/Thunder.
 1. Fix the mTLS env var mismatch (§8.1) and decide `backend-tls`'s fate.
 2. Decide the namespace-topology question (§8.1) before any staging/production wiring.
 3. Pin a real `storageClassName` for `base/rag/`'s Qdrant PVC per environment
    (mirroring how `timescaledb`/`redpanda` already do it with `fast-ssd`), and
    revisit resource requests/limits once there's a sense of real load.
-4. Add `rag-inference` to the CI build matrix and wire its image tag into
-   whichever kustomization ends up owning `base/rag/`.
+4. ~~Add `rag-inference` to the CI build matrix~~ **done** (`ci-cd.yml`'s
+   `build-images` matrix, 2026-08-19) — still need to wire its image tag into
+   whichever kustomization ends up owning `base/rag/`, which is blocked on #2.
 5. Wire `QDRANT_API_KEY` / `RAG_INFERENCE_API_KEY` and NetworkPolicies once the
    namespace-topology decision lands.
