@@ -6239,3 +6239,104 @@ A corollary worth stating: this is only writable by someone who has just been th
 code. A runbook written from the outside contains the procedure, because the procedure is what
 is visible from the outside.
 
+
+## Rule 285 — a branch behind yours is not a subset of yours, even in its own lane
+
+Lane ownership says *whose decisions these are*. It does not say whose copy of a file is
+newer, and the 2026-08-28 RAG integration cost two regressions before that distinction
+landed.
+
+The reasoning that failed was: `rag_retriever.py` and `rag.py` are the RAG lane's files, the
+RAG lane's branch is where RAG work happens, so take that branch's version. It is wrong
+whenever *you* have also worked in that lane since the fork — and on a converged branch you
+almost always have. His copies predated my Compliance Assistant slice by four weeks, so taking
+them wholesale deleted `SourceDoc`, `_build_sources`, the ERP operational leg, an entire route
+(`POST /documents/link`) and the FS-742 transport handling. Nothing about that was visible in
+the merge: git reported the file resolved, and it was resolved, to a version that had never
+contained the work.
+
+Both times a test caught it, which is the only reason this is a rule and not an outage:
+`test_rag_erp_context.py` failed to import a name that no longer existed, and
+`test_lane_failure_root_causes_stay_fixed.py` found three routes that had stopped translating
+a connection failure. **A file-level "take theirs" is a claim that their version is a superset
+of yours. Check it, or make the merge additive.**
+
+The resolution that worked was not "take mine" either. His structure was better — a shared
+`_gather_context` feeding both `retrieve` and `stream`, where mine had one path — so the file
+is his shape carrying my additions. Deciding that required reading both, which is the actual
+cost the shortcut was trying to avoid.
+
+## Rule 286 — a refactor that improves a metric can silently disconnect the alert watching the old one
+
+The OTA lane replaced `record_error` with `record_poll_failure` in the HTTP collector. The new
+call is strictly better: it carries a `failure_class` label, records consecutive failures, and
+sets connection state. Every test of it passed. It was also the only writer of
+`edge_collector_errors_total`, which is what `alerts.yml:216` and `:312` fire on and what
+`edge-collectors.json` plots — and the new counter is read by nothing outside the edge tests.
+
+So a device answering 500 forever would have incremented a metric no rule watches, and both
+edge alerts would have gone quiet for every HTTP collector, while the dashboards showed a flat
+zero that looks exactly like health. This is the green-by-vacancy class the FS-769..798 wave
+spent thirty items closing, reintroduced by an improvement.
+
+The trap is that **the refactor's blast radius is not in the code it changed.** Nothing in
+`http_rest.py` mentions an alert. The consumers live in `infra/prometheus/` and
+`infra/grafana/`, in a different language, and no test in either tree exercises the producer.
+
+Two things follow. **Renaming or replacing a metric is an interface change, not an internal
+one** — grep the alert rules and dashboards before, not after. And **the classified counter
+should be additive to the coarse one, not a replacement**: the alerting contract is the coarse
+metric, and one `.inc()` keeps it true while the better metric carries the detail.
+
+What caught it was my own FS-691 test failing during the merge — a test written for a
+different reason, months earlier, whose subject happened to be the seam.
+
+## Rule 287 — an exemption keyed on a path never expires by itself
+
+`NOT_DEPLOYED = ("legacy-patroni",)` skips whole directories in the mutable-tag guard. It was
+correct: nothing builds that tree, so nothing runs those tags. The RAG base met the same
+criterion exactly — no kustomization references it — so it went in the same tuple.
+
+Then the question worth asking: what happens when that stops being true? A path prefix keeps
+matching forever. Wiring `base/rag/` into an overlay is a one-line change to a kustomization,
+and it makes three unpinned images real without touching the guard, the tuple, or anything
+that would prompt anyone to revisit either. The exemption would outlive its reason silently,
+which is the failure mode rule 278 named for exemptions generally — but a path exemption is
+the worst case, because it is the broadest and the least visible.
+
+So the entry came with a test that fails the moment any kustomization outside those trees
+names one of them, and it was mutation-verified by adding `- rag` to `base/kustomization.yaml`
+and watching it fail. The exemption is now a statement with an expiry date rather than a
+permanent hole. It also retroactively covers `legacy-patroni`, which had the same hole for as
+long as it had existed.
+
+**Every exemption should be able to answer "what would make this wrong?" with a test rather
+than a sentence.**
+
+## Rule 288 — rewritten history makes a clean merge look like a conflict
+
+The RAG branch reported **155 conflicted files**. Only 21 were files its author had ever
+touched. The other 134 were mine on both sides.
+
+The cause was the 2026-08-15 force-push and recovery: it rewrote my commits' hashes, so the
+copies on his branch — merged there on 2026-07-19, before the incident — are no longer
+ancestors of my line. Git therefore sees both sides having changed 134 files that exactly one
+person ever edited, and correctly refuses to guess.
+
+The diagnostic is two commands and worth knowing, because the alternative is resolving 134
+files by hand or, worse, resolving them carelessly:
+
+```
+git merge-base --is-ancestor <my-old-commit> HEAD     # NO
+git merge-base --is-ancestor <my-old-commit> <theirs> # YES
+```
+
+A commit of mine that is an ancestor of *their* branch and not of *mine* is the signature. Once
+seen, the resolution is mechanical and safe: for every conflicted file **the other author never
+authored a change to**, their side is by definition an older copy of your own work, so take
+yours. `git log --author=<them> <merge-base>..<branch> -- <path>` decides it per file, and the
+21 that remain are the real merge.
+
+The general form: **before resolving a large conflict set, find out how many of the conflicts
+are about the work and how many are about the history.** They need opposite treatments, and
+the ratio here was 21 to 134.

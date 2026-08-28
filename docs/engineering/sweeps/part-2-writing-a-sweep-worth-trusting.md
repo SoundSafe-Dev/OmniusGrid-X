@@ -2104,6 +2104,27 @@ one of its findings. The habit that catches it:
      is no per-tenant rate limit to raise. Each is invisible from the code an engineer would
      naturally open first and would otherwise be discovered mid-incident. Put the constraints
      above the steps.
+285. **A branch behind yours is not a subset of yours, even in its own lane.** Lane ownership
+     says whose decisions these are, not whose copy of a file is newer. Taking the RAG lane's
+     version of two RAG files deleted four weeks of my own work in them — a class, a helper, an
+     entire route and the transport handling — and git reported both files cleanly resolved. A
+     file-level "take theirs" is a claim that their version is a superset of yours; check it,
+     or make the merge additive.
+286. **A refactor that improves a metric can silently disconnect the alert watching the old
+     one.** The HTTP collector's failures moved to a better counter carrying a `failure_class`
+     label, and off the coarse one that two production alerts and a dashboard read. Every test
+     of the new counter passed. Renaming or replacing a metric is an interface change: grep the
+     rules and dashboards first, and make the classified counter additive to the coarse one
+     rather than a replacement, because the coarse one is the alerting contract.
+287. **An exemption keyed on a path never expires by itself.** A directory-level skip keeps
+     matching forever, so the one-line change that makes it wrong — wiring the tree into an
+     overlay — touches nothing that would prompt anyone to revisit it. Every exemption should
+     answer "what would make this wrong?" with a test rather than a sentence.
+288. **Rewritten history makes a clean merge look like a conflict.** 155 conflicted files, 21
+     of them about the work and 134 about a force-push recovery that re-hashed commits both
+     branches shared. A commit of yours that is an ancestor of *their* branch and not of yours
+     is the signature. Before resolving a large conflict set, find out how many conflicts are
+     about the work and how many are about the history — they need opposite treatments.
 ---
 
 ## Open observations, not yet tickets

@@ -15583,3 +15583,82 @@ per-tenant rate limit to raise. Each is a fact that changes what you *do*, is in
 the code you would naturally open first, and would otherwise be learned at the worst possible
 moment. Write the constraints at the top, above the steps.
 
+
+## The two dev branches — what merging them actually cost
+
+Two lanes had shipped work that had never met the converged line: the OTA lane
+(`hridyansh/integration`, 85 commits to 2026-08-23) and the RAG lane
+(`feature/RAG-Compliance-Doc-Pipeline`, 41 commits to 2026-08-27). Both live on the `backup`
+remote only. Fifteen of the seventeen branches on each remote differ from `main` by nothing but
+the `SECURITY: origin was force-pushed` notice commit.
+
+**The survey mattered more than the merge.** The RAG branch's raw diff touches ~900 files and
+reports **155 conflicts**; the number that decides how to approach it is that its author
+authored changes to **89**, of which **21** collide with mine. The other 134 are the
+2026-08-15 force-push recovery: it re-hashed my commits, so the copies merged onto his branch
+on 2026-07-19 are no longer ancestors of my line, and git correctly refuses to guess about
+files exactly one person ever edited. `git merge-base --is-ancestor <my-old-commit> HEAD`
+returning NO while the same query against his branch returns YES is the signature, and it turns
+134 files from "resolve by hand" into "take mine, by definition". That is method rule 288.
+
+The OTA branch was the opposite shape: 20 files, all in lane, migrations a byte-identical
+subset, four conflicts.
+
+### What each merge found that its own tests did not
+
+Neither branch was careless. Both were behind, and *behind* is its own failure mode.
+
+**The OTA merge moved an alert onto a metric nothing watches.** `HTTPRestCollector` was
+refactored to call `record_poll_failure` — classified, with `failure_class` and consecutive
+counts — instead of `record_error`. Strictly the better metric, and the only writer of
+`edge_collector_errors_total`, which is what `alerts.yml:216` and `:312` fire on and what
+`edge-collectors.json` plots. A device answering 500 forever would have incremented a counter
+no rule reads while both edge alerts stayed silent: the green-by-vacancy class the FS-769..798
+wave had just spent thirty items closing. The fix is one line — the classified counter is now
+additive to the coarse one — and what caught it was an FS-691 test written months earlier for
+a different reason.
+
+**The RAG merge twice lost my own work to "his lane, his file".** `rag_retriever.py` and
+`rag.py` predate the 2026-07-31 Compliance Assistant slice, so taking them wholesale deleted
+`SourceDoc`, `_build_sources`, the ERP operational leg, `POST /documents/link` and the FS-742
+transport handling — with git reporting both files cleanly resolved. `test_rag_erp_context.py`
+failed on a missing import and `test_lane_failure_root_causes_stay_fixed.py` found three routes
+that had stopped translating a connection failure. The files are now his structure — a shared
+`_gather_context` feeding both `retrieve` and `stream` is better than what I had — carrying my
+additions back on top. That is rule 285, and it is the one I would most expect to repeat.
+
+### The six guards, and why none of them was loosened
+
+| Guard | What it caught |
+|---|---|
+| `check_migrations.py` | 043/044 collided; renumbered to 073/074. Duplicate prefixes are grandfathered here, but *new* ones fail, and the four grandfathered entries stayed four |
+| `test_insert_ordering_is_possible` | `RagDocument` had FK columns and no `relationship()`, so a flush could emit it before its parent — a Postgres FK violation, silently fine on SQLite |
+| the naive-datetime guard | `default=datetime.utcnow`, the form FS-96/97 removed, which is why `models.py` no longer imports `datetime` at all |
+| `check_probe_ports.py` | `rag-indexing-worker` shipped with **no probe of any kind**: a pass wedged on an unreachable Qdrant left a pod Kubernetes called healthy while the queue backed up |
+| `test_the_swallow_surface_only_shrinks` | three new broad handlers. Two now count; two were **narrowed to what their own comments claimed** — a defect on our side was being requeued, written to the row as `failed`, and dressed as an infrastructure fault |
+| `test_response_model_coverage_ratchet` | two undeclared routes. `/query/stream` declares `text/event-stream`, because declaring the media type is how a route honestly says it has no JSON schema; `/documents/{doc_id}/status` got a real model instead of `Dict[str, Any]` |
+
+The mutable-tag guard is the interesting one. The RAG base runs three unpinned images and is
+built by no kustomization, so it is exempt exactly as `legacy-patroni` is — but a path-prefix
+exemption never expires, and wiring the tree into an overlay is one line. The entry therefore
+arrived with a test that fails the moment any kustomization names it, mutation-verified by
+adding `- rag` to `base/kustomization.yaml` and watching it go red. That test retroactively
+closes the same hole `legacy-patroni` had carried since it was created. Rule 287.
+
+### Two things taken from the branches and two deliberately not
+
+Taken: the RAG lane's **per-org ingest quotas** are the first per-tenant limits anywhere in the
+backend — FS-842 says there are none, and that is now half wrong, with a working template to
+copy. And `TEST_DATABASE_URL`, an escape hatch for hosts without Docker bridge networking,
+which runs the full migration chain against whatever it names. Its docstring warned about that;
+it now refuses, because the obvious value to reach for on a developer machine is the dev
+database, which is the one whose schema must not be rewritten.
+
+Not taken: `S3_ENDPOINT_URL` repointed at the rag namespace — it is shared with the export
+pipeline, so it would have moved exports onto a host that resolves only where the rag base is
+applied — and `MTLS_ENABLED` as an explicit `env` entry, which beats `envFrom` and would have
+broken the staging overlay's `MTLS_ENABLED=false`. Both are recorded in the manifest beside the
+lines that would otherwise invite them back.
+
+Backend 5,306 → **5,398**; frontend 1,211 → **1,223**; edge 477 → **490**, plus 109 DDIL
+scenarios. Method rules to **288**.

@@ -50,7 +50,21 @@ detail.
    on #3.
 6. **Qdrant PVC storage class** — pin a real `storageClassName` per
    environment (mirrors how `timescaledb`/`redpanda` already do it).
-7. **Replay onto `main`** — not gating #1–6, but needed before this ships.
+7. ~~**Replay onto `main`**~~ — **DONE 2026-08-28**, on `hamad/converged-pre-main` rather
+   than by replay. The analysis below was right on every point; recording what differed.
+   The migrations were renumbered to **073/074**, not 068/069 — main's highest had moved
+   to 072 by then. The k8s base manifests were additive on both sides as predicted, and
+   merged mechanically. The mechanism was NOT a cherry-pick onto a fresh branch: it was a
+   merge with this branch's own commits replayed per-file onto the converged versions,
+   because 134 of the 155 conflicts turned out to be artefacts of the 2026-08-15
+   force-push recovery rather than real divergence. Six guards fired; see the merge commit
+   for each. Two things in this branch were superseded by later work on the converged
+   line and were NOT taken: `S3_ENDPOINT_URL` pointing at the rag namespace (it is shared
+   with the export pipeline, so it would have moved exports onto a host that does not
+   resolve outside the rag base) and `MTLS_ENABLED` as an explicit env entry (it moved to
+   the ConfigMap so the staging overlay can override it). The original text follows.
+
+   **Replay onto `main`** — not gating #1–6, but needed before this ships.
    This branch is diverged from `origin/main`; the RAG-specific diff is
    ~32 files. One real conflict: this branch's migrations
    `043_rag_documents.sql`/`044_rag_document_size_bytes.sql` collide with
