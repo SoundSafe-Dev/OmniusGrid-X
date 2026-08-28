@@ -1,0 +1,14 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: omniusgrid-rag
+  labels:
+    app.kubernetes.io/name: omniusgrid-rag
+    app.kubernetes.io/component: namespace
+    # enforce: baseline (not restricted) - qdrant/qdrant and chrislusf/seaweedfs
+    # are third-party images with unverified non-root support; audit/warn stay
+    # at restricted so violations are visible once that's confirmed in the
+    # isolated kind test, without blocking pods on an unconfirmed assumption.
+    pod-security.kubernetes.io/enforce: baseline
+    pod-security.kubernetes.io/audit: restricted
+    pod-security.kubernetes.io/warn: restricted

@@ -27,7 +27,7 @@
 # secrets. Run the issue_broker_cert.py step before first `up`.
 #
 # rag-inference (htreinen's service) can be added here once containerized —
-# see docs/RAG_CONTAINERIZATION.md.
+# see docs/RAG_DEVELOPMENT.md.
 
 # Single definition of the backend image ref: a tag-scheme change that missed
 # one worker would silently keep deploying the old image.

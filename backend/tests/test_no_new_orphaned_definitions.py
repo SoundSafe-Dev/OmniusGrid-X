@@ -15,9 +15,10 @@ WHAT THE INVENTORY FOUND, and the two that matter most:
     place, and the next person to "reuse" the helper in `core/security` gets subtly different
     auth than the rest of the product.
 
-  * **`llm_client.stream_generate` and `strategic_engine.get_recommendation_history`** are
+  * **`llm_client.stream_generate` and `strategic_engine.get_recommendation_history`** were
     finished capability with no route in front of them. Not dead code — unwired features, and
-    the reason two screens render `—`.
+    the reason two screens rendered `—`. Both have routes now (FS-567, and the RAG merge's
+    `/rag/query/stream`), so both have come off the list.
 
 THE DETECTOR WAS WRONG FIRST, BY A FACTOR OF TWENTY. Its first run reported **1,111 of 1,936**
 functions as orphaned — 57% of the codebase. The bug was a decrement: it subtracted one use per
@@ -68,9 +69,10 @@ ORPHANS: dict[str, str] = {
         "of the same duplicate-auth surface as get_current_user_ws — decide both together.",
 
     # --- finished capability with no route in front of it --------------------------------
-    "app/services/llm_client.py::stream_generate":
-        "Streaming answer generation, complete and unexposed. FS-563 is the route. Not dead "
-        "code — an unwired feature.",
+    # stream_generate CAME OFF THIS LIST with the 2026-08-28 RAG merge, which gave it the
+    # route the entry was waiting for: `POST /rag/query/stream` reaches it through
+    # rag_retriever.py:196. Same shape as get_recommendation_history below — the entry was
+    # holding a decision open, the decision got made, so the entry goes.
     # get_recommendation_history CAME OFF THIS LIST when FS-567 gave it a route
     # (GET /engines/strategic/recommendations/history). The staleness test named it on the
     # next full run — the inventory reporting a wired method as dead is the failure that

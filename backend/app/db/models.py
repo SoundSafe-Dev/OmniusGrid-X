@@ -2709,6 +2709,80 @@ class ComplianceReportJob(Base):
     email_sent_at = Column(DateTime(timezone=True))
 
 
+class RagDocument(Base):
+    """Canonical per-document RAG record; doubles as the indexing work queue.
+
+    One row per (organization_id, doc_id). ``doc_id`` is caller-supplied free
+    text, not a UUID. ``status`` drives the worker: 'queued' rows are claimed
+    with FOR UPDATE SKIP LOCKED, and terminal states are 'indexed' (vectors
+    live), 'skipped' (nothing indexable — see ``reason``), or 'failed' (infra
+    fault after retries — see ``error``).
+    """
+    __tablename__ = "rag_documents"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('queued', 'indexing', 'indexed', 'skipped', 'failed')",
+            name="ck_rag_documents_status",
+        ),
+        CheckConstraint(
+            "kind IN ('pdf', 'docx', 'markdown', 'csv', 'image', 'text', "
+            "'unsupported')",
+            name="ck_rag_documents_kind",
+        ),
+        UniqueConstraint(
+            "organization_id", "doc_id", name="uq_rag_documents_org_doc"
+        ),
+    )
+
+    id = UUIDColumn()
+    organization_id = Column(
+        UUIDString(),
+        ForeignKey("organizations.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    doc_id = Column(Text, nullable=False)
+    uploaded_by = Column(
+        UUIDString(),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    filename = Column(String(255), nullable=False)
+    s3_key = Column(Text, nullable=False)
+    kind = Column(String(20), nullable=False)
+    # Stored blob size, used for the per-org max-total-bytes ingest quota.
+    # Rows created before migration 044 read 0 (see that migration's note).
+    size_bytes = Column(BigInteger, nullable=False, default=0, server_default="0")
+    status = Column(
+        String(20), nullable=False, default="queued", server_default="queued"
+    )
+    attempts = Column(Integer, nullable=False, default=0, server_default="0")
+    num_blocks = Column(Integer, nullable=False, default=0, server_default="0")
+    num_chunks = Column(Integer, nullable=False, default=0, server_default="0")
+    reason = Column(Text)
+    error = Column(Text)
+    created_at = Column(
+        DateTime(timezone=True), default=utcnow, server_default=func.now()
+    )
+    updated_at = Column(
+        DateTime(timezone=True),
+        default=utcnow,
+        onupdate=utcnow,
+        server_default=func.now(),
+    )
+    started_at = Column(DateTime(timezone=True))
+
+    #: Ordering only (FS-417). SQLAlchemy builds insert ordering from relationships, not
+    #: from ForeignKey columns, so without these a flush can emit this row before the
+    #: parent it references — refused by Postgres, accepted silently by SQLite.
+    #: `lazy="raise"` because nothing should traverse them: they exist to order inserts,
+    #: and an accidental lazy load in async code is a MissingGreenlet.
+    organization = relationship(
+        "Organization", foreign_keys="RagDocument.organization_id", lazy="raise"
+    )
+    user = relationship("User", foreign_keys="RagDocument.uploaded_by", lazy="raise")
+    completed_at = Column(DateTime(timezone=True))
+
+
 class AgentRelease(Base):
     """Signed config, model, or executable edge-agent release artifact."""
     __tablename__ = "agent_releases"

@@ -326,6 +326,35 @@ class Settings(BaseSettings):
     RAG_RERANK_TOP_N: int = 5  # passages kept after rerank, sent to the LLM
     RAG_MAX_CONTEXT_CHARS: int = 12000  # cap on concatenated context
 
+    # Retrieval knobs the eval harness flips to isolate each leg's contribution to
+    # quality (hybrid search + cross-encoder rerank). Not exposed on the public /query
+    # API.
+    RAG_RERANK_ENABLED: bool = True
+    RAG_SEARCH_MODE: str = "hybrid"  # hybrid | dense | sparse
+
+    # Per-tenant ingest quota + rate limit. Without these one org can push unbounded
+    # documents and saturate the shared embedding capacity, degrading every other
+    # tenant's query latency. Counted from rag_documents, so the budget is exact per org
+    # and survives a restart. 0 disables a given limit.
+    #
+    # Worth naming for the capacity work: these are the FIRST per-tenant quotas in the
+    # backend. The rest of the product still has none.
+    RAG_MAX_DOCUMENTS_PER_ORG: int = 10_000
+    RAG_MAX_TOTAL_BYTES_PER_ORG: int = 50 * 1024 * 1024 * 1024  # 50 GiB
+    RAG_INGEST_RATE_LIMIT_PER_MINUTE: int = 60  # uploads/min/org; 0 = unlimited
+
+    # Async indexing worker (app/workers/rag_indexing.py). The worker claims queued
+    # rag_documents rows with FOR UPDATE SKIP LOCKED, so it is safe at any replica
+    # count — unlike the singleton OTA dispatcher.
+    RAG_INDEX_WORKER_ENABLED: bool = True
+    RAG_INDEX_POLL_INTERVAL_SECONDS: int = 5
+    RAG_INDEX_MAX_ATTEMPTS: int = 3
+    # Must exceed worst-case indexing time: compose runs RAG_INFERENCE_TIMEOUT at 180s
+    # PER EMBED BATCH, and a large document has many batches.
+    RAG_INDEX_STALE_INDEXING_SECONDS: int = 3600
+    # Ingest-side inference endpoint; falls back to RAG_INFERENCE_URL when unset.
+    RAG_INFERENCE_INGEST_URL: str = ""
+
     # Operational context (ERP) blended into the generation prompt.
     # A SECOND retrieval leg, deliberately not a second corpus: ERP rows are read
     # live from Postgres at query time and appended to the prompt UNNUMBERED, so

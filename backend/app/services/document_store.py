@@ -18,7 +18,8 @@ Design notes:
   against SeaweedFS, MinIO, or real AWS S3 by changing env vars only.
 """
 
-from typing import Optional, List, Dict, Any
+import re
+from typing import Optional, List, Dict, Any, BinaryIO
 from functools import lru_cache
 
 import structlog
@@ -37,12 +38,51 @@ except ImportError:  # aioboto3 not installed - service disabled until used
 logger = structlog.get_logger()
 
 
+_DOC_ID_RE = re.compile(r"^(?!\.+\Z)[A-Za-z0-9._-]{1,128}\Z")
+
+
+class InvalidDocumentId(ValueError):
+    """A caller-supplied doc_id that cannot safely be used in an object key."""
+
+
+def validate_doc_id(doc_id: str) -> str:
+    """Reject a doc_id that would escape the tenant prefix or break the key.
+
+    Object keys are ``{org_id}/{doc_id}/{filename}``. Because ``doc_id`` comes
+    straight from the client, an unvalidated ``../other-org`` would write
+    outside the caller's own prefix, and any ``/`` silently breaks the
+    three-segment layout that key parsers rely on.
+    """
+    if not isinstance(doc_id, str) or not _DOC_ID_RE.match(doc_id):
+        raise InvalidDocumentId(
+            "doc_id must be 1-128 characters of letters, digits, "
+            "'.', '_' or '-'."
+        )
+    return doc_id
+
+
+def stream_size(fileobj: BinaryIO) -> int:
+    """Measure a seekable stream by seeking to its end, then rewind it.
+
+    Used to size an upload without reading it: a multipart body has already
+    been spooled to a temp file by the time a handler sees it, so its length is
+    a cheap ``seek``/``tell`` rather than a full read into memory. The stream is
+    always left rewound so the caller can hand it straight to an uploader.
+    """
+    fileobj.seek(0, 2)  # SEEK_END
+    size = fileobj.tell()
+    fileobj.seek(0)
+    return size
+
+
 def build_document_key(org_id: str, doc_id: str, filename: str) -> str:
     """Build a stable object key for a source document.
 
-    Structure: ``{org_id}/{doc_id}/{filename}``. The ``doc_id`` (a UUID) keeps
-    keys unique and stable even when two uploads share a filename.
+    Structure: ``{org_id}/{doc_id}/{filename}``. The ``doc_id`` keeps keys
+    unique and stable even when two uploads share a filename. ``doc_id`` is
+    validated first — see ``validate_doc_id``.
     """
+    validate_doc_id(doc_id)
     return f"{org_id}/{doc_id}/{filename}"
 
 
@@ -124,6 +164,42 @@ class DocumentStore:
         )
         return key
 
+    async def put_document_stream(
+        self,
+        key: str,
+        fileobj: BinaryIO,
+        content_type: str = "application/octet-stream",
+        bucket: Optional[str] = None,
+        metadata: Optional[Dict[str, str]] = None,
+    ) -> str:
+        """Store a document straight from a file object, never buffering it whole.
+
+        ``upload_fileobj`` reads the source in bounded parts and uploads them,
+        so peak memory is one part rather than the whole document. Prefer this
+        over ``put_document`` for anything client-supplied: a multipart upload
+        arrives as a ``SpooledTemporaryFile`` that is already on disk past
+        Starlette's spool threshold, and calling ``.read()`` on it would pull
+        the entire file back into RAM for no reason.
+        """
+        bucket = bucket or self.raw_bucket
+        async with self._require_client() as s3:
+            await s3.upload_fileobj(
+                fileobj,
+                bucket,
+                key,
+                ExtraArgs={
+                    "ContentType": content_type,
+                    "Metadata": metadata or {},
+                },
+            )
+        logger.info(
+            "document_store.put_stream",
+            bucket=bucket,
+            key=key,
+            content_type=content_type,
+        )
+        return key
+
     async def get_document(self, key: str, bucket: Optional[str] = None) -> bytes:
         """Fetch and return the full object bytes."""
         bucket = bucket or self.raw_bucket
@@ -142,14 +218,27 @@ class DocumentStore:
     async def list_documents(
         self, prefix: str = "", bucket: Optional[str] = None
     ) -> List[str]:
-        """List object keys under a prefix (handles pagination)."""
+        """List object keys under a prefix (handles pagination).
+
+        Raises ``RuntimeError`` with a generic, client-safe message if the
+        object store cannot be reached — the real exception (which may name
+        internal hosts/ports) is logged server-side, not propagated.
+        """
         bucket = bucket or self.raw_bucket
         keys: List[str] = []
-        async with self._require_client() as s3:
-            paginator = s3.get_paginator("list_objects_v2")
-            async for page in paginator.paginate(Bucket=bucket, Prefix=prefix):
-                for obj in page.get("Contents", []):
-                    keys.append(obj["Key"])
+        try:
+            async with self._require_client() as s3:
+                paginator = s3.get_paginator("list_objects_v2")
+                async for page in paginator.paginate(Bucket=bucket, Prefix=prefix):
+                    for obj in page.get("Contents", []):
+                        keys.append(obj["Key"])
+        except RuntimeError:
+            raise  # aioboto3 not installed - already a clean, client-safe message
+        except Exception as exc:
+            logger.error(
+                "document_store.list_failed", bucket=bucket, prefix=prefix, error=str(exc)
+            )
+            raise RuntimeError("Document store is currently unavailable.") from exc
         return keys
 
     async def generate_presigned_url(

@@ -349,6 +349,10 @@ AUTHENTICATED_OPERATIONAL_MUTATIONS = {
     # RAG compliance-doc pipeline (Hudson): authenticated ingest/query/delete.
     ("POST", "/api/v1/rag/ingest"),
     ("POST", "/api/v1/rag/query"),
+    # Same authorization as /rag/query — it IS /rag/query, answered over SSE instead of
+    # in one response. POST because the question travels in a body, and it mutates
+    # nothing. Arrived with the 2026-08-28 RAG merge.
+    ("POST", "/api/v1/rag/query/stream"),
     ("DELETE", "/api/v1/rag/documents/{doc_id}"),
     # Presigns a document the caller was already shown as a citation, so it is a
     # POST only to keep the S3 key out of URLs and access logs — it mutates

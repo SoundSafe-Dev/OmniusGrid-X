@@ -3,21 +3,33 @@ RAG API
 
 Exposes the retrieval-augmented pipeline over HTTP:
 
-    POST   /ingest              multipart upload -> store + index a document
-    POST   /query               ask a question, get a grounded, cited answer
-    GET    /documents           list this org's stored documents
-    POST   /documents/link      presigned URL to open a cited document
-    DELETE /documents/{doc_id}  remove a document's vectors + blobs
-    GET    /health              status of the RAG services
+    POST   /ingest                     multipart upload -> store + queue a document
+    POST   /query                       ask a question, get a grounded, cited answer
+    POST   /query/stream                same, but stream the answer over SSE
+    GET    /documents                   list this org's stored documents
+    GET    /documents/{doc_id}/status   where a queued document got to
+    DELETE /documents/{doc_id}          remove a document's vectors + blobs
+    GET    /health                      status of the RAG services
 
 All endpoints are authenticated and scoped to the caller's organization: the
 ``org_id`` used for storage keys, vector payloads, and search filters comes from
 the JWT-bound user, so tenants can never read or delete each other's documents.
 """
 
-from typing import Optional, List, Dict, Any
+import json
+from datetime import datetime
+from typing import AsyncIterator, Optional, List, Dict, Any
 
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
+from fastapi import (
+    APIRouter,
+    Depends,
+    HTTPException,
+    UploadFile,
+    File,
+    Form,
+    status as http_status,
+)
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 import structlog
@@ -30,62 +42,27 @@ from app.services.rag_ingestion import get_ingestion_pipeline, IngestionResult
 from app.services.rag_retriever import get_retriever, RagAnswer
 from app.services.rag_erp_context import build_erp_context
 from app.services.document_store import get_document_store
+from app.services.transport_errors import TRANSPORT_ERRORS
+from app.services.document_store import (
+    get_document_store,
+    InvalidDocumentId,
+    stream_size,
+    validate_doc_id,
+)
+from app.services.rag_index_queue import (
+    check_ingest_quota,
+    get_status,
+    list_for_org,
+    quota_usage,
+)
 
 logger = structlog.get_logger()
 
 router = APIRouter()
 
 
-#: An unreachable object store is a 503, not a 500 (FS-431).
-#:
-#: `DocumentStore.available` is `aioboto3 is not None` — a check that the PACKAGE is
-#: installed. It is True on every deployment, so the `if not docs.available: raise 503`
-#: guards in this file could never fire for the condition anyone actually hits: the store
-#: is configured and simply not answering. `GET /documents` and `DELETE /documents/{id}`
-#: both surfaced `EndpointConnectionError: Could not connect to seaweedfs:8333` as a 500,
-#: which tells a caller "this API is broken" about a dependency being down.
-#:
-#: 503 is the decision, matching what this file already does when the store is absent and
-#: what every Redis-backed endpoint here does. It is retryable, it does not page anyone for
-#: a bug in this service, and it is honest: we could not reach storage.
-#:
-#: `ClientError` is deliberately NOT in here. A 404 on a bucket or a signature rejection is
-#: a configuration defect in this service, and turning it into "try again later" would hide
-#: a broken deployment behind a status code that says nothing is wrong.
-#: BOTH stores, because the delete path touches both. The register named SeaweedFS; the
-#: DELETE actually failed on QDRANT first — `vectors.delete_by_doc` runs before any blob is
-#: touched — so a fix covering only the object store would have left the endpoint 500ing and
-#: the walk would have said so. `VectorStore.available` is `client installed and a URL set`:
-#: the same configured-not-reachable check as `DocumentStore.available`, in a second file.
-#:
-#: `UnexpectedResponse` is excluded for the reason `ClientError` is: it means the store
-#: ANSWERED and refused. That is a defect here, not an outage there.
-_TRANSPORT: tuple[type[BaseException], ...] = (OSError,)
-try:  # pragma: no cover - httpx is a hard dependency, guarded for symmetry
-    import httpx
-
-    # `httpx.TransportError` covers connect/read/write/pool failures and NOT
-    # `HTTPStatusError`, which means the service answered — the same distinction the
-    # `UnexpectedResponse` note above makes. Added because `httpx.ConnectError` is not an
-    # `OSError` subclass, so an unreachable generator host escaped this tuple entirely.
-    _TRANSPORT += (httpx.TransportError,)
-except ImportError:  # pragma: no cover
-    pass
-try:  # pragma: no cover - import shape mirrors the services' optional dependencies
-    from botocore.exceptions import BotoCoreError
-
-    _TRANSPORT += (BotoCoreError,)
-except ImportError:  # pragma: no cover
-    pass
-try:  # pragma: no cover
-    from qdrant_client.http.exceptions import ResponseHandlingException
-
-    _TRANSPORT += (ResponseHandlingException,)
-except ImportError:  # pragma: no cover
-    pass
-
 #: Kept as a name because the guards and the `except` clauses read better for it.
-_StoreTransportError = _TRANSPORT
+_StoreTransportError = TRANSPORT_ERRORS
 
 
 class _StoreUnreachable(HTTPException):
@@ -104,10 +81,60 @@ def _org_id(user: User) -> str:
     return str(user.organization_id)
 
 
+def _validated_doc_id(doc_id: str) -> str:
+    """Translate an unsafe doc_id into a 422 rather than a 500."""
+    try:
+        return validate_doc_id(doc_id)
+    except InvalidDocumentId as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+
+
+async def _enforce_ingest_quota(
+    *, org_id: str, doc_id: Optional[str], size_bytes: int
+) -> None:
+    """Refuse an upload that would exceed this org's ingest budget.
+
+    Checked before the blob is stored, so a rejected upload costs no object
+    storage. 429 for the rate limit (retrying later works), 409 for the
+    document/byte quotas (retrying does not help until something is deleted).
+    """
+    rejection = await check_ingest_quota(
+        org_id=org_id, doc_id=doc_id, size_bytes=size_bytes
+    )
+    if rejection is not None:
+        raise HTTPException(
+            status_code=rejection.status, detail=rejection.detail
+        )
+
+
 class QueryRequest(BaseModel):
     query: str = Field(..., min_length=1)
     top_n: Optional[int] = Field(None, ge=1, le=50)
     generate: bool = True  # False -> return ranked citations without an LLM call
+
+
+class DocumentStatus(BaseModel):
+    """The ingestion state of one document, as `rag_index_queue._to_dict` returns it.
+
+    Declared rather than left as `Dict[str, Any]` because this is the response a caller
+    POLLS: an SDK generated from the schema is how anyone waits for `indexed`, and a
+    bare dict gives them nothing to wait on.
+    """
+
+    doc_id: str
+    status: str
+    kind: Optional[str] = None
+    filename: Optional[str] = None
+    s3_key: Optional[str] = None
+    size_bytes: Optional[int] = None
+    num_blocks: Optional[int] = None
+    num_chunks: Optional[int] = None
+    reason: Optional[str] = None
+    error: Optional[str] = None
+    attempts: Optional[int] = None
+    created_at: Optional[datetime] = None
+    started_at: Optional[datetime] = None
+    completed_at: Optional[datetime] = None
 
 
 class DocumentLinkRequest(BaseModel):
@@ -119,39 +146,57 @@ class DocumentLinkResponse(BaseModel):
     expires_in: int
 
 
-@router.post("/ingest", response_model=IngestionResult, summary="Ingest a document")
+@router.post(
+    "/ingest",
+    response_model=IngestionResult,
+    status_code=http_status.HTTP_202_ACCEPTED,
+    summary="Queue a document for ingestion",
+)
 async def ingest(
     file: UploadFile = File(...),
     doc_id: Optional[str] = Form(None),
     current_user: User = Depends(get_current_active_user),
 ) -> IngestionResult:
-    """Store a file in the document store and index it for retrieval.
+    """Store a file and queue it for indexing.
 
-    Supports PDF, DOCX, images (with vision enabled), and plain text. The blob
-    is always stored; ``indexed=false`` with a ``reason`` means it was stored
-    but not vector-indexed (unsupported type, no extractable text, or the
-    inference/vector service was unavailable).
+    Returns ``202`` as soon as the blob is durable, with ``status="queued"``.
+    Indexing happens on the rag-indexing worker; poll
+    ``GET /rag/documents/{doc_id}/status`` for the outcome. Previously this
+    endpoint indexed inline and could outlive the ingress read timeout on large
+    documents.
+
+    The upload is never read into memory here. Starlette has already spooled
+    the multipart body to a temp file, so its size is a ``seek``/``tell`` and
+    the file object itself is handed to the object store to stream. Calling
+    ``.read()`` would undo that and put the whole document back on the heap.
     """
-    content = await file.read()
-    if not content:
+    org_id = _org_id(current_user)
+    size_bytes = stream_size(file.file)
+    if size_bytes == 0:
         raise HTTPException(status_code=400, detail="Empty file.")
-    if len(content) > settings.RAG_MAX_UPLOAD_BYTES:
+    if size_bytes > settings.RAG_MAX_UPLOAD_BYTES:
         raise HTTPException(
             status_code=413,
             detail=(
-                f"File too large ({len(content)} bytes); the limit is "
+                f"File too large ({size_bytes} bytes); the limit is "
                 f"{settings.RAG_MAX_UPLOAD_BYTES} bytes."
             ),
         )
+    if doc_id is not None:
+        doc_id = _validated_doc_id(doc_id)
+
+    await _enforce_ingest_quota(org_id=org_id, doc_id=doc_id, size_bytes=size_bytes)
+
     try:
-        return await get_ingestion_pipeline().ingest_document(
-            content=content,
+        return await get_ingestion_pipeline().store_document(
+            content=file.file,
             filename=file.filename or "upload",
-            org_id=_org_id(current_user),
+            org_id=org_id,
             doc_id=doc_id,
             content_type=file.content_type,
+            uploaded_by=str(current_user.id),
         )
-    except RuntimeError as exc:  # document store not configured
+    except RuntimeError as exc:  # document store not configured/reachable
         raise HTTPException(status_code=503, detail=str(exc))
 
 
@@ -209,18 +254,133 @@ async def query(
         raise _StoreUnreachable(exc) from exc
 
 
+def _sse(event: str, data: Dict[str, Any]) -> str:
+    return f"event: {event}\ndata: {json.dumps(data)}\n\n"
+
+
+@router.post(
+    "/query/stream",
+    # SSE carries no JSON body, so `response_model` cannot describe it. Declaring the
+    # media type is how a route says that HONESTLY: the contract gate and
+    # `test_response_model_coverage_ratchet.py` both read `responses`, and a declared
+    # non-JSON content type counts as documented rather than as debt. The alternative —
+    # raising the ratchet — would have recorded a describable route as undescribed.
+    responses={200: {"content": {"text/event-stream": {}}}},
+    summary="Ask a question, stream the answer (SSE)",
+)
+async def query_stream(
+    body: QueryRequest,
+    current_user: User = Depends(get_current_active_user),
+) -> StreamingResponse:
+    """Same retrieval as ``/query``, but streams the generated answer over
+    Server-Sent Events instead of waiting for the full completion.
+
+    Retrieval and reranking run first, synchronously, so a 503 for an
+    unavailable inference/vector service still comes back as a normal HTTP
+    error rather than mid-stream. Frames after that, in order:
+
+    - one ``citations`` event - the same structured sources ``/query``
+      returns, plus ``used_context``/``generated`` flags
+    - zero or more ``delta`` events, one per token chunk, while ``generated``
+      was true
+    - a terminal ``done`` event (or ``error`` if generation fails mid-stream)
+    """
+    org_id = _org_id(current_user)
+    try:
+        citations, used_context, generated, tokens = await get_retriever().stream(
+            body.query, org_id=org_id, top_n=body.top_n, generate=body.generate
+        )
+    except RuntimeError as exc:  # inference/vector store unavailable
+        raise HTTPException(status_code=503, detail=str(exc))
+
+    async def event_source() -> AsyncIterator[str]:
+        yield _sse(
+            "citations",
+            {
+                "citations": [c.model_dump() for c in citations],
+                "used_context": used_context,
+                "generated": generated,
+            },
+        )
+        if generated and tokens is not None:
+            try:
+                async for delta in tokens:
+                    yield _sse("delta", {"content": delta})
+            except (RuntimeError, *TRANSPORT_ERRORS) as exc:
+                # NARROWED (2026-08-28) to the case the comment below already names: a
+                # dropped LLM connection. Catching `Exception` meant a defect in our own
+                # token handling was delivered to the browser as an `error` frame that
+                # reads like the model went away, and the stream then closed cleanly —
+                # so nothing anywhere recorded that this service was broken. An
+                # unexpected exception now propagates, the stream breaks, and the
+                # unhandled-exception middleware reports it.
+                # Some exceptions (e.g. httpx's *Timeout family) stringify to
+                # "" - fall back to the type name so the client never gets an
+                # empty detail. Confirmed live: an Ollama cold-load exceeding
+                # LLM_TIMEOUT raises httpx.ReadTimeout with str(exc) == "".
+                yield _sse("error", {"detail": str(exc) or type(exc).__name__})
+                return
+        yield _sse("done", {})
+
+    return StreamingResponse(event_source(), media_type="text/event-stream")
+
+
 @router.get("/documents", summary="List this org's documents")
 async def list_documents(
     current_user: User = Depends(get_current_active_user),
 ) -> Dict[str, Any]:
+    """List stored documents.
+
+    ``count``/``keys`` keep their original meaning and S3 source for backward
+    compatibility; ``documents`` adds the Postgres registry view. The two can
+    differ: blobs ingested before the registry existed have no row.
+
+    ``quota`` reports this org's ingest budget and how much of it is used, so a
+    client can see a 409 coming instead of discovering the limit by hitting it.
+    A null limit means that dimension is unlimited.
+    """
+    org_id = _org_id(current_user)
     docs = get_document_store()
     if not docs.available:
         raise HTTPException(status_code=503, detail="Document store unavailable.")
     try:
-        keys = await docs.list_documents(prefix=f"{_org_id(current_user)}/")
+        keys = await docs.list_documents(prefix=f"{org_id}/")
+    except RuntimeError as exc:  # store not configured
+        raise HTTPException(status_code=503, detail=str(exc))
     except _StoreTransportError as exc:
+        # FS-742: `RuntimeError` alone does not cover it. An unreachable SeaweedFS
+        # arrives as a botocore/httpx transport error, neither of which is a
+        # RuntimeError, so this route answered 500 on the most ordinary outage there
+        # is. `docs.available` cannot help — it is a package-installed check.
         raise _StoreUnreachable(exc) from exc
-    return {"count": len(keys), "keys": keys}
+    return {
+        "count": len(keys),
+        "keys": keys,
+        "documents": await list_for_org(org_id),
+        "quota": (await quota_usage(org_id)).as_dict(),
+    }
+
+
+@router.get(
+    "/documents/{doc_id}/status",
+    response_model=DocumentStatus,
+    summary="Ingestion status of a document",
+)
+async def document_status(
+    doc_id: str,
+    current_user: User = Depends(get_current_active_user),
+) -> DocumentStatus:
+    """Poll a queued document until it reaches a terminal status.
+
+    Terminal statuses are ``indexed`` (vectors are queryable), ``skipped``
+    (nothing indexable — see ``reason``) and ``failed`` (infrastructure fault
+    after retries — see ``error``). Unknown ids 404 regardless of which tenant
+    owns them, so this cannot be used to probe another org.
+    """
+    row = await get_status(_org_id(current_user), _validated_doc_id(doc_id))
+    if row is None:
+        raise HTTPException(status_code=404, detail="Document not found.")
+    return DocumentStatus(**row)
 
 
 @router.post(
@@ -283,7 +443,7 @@ async def delete_document(
     """
     try:
         return await get_ingestion_pipeline().delete_document(
-            doc_id=doc_id, org_id=_org_id(current_user)
+            doc_id=_validated_doc_id(doc_id), org_id=_org_id(current_user)
         )
     except _StoreTransportError as exc:
         raise _StoreUnreachable(exc) from exc

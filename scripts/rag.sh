@@ -3,7 +3,7 @@
 # rag.sh - local RAG stack helper (lean up/down, ingest, query, verify, doctor)
 #
 #   ./scripts/rag.sh doctor          # check the machine is ready (run this FIRST)
-#   ./scripts/rag.sh up              # LEAN stack (qdrant+seaweedfs+bge+backend)
+#   ./scripts/rag.sh up              # LEAN stack (qdrant+seaweedfs+bge+backend+worker)
 #   ./scripts/rag.sh up-full         # full stack incl. observability + RAG
 #   ./scripts/rag.sh logs            # follow rag-inference (watch weights load)
 #   ./scripts/rag.sh ingest FILE     # upload a document through the API
@@ -18,7 +18,11 @@ cd "$(dirname "$0")/.."   # repo root
 BACKEND="${BACKEND_URL:-http://localhost:8000}"
 INFER="${INFER_URL:-http://localhost:8001}"
 TOKEN="dev-token"
-LEAN_SERVICES="qdrant seaweedfs rag-inference backend"
+# rag-indexing-worker is NOT optional: ingestion is asynchronous, so without it
+# uploads are accepted, sit at status='queued' forever, and never index - with
+# no error anywhere. Naming a profiled service explicitly enables its profile,
+# same as the other three.
+LEAN_SERVICES="qdrant seaweedfs rag-inference backend rag-indexing-worker"
 
 G="\033[92m"; R="\033[91m"; Y="\033[93m"; B="\033[1m"; X="\033[0m"
 ok(){ echo -e "  ${G}✓${X} $1"; }
@@ -105,6 +109,7 @@ ingest(){
   echo "Uploading $(basename "$f") …"
   curl -sS -X POST "$BACKEND/api/v1/rag/ingest" \
     -H "Authorization: Bearer $TOKEN" -F "file=@$f" | python3 -m json.tool
+  echo "Ingestion is async: poll GET $BACKEND/api/v1/rag/documents/{doc_id}/status until it reaches indexed/skipped/failed."
 }
 
 query(){

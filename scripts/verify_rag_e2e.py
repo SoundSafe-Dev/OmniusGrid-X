@@ -8,7 +8,8 @@ data plane DIRECTLY, not through the backend:
 
   1. Preflight  - backend, rag-inference (models loaded), Qdrant, SeaweedFS up
   2. BGE        - call rag-inference /embed directly; assert dense[1024]+sparse
-  3. Ingest     - POST a document through the backend API
+  3. Ingest     - POST a document through the backend API (202), then poll
+                  /documents/{doc_id}/status until the worker finishes
   4. SeaweedFS  - boto3 HEAD+GET the blob at the expected key; assert bytes match
   5. Qdrant     - REST scroll by doc_id; assert points exist with a real 1024-d
                   dense vector (non-zero) + non-empty sparse + correct payload
@@ -154,12 +155,34 @@ def ingest_document(headers):
     content = body.encode()
     files = {"file": (f"compliance_{sentinel}.txt", content, "text/plain")}
     r = httpx.post(f"{BACKEND}/api/v1/rag/ingest", files=files, headers=headers, timeout=120)
-    if not check("POST /ingest 200", r.status_code == 200, f"(status {r.status_code}: {r.text[:200]})"):
+    if not check("POST /ingest 202", r.status_code == 202, f"(status {r.status_code}: {r.text[:200]})"):
         die("ingest failed")
-    res = r.json()
-    check("stored=true", res.get("stored") is True)
-    check("indexed=true", res.get("indexed") is True, f"(reason: {res.get('reason')})")
+    accepted = r.json()
+    check("stored=true", accepted.get("stored") is True)
+    check("status=queued", accepted.get("status") == "queued")
+
+    # Indexing is asynchronous now: poll until the worker reaches a terminal state.
+    doc_id = accepted["doc_id"]
+    deadline = time.monotonic() + 300
+    res = {}
+    while time.monotonic() < deadline:
+        s = httpx.get(
+            f"{BACKEND}/api/v1/rag/documents/{doc_id}/status",
+            headers=headers, timeout=30,
+        )
+        if s.status_code == 200:
+            res = s.json()
+            if res.get("status") in ("indexed", "skipped", "failed"):
+                break
+        time.sleep(2)
+    else:
+        die("indexing did not finish within 300s")
+
+    check("indexed", res.get("status") == "indexed",
+          f"(status {res.get('status')}, reason: {res.get('reason')}, error: {res.get('error')})")
     check("chunks written > 0", res.get("num_chunks", 0) > 0, f"({res.get('num_chunks')} chunks)")
+    res["s3_key"] = accepted["s3_key"]
+    res["doc_id"] = doc_id
     return res, content, sentinel
 
 

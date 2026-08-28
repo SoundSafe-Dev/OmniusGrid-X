@@ -22,13 +22,25 @@ def test_unsupported_type_stored_not_indexed(rag_client, run_id, record):
     try:
         status, body = rag_client.ingest_bytes(
             "thing.xyz", "application/octet-stream", b"arbitrary bytes here", doc_id)
-        ok = status == 200 and body.get("indexed") is False and body.get("kind") == "unsupported"
-        record("robustness", "unsupported_type", ok,
-               note=f"status={status} kind={body.get('kind')} indexed={body.get('indexed')}")
-        assert status == 200, f"expected 200 (stored), got {status}"
+        assert status == 202, f"expected 202 (queued), got {status}: {body}"
         assert body.get("stored") is True
-        assert body.get("indexed") is False
-        assert body.get("kind") == "unsupported"
+
+        # `indexed` is always False in the 202 body regardless of outcome, so
+        # the real assertion is the terminal status reached after indexing.
+        try:
+            terminal = rag_client.await_indexed(doc_id)
+        except ApiError as e:
+            pytest.fail(f"doc {doc_id} never reached a terminal status: {e}")
+        ok = (
+            status == 202
+            and body.get("stored") is True
+            and terminal.get("status") == "skipped"
+            and terminal.get("kind") == "unsupported"
+        )
+        record("robustness", "unsupported_type", ok,
+               note=f"status={status} terminal={terminal.get('status')} kind={terminal.get('kind')}")
+        assert terminal.get("status") == "skipped"
+        assert terminal.get("kind") == "unsupported"
     finally:
         try:
             rag_client.delete_doc(doc_id)
@@ -41,10 +53,20 @@ def test_non_utf8_graceful(rag_client, run_id, record):
     data = b"\xff\xfe\x00 acid rinse additive at 0.5% for 8 minutes \x80\x81"
     try:
         status, body = rag_client.ingest_bytes("weird.txt", "text/plain", data, doc_id)
-        ok = status == 200 and body.get("stored") is True
-        record("robustness", "non_utf8", ok, note=f"status={status} indexed={body.get('indexed')}")
-        assert status == 200, f"non-UTF8 must not 500, got {status}: {body}"
+        assert status == 202, f"non-UTF8 must not 500, got {status}: {body}"
         assert body.get("stored") is True
+
+        # Non-UTF8 input is designed to fall back to plain-text chunking rather
+        # than error, so this may legitimately end as "indexed" -- the only
+        # thing we assert is that it never lands on "failed".
+        try:
+            terminal = rag_client.await_indexed(doc_id)
+        except ApiError as e:
+            pytest.fail(f"doc {doc_id} never reached a terminal status: {e}")
+        ok = status == 202 and body.get("stored") is True and terminal.get("status") != "failed"
+        record("robustness", "non_utf8", ok,
+               note=f"status={status} terminal={terminal.get('status')} reason={terminal.get('reason')}")
+        assert terminal.get("status") != "failed", f"non-UTF8 must not fail: {terminal}"
     finally:
         try:
             rag_client.delete_doc(doc_id)
@@ -57,11 +79,20 @@ def test_corrupt_pdf_graceful(rag_client, run_id, record):
     data = b"%PDF-1.4 this is not actually a valid pdf body at all"
     try:
         status, body = rag_client.ingest_bytes("bad.pdf", "application/pdf", data, doc_id)
-        ok = status == 200 and body.get("stored") is True
-        record("robustness", "corrupt_pdf", ok,
-               note=f"status={status} indexed={body.get('indexed')} reason={body.get('reason')}")
-        assert status == 200, f"corrupt PDF must not 500, got {status}: {body}"
+        assert status == 202, f"corrupt PDF must not 500, got {status}: {body}"
         assert body.get("stored") is True  # blob stored; indexing may be skipped with a reason
+
+        # A corrupt PDF is a parse failure, which this design classifies as
+        # "skipped" (a decided outcome) -- NOT "failed" (reserved for
+        # retryable infra faults). Landing on "failed" would be a real bug.
+        try:
+            terminal = rag_client.await_indexed(doc_id)
+        except ApiError as e:
+            pytest.fail(f"doc {doc_id} never reached a terminal status: {e}")
+        ok = status == 202 and body.get("stored") is True and terminal.get("status") != "failed"
+        record("robustness", "corrupt_pdf", ok,
+               note=f"status={status} terminal={terminal.get('status')} reason={terminal.get('reason')}")
+        assert terminal.get("status") != "failed", f"corrupt PDF must not fail: {terminal}"
     finally:
         try:
             rag_client.delete_doc(doc_id)

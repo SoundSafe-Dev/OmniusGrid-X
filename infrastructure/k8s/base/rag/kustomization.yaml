@@ -1,0 +1,19 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# Standalone base - deliberately NOT referenced from
+# infrastructure/k8s/base/kustomization.yaml. Deployable and testable alone
+# against a local kind cluster with no dependency on the main app stack.
+# See docs/superpowers/specs/2026-07-27-rag-k8s-isolated-design.md.
+
+namespace: omniusgrid-rag
+
+resources:
+  - namespace.yaml
+  - qdrant-statefulset.yaml
+  - seaweedfs-deployment.yaml
+  - rag-inference-deployment.yaml
+
+commonLabels:
+  app.kubernetes.io/part-of: omniusgrid-rag
+  app.kubernetes.io/managed-by: kustomize

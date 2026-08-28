@@ -24,7 +24,9 @@ spec:
         runAsUser: 1000
         runAsGroup: 1000
         fsGroup: 1000
-      
+        seccompProfile:
+          type: RuntimeDefault
+
       containers:
         - name: timescaledb
           # FS-821. THE DATABASE ENGINE was floating on a mutable tag. `latest-pg15` is repointed by the

@@ -142,6 +142,7 @@ spec:
                   - compliance-reports-worker
                   - ota-rollout-worker
                   - db-migrate
+                  - rag-indexing-worker
       ports:
         - protocol: TCP
           port: 5432
@@ -577,6 +578,79 @@ spec:
           port: 4317
         - protocol: TCP
           port: 4318
+---
+# rag-indexing-worker: drains the rag_documents queue (FOR UPDATE SKIP
+# LOCKED) and indexes documents. Reads/writes TimescaleDB directly and calls
+# out to the RAG stack (qdrant, seaweedfs, rag-inference), which lives in its
+# own omniusgrid-rag namespace - applied separately, see
+# infrastructure/k8s/base/rag. No Redpanda dependency: unlike the other
+# workers this one is not a Kafka consumer, so no Redpanda rule here.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-rag-indexing-worker-egress
+  namespace: omniusgrid
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: rag-indexing-worker
+  policyTypes:
+    - Egress
+  egress:
+    # Cluster DNS resolution (kube-dns in kube-system).
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    # TimescaleDB.
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: timescaledb
+      ports:
+        - protocol: TCP
+          port: 5432
+    # Qdrant (vector store), in the omniusgrid-rag namespace.
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: omniusgrid-rag
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: qdrant
+      ports:
+        - protocol: TCP
+          port: 6333
+    # SeaweedFS (S3-compatible object store), in the omniusgrid-rag namespace.
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: omniusgrid-rag
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: seaweedfs
+      ports:
+        - protocol: TCP
+          port: 8333
+    # rag-inference (embeddings + reranker), in the omniusgrid-rag namespace.
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: omniusgrid-rag
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: rag-inference
+      ports:
+        - protocol: TCP
+          port: 8000
 ---
 # Egress for the nightly logical backup Job (FS-151). Without this the Job is
 # caught by default-deny-all and hangs on DNS, then fails — which is worse than

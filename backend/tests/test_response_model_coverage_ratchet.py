@@ -68,6 +68,10 @@ TOTAL_TOLERANCE = 0.15
 #: because nobody investigates a number that is too high.
 _NON_JSON = (
     "application/pdf",
+    # Server-sent events. The body is a token stream, not a document, so there is no
+    # JSON schema to declare — the same situation as `text/plain` above and the same
+    # resolution: a route that DECLARES it is documented, not in debt.
+    "text/event-stream",
     "text/csv",
     "text/plain",
     "application/vnd.openxmlformats",

@@ -1,0 +1,114 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: rag-indexing-worker
+  namespace: omniusgrid
+  labels:
+    app.kubernetes.io/name: rag-indexing-worker
+    app.kubernetes.io/component: worker
+    app.kubernetes.io/part-of: omniusgrid
+spec:
+  # Safe to raise, unlike ota-rollout-worker: this worker claims rows with
+  # FOR UPDATE SKIP LOCKED, so concurrent replicas never take the same
+  # document. Starts at 1 only to match its siblings' footprint.
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: rag-indexing-worker
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: rag-indexing-worker
+        app.kubernetes.io/component: worker
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: rag-indexing-worker
+          image: omniusgrid/backend:latest
+          imagePullPolicy: Always
+          command: ["python", "-m", "app.workers.rag_indexing"]
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+          env:
+            - name: SCHEDULERS_IN_API
+              value: "false"
+            # RAG stack lives in its own namespace (infrastructure/k8s/base/rag),
+            # applied separately - these FQDNs only resolve where that base is
+            # also applied, same caveat as backend-deployment.yaml.
+            - name: QDRANT_URL
+              value: "http://qdrant.omniusgrid-rag.svc.cluster.local:6333"
+            - name: S3_ENDPOINT_URL
+              value: "http://seaweedfs.omniusgrid-rag.svc.cluster.local:8333"
+            - name: RAG_INFERENCE_URL
+              value: "http://rag-inference.omniusgrid-rag.svc.cluster.local:8000"
+            - name: RAG_EMBED_BATCH
+              value: "8"
+            - name: RAG_INFERENCE_TIMEOUT
+              value: "180"
+            - name: RAG_INDEX_WORKER_ENABLED
+              value: "true"
+            - name: RAG_INDEX_POLL_INTERVAL_SECONDS
+              value: "5"
+            - name: RAG_INDEX_MAX_ATTEMPTS
+              value: "3"
+            - name: RAG_INDEX_STALE_INDEXING_SECONDS
+              value: "900"
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: database-credentials
+                  key: url
+            - name: JWT_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: jwt-secret
+                  key: secret
+            - name: LOG_LEVEL
+              value: "info"
+            - name: PYTHONDONTWRITEBYTECODE
+              value: "1"
+            - name: PYTHONUNBUFFERED
+              value: "1"
+            - name: WORKER_HEALTH_PORT
+              value: "9109"
+          ports:
+            - name: health
+              containerPort: 9109
+          # This Deployment carried NO probe of any kind, so a pass wedged on an
+          # unreachable Qdrant left a pod Kubernetes considered healthy while the
+          # queue backed up behind it — `tests/k8s/check_probe_ports.py` is what
+          # named it. The worker heartbeats once per completed pass; the server
+          # reports stale when it stops, which is the honest liveness signal here.
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: health
+            initialDelaySeconds: 30
+            periodSeconds: 30
+            failureThreshold: 3
+          # The root filesystem is read-only, but the document parsers
+          # (pdfplumber, python-docx) spill to temp files while extracting.
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: "100m"
+            limits:
+              memory: "512Mi"
+              cpu: "500m"
+      volumes:
+        - name: tmp
+          emptyDir: {}
+      terminationGracePeriodSeconds: 30

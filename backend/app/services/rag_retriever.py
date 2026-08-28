@@ -24,9 +24,9 @@ Design:
   Inference/vector store unavailable -> ``RuntimeError`` (router maps to 503).
 """
 
-from typing import List, Dict, Any, Optional, Tuple
-from functools import lru_cache
 import re
+from typing import AsyncIterator, List, Dict, Any, Optional, Tuple
+from functools import lru_cache
 
 import structlog
 from pydantic import BaseModel
@@ -45,19 +45,12 @@ _SYSTEM_PROMPT = (
     "the answer, say so plainly - do not invent facts or cite outside knowledge."
 )
 
-# Appended only when an operational block is present. The second sentence is
-# load-bearing: without it the model numbers the operational lines as [6], [7]
-# and the client renders citation markers with no citation behind them.
 _OPERATIONAL_PROMPT = (
     " You may also be given a section of operational records from the "
     "organization's own systems. Use them to make the answer specific and "
     "current, but ONLY the numbered context passages may be cited - never "
     "attach a bracketed number to an operational record, and never refer to "
     "the operational records section itself."
-)
-
-_NO_CONTEXT_ANSWER = (
-    "I couldn't find any relevant documents to answer that question."
 )
 
 # A document a reader would have to fill in and return, as opposed to one they
@@ -68,6 +61,10 @@ _FORM_PATTERN = re.compile(
     r"(?:^|[-_ /])(?:form|forms|request|application|checklist|permit|waiver|"
     r"authorization|consent|f-?\d+)(?:[-_ .]|$)",
     re.I,
+)
+
+_NO_CONTEXT_ANSWER = (
+    "I couldn't find any relevant documents to answer that question."
 )
 
 
@@ -144,28 +141,28 @@ class Retriever:
         org_id: str,
         top_n: Optional[int] = None,
         generate: bool = True,
+        rerank: Optional[bool] = None,
+        search_mode: Optional[str] = None,
         erp_context: Optional[str] = None,
         erp_meta: Optional[Dict[str, Any]] = None,
     ) -> RagAnswer:
+        """``rerank`` and ``search_mode`` are ablation overrides for the eval
+        harness (default to the ``RAG_RERANK_ENABLED`` / ``RAG_SEARCH_MODE``
+        settings, i.e. today's hybrid+rerank behavior unless env-overridden).
+        Not exposed on the public /query API."""
         if not self.inference.available or not self.vectors.available:
             raise RuntimeError(
                 "Retrieval unavailable: the inference or vector service is not "
                 "configured/reachable."
             )
         top_n = top_n or settings.RAG_RERANK_TOP_N
+        rerank = settings.RAG_RERANK_ENABLED if rerank is None else rerank
+        search_mode = search_mode or settings.RAG_SEARCH_MODE
 
-        # 1. Embed the query (BGE-M3 asymmetric query encoding).
-        embedding = await self.inference.embed_query(query)
-
-        # 2. Hybrid (dense + sparse) search, scoped to the caller's org.
-        candidates = await self.vectors.hybrid_search(
-            dense=embedding.dense,
-            sparse_indices=embedding.sparse.indices,
-            sparse_values=embedding.sparse.values,
-            limit=settings.RAG_RETRIEVE_LIMIT,
-            org_id=org_id,
+        context, citations, used_context, candidates = await self._gather_context(
+            query, org_id=org_id, top_n=top_n, rerank=rerank, search_mode=search_mode
         )
-        if not candidates:
+        if not used_context:
             # No document matched. An operational block alone must NEVER produce an
             # answer: a compliance assistant that answers from work-order rows with
             # no policy behind them is worse than one that declines.
@@ -177,20 +174,9 @@ class Retriever:
                 sources=[],
             )
 
-        # 3. Cross-encoder rerank; keep the strongest top_n passages.
-        passages = [c.payload.get("text", "") for c in candidates]
-        ranked = await self.inference.rerank_top_n(query, passages, top_n)
-        top: List[Tuple[SearchResult, float]] = [
-            (candidates[idx], score) for idx, score in ranked
-        ]
-
-        # 4. Assemble numbered context (capped) + citations, then roll the whole
-        #    candidate set up per document so the caller gets the files and forms,
-        #    not just the passages that fit the context budget.
-        context, citations = self._build_context(top)
         sources = self._build_sources(candidates, citations)
 
-        # 5. Generate a grounded answer (or return citations only).
+        # Generate a grounded answer (or return citations only).
         if not generate or not self.llm.available:
             return RagAnswer(
                 answer=None,
@@ -199,24 +185,12 @@ class Retriever:
                 generated=False,
                 sources=sources,
             )
-        prompt = (
-            f"Context:\n{context}\n\n"
-            f"Question: {query}\n\n"
-            "Answer using only the context above, citing sources as [n]."
-        )
         system = _SYSTEM_PROMPT
         if erp_context:
-            # Placed AFTER the numbered context and before the question, without
-            # numbers of its own - the separation is what keeps [n] meaning
-            # "document passage" and nothing else.
-            prompt = (
-                f"Context:\n{context}\n\n"
-                f"Operational records:\n{erp_context}\n\n"
-                f"Question: {query}\n\n"
-                "Answer using only the context above, citing sources as [n]."
-            )
             system = _SYSTEM_PROMPT + _OPERATIONAL_PROMPT
-        answer = await self.llm.generate(prompt=prompt, system=system)
+        answer = await self.llm.generate(
+            prompt=self._prompt(query, context, erp_context=erp_context), system=system
+        )
         # The ERP fields below are the ONLY record that operational data reached
         # the prompt - RagAnswer deliberately carries none of it. If an answer is
         # ever challenged, this log line is the audit trail.
@@ -236,6 +210,121 @@ class Retriever:
             used_context=True,
             generated=True,
             sources=sources,
+        )
+
+    async def stream(
+        self,
+        query: str,
+        *,
+        org_id: str,
+        top_n: Optional[int] = None,
+        generate: bool = True,
+    ) -> Tuple[List[Citation], bool, bool, Optional[AsyncIterator[str]]]:
+        """Streaming counterpart to ``retrieve()``.
+
+        Embed/search/rerank happen synchronously here (they're fast relative
+        to generation) and their result - the citations - is returned
+        immediately. Generation, when it happens, is handed back as an
+        unstarted token iterator so the caller can stream it out separately
+        (e.g. over SSE) without this method itself buffering the answer.
+
+        Returns ``(citations, used_context, will_generate, tokens)``. ``tokens``
+        is ``None`` whenever there is nothing to stream - no matching context,
+        ``generate=False``, or the LLM is unavailable - matching the three
+        cases ``retrieve()`` handles by returning ``generated=False``.
+
+        Ablation overrides (``rerank``/``search_mode``) are intentionally not
+        threaded through here, same as the public ``/query`` route.
+        """
+        if not self.inference.available or not self.vectors.available:
+            raise RuntimeError(
+                "Retrieval unavailable: the inference or vector service is not "
+                "configured/reachable."
+            )
+        top_n = top_n or settings.RAG_RERANK_TOP_N
+
+        context, citations, used_context, _candidates = await self._gather_context(
+            query,
+            org_id=org_id,
+            top_n=top_n,
+            rerank=settings.RAG_RERANK_ENABLED,
+            search_mode=settings.RAG_SEARCH_MODE,
+        )
+        if not used_context or not generate or not self.llm.available:
+            return citations, used_context, False, None
+
+        return (
+            citations,
+            True,
+            True,
+            self.llm.stream_generate(
+                prompt=self._prompt(query, context), system=_SYSTEM_PROMPT
+            ),
+        )
+
+    async def _gather_context(
+        self,
+        query: str,
+        *,
+        org_id: str,
+        top_n: int,
+        rerank: bool,
+        search_mode: str,
+    ) -> Tuple[str, List[Citation], bool, List[SearchResult]]:
+        """Shared embed -> search -> rerank -> build-context steps.
+
+        Returns ``("", [], False, [])`` when nothing matched, so callers can
+        short-circuit before touching the LLM - same "no context" contract
+        both ``retrieve()`` and ``stream()`` rely on.
+
+        The FULL fused candidate set comes back as the fourth element, not just the
+        reranked few that made the context budget. `_build_sources` needs it: a form
+        that matched the question and placed sixth is exactly what a reader asking
+        "what do I file" wants, and it appears in no citation.
+        """
+        # 1. Embed the query (BGE-M3 asymmetric query encoding).
+        embedding = await self.inference.embed_query(query)
+
+        # 2. Search, scoped to the caller's org (hybrid by default; dense-only
+        #    or sparse-only is an ablation knob - see search_mode above).
+        candidates = await self.vectors.hybrid_search(
+            dense=embedding.dense,
+            sparse_indices=embedding.sparse.indices,
+            sparse_values=embedding.sparse.values,
+            limit=settings.RAG_RETRIEVE_LIMIT,
+            org_id=org_id,
+            mode=search_mode,
+        )
+        if not candidates:
+            return "", [], False, []
+
+        # 3. Cross-encoder rerank and keep the strongest top_n passages, or -
+        #    with reranking disabled - just take the top_n fused/raw candidates
+        #    as-is, carrying their search-stage score through unchanged.
+        if rerank:
+            passages = [c.payload.get("text", "") for c in candidates]
+            ranked = await self.inference.rerank_top_n(query, passages, top_n)
+            top: List[Tuple[SearchResult, float]] = [
+                (candidates[idx], score) for idx, score in ranked
+            ]
+        else:
+            top = [(c, c.score) for c in candidates[:top_n]]
+
+        # 4. Assemble numbered context (capped) + citations.
+        context, citations = self._build_context(top)
+        return context, citations, True, candidates
+
+    @staticmethod
+    def _prompt(query: str, context: str, *, erp_context: Optional[str] = None) -> str:
+        """The operational block sits AFTER the numbered context and before the
+        question, so passage numbering is unaffected and nothing in it can be read as
+        citable - `_OPERATIONAL_PROMPT` says so explicitly."""
+        operational = f"Operational records:\n{erp_context}\n\n" if erp_context else ""
+        return (
+            f"Context:\n{context}\n\n"
+            f"{operational}"
+            f"Question: {query}\n\n"
+            "Answer using only the context above, citing sources as [n]."
         )
 
     def _build_context(

@@ -24,6 +24,7 @@ import os
 import socket
 import sys
 import tarfile
+import urllib.parse
 import time
 from io import BytesIO
 from textwrap import dedent
@@ -246,9 +247,67 @@ def _disable_ryuk_on_socket_mount_failure() -> None:
     os.environ.setdefault("TESTCONTAINERS_RYUK_DISABLED", "true")
 
 
+#: Database names that are somebody's real data rather than a scratch target. The
+#: migration chain CREATEs and ALTERs, so running it against one of these does not fail
+#: — it silently rewrites the schema of the database the developer was using.
+NOT_A_SCRATCH_DATABASE = {"omniusgrid", "opsgrid", "postgres"}
+
+
+def _refuse_a_non_scratch_database(sync_url: str) -> None:
+    """Refuse a TEST_DATABASE_URL that names a real database.
+
+    Deliberately keyed on the database NAME, not the host or port. A scratch database on
+    the default port is fine; the dev database reached over a tunnel is not, and a
+    host/port rule would have those two backwards.
+    """
+    name = urllib.parse.urlparse(sync_url).path.lstrip("/").split("?")[0]
+    if name.lower() in NOT_A_SCRATCH_DATABASE:
+        raise RuntimeError(
+            f"TEST_DATABASE_URL names {name!r}, which is a real database rather than a "
+            f"scratch one. The session fixture runs the full migration chain against "
+            f"whatever it is given, so this would have rewritten that database's "
+            f"schema. Point it at a scratch database — createdb omniusgrid_test — or "
+            f"unset TEST_DATABASE_URL to use an ephemeral container."
+        )
+
+
 @pytest.fixture(scope="session")
 def pg_container():
-    """Start an ephemeral TimescaleDB container for the whole test session."""
+    """Start an ephemeral TimescaleDB container for the whole test session.
+
+    Escape hatch: if ``TEST_DATABASE_URL`` is set, connect to that server instead of
+    starting a container. Testcontainers publishes ports, which needs Docker bridge
+    networking — absent in CI without docker-in-docker, and absent on sandboxed hosts
+    where only the ``host`` and ``none`` networks exist, where every testcontainers test
+    dies with ``Port mapping ... is not available``.
+
+    ``TEST_DATABASE_URL`` MUST name a scratch database. ``_setup_schema`` runs the full
+    migration chain against whatever it is given, creating and altering tables, so
+    pointing it at a real database rewrites that database's schema.
+
+    THAT WARNING IS ENFORCED BELOW RATHER THAN ONLY STATED. It arrived with the
+    2026-08-28 RAG merge as a docstring, and a docstring does not stop anyone: on a
+    developer machine the obvious value to reach for is the running dev database, which
+    is exactly the one whose schema must not be rewritten. The refusal names the
+    database rather than guessing at intent.
+
+    Yields ``(container, sync_url)``. In external mode there is no container to yield, so
+    consumers that drive the container itself must skip — see
+    ``test_backup_restore_drill.py``.
+    """
+    if external_url := os.environ.get("TEST_DATABASE_URL", "").strip():
+        # Same normalization as the container path below: accept either driver-qualified
+        # scheme and reduce to plain `postgresql://`, which is what psycopg2 and the
+        # migration runner accept.
+        sync_url = external_url.replace(
+            "postgresql+psycopg2://", "postgresql://"
+        ).replace("postgresql+asyncpg://", "postgresql://")
+        _refuse_a_non_scratch_database(sync_url)
+        _setup_schema(sync_url)
+        _provision_tenant_role(sync_url, "tenant_user", "tenant_pass")
+        yield None, sync_url
+        return
+
     _disable_ryuk_on_socket_mount_failure()
     from testcontainers.postgres import PostgresContainer
 

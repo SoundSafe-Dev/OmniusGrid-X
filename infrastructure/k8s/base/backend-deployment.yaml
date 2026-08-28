@@ -120,6 +120,32 @@ spec:
                 secretKeyRef:
                   name: signed-url-secret
                   key: secret
+            # RAG (arrived with the 2026-08-28 merge). Points at the standalone
+            # infrastructure/k8s/base/rag/ base, applied separately into its own
+            # omniusgrid-rag namespace, so these FQDNs resolve only where that base is
+            # also applied. No QDRANT_API_KEY/RAG_INFERENCE_API_KEY yet — single cluster
+            # network, same no-auth assumption as the isolated rag base itself.
+            #
+            # HIS `S3_ENDPOINT_URL` IS DELIBERATELY NOT GRAFTED. It is not RAG-specific:
+            # `document_store.py:93` reads the same `settings.S3_ENDPOINT_URL` the export
+            # pipeline uses, so repointing it at `seaweedfs.omniusgrid-rag` would have
+            # moved EXPORTS onto a host that does not resolve in staging or production,
+            # where the rag base is not applied. The default below already reaches an
+            # object store that exists in every environment, and RAG is content with it.
+            #
+            # `MTLS_ENABLED` is likewise not grafted — see the note further down; an
+            # explicit `env` entry beats `envFrom` and would break the staging override.
+            - name: QDRANT_URL
+              value: "http://qdrant.omniusgrid-rag.svc.cluster.local:6333"
+            - name: RAG_INFERENCE_URL
+              value: "http://rag-inference.omniusgrid-rag.svc.cluster.local:8000"
+            # CPU-only inference tuning, as docker-compose sets: rag-inference has no GPU
+            # path on k8s either, so the default batch/timeout would ReadTimeout the way
+            # the eval suite caught in compose.
+            - name: RAG_EMBED_BATCH
+              value: "8"
+            - name: RAG_INFERENCE_TIMEOUT
+              value: "180"
             # The three remaining things validate_settings() demands in production. They
             # are secrets rather than settings, so they follow the same pattern as
             # jwt-secret above; `infrastructure/k8s/secrets/` documents how they are

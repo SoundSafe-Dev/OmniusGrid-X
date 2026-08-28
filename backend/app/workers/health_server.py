@@ -131,6 +131,23 @@ INGESTION_DEAD_LETTER_FAILED = Counter(
 #: monitoring the edge's silent failures and not its own, twice.
 #:
 #: Labelled by SIDE EFFECT, which is a fixed set of five, never by error text.
+#: The RAG indexing worker's two swallowing handlers, which arrived with the 2026-08-28
+#: merge logging but not counting. Both catches are correct — a retryable indexing fault
+#: must not be fatal, and a bad pass must not kill the poll loop — but an uncounted
+#: swallow is exactly the shape FS-691 named on the edge side: the loop stays alive, so
+#: liveness reads healthy, while nothing it was supposed to do is happening.
+#:
+#: `pass_failed` is per-document and retryable (requeued until attempts run out);
+#: `pass_errored` is the loop-level catch, and a non-zero rate there means the worker is
+#: spinning without draining the queue.
+RAG_INDEXING_FAILED = Counter(
+    "opsgrid_rag_indexing_failed_total",
+    "Failures in the RAG indexing worker that were logged and swallowed",
+    ["stage"],
+)
+
+RAG_INDEXING_STAGES = ("pass_failed", "pass_errored")
+
 INGESTION_SIDE_EFFECT_FAILED = Counter(
     "opsgrid_ingestion_side_effect_failed_total",
     "Non-fatal side effects on the ingest path that raised and were swallowed",

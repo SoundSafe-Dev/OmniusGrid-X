@@ -14,6 +14,7 @@ resources:
   - ingestion-worker-deployment.yaml
   - export-worker-deployment.yaml
   - compliance-reports-worker-deployment.yaml
+  - rag-indexing-worker-deployment.yaml
   - migration-job.yaml
   - db-backup-cronjob.yaml
   # FS-811. Weekly read-only check that the backup bucket is versioned and

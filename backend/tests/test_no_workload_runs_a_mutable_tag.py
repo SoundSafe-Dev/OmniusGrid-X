@@ -90,7 +90,18 @@ OTHER_LANE_DOCKERFILES = {
 #: Trees no kustomization builds. `legacy-patroni/` is superseded by database-ha and applied
 #: nowhere — the repository keeps it rather than deleting it because the DR runbooks still
 #: reference it, and deleting it would make those references dangle.
-NOT_DEPLOYED = ("legacy-patroni",)
+#:
+#: `rag/` arrived with the 2026-08-28 RAG merge as a deliberately standalone base for its own
+#: `omniusgrid-rag` namespace: no kustomization references it, so nothing is running on
+#: `qdrant:v1.12.4`, `seaweedfs:3.68` or `rag-inference:local`. Whether it folds into the
+#: overlays is an open decision in that lane (docs/rag_status_8.27.md, item 3), and it is the
+#: decision that makes pinning these three mandatory rather than premature.
+#:
+#: THE EXEMPTION EXPIRES BY ITSELF. `test_nothing_exempted_as_undeployed_is_deployed` below
+#: fails the moment any kustomization names one of these trees, so wiring `rag/` into an
+#: overlay turns the three unpinned images back into a failure instead of leaving a hole that
+#: a path-prefix exemption would keep open forever.
+NOT_DEPLOYED = ("legacy-patroni", "rag")
 
 MUTABLE = re.compile(r":(latest|stable|main|master|edge)$|^[^:]+$|:[^@]*latest")
 
@@ -243,3 +254,36 @@ def test_every_deploy_pinned_image_is_actually_pinned_by_a_deploy(image: str):
             f"understanding that every deploy pins it — so without this line the workload "
             f"runs whatever was pushed last, with no correlation to the release tag."
         )
+
+
+@pytest.mark.parametrize("tree", sorted(NOT_DEPLOYED))
+def test_nothing_exempted_as_undeployed_is_deployed(tree: str):
+    """A tree exempted as "nothing builds it" must still be built by nothing.
+
+    NOT_DEPLOYED skips whole directories, which is the most powerful exemption in this file
+    and the only one that was not self-checking: a path prefix keeps matching long after the
+    reason for it stops being true. If someone adds `- ../rag` to an overlay, the images in it
+    are suddenly running in a cluster and the pinning rule has to apply again.
+    """
+    referrers = []
+    for kustomization in sorted(K8S.rglob("kustomization.yaml")):
+        if any(part in kustomization.parts for part in NOT_DEPLOYED):
+            continue  # a tree referring to itself is not someone deploying it
+        try:
+            document = yaml.safe_load(kustomization.read_text()) or {}
+        except yaml.YAMLError:
+            continue
+        entries = (document.get("resources") or []) + (document.get("components") or [])
+        for entry in entries:
+            if not isinstance(entry, str):
+                continue
+            target = (kustomization.parent / entry).resolve()
+            if tree in target.parts:
+                referrers.append(f"{kustomization.relative_to(REPO)} -> {entry}")
+
+    assert not referrers, (
+        f"{tree!r} is exempted from digest pinning because no kustomization builds it, but "
+        f"it is referenced by: {referrers}. Either drop the NOT_DEPLOYED entry and pin every "
+        f"image in that tree, or drop the reference — an image that a cluster actually runs "
+        f"has to answer 'roll back to what was running'."
+    )
