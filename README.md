@@ -254,7 +254,7 @@ python scripts/seed_demo_kanban.py
 ```bash
 cd backend && pytest          # 5,100+ pass, ~110 skip. Docker is OPTIONAL: the real-DB
                               # tests skip without it, the rest run anyway
-cd edge-agent && pytest       # 460+ pass — DDIL scenarios excluded by default (see below)
+cd edge-agent && pytest       # 600+ pass — DDIL scenarios excluded by default (see below)
 cd frontend && npx vitest run  # 1,150+ across 135+ files
 cd frontend && npx tsc --noEmit
 ```
@@ -494,7 +494,7 @@ waiting to rotate — plus 57 `.pyc` and 10 `.DS_Store` files, and resurrect the
 **The four local stashes on his branches are also spent.** Two contain only artifacts;
 `stash@{2}`'s Sidebar tagline is already applied (`Sidebar.tsx:251`), and `stash@{0}` only
 drops the anonymous `node_modules` volume from `docker-compose.yml` — a local dev
-workaround, not a fix. They can be dropped whenever Hridyansh confirms.
+workaround, not a fix. They were waiting on his confirmation; he has since left, so **that confirmation is not coming.** All four were therefore re-read on 2026-08-28 rather than dropped on the strength of the summary above, and the summary held: `stash@{1}` and `stash@{3}` contain nothing but `.pyc` and `node_modules` artifacts; `stash@{2}`'s tagline is already in the tree (`Sidebar.tsx:268`, *Data Correlation for Industry 4.0*); and `stash@{0}` is the compose line plus patch-level `package-lock.json` drift with **`package.json` untouched**, i.e. `npm install` churn rather than a dependency decision. Nothing in them is wanted — which is a different statement from *nobody is left to ask*, and only the first one justifies deleting somebody else's work.
 
 **If a future branch of his does need merging**, rebase or cherry-pick onto
 `converged-pre-main` rather than merging unrelated histories, and confirm
@@ -601,6 +601,19 @@ verifier failed. On a UTC developer machine none of it is visible.
 
 ### Subsystem ownership — check here before starting work
 
+> **Hridyansh left the company in August 2026, and his three lanes — OTA/edge command
+> dispatch, tenant isolation/RBAC, and the ERP integration surface — moved to Hamad on
+> 2026-08-28.** All of his branches are merged; they are kept for history and the CI branch
+> patterns still cover `hridyansh/**` so that anything pushed to one is still gated.
+>
+> The consequence worth knowing is not the table row. **Every register in the test suite that
+> parked a finding as "his lane, his call" is now an open decision with an owner**, and the
+> deferrals were doing real work: `model_update` was dispatched to every device and answered
+> `unknown_action`, and `/api/v1/fleet` and `/api/v1/edge` were exempt from the idempotency
+> seam on the strength of a judgement nobody here had made. Those are now recorded as mine,
+> with the reasoning kept and the owner corrected — searching the suite for a departed
+> colleague's name is how you find work that has quietly stopped having an owner.
+
 | Area | Active owner(s) | Branches / notes |
 |------|-----------------|-------|
 | Correlation AI / NLP / intake / spreadsheet parsing | **Harsh** | `feature/gemma-correlation-ai`, `HARSH-CONTRIBUTION`. Coordinate before touching `correlation_ai_engine.py`, `nlp_correlation.py`, intake services. Owns the 3 failing intake tests + scenario-builder import drift, and the Gemma correlation model. |
@@ -608,9 +621,9 @@ verifier failed. On a UTC developer machine none of it is visible.
 | MLOps (model registry + training + monitoring) | **Harsh** | `model_registry` / `model_training_runs`; model-monitoring drift + performance tracking. |
 | RAG / compliance doc pipeline (SeaweedFS/S3 + Gemma inference) | **Hudson** (htreinen) | `htreinen`, `feature/RAG-Compliance-Doc-Pipeline`, `rag-async-ingest`, `rag-rewrite` (a frozen record, not development). `/api/v1/rag`; containerization seam in `docs/RAG_CONTAINERIZATION.md`. His `origin` is the SoundSafe-Dev mirror — `rag-async-ingest` exists only there, and matched no CI push trigger until a `rag-**` pattern was added. **Merged into the converged line 2026-08-28**: async ingestion behind `rag-indexing-worker` (202 + poll, `FOR UPDATE SKIP LOCKED`), SSE streaming answers, per-org ingest quotas, org-scoped vector deletion, and `rag-ci.yml` as a reusable blocking gate. His branch is now historical — reset onto `converged-pre-main` rather than continuing on it. |
 | Compliance Assistant page + the operational-context leg | **Hamad** | Consumes Hudson's pipeline; does not change it. `docs/compliance_assistant.md`. Coordinate with Hudson before altering `rag_retriever.py` prompt assembly — the citation numbering is a contract with the UI. **The 2026-08-28 merge is why that coordination is not optional**: taking his branch's copy of `rag_retriever.py` and `rag.py` wholesale deleted `SourceDoc`, `_build_sources`, the ERP leg and `POST /documents/link`, and git called both files cleanly resolved. Two tests caught it. The files are now his structure carrying these additions — see method rule 285. |
-| Tenant isolation / RBAC / security hardening | **Hridyansh** | `hridyansh/tenant-isolation-middleware`. RLS enforced through the canonical `app.current_org_id` GUC everywhere (incl. ERP tables). |
-| OTA / edge command dispatch / agent releases | **Hridyansh** | `hridyansh/edge-command-dispatch`, `hridyansh/edge-agent-retry-logic`, `hridyansh/integration`. Rollout orchestrator + agent-side executor; `ota-rollout-worker` runs in compose + k8s. **`hridyansh/integration` merged into the converged line 2026-08-28**: durable collector supervision on the shared `ExponentialBackoff`, classified HTTP poll failures, fleet resource editing, expired target previews. That merge also moved edge failures onto a counter no alert reads — see method rule 286 — so the classified counter is now additive to `edge_collector_errors_total` rather than replacing it. |
-| ERP integration surface / package layout | **Hridyansh** | `hridyansh/integration`, `hridyansh/integration-erp`, `hridyansh/package-renaming-fix`. |
+| Tenant isolation / RBAC / security hardening | **Hamad** (was Hridyansh) | `hridyansh/tenant-isolation-middleware`, merged. RLS enforced through the canonical `app.current_org_id` GUC everywhere (incl. ERP tables). |
+| OTA / edge command dispatch / agent releases | **Hamad** (was Hridyansh) | `hridyansh/edge-command-dispatch`, `hridyansh/edge-agent-retry-logic`, `hridyansh/integration`. Rollout orchestrator + agent-side executor; `ota-rollout-worker` runs in compose + k8s. **`hridyansh/integration` merged into the converged line 2026-08-28**: durable collector supervision on the shared `ExponentialBackoff`, classified HTTP poll failures, fleet resource editing, expired target previews. That merge also moved edge failures onto a counter no alert reads — see method rule 286 — so the classified counter is now additive to `edge_collector_errors_total` rather than replacing it. |
+| ERP integration surface / package layout | **Hamad** (was Hridyansh) | `hridyansh/integration`, `hridyansh/integration-erp`, `hridyansh/package-renaming-fix` — all merged. |
 | ERP **connector internals + validation harness** | **Hamad** | Reassigned during the convergence program. The 8 connectors, their auth/pagination/envelope handling, and the Tier 0–4 harness. **Read [`docs/erp/README.md`](docs/erp/README.md) before touching a connector** — the guards there encode defects that already shipped. |
 | Edge platform, backend platform, frontend/UI, deploy/CI, schema, observability, docs | **Hamad** | `hamad/converged-pre-main` (integration → `main`). The convergence program + the FS fixed-sprints above. |
 | Spreadsheet intake / column normalisation — under Harsh's lane | **Alex** | `alex`. Three commits merged onto the convergence branch (already present by content at the time; merged for ancestry). |

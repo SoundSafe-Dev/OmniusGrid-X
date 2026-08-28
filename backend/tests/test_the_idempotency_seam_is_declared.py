@@ -70,8 +70,23 @@ UNPROTECTED: dict[str, str] = {
     ),
     "/api/v1/model-monitoring": "Harsh's lane (MLOps)",
     "/api/v1/models": "Harsh's lane (MLOps model registry)",
-    "/api/v1/fleet": "Hridyansh's lane (OTA) — rollouts carry their own resume semantics",
-    "/api/v1/edge": "Hridyansh's lane (edge enrolment)",
+    # These two were exempt because they were another lane's judgement to make. That lane is
+    # Hamad's since 2026-08-28, so the reason has to stand on the claim rather than on whose
+    # call it was — an exemption inherited from a departed colleague is the weakest kind of
+    # allowlist entry there is, and rule 278 says an exemption is a claim needing its own
+    # check. Both claims below were re-read when ownership moved; neither has been re-derived
+    # from the code, which is the honest state to record.
+    "/api/v1/fleet": (
+        "OTA rollouts carry their own resume semantics — a rollout has an id and a state "
+        "machine, so a retried create is not the thing Idempotency-Key protects against. "
+        "Inherited from Hridyansh's lane; the claim is plausible and unverified."
+    ),
+    "/api/v1/edge": (
+        "Edge enrolment. Inherited from Hridyansh's lane with no recorded reason beyond the "
+        "lane itself, which is not a reason. Enrolment mints credentials, so a retried "
+        "request minting a second identity is exactly the failure this seam exists to stop — "
+        "this one deserves re-deriving rather than carrying forward."
+    ),
     "/api/v1/rag": "htreinen's lane (retrieval and ingestion)",
 
     # --- replay is handled elsewhere, or would be wrong here -----------------------------

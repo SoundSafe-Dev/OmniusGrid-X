@@ -89,7 +89,10 @@ UNREACHABLE: dict[str, str] = {
         "classification that DOES ship lives in `erp_retry_classification`, which is tested.",
     "app/services/device_provisioning.py":
         "465 lines. Edge enrolment ships through `api/edge_enroll.py` + `services/edge_ca.py`. "
-        "Hridyansh's lane — do not delete without asking whether OTA needs it.",
+        "Was Hridyansh's lane, held pending an answer to 'does OTA need it'. He left in "
+        "August 2026 and the lane is Hamad's, so THE QUESTION NOW HAS AN OWNER RATHER THAN "
+        "AN ADDRESSEE: keep the entry until that answer is written down, and do not let "
+        "'nobody to ask' quietly become 'safe to delete'.",
     "app/services/schema_registry.py":
         "Telemetry schema validation. `workers/ingestion.py` validates inline instead.",
     "app/services/feature_extraction.py":

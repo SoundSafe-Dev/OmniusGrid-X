@@ -18,7 +18,15 @@ owners:
     lane: hamad
   edge:
     description: Edge agent, store-and-forward, OTA, DDIL behaviour
-    lane: hridyansh
+    # 2026-08-28: was `hridyansh`, who has left. THE HEADER ABOVE PREDICTED THIS EXACTLY —
+    # "a catalogue keyed to people goes stale the first time somebody changes team" — and the
+    # file did it anyway, in this entry and in every other one. `hamad` is a person too.
+    #
+    # Not renamed to a role here because that is a wider change than an ownership handover
+    # and would touch every control's `owner:`; recorded instead as the open item it is, so
+    # the next reader sees a known defect rather than an oversight. No control currently
+    # routes to `edge`, so the staleness cost nothing this time. It will not always.
+    lane: hamad
   data-governance:
     description: Retention, residency, GDPR obligations, data lifecycle
     lane: hamad

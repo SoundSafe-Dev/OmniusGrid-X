@@ -71,11 +71,15 @@ UNREACHABLE: dict[str, str] = {
         "path by which a reload could be requested. The diff logic is pure and correct; it "
         "has never had a caller.",
     "opsgrid_agent/ota/model_executor.py":
-        "220 lines and the only one here with NO tests (FS-507). It is also the only one that "
-        "is actively dispatched to: rollout_orchestrator.py:297 sends `model_update` for "
-        "every model release and the agent answers `unknown_action`, because nothing "
-        "constructs this class so `register()` never runs. Paired by "
-        "backend/tests/test_dispatched_commands_have_a_handler.py (FS-505). Owner: Hridyansh.",
+        "220 lines, dispatched to but never constructed: rollout_orchestrator sends "
+        "`model_update` for every model release and the agent answers `unknown_action`, "
+        "because nothing calls `register()`. Paired by "
+        "backend/tests/test_dispatched_commands_have_a_handler.py (FS-505), which carries "
+        "the full reasoning. Owner: Hamad since 2026-08-28. NO LONGER UNTESTED — "
+        "tests/test_model_executor.py covers it — and deliberately still unreachable: the "
+        "agent has no consumer for a model artifact, so registering it would report success "
+        "for a file nothing loads. Reachability waits on an inference runtime, not on the "
+        "three lines this entry used to promise.",
 }
 
 

@@ -998,7 +998,7 @@ async def _vacuum_telemetry() -> None:
 # `OTAUpdateExecutor.register` (`edge-agent/opsgrid_agent/ota/executor.py:68`), which
 # `main.py:68,209` constructs and registers. Submitting a `restart_collector` command would
 # queue something nothing consumes — the same lie moved one layer down, and harder to see.
-# Adding the handler is Hridyansh's lane.
+# Adding the handler was Hridyansh's lane; it is Hamad's since 2026-08-28.
 #
 # CORRECTED 2026-08-07 (FS-505). This note previously said "exactly two … `agent_update` and
 # `model_update`". `ModelUpdateExecutor.register` does bind `model_update`

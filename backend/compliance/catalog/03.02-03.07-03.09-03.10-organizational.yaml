@@ -108,6 +108,17 @@ controls:
         departure from locking a tenant out (see OG-IA-006). What is missing is the process
         that triggers it on the day someone leaves.
 
+        EVIDENCED 2026-08-28, not hypothetical any more. An engineer left, his three
+        subsystem lanes were reassigned in the same change that records this, and the
+        repository contained no runbook, checklist or owner for revoking his access — the
+        gap this note described, met in practice. What the reassignment DID surface is that
+        the technical half above is not the hard part: the deferrals in the test suite
+        carrying his name were found by grepping for it, which is not a process either.
+        Two access facts are open and belong to a human, not to code: his GitHub
+        collaborator/admin rights on both remotes, and whether he held any credential in
+        scope of the 2026-08-15 force-push incident whose rotation is still outstanding.
+        A departure 13 days after that incident is the worst time for this to be undefined.
+
   - id: OG-PE-001
     title: Physical access is limited, monitored, logged and managed
     satisfies:
