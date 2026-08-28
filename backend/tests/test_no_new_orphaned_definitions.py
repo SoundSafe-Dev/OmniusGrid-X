@@ -63,17 +63,6 @@ FRAMEWORK_PROTOCOL_NAMES = {
 #: "Unused" is the observation, not the reason.
 ORPHANS: dict[str, str] = {
     # --- superseded parallel implementations, the dangerous ones --------------------------
-    # ARRIVED WITH THE 2026-08-08 MERGE. Both are helpers for a path that was not finished,
-    # in modules that ARE live — so they inherit the module's credibility while running
-    # never, which is exactly the shape this file exists to name.
-    "app/services/fleet_targeting.py::_membership_exists":
-        "A bulk membership pre-check. The bulk-assignment route validates per row instead, "
-        "so this never runs — and wiring it would replace four round trips with one, which "
-        "is the reason to decide rather than delete.",
-    "app/services/maintenance_windows.py::local_date_for_weekday":
-        "Resolves a weekday to a local date inside a window's own timezone. The scheduler "
-        "works in fixed UTC offsets today, which is what makes a DST boundary interesting; "
-        "this helper is the half of that fix that landed.",
     "app/core/security.py::verify_token":
         "A thin wrapper over decode_local_token with no callers. Harmless in itself and part "
         "of the same duplicate-auth surface as get_current_user_ws — decide both together.",

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date, datetime, time, timedelta, timezone
+from datetime import datetime, time, timedelta, timezone
 from typing import Iterable, Sequence
 from uuid import UUID
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -402,12 +402,3 @@ def evaluate_rollout_groups(
 
 def effective_scope_label(site_id: UUID | None) -> str:
     return str(site_id) if site_id is not None else "organization"
-
-
-def local_date_for_weekday(
-    anchor: date,
-    weekday: int,
-) -> date:
-    """Small public helper used by clock-driven recurrence tests."""
-
-    return anchor + timedelta(days=(weekday - anchor.weekday()) % 7)

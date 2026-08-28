@@ -1,4 +1,4 @@
-"""Collector supervision retains its tasks and never hot-spins (FS-501, FS-502).
+"""Collector supervision is retained, backed off, and durable until stop.
 
 Two defects in the same twenty lines, both of which produce no error and no log line.
 
@@ -24,9 +24,9 @@ nothing — a tight loop for the life of the process, burning a core with no cou
 nothing in the log. A collector that exits normally when its connection closes is the ordinary
 case, not an exotic one.
 
-Neither is visible from the outside: the process keeps running, the collector list still looks
-populated, and the only symptom is CPU or a supervisor that quietly stopped existing. So both
-need an assertion that names them.
+FS-660 closes the later failure mode: the corrected loop still stopped permanently after ten
+attempts. These tests cross that old boundary deterministically, verify the capped delays and
+status, and prove stop wakes a long retry wait immediately.
 """
 
 from __future__ import annotations
@@ -35,6 +35,7 @@ import asyncio
 import os
 import sys
 import unittest
+from unittest.mock import AsyncMock, patch
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -64,6 +65,12 @@ class _ReturningCollector:
         pass
 
 
+class _CrashingCollector(_ReturningCollector):
+    async def start(self):
+        self.starts += 1
+        raise RuntimeError("collector crashed")
+
+
 class SupervisionDoesNotHotSpin(unittest.IsolatedAsyncioTestCase):
     async def _coordinator(self, tmpdir):
         buffer = StoreForwardBuffer(buffer_path=os.path.join(tmpdir, "b.db"))
@@ -72,11 +79,9 @@ class SupervisionDoesNotHotSpin(unittest.IsolatedAsyncioTestCase):
     async def test_a_clean_return_does_not_spin(self):
         """Measures the RATE, not the exit.
 
-        The first version of this test waited for the loop to exhaust `max_restarts` — which
-        is now correct behaviour and takes ~50 s (10 restarts x a 5 s delay), so it timed out
-        against a working fix. What actually distinguishes the defect is how fast the loop
-        goes round: a supervisor that sleeps starts a handful of times in a short window, one
-        that hot-spins starts thousands.
+        What distinguishes the defect is how fast the loop goes round: a supervisor that
+        sleeps starts a handful of times in a short window, while one that hot-spins starts
+        thousands.
         """
         import tempfile
 
@@ -106,6 +111,130 @@ class SupervisionDoesNotHotSpin(unittest.IsolatedAsyncioTestCase):
             self.assertGreaterEqual(
                 collector.starts, 1, "the supervisor never started the collector at all"
             )
+
+
+class SupervisionDoesNotExhaust(unittest.IsolatedAsyncioTestCase):
+    async def _assert_attempt_eleven_remains_live(self, collector, expected_outcome):
+        coordinator = UnifiedCollectorCoordinator(buffer=object())
+        coordinator._running = True
+        release = asyncio.Event()
+        reached_attempt_eleven = asyncio.Event()
+        delays: list[float] = []
+
+        async def controlled_wait(delay):
+            delays.append(delay)
+            if collector.starts >= 11:
+                reached_attempt_eleven.set()
+                await release.wait()
+            return coordinator._running
+
+        coordinator._wait_for_supervisor_retry = controlled_wait
+        coordinator.configs["a1"] = CollectorConfig(
+            asset_id="a1",
+            collector_type="test",
+            config={},
+        )
+        coordinator.collectors["a1"] = collector
+        supervisor = asyncio.create_task(
+            coordinator._run_collector("a1", collector)
+        )
+        coordinator.collector_tasks["a1"] = supervisor
+        try:
+            await asyncio.wait_for(reached_attempt_eleven.wait(), timeout=1)
+
+            self.assertEqual(collector.starts, 11)
+            self.assertFalse(
+                supervisor.done(),
+                "the supervisor ended at the old ten-attempt limit",
+            )
+            self.assertEqual(delays[:5], [5.0, 10.0, 20.0, 40.0, 60.0])
+            self.assertEqual(delays[5:], [60.0] * 6)
+
+            status = coordinator.get_collector_status("a1")
+            self.assertTrue(status["running"])
+            self.assertEqual(
+                status["supervision"],
+                {
+                    "state": "backing_off",
+                    "attempts": 11,
+                    "last_outcome": expected_outcome,
+                    "next_retry_seconds": 60.0,
+                },
+            )
+            self.assertEqual(coordinator.get_status()["degraded_collectors"], 1)
+        finally:
+            coordinator._running = False
+            release.set()
+            await asyncio.wait_for(supervisor, timeout=1)
+
+    async def test_a_clean_return_is_retried_after_attempt_ten(self):
+        await self._assert_attempt_eleven_remains_live(
+            _ReturningCollector(),
+            "returned",
+        )
+
+    async def test_a_crash_is_retried_after_attempt_ten(self):
+        await self._assert_attempt_eleven_remains_live(
+            _CrashingCollector(),
+            "crashed",
+        )
+
+    async def test_stop_wakes_a_capped_retry_wait(self):
+        coordinator = UnifiedCollectorCoordinator(buffer=object())
+        coordinator._running = True
+        wait_task = asyncio.create_task(
+            coordinator._wait_for_supervisor_retry(3600)
+        )
+        await asyncio.sleep(0)
+
+        await coordinator.stop_all()
+
+        self.assertFalse(await asyncio.wait_for(wait_task, timeout=0.1))
+
+
+class HealthMonitorDoesNotDuplicateDurableSupervision(
+    unittest.IsolatedAsyncioTestCase
+):
+    async def test_a_backing_off_live_task_is_not_recreated(self):
+        coordinator = UnifiedCollectorCoordinator(buffer=object())
+        coordinator._running = True
+        coordinator.configs["a1"] = CollectorConfig(
+            asset_id="a1",
+            collector_type="test",
+            config={},
+        )
+        coordinator.collectors["a1"] = _CrashingCollector()
+        coordinator._supervision_status["a1"] = {
+            "state": "backing_off",
+            "attempts": 11,
+            "last_outcome": "crashed",
+            "next_retry_seconds": 60.0,
+        }
+        live_supervisor = asyncio.create_task(asyncio.Event().wait())
+        coordinator.collector_tasks["a1"] = live_supervisor
+
+        async def one_health_tick(_delay):
+            coordinator._running = False
+
+        try:
+            with patch(
+                "opsgrid_agent.collectors.coordinator.asyncio.sleep",
+                side_effect=one_health_tick,
+            ), patch.object(
+                coordinator,
+                "_start_collector",
+                new_callable=AsyncMock,
+            ) as restart:
+                await coordinator._health_monitor()
+
+            restart.assert_not_awaited()
+            self.assertFalse(live_supervisor.done())
+        finally:
+            live_supervisor.cancel()
+            try:
+                await live_supervisor
+            except asyncio.CancelledError:
+                pass
 
 
 class StartAllRetainsItsSupervisors(unittest.IsolatedAsyncioTestCase):

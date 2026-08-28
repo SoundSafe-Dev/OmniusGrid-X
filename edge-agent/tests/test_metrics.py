@@ -44,6 +44,97 @@ class MetricsTest(unittest.TestCase):
             REGISTRY.get_sample_value("edge_collector_connection_state", labels), 0.0
         )
 
+    def test_poll_failure_and_recovery_update_bounded_metrics(self):
+        labels = {"asset_id": "poll-metrics-test", "collector_type": "http_rest"}
+        failure_labels = {**labels, "failure_class": "transport"}
+        failure_before = (
+            REGISTRY.get_sample_value(
+                "edge_collector_poll_failures_total", failure_labels
+            )
+            or 0.0
+        )
+        recovery_before = (
+            REGISTRY.get_sample_value(
+                "edge_collector_poll_recoveries_total", labels
+            )
+            or 0.0
+        )
+
+        metrics.record_poll_failure(
+            "poll-metrics-test", "http_rest", "transport", 3
+        )
+
+        self.assertEqual(
+            REGISTRY.get_sample_value(
+                "edge_collector_poll_failures_total", failure_labels
+            ),
+            failure_before + 1,
+        )
+        self.assertEqual(
+            REGISTRY.get_sample_value(
+                "edge_collector_poll_consecutive_failures", labels
+            ),
+            3.0,
+        )
+        self.assertEqual(
+            REGISTRY.get_sample_value("edge_collector_connection_state", labels),
+            0.0,
+        )
+
+        metrics.record_poll_success(
+            "poll-metrics-test", "http_rest", recovered=True
+        )
+
+        self.assertEqual(
+            REGISTRY.get_sample_value(
+                "edge_collector_poll_recoveries_total", labels
+            ),
+            recovery_before + 1,
+        )
+        self.assertEqual(
+            REGISTRY.get_sample_value(
+                "edge_collector_poll_consecutive_failures", labels
+            ),
+            0.0,
+        )
+        self.assertEqual(
+            REGISTRY.get_sample_value("edge_collector_connection_state", labels),
+            1.0,
+        )
+
+    def test_unknown_poll_failure_class_is_folded_into_unexpected(self):
+        asset_id = "bounded-poll-class-test"
+        bounded = {
+            "asset_id": asset_id,
+            "collector_type": "http_rest",
+            "failure_class": "unexpected",
+        }
+        before = (
+            REGISTRY.get_sample_value(
+                "edge_collector_poll_failures_total", bounded
+            )
+            or 0.0
+        )
+
+        metrics.record_poll_failure(asset_id, "http_rest", "secret-and-unbounded", 1)
+
+        self.assertEqual(
+            REGISTRY.get_sample_value(
+                "edge_collector_poll_failures_total", bounded
+            ),
+            before + 1,
+        )
+        self.assertIsNone(
+            REGISTRY.get_sample_value(
+                "edge_collector_poll_failures_total",
+                {
+                    "asset_id": asset_id,
+                    "collector_type": "http_rest",
+                    "failure_class": "secret-and-unbounded",
+                },
+            )
+        )
+
     def test_metrics_are_exposed_in_scrape_output(self):
         metrics.record_message("scrape-test", "http_rest")
         text = generate_latest().decode()
