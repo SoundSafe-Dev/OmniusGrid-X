@@ -31,16 +31,15 @@ APP = REPO / "backend/app"
 
 #: Resources FS-842 names that are NOT bounded yet, with why. An empty absence reads as a
 #: decision; this says plainly that it is not one.
-NOT_YET_BOUNDED = {
-    "export_row_count": (
-        "An export's ARTEFACT size is now bounded — `check_storage_quota` refuses "
-        "generation for a tenant already over its limit, and migration 075 made the "
-        "figure exist. What is still unbounded is the number of ROWS a single export may "
-        "request: that is bounded incidentally by the pagination ceilings rather than "
-        "deliberately, so a very large export is refused only after it has been produced "
-        "and pushed the tenant over. Bounding it properly means predicting the artefact "
-        "from the query, which is a product decision about where to refuse."
-    ),
+NOT_YET_BOUNDED: dict[str, str] = {
+    # Empty, and meant to stay that way. FS-842 named five resources — assets, seats,
+    # ingestion rate, storage and export size — and all five are bounded now:
+    # `MAX_ASSETS_PER_ORG`, `MAX_USERS_PER_ORG`, `RATE_LIMIT_PER_TENANT` (FS-843),
+    # `MAX_STORAGE_BYTES_PER_ORG` across all three producers, and `MAX_EXPORT_ROWS`.
+    #
+    # An entry here is a resource a tenant can consume without limit, so it is a promise
+    # to fix rather than an excuse — and the tests below assert any entry is genuinely
+    # still unbounded, so one cannot go stale.
 }
 
 
@@ -189,16 +188,24 @@ class TestTheBypassAQuotaOnCreateWouldMiss:
 
 
 class TestTheGapIsRecordedRatherThanImplied:
-    @pytest.mark.parametrize("resource", sorted(NOT_YET_BOUNDED))
-    def test_every_unbounded_resource_says_why(self, resource):
-        """FS-842 names five resources; two are bounded. An unexplained absence reads as a
-        decision that was never taken."""
-        assert len(NOT_YET_BOUNDED[resource]) > 80
+    def test_every_unbounded_resource_says_why(self):
+        """An unexplained absence reads as a decision that was never taken.
+
+        A LOOP, NOT `parametrize`. With the register empty — which is now the case, all
+        five of FS-842's resources are bounded — a parametrized test SKIPS, and a skip is
+        indistinguishable from a pass in a CI summary. The register being empty is the
+        goal, so the test has to still run and say so.
+        """
+        for resource, reason in sorted(NOT_YET_BOUNDED.items()):
+            assert len(reason) > 80, (
+                f"{resource} is recorded as unbounded without a real explanation, which "
+                f"is an exemption nobody will revisit"
+            )
 
     def test_the_bounded_ones_are_not_also_listed(self):
         """A register that names something already done is stale, and a stale register is
         worse than none — it reports solved work as outstanding."""
-        for done in ("assets", "seats", "storage_bytes", "export_size"):
+        for done in ("assets", "seats", "storage_bytes", "export_size", "export_row_count"):
             assert done not in NOT_YET_BOUNDED, (
                 f"{done!r} is bounded now and still listed as outstanding."
             )
@@ -301,3 +308,94 @@ class TestTheStorageQuotaCountsEveryProducer:
         rejection = await check_storage_quota(_db(2 * 1024 ** 3), "org-1")
         assert rejection is not None and rejection.status == 409
         assert "GiB" in rejection.detail
+
+
+class TestAnExportCannotOomTheWorker:
+    """Every export builder materialised EVERY row for an organisation and built the
+    spreadsheet in memory, with no LIMIT on any query. In a worker capped at 512Mi that is
+    an unbounded allocation: a tenant with enough history does not receive a large file,
+    it gets the worker OOM-killed part-way through — with no message, no failed-job
+    status anybody can read, and a restart that tries the same export again.
+    """
+
+    def test_a_row_count_past_the_ceiling_is_refused(self):
+        from app.core.config import settings
+        from app.services.export_processor import ExportTooLarge, _guard_row_count
+
+        with pytest.raises(ExportTooLarge) as excinfo:
+            _guard_row_count(list(range(settings.MAX_EXPORT_ROWS + 1)), "tasks")
+        assert str(settings.MAX_EXPORT_ROWS) in str(excinfo.value).replace(",", "")
+
+    def test_the_message_names_the_remedy(self):
+        """A refusal that does not say what to change generates a support ticket."""
+        from app.core.config import settings
+        from app.services.export_processor import ExportTooLarge, _guard_row_count
+
+        with pytest.raises(ExportTooLarge) as excinfo:
+            _guard_row_count(list(range(settings.MAX_EXPORT_ROWS + 1)), "tasks")
+        assert "Narrow the filters" in str(excinfo.value)
+
+    def test_it_ships_on_unlike_the_other_quotas(self):
+        """0 elsewhere preserves a working feature; 0 here would preserve an unbounded
+        allocation. The ceiling takes away nothing that works today — an export past this
+        size already fails, as an OOM kill rather than a refusal."""
+        from app.core.config import Settings
+
+        assert Settings().MAX_EXPORT_ROWS > 0
+
+    def test_every_builder_is_guarded(self):
+        """One unguarded builder is an unbounded allocation, and it is the one a tenant
+        will find.
+
+        PER FUNCTION, VIA AST. Two earlier versions of this check were wrong in different
+        ways and both were caught by mutation-testing rather than by reading:
+
+        * matching `rows = [` missed the OEE builder entirely, because it accumulates in a
+          loop rather than a comprehension — and that builder was genuinely unguarded, so
+          the check found the right file for the wrong reason;
+        * matching lines and locating them with `str.index` broke on `).scalars().all()`,
+          which appears several times, so it kept testing the first occurrence.
+
+        The claim is about BUILDERS, not lines: a function that materialises a full result
+        set must also apply the ceiling. That is what is asserted.
+        """
+        tree = ast.parse((APP / "services/export_processor.py").read_text())
+        offenders = []
+        checked = 0
+        for node in ast.walk(tree):
+            if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            calls = [
+                c
+                for c in ast.walk(node)
+                if isinstance(c, ast.Call) and isinstance(c.func, ast.Attribute)
+            ]
+            if not any(c.func.attr == "all" for c in calls):
+                continue
+            checked += 1
+            guarded = any(
+                isinstance(c.func, ast.Name) and c.func.id == "_guard_row_count"
+                for c in ast.walk(node)
+                if isinstance(c, ast.Call)
+            )
+            if not guarded:
+                offenders.append(node.name)
+
+        assert checked >= 4, (
+            f"only {checked} functions materialise a result set; the walk is broken and "
+            f"this check would pass over almost nothing"
+        )
+        assert not offenders, (
+            f"these export builders materialise a full result set without applying "
+            f"MAX_EXPORT_ROWS: {offenders}. Each is an unbounded in-memory spreadsheet in "
+            f"a worker capped at 512Mi."
+        )
+
+    def test_it_refuses_rather_than_truncating(self):
+        """A LIMIT on the query would have been cheaper and is the wrong answer: it
+        silently truncates. For a compliance artefact a file that looks complete and is
+        not is the worst available outcome."""
+        source = (APP / "services/export_processor.py").read_text()
+        guard = source[source.index("def _guard_row_count") : source.index("class ExportProcessor")]
+        assert "raise ExportTooLarge" in guard
+        assert ".limit(" not in guard

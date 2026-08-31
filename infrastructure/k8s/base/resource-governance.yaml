@@ -1,0 +1,77 @@
+# Namespace resource governance (FS-849).
+#
+# `ResourceQuota` and `LimitRange` returned ZERO hits across `infrastructure/k8s/`. Every
+# workload declares its own requests and limits — all 20 containers do, checked — so this
+# is not about fixing what is deployed. It is about the two things a per-container
+# declaration cannot do:
+#
+#   1. BOUND THE NAMESPACE TOTAL. The backend HPA allows 20 replicas and KEDA allows
+#      12 + 8 + 6 workers. Nothing capped what those ceilings add up to, so a runaway
+#      scale-out — a stuck consumer group, a metric that never drops — could consume the
+#      cluster and starve the namespaces that would tell you about it: monitoring,
+#      ingress, cert-manager. The blast radius of an application fault reached the
+#      control plane.
+#
+#   2. CATCH THE NEXT WORKLOAD. A Deployment added without `resources` is unbounded, and
+#      it is admitted silently. The LimitRange gives it a default instead, and refuses one
+#      that asks for something absurd.
+#
+# SIZED FROM THE MANIFESTS, NOT GUESSED. At every declared replica ceiling the namespace
+# requests 17.6 CPU / 35.2 Gi and limits 75.5 CPU / 75.1 Gi. The quota is set above that
+# with room for a workload or two, and `tests/k8s/check_resource_quota_fits.py` recomputes
+# the figure on every build — so raising a replica ceiling without raising the quota fails
+# CI rather than failing an apply at 3am.
+#
+# A QUOTA THAT IS TOO TIGHT IS AN OUTAGE, and a specific one: once `requests.cpu` is
+# exhausted the namespace stops admitting pods, so the HPA scales up and the new replicas
+# sit Pending — the platform stops responding to load in exactly the way it was scaled to
+# handle. That is why the headroom is deliberate rather than snug.
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: omniusgrid-quota
+  namespace: omniusgrid
+spec:
+  hard:
+    # Requests are what the scheduler reserves, so this is the number that decides whether
+    # a pod is admitted at all.
+    requests.cpu: "24"
+    requests.memory: 48Gi
+    # Limits bound the burst. Deliberately well above requests: these workloads are bursty
+    # by design (an export builds a spreadsheet, an ingestion worker drains a backlog), and
+    # a limit ceiling equal to requests would remove the burst capacity the sizing assumes.
+    limits.cpu: "96"
+    limits.memory: 96Gi
+    # A count cap catches the runaway that CPU does not: many small pods, each within its
+    # request, collectively exhausting the node's pod slots.
+    pods: "120"
+    persistentvolumeclaims: "24"
+---
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: omniusgrid-defaults
+  namespace: omniusgrid
+spec:
+  limits:
+    - type: Container
+      # What a container gets if it declares nothing. Modest on purpose: a default that is
+      # generous enough to run anything is a default nobody notices they are relying on,
+      # and it silently consumes the namespace quota above.
+      defaultRequest:
+        cpu: 50m
+        memory: 128Mi
+      default:
+        cpu: 500m
+        memory: 512Mi
+      # The ceiling for any single container. Sized above the largest thing deployed today
+      # (timescaledb at 2 CPU / 4Gi) so it constrains nothing current, and refuses a
+      # workload that would take a whole node by itself.
+      max:
+        cpu: "4"
+        memory: 8Gi
+      # A floor, so a container cannot request effectively nothing and then be scheduled
+      # onto an already-full node — which is how a "small" pod causes an eviction.
+      min:
+        cpu: 10m
+        memory: 32Mi

@@ -16,6 +16,7 @@ from aiokafka import AIOKafkaConsumer, AIOKafkaProducer, TopicPartition
 from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.circuit_breaker import CircuitBreaker
 from app.core.config import settings
 from app.db.database import AsyncSessionLocal
 from app.db.models import Asset, Command, Organization
@@ -76,6 +77,11 @@ def _uuid(value: Any) -> Optional[UUID]:
 
 class CommandExecutor:
     """Persist commands, publish claimed rows, and reconcile acks via the DB."""
+
+    #: Shared across instances on purpose: the broker is one dependency, so one process
+    #: should reach one verdict about it. A per-instance breaker would relearn that
+    #: Redpanda is down separately for every executor constructed.
+    _breaker = CircuitBreaker("redpanda:commands", failure_threshold=3)
 
     def __init__(self, *, session_factory=None) -> None:
         self._session_factory = session_factory
@@ -741,10 +747,21 @@ class CommandExecutor:
             "timestamp": _utcnow().isoformat(),
         }
         try:
-            await self._producer.send_and_wait(
-                settings.REDPANDA_COMMAND_TOPIC,
-                command_message,
-                key=command_id.encode("utf-8"),
+            # FS-848. Every dispatch paid the broker's full `send_and_wait` timeout while
+            # Redpanda was down, and command dispatch is called in a loop over targeted
+            # assets — so one broker outage turned a fleet-wide command into N timeouts
+            # back to back, each holding its worker. The breaker makes the second and
+            # subsequent ones immediate; the OUTCOME is unchanged (`SEND_FAILED`), which
+            # is what makes it safe to short-circuit.
+            #
+            # `edge_ingest` already had a hand-rolled equivalent (`_unavailable_until`);
+            # this path had nothing, which is the asymmetry FS-846..848 was about.
+            await self._breaker.call(
+                lambda: self._producer.send_and_wait(
+                    settings.REDPANDA_COMMAND_TOPIC,
+                    command_message,
+                    key=command_id.encode("utf-8"),
+                )
             )
         except Exception as exc:  # noqa: BLE001
             logger.error(

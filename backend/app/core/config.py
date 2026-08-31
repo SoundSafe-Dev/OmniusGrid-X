@@ -150,6 +150,18 @@ class Settings(BaseSettings):
     # a real 504 instead of the proxy's opaque one. Cancelling the task is the point:
     # asyncio cancellation unwinds the handler and returns its connection to the pool.
     REQUEST_TIMEOUT_SECONDS: float = 55.0
+
+    # EXPORT ROW CEILING (FS-842). Every export builder materialised EVERY row for an
+    # organisation and built the spreadsheet in memory — no LIMIT on any of the queries.
+    # In a worker capped at 512Mi that is an unbounded allocation, so a tenant with enough
+    # history does not get a large file, it gets the worker OOM-killed mid-export.
+    #
+    # UNLIKE THE OTHER QUOTAS THIS SHIPS ON, and the difference is deliberate: 0 there
+    # preserves a working feature, while 0 here would preserve an unbounded allocation.
+    # The ceiling does not take away an export that works today — an export past this size
+    # already fails, just as an OOM kill with no message instead of a refusal that names
+    # the number.
+    MAX_EXPORT_ROWS: int = 100_000
     RATE_LIMIT_BURST: int = 10
     AUTH_LOGIN_RATE_LIMIT: str = "10/minute"
     AUTH_REGISTER_RATE_LIMIT: str = "5/hour"

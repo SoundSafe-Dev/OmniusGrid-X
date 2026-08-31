@@ -15,6 +15,9 @@ resources:
   - export-worker-deployment.yaml
   - compliance-reports-worker-deployment.yaml
   - rag-indexing-worker-deployment.yaml
+  # FS-849. Namespace-level ceilings; see the file for why per-container limits
+  # are not the same thing.
+  - resource-governance.yaml
   - migration-job.yaml
   - db-backup-cronjob.yaml
   # FS-811. Weekly read-only check that the backup bucket is versioned and

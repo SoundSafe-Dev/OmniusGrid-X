@@ -259,6 +259,44 @@ def _write_bytes(path: str, content: bytes) -> None:
         fh.write(content)
 
 
+class ExportTooLarge(Exception):
+    """An export whose row count exceeds `MAX_EXPORT_ROWS` (FS-842).
+
+    Raised BEFORE the spreadsheet is built, because building it is the unbounded
+    allocation being prevented. Carries the numbers so the caller can say which limit was
+    hit and by how much rather than "export failed".
+    """
+
+    def __init__(self, rows: int, limit: int, what: str) -> None:
+        self.rows = rows
+        self.limit = limit
+        self.what = what
+        super().__init__(
+            f"This {what} export would contain {rows:,} rows, above the limit of "
+            f"{limit:,}. Narrow the filters or the date range and try again."
+        )
+
+
+def _guard_row_count(rows: list, what: str) -> list:
+    """Refuse a result set too large to turn into a spreadsheet in memory.
+
+    Checked on the materialised list rather than with a COUNT: a separate COUNT is a
+    second round trip AND a race — the count and the fetch see different snapshots — and
+    the rows are already in memory by the time anything can be decided. What this prevents
+    is the NEXT allocation, which is the expensive one: `_build_xlsx` holds the whole
+    workbook, its XML, and the compressed output at once, several times the size of the
+    rows themselves.
+
+    Bounding the query with LIMIT instead would silently TRUNCATE an export, which for a
+    compliance artefact is the worst available outcome: a file that looks complete and is
+    not.
+    """
+    limit = settings.MAX_EXPORT_ROWS
+    if limit > 0 and len(rows) > limit:
+        raise ExportTooLarge(len(rows), limit, what)
+    return rows
+
+
 class ExportProcessor:
     """CSV / Excel / PDF builders + Redis-tracked async telemetry export."""
 
@@ -475,7 +513,10 @@ class ExportProcessor:
         if status:
             q = q.where(Task.status == status)
         result = await session.execute(q)
-        rows = [self._task_row(task, column_name) for task, column_name in result.all()]
+        rows = _guard_row_count(
+            [self._task_row(task, column_name) for task, column_name in result.all()],
+            "tasks",
+        )
         return self._build_xlsx("Tasks", columns, rows), len(rows)
 
     @staticmethod
@@ -506,7 +547,9 @@ class ExportProcessor:
             q = q.where(ActionableRegistry.registry_type == registry_type)
         q = q.order_by(ActionableRegistry.created_at.desc())
         result = await session.execute(q)
-        rows = [self._registry_row(r) for r in result.scalars().all()]
+        rows = _guard_row_count(
+            [self._registry_row(r) for r in result.scalars().all()], "registries"
+        )
         return self._build_xlsx("Registries", columns, rows), len(rows)
 
     @staticmethod
@@ -536,7 +579,10 @@ class ExportProcessor:
             .where(ActionableRegistryItem.registry_id == registry_id)
             .order_by(ActionableRegistryItem.item_code.asc())
         )
-        rows = [self._registry_item_row(i) for i in result.scalars().all()]
+        rows = _guard_row_count(
+            [self._registry_item_row(i) for i in result.scalars().all()],
+            "registry items",
+        )
         return self._build_xlsx("Registry Items", columns, rows), len(rows)
 
     # --- PDF (OEE) ------------------------------------------------------------
@@ -724,6 +770,14 @@ class ExportProcessor:
                     )
                 ).scalars().all()
                 from app.services.oee_calculator import oee_calculator
+
+                # FS-842. Guarded on the ASSET list rather than on the finished rows: the
+                # loop below calls `calculate_oee` once per asset, so refusing here also
+                # avoids N round trips for an export that would be refused anyway. This
+                # builder was missed on the first pass and found by the coverage test —
+                # it accumulates into `rows` rather than a comprehension, so a check
+                # looking for `rows = [...]` saw an empty initialiser and moved on.
+                assets = _guard_row_count(list(assets), "OEE summary")
 
                 rows = []
                 for asset in assets:

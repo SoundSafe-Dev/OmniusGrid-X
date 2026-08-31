@@ -21,6 +21,8 @@ from typing import Any, Optional
 import redis.asyncio as redis
 import structlog
 from redis.exceptions import WatchError
+
+from app.core.circuit_breaker import CircuitBreaker, CircuitOpen
 from sqlalchemy import text
 
 from app.core.config import settings
@@ -52,6 +54,12 @@ class FeatureFlagService:
 
     def __init__(self) -> None:
         self._client: Optional[redis.Redis] = None
+
+    #: One breaker per process for this service's Redis reads. Named so the metrics say
+    #: WHICH dependency tripped — `opsgrid_circuit_breaker_state{dependency=...}` is only
+    #: useful if the label distinguishes the six independent Redis clients this codebase
+    #: builds (see the register in test_the_circuit_breaker_fails_fast.py).
+    _breaker = CircuitBreaker("redis:feature_flags", failure_threshold=3)
 
     def _redis(self) -> redis.Redis:
         """Lazily create a shared async Redis client (decoded strings)."""
@@ -206,7 +214,16 @@ class FeatureFlagService:
         callers (and the frontend hook) treat every flag as off rather than error.
         """
         try:
-            flags = await self.list_flags()
+            # FS-847. The fallback below was already correct — an unreachable Redis
+            # resolves every flag to off rather than erroring — but it was reached by
+            # PAYING THE CONNECT TIMEOUT FIRST, on every request, for as long as Redis was
+            # down. That is the cost a breaker exists to remove: the outcome is identical
+            # and it arrives immediately, so the request keeps its worker, its connection
+            # and its bulkhead slot instead of blocking on a socket that will not answer.
+            flags = await self._breaker.call(self.list_flags)
+        except CircuitOpen as exc:
+            logger.debug("feature_flag_evaluate_short_circuited", detail=str(exc))
+            return {}
         except Exception as exc:
             logger.warning("feature_flag_evaluate_failed", error=str(exc))
             return {}

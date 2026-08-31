@@ -748,6 +748,21 @@ jobs:
           # cluster's own `max_connections`, because multiplexing moves the ceiling rather
           # than removing it.
           ./tests/k8s/check_connection_budget.py
+      - name: The namespace quota fits its own replica ceilings
+        run: |
+          pip install pyyaml
+          # FS-849. ResourceQuota and LimitRange returned zero hits across the k8s tree.
+          # Every workload declared its own resources, which cannot bound what the
+          # CEILINGS ADD UP TO: 20 backend replicas plus 12 + 8 + 6 workers could consume
+          # the cluster and starve monitoring and ingress — the namespaces that would
+          # report it.
+          #
+          # The quota and the ceilings live in different files and drift in the direction
+          # that hurts. Once `requests.cpu` is exhausted the namespace stops admitting
+          # pods, so the autoscaler scales up and the replicas sit Pending: the platform
+          # stops responding to load in exactly the way it was scaled to handle, and the
+          # quota meant to contain a fault has caused one.
+          ./tests/k8s/check_resource_quota_fits.py
       - name: Manifests land in their declared namespace and name a real target
         run: |
           pip install pyyaml
