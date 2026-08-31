@@ -731,6 +731,23 @@ jobs:
           # KEDA's first poll, and permanently wherever the KEDA CRDs are absent — which the
           # deploy job explicitly tolerates.
           ./tests/k8s/check_replica_floors.py
+      - name: The connection budget fits the database
+        run: |
+          pip install pyyaml
+          # FS-839. Nothing set `pool_size` on the engine or `max_connections` on the
+          # database, so both were upstream defaults — 15 connections per process against
+          # 100. The declared ceilings are 20 backend replicas plus 12 + 8 + 6 workers,
+          # which measured 465 connections asked of 100 in staging. Production survived
+          # only because the CNPG pooler multiplexes; staging applies the same KEDA
+          # ceilings with no pooler, and past the limit PostgreSQL refuses the next
+          # connection from anybody — backend and every worker failing together, during
+          # the load that caused the scale-out.
+          #
+          # Runs per environment, and follows the pooler where one is in the path: client
+          # connections against `max_client_conn`, and what the pooler opens against the
+          # cluster's own `max_connections`, because multiplexing moves the ceiling rather
+          # than removing it.
+          ./tests/k8s/check_connection_budget.py
       - name: Manifests land in their declared namespace and name a real target
         run: |
           pip install pyyaml

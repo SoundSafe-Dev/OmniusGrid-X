@@ -63,6 +63,18 @@ spec:
               value: "3"
             - name: RAG_INDEX_STALE_INDEXING_SECONDS
               value: "900"
+            # CONNECTION BUDGET (FS-839). A worker is not an API server: it runs one
+            # consume/claim loop, so the API's pool would be idle capacity multiplied
+            # by the replica ceiling. Set even though this workload is `replicas: 1` and not KEDA-scaled: an unsized pool is unsized whether or not it scales today, and the day it gains a ScaledObject nobody will revisit this file.
+            #
+            # 2 + 2 leaves room for the loop plus an overlapping commit without
+            # reserving a pool nothing uses. `tests/k8s/check_connection_budget.py`
+            # measures every replica ceiling against `max_connections` and fails if
+            # this is raised without the database's ceiling moving with it.
+            - name: DB_POOL_SIZE
+              value: "2"
+            - name: DB_MAX_OVERFLOW
+              value: "2"
             - name: DATABASE_URL
               valueFrom:
                 secretKeyRef:

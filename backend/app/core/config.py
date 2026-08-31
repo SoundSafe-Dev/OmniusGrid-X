@@ -11,6 +11,35 @@ class Settings(BaseSettings):
     
     # Database
     DATABASE_URL: str = "sqlite+aiosqlite:///./opsgrid.db"
+
+    # CONNECTION BUDGET (FS-839). These were never set, so every process ran SQLAlchemy's
+    # QueuePool defaults — `pool_size=5, max_overflow=10`, i.e. **15 connections per
+    # process**, chosen by the library rather than against this deployment's ceilings.
+    #
+    # The ceilings are declared and knowable: the backend HPA allows 20 replicas, and KEDA
+    # allows 12 + 8 + 6 worker replicas. At 15 each that is 675 connections demanded of a
+    # PostgreSQL whose `max_connections` the base StatefulSet never overrode — so the
+    # default, 100. Production survives only because the CNPG pooler (FS-801) multiplexes
+    # in front of it; staging applies the same KEDA ceilings with **no pooler**, so it is
+    # the environment this arithmetic actually breaks.
+    #
+    # The failure is not gradual. Past the limit Postgres answers `FATAL: sorry, too many
+    # clients already` to the NEXT connection, whoever opens it — so the symptom is the
+    # backend and every worker failing at once, under exactly the load that triggered the
+    # scale-out meant to relieve it.
+    #
+    # Defaults are deliberately smaller than SQLAlchemy's. `tests/k8s/check_connection_budget.py`
+    # holds the invariant against the manifests, so changing either side without the other
+    # fails the build rather than a cluster.
+    DB_POOL_SIZE: int = 5
+    DB_MAX_OVERFLOW: int = 5
+    #: Seconds a request waits for a connection before failing. SQLAlchemy's default is 30,
+    #: which is longer than most upstream timeouts — the caller has usually given up, so the
+    #: connection is acquired for a response nobody reads. Fail while somebody is listening.
+    DB_POOL_TIMEOUT: float = 10.0
+    #: Recycle below any middlebox idle timeout so the pool does not hand out a connection
+    #: the network has already dropped. PgBouncer and most cloud LBs cut at 300-600s.
+    DB_POOL_RECYCLE: int = 240
     
     # Message Broker
     REDPANDA_URL: str = "redpanda:29092"

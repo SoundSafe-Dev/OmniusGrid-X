@@ -60,6 +60,18 @@ spec:
               drop:
                 - ALL
           env:
+            # CONNECTION BUDGET (FS-839). A worker is not an API server: it runs one
+            # consume/claim loop, so the API's pool would be idle capacity multiplied
+            # by the replica ceiling. Ingestion alone may reach 12 replicas, and at the API's size that is 120 connections from one workload.
+            #
+            # 2 + 2 leaves room for the loop plus an overlapping commit without
+            # reserving a pool nothing uses. `tests/k8s/check_connection_budget.py`
+            # measures every replica ceiling against `max_connections` and fails if
+            # this is raised without the database's ceiling moving with it.
+            - name: DB_POOL_SIZE
+              value: "2"
+            - name: DB_MAX_OVERFLOW
+              value: "2"
             - name: DATABASE_URL
               valueFrom:
                 secretKeyRef:

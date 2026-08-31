@@ -43,6 +43,26 @@ spec:
               drop:
                 - ALL
           
+          # THE CONNECTION CEILING, STATED (FS-839). Nothing set `max_connections`, so it
+          # was PostgreSQL's default of 100 — a number chosen by the upstream project, not
+          # against this deployment's declared scale. The backend HPA allows 20 replicas
+          # and KEDA allows 12 + 8 + 6 workers; at SQLAlchemy's own default pool of 15 per
+          # process that is 675 connections asked of 100.
+          #
+          # Production is shielded by the CNPG pooler (FS-801), which multiplexes. STAGING
+          # APPLIES THE SAME KEDA CEILINGS WITH NO POOLER, so staging is where the
+          # arithmetic actually lands — and past the limit Postgres refuses the next
+          # connection from anybody, so the symptom is the backend and every worker failing
+          # together, under the load that caused the scale-out.
+          #
+          # 200 matches the CNPG cluster (`database-ha/cluster.yaml`) so the two paths do
+          # not disagree, and fits the 4Gi limit below at roughly 5-10MB per backend
+          # process. `tests/k8s/check_connection_budget.py` holds the arithmetic against
+          # the manifests, so raising a replica ceiling without raising this fails CI.
+          args:
+            - "-c"
+            - "max_connections=200"
+
           ports:
             - name: postgres
               containerPort: 5432
