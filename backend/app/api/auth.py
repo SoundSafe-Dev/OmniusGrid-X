@@ -257,6 +257,16 @@ def _create_token_pair(user: User) -> tuple[str, dict, str, dict]:
             "email": user.email,
             "role": user.role,
             "sid": refresh_payload["jti"],
+            # FS-843. The tenant a request belongs to, so the rate limiter can bucket by
+            # ORGANISATION without a database lookup on every request. It is not used for
+            # authorisation — RLS and `get_tenant_db` derive the org from the loaded user,
+            # never from a claim — and this token is signed but decoded UNVERIFIED in the
+            # limiter, which is safe for bucketing and would not be for access control.
+            #
+            # A user with no organisation is a real state (invited, not yet attached), so
+            # this is deliberately nullable rather than defaulted to something that would
+            # put unrelated users in one bucket.
+            "org": str(user.organization_id) if user.organization_id else None,
         }
     )
     access_payload = decode_local_token(access_token, expected_type="access")

@@ -20,6 +20,7 @@ from app.core.pagination import MAX_OFFSET
 from app.core.session import SessionManager
 from app.core.tenant import get_tenant_db, get_tenant_org_id
 from app.db.models import Organization, User, UserInvitation
+from app.services.tenant_quotas import check_seat_quota
 from app.middleware.rate_limit import auth_rate_limit
 from app.middleware.rbac import require_admin
 from app.services.user_audit import add_user_audit
@@ -555,6 +556,20 @@ async def create_invitation(
     ):
         await db.flush()
 
+    # FS-842. Gated HERE rather than at acceptance, and after expiry has been swept so the
+    # count reflects seats actually held. Refusing at invitation time tells the admin who
+    # can act; refusing at acceptance would send an invitation, let someone click it, and
+    # then reject the person invited — for a reason they cannot do anything about.
+    #
+    # An invitation issued under the limit and accepted after somebody else takes the last
+    # seat is deliberately allowed through: the organisation already committed to that
+    # person, and revoking on arrival is the worse of the two failures.
+    seat_rejection = await check_seat_quota(db, organization_id)
+    if seat_rejection is not None:
+        raise HTTPException(
+            status_code=seat_rejection.status, detail=seat_rejection.detail
+        )
+
     existing_user = (
         await db.execute(
             select(User.id).where(func.lower(User.email) == body.email)
@@ -967,6 +982,15 @@ async def reactivate_user(
     target, _ = await _locked_tenant_users(user_id, organization_id, db)
     if target.is_active:
         raise HTTPException(status_code=409, detail="User is already active")
+
+    # FS-842. REACTIVATION CONSUMES A SEAT, and a quota enforced only on creation is
+    # bypassed by deactivating and reactivating — which is a normal administrative action,
+    # not an attack, so it would have been found by an admin rather than reported.
+    seat_rejection = await check_seat_quota(db, organization_id)
+    if seat_rejection is not None:
+        raise HTTPException(
+            status_code=seat_rejection.status, detail=seat_rejection.detail
+        )
 
     target.is_active = True
     target.updated_at = utcnow()

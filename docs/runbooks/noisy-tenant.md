@@ -6,6 +6,29 @@ second.
 
 ## Read this before reaching for the rate limiter
 
+**CORRECTED 2026-08-31 (FS-843): there IS a per-tenant limit now.** The paragraph that
+stood here said there was not, and it was true when written. What follows is what to reach
+for; the original text is kept below it because the shape of the old problem explains the
+new lever.
+
+`RATE_LIMIT_PER_TENANT` (default `2000/minute`) is enforced by `tenant_limiter` in
+`middleware/rate_limit.py`, keyed on the access token's `org` claim. **Turning it down is
+now a real containment option** and it bounds the organisation as a whole rather than one
+user at a time. Two things to know before you use it:
+
+* It is a **global** setting, not per-tenant-configurable. Turning it down throttles every
+  tenant, so it is a blunt instrument aimed slightly better than before — a per-tenant
+  override is not built.
+* Access tokens minted before this shipped carry no `org` claim and fall back to the
+  per-user bucket, so they escape the tenant cap until they expire
+  (`JWT_ACCESS_TOKEN_EXPIRE_MINUTES`, 30 by default). During an incident that began less
+  than half an hour ago, some of the offending traffic may still be uncapped.
+
+Still true: **there are no resource quotas** — nothing bounds a tenant's assets, ingestion
+rate, storage or export size (FS-842). Rate is bounded; volume is not.
+
+<details><summary>What this section said before FS-843, and why it read that way</summary>
+
 **There is no per-tenant limit to turn up, and the per-user limit works against you here.**
 
 `middleware/rate_limit.py` keys on the token's `sub` — the **user id**. So the budget is
@@ -16,6 +39,8 @@ account is limited as if it were one person at a keyboard.
 There are also **no quotas of any kind** — `quota`, `max_assets`, `tenant_limit` and
 `plan_limit` return zero hits across the backend. Nothing bounds a tenant's assets, ingestion
 rate, storage or export size (FS-842, FS-843).
+
+</details>
 
 That means: *the containment options below are all blunt.* Knowing that now is better than
 discovering it while looking for a knob that does not exist.
@@ -118,7 +143,7 @@ is the argument for them, and they are already scoped:
 
 | gap | item |
 |---|---|
-| Rate limits are per-user, so a large tenant gets a proportionally larger budget | FS-843 |
+| ~~Rate limits are per-user, so a large tenant gets a proportionally larger budget~~ — **closed 2026-08-31**, `RATE_LIMIT_PER_TENANT` bounds the organisation; still global rather than per-tenant | FS-843 |
 | No quotas at all — assets, users, ingestion rate, storage, export size | FS-842 |
 | No per-tenant concurrency cap; one tenant's sweep can take the whole pool | FS-844 |
 | No global request timeout | FS-845 |

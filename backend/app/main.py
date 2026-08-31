@@ -65,6 +65,8 @@ from app.middleware.csrf import CSRFMiddleware
 from app.middleware.rate_limit import (
     auth_limiter,
     limiter,
+    tenant_limiter,
+    TenantRateLimitMiddleware,
     rate_limit_exceeded_handler,
     remote_operation_limiter,
 )
@@ -284,12 +286,23 @@ setup_tracing(app, engine=_db_engine)
 # limits work in tests and dynamically configured deployments.
 app.state.limiter = limiter
 app.state.auth_limiter = auth_limiter
+app.state.tenant_limiter = tenant_limiter
 app.state.remote_operation_limiter = remote_operation_limiter
 app.add_exception_handler(RateLimitExceeded, rate_limit_exceeded_handler)
 
 # Application-wide middleware remains gated on settings.RATE_LIMIT_ENABLED.
 if settings.RATE_LIMIT_ENABLED:
     app.add_middleware(SlowAPIMiddleware)
+    # FS-843. The tenant budget is a SECOND dimension, not a replacement: the per-user
+    # limit protects one user from a runaway client, and this protects every other tenant
+    # from one organisation as a whole. Before it, a tenant's share of the platform grew
+    # with its headcount, so the noisiest neighbour was structurally the largest customer.
+    #
+    # Registered after the user limiter and therefore evaluated BEFORE it (Starlette
+    # applies middleware outermost-last). The order is deliberate: a tenant that has
+    # exhausted its whole budget should be refused without first spending a per-user
+    # counter that its other users still need.
+    app.add_middleware(TenantRateLimitMiddleware)
 
 # Unhandled-exception envelope, registered FIRST and therefore INNERMOST — deliberately
 # inside CORS below. Starlette's catch-all exception handler lives on the outermost

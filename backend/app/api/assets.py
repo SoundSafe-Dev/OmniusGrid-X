@@ -18,6 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.middleware.tenant_isolation import get_tenant_org_id, get_tenant_db
 from app.db.database import get_db
 from app.db.models import Asset, AssetType, Workcell, Organization, User
+from app.services.tenant_quotas import check_asset_quota
 from app.api.auth import get_current_active_user
 from app.core.pagination import MAX_OFFSET, PaginatedResponse, paginate
 from app.middleware.rbac import require_admin
@@ -142,6 +143,16 @@ async def create_asset(
     db: AsyncSession = Depends(get_tenant_db),
 ):
     """Create a new asset in the authenticated user's organization."""
+
+    # FS-842. Checked FIRST, before the reference walk and the type/workcell lookups: a
+    # refusal should cost the platform nothing, and a tenant at its ceiling is refused for
+    # a reason that no amount of correcting the body will change.
+    #
+    # 409 rather than 429 on purpose — retrying does not help until something is
+    # deactivated, and a 429 invites a client to back off and try again forever.
+    rejection = await check_asset_quota(db, org_id)
+    if rejection is not None:
+        raise HTTPException(status_code=rejection.status, detail=rejection.detail)
 
     # EVERY ID IN THIS BODY, AGAINST THE CALLER'S OWN ORGANISATION (FS-737). A foreign key
     # is checked BELOW row-level security, so a body naming another tenant's row is accepted

@@ -18,6 +18,12 @@ from fastapi import Request
 from fastapi.responses import JSONResponse
 from slowapi import Limiter
 from slowapi.errors import RateLimitExceeded
+from slowapi.middleware import (
+    SlowAPIMiddleware,
+    _find_route_handler,
+    _should_exempt,
+    async_check_limits,
+)
 from slowapi.util import get_remote_address
 
 from app.core.errors import problem_response
@@ -68,6 +74,45 @@ def get_user_id_from_request(request: Request) -> str:
     return f"ip:{get_remote_address(request)}"
 
 
+def get_tenant_key_from_request(request: Request) -> str:
+    """Return the rate-limit key for the ORGANISATION a request belongs to (FS-843).
+
+    THE DEFECT THIS EXISTS FOR. `get_user_id_from_request` keys on the token's `sub`, so
+    the budget is per person and a tenant's share of the platform scaled with its
+    headcount — 500 users meant 500x the budget of a single-user tenant. Nothing bounded
+    an organisation as a whole, so the noisiest neighbour was structurally the largest
+    customer and the only lever was throttling one user at a time while the other 499
+    carried on.
+
+    Read from the `org` claim, decoded WITHOUT signature verification. That is correct
+    here and would not be for authorisation: this only chooses a counter, and the real
+    identity check happens in the endpoint's auth dependency. A forged claim can only move
+    the forger into another tenant's bucket, which throttles the forger.
+
+    THE FALLBACK IS DELIBERATELY PER-USER, NOT A SHARED BUCKET. A token minted before this
+    claim existed has no `org`, and so does a user who has not been attached to one. Both
+    fall back to the per-user key, which means such a request is bounded by the per-user
+    limit and escapes the tenant cap. The alternative — a shared `tenant:unknown` bucket —
+    would throttle every unattached user against every other one, which is a worse failure
+    than a 30-minute gap while old access tokens expire.
+    """
+    auth_header = request.headers.get("Authorization", "")
+    if auth_header.startswith("Bearer "):
+        token = auth_header[7:]
+        if token == "dev-token":
+            return "tenant:dev-org"
+        try:
+            claims = jwt.decode(token, options={"verify_signature": False})
+            org = claims.get("org")
+            if org:
+                return f"tenant:{org}"
+        except jwt.PyJWTError:
+            pass
+    # No org to bill this to. Fall back to the caller's own key so the request is still
+    # counted somewhere rather than sharing a bucket with unrelated callers.
+    return get_user_id_from_request(request)
+
+
 def get_auth_client_key(request: Request) -> str:
     """Key authentication budgets by source IP, never by supplied tokens."""
     return f"auth-ip:{get_remote_address(request)}"
@@ -114,6 +159,25 @@ limiter = Limiter(
     headers_enabled=False,
     enabled=settings.RATE_LIMIT_ENABLED,
 )
+
+# THE TENANT BUDGET (FS-843), a second dimension rather than a replacement. The per-user
+# limiter above still protects one user from a runaway client; this one protects every
+# other tenant from one organisation as a whole. Both apply, and a request must pass both.
+#
+# Shares slowapi's fallback semantics on purpose — `in_memory_fallback_enabled` and
+# `swallow_errors` for the reason written above the first limiter: a rate limiter must
+# never convert a Redis outage into an API outage. Under fallback a fleet-wide tenant cap
+# degrades to a per-process one, which is weaker and still bounded.
+tenant_limiter = Limiter(
+    key_func=get_tenant_key_from_request,
+    storage_uri=settings.REDIS_URL,
+    in_memory_fallback_enabled=True,
+    swallow_errors=True,
+    default_limits=[settings.RATE_LIMIT_PER_TENANT],
+    headers_enabled=False,
+    enabled=settings.RATE_LIMIT_ENABLED,
+)
+
 
 # This limiter is intentionally independent from RATE_LIMIT_ENABLED. Auth
 # decorators execute their own checks, so they do not require the optional
@@ -251,3 +315,34 @@ def _resolve_postponed_annotations(func: Callable) -> None:
         # preserves existing behavior for callables with intentionally local
         # or incomplete typing namespaces.
         return
+
+
+class TenantRateLimitMiddleware(SlowAPIMiddleware):
+    """Apply the tenant budget alongside the per-user one (FS-843).
+
+    `SlowAPIMiddleware` reads `app.state.limiter`, so one instance can enforce exactly one
+    dimension. This subclass changes only which limiter it reads, inheriting slowapi's
+    route-exemption handling, storage fallback and 429 translation rather than
+    reimplementing them — a second copy of that logic is a second thing to keep correct.
+
+    SAFE TO RUN BESIDE THE FIRST because neither middleware sets
+    `request.state._rate_limiting_complete`; that flag belongs to the `@limit` DECORATOR
+    path, and it is what stops a decorated endpoint being counted twice. Both middlewares
+    therefore evaluate, and a request has to satisfy both budgets.
+    """
+
+    async def dispatch(self, request: Request, call_next):
+        app = request.app
+        limiter = app.state.tenant_limiter
+
+        if not limiter.enabled:
+            return await call_next(request)
+
+        handler = _find_route_handler(app.routes, request.scope)
+        if _should_exempt(limiter, handler):
+            return await call_next(request)
+
+        error_response, _ = await async_check_limits(limiter, request, handler, app)
+        if error_response is not None:
+            return error_response
+        return await call_next(request)

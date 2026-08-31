@@ -96,6 +96,28 @@ class Settings(BaseSettings):
     RATE_LIMIT_ENABLED: bool = False
     RATE_LIMIT_PER_USER: str = "100/minute"
     RATE_LIMIT_GLOBAL: str = "1000/minute"
+    # FS-843. The per-user limit above is a budget PER PERSON, so a tenant's share of the
+    # platform grew with its headcount: 500 users meant 500x the budget of a single-user
+    # tenant, and nothing anywhere bounded an organisation as a whole. The noisiest tenant
+    # was therefore the biggest customer, and the only lever was throttling one user at a
+    # time.
+    #
+    # Sized as a multiple of the per-user limit rather than an absolute: it has to exceed
+    # it, or a single active user would exhaust their whole organisation's budget and the
+    # per-user limit would become unreachable. 20x is roughly "twenty users going flat out
+    # at once", which is a busy tenant rather than a runaway one.
+    RATE_LIMIT_PER_TENANT: str = "2000/minute"
+
+    # PER-TENANT RESOURCE QUOTAS (FS-842). FS-843 bounds a tenant's request RATE; these
+    # bound its VOLUME, which is a different failure — a tenant within its rate limit can
+    # still grow to a million assets one row at a time, and every dashboard aggregate and
+    # retention sweep pays for that forever.
+    #
+    # 0 means unlimited, so this ships OFF and is turned on per deployment. A quota
+    # switched on by default would refuse real work in every existing environment on the
+    # day it deployed, which is how a safety feature gets reverted instead of tuned.
+    MAX_ASSETS_PER_ORG: int = 0
+    MAX_USERS_PER_ORG: int = 0
     RATE_LIMIT_BURST: int = 10
     AUTH_LOGIN_RATE_LIMIT: str = "10/minute"
     AUTH_REGISTER_RATE_LIMIT: str = "5/hour"
