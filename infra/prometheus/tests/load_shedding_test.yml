@@ -1,0 +1,81 @@
+# Unit tests for the load-shedding alerts (FS-860..864).
+#
+# Shedding is deliberate data loss. `DataSheddingManager` drops telemetry under pressure
+# by design — five tiers with per-tenant overrides, so a vibration stream yields before an
+# emergency stop — and until FS-860 the only record of a dropped reading was a `debug` log
+# line on a cluster deployed at `info`. The data was gone and nothing recorded it.
+#
+# So these rules exist to make a silent loss loud, and each is driven true with a
+# must-stay-quiet companion: an alert that fires on a healthy system would train the
+# on-call to ignore the one signal that says data is being discarded.
+
+rule_files:
+  - ../alerts.yml
+
+evaluation_interval: 1m
+
+tests:
+  # ── sustained shedding pages, naming the tenant losing data ───────────────────────
+  - interval: 1m
+    name: a tenant losing readings to shedding is named
+    input_series:
+      - series: 'opsgrid_telemetry_shed_total{organization_id="org-7",priority="4"}'
+        values: '0+30x20'   # 30 readings/min = 0.5/sec, sustained
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: TelemetryBeingShed
+        exp_alerts:
+          - exp_labels:
+              severity: high
+              team: platform
+              organization_id: org-7
+            exp_annotations:
+              summary: "Telemetry is being dropped by load shedding"
+              description: "Organization org-7 is losing 0.50 readings/sec to load shedding. This data is not buffered and does not arrive later."
+              runbook_url: "https://github.com/SoundSafe-Dev/OmniusGrid-X/blob/main/docs/runbooks/noisy-tenant.md"
+
+  # ── a system that is not shedding says nothing ────────────────────────────────────
+  - interval: 1m
+    name: a flat counter is silence
+    input_series:
+      # The counter EXISTS and does not move. This is the important quiet case: the series
+      # is present on every cluster, so a rule written against its presence rather than its
+      # rate would fire permanently everywhere.
+      - series: 'opsgrid_telemetry_shed_total{organization_id="org-7",priority="4"}'
+        values: '12x20'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: TelemetryBeingShed
+        exp_alerts: []
+      - eval_time: 10m
+        alertname: CriticalTelemetryShed
+        exp_alerts: []
+
+  # ── priority 1 is documented as never-shed, so any of it is a policy defect ───────
+  - interval: 1m
+    name: shedding a never-shed tier is critical, not overload
+    input_series:
+      - series: 'opsgrid_telemetry_shed_total{organization_id="org-7",priority="1"}'
+        values: '0+1x20'
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: CriticalTelemetryShed
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              team: platform
+            exp_annotations:
+              summary: "Priority-1 telemetry was shed, which must never happen"
+              description: "Load shedding dropped a reading in the tier documented as never-shed (PackML state changes, alarms, emergency stops). This is a policy defect, not overload."
+              runbook_url: "https://github.com/SoundSafe-Dev/OmniusGrid-X/blob/main/docs/runbooks/noisy-tenant.md"
+
+  # ── low-tier shedding must NOT raise the critical alert ───────────────────────────
+  - interval: 1m
+    name: shedding tier 4 is not a policy defect
+    input_series:
+      - series: 'opsgrid_telemetry_shed_total{organization_id="org-7",priority="4"}'
+        values: '0+30x20'
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: CriticalTelemetryShed
+        exp_alerts: []

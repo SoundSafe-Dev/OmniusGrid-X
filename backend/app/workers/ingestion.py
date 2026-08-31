@@ -33,6 +33,7 @@ from app.db.models import (
     PackMLState,
     Telemetry,
 )
+from app.core.http_metrics import TELEMETRY_SHED
 from app.services.data_shedding import data_shedder
 from app.services.fleet_targeting import semver_asset_values
 from app.services.websocket_manager import websocket_manager
@@ -336,6 +337,19 @@ class IngestionWorker:
                         timestamp,
                         organization_id=organization_id,
                     ):
+                        # COUNTED, NOT ONLY LOGGED (FS-860). The line below is `debug`
+                        # and the deployed LOG_LEVEL is `info`, so before this counter a
+                        # shed reading left no trace on a production cluster at all — the
+                        # data was gone and the only party who could notice was the
+                        # customer, looking at a gap in a chart.
+                        TELEMETRY_SHED.labels(
+                            organization_id=str(organization_id),
+                            priority=str(
+                                data_shedder.priority_of(
+                                    metric_name, organization_id
+                                )
+                            ),
+                        ).inc()
                         logger.debug(
                             "data_shedded",
                             metric=metric_name,

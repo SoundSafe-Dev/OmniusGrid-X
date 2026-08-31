@@ -538,6 +538,11 @@ services:
     command:
       - '--config.file=/etc/prometheus/prometheus.yml'
       - '--storage.tsdb.path=/prometheus'
+      # FS-859. No retention flag meant Prometheus's own default of 15d, against the
+      # 28-day SLO window in slo_rules.yml — so the error budget here was computed from
+      # roughly half the period it claims to cover, and silently, because `avg_over_time`
+      # averages the samples that exist rather than failing on the ones that do not.
+      - '--storage.tsdb.retention.time=35d'
       # FS-516. `--alertmanager.url` was REMOVED in Prometheus 2.0. An unknown flag is
       # fatal at startup, so the compose Prometheus exited immediately — which means
       # nobody running the stack locally has ever had metrics, alerts or the SLO rules,

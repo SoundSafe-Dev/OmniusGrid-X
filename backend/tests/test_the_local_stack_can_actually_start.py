@@ -91,10 +91,20 @@ class TestPrometheusCanStart:
         prometheus = (_compose()["services"] or {}).get("prometheus")
         assert prometheus, "no `prometheus` service in docker-compose.yml"
         command = prometheus.get("command") or []
+        # MATCHED ON THE WHOLE FLAG NAME, not a prefix. `startswith` could not tell the
+        # REMOVED `--storage.tsdb.retention` from the CURRENT
+        # `--storage.tsdb.retention.time`, so FS-859 setting the correct flag failed this
+        # guard — a false positive that would have been "fixed" by removing the retention
+        # setting the SLO window depends on. Rule 37: the check has to distinguish the
+        # states it claims to.
+        def _named(arg: str) -> str:
+            return str(arg).split("=", 1)[0].strip()
+
+        present = {_named(arg) for arg in command}
         offenders = [
             f"{flag} ({reason})"
             for flag, reason in REMOVED_PROMETHEUS_FLAGS.items()
-            if any(str(arg).startswith(flag) for arg in command)
+            if flag in present
         ]
         assert not offenders, (
             f"the compose Prometheus is passed flags the binary rejects: {offenders}. An "

@@ -174,3 +174,26 @@ def observe_db_pool(pool) -> None:
     # right for both.
     limit = getattr(pool, "_max_overflow", 0)
     DB_POOL_LIMIT.set(size + max(0, limit))
+
+
+# --- LOAD SHEDDING (FS-860..864) ----------------------------------------------------
+#
+# `DataSheddingManager` drops telemetry under pressure, by design and correctly: five
+# priority tiers with per-tenant overrides, so a vibration stream yields before an
+# emergency stop. What it did NOT do is say so. The only record of a dropped reading was
+# `logger.debug("data_shedded", ...)`, and the deployed LOG_LEVEL is `info` — so on a
+# production cluster a tenant's data was discarded and **nothing anywhere recorded it**.
+#
+# That is deliberate data loss with no signal, which is the class this sprint opened on:
+# an operator cannot alert on it, a dashboard cannot show it, and the first person to
+# notice is the customer asking why a chart has gaps.
+#
+# LABELS ARE BOUNDED ON PURPOSE. `organization_id` is the customer list and `priority` is
+# 1-5; `metric_name` is deliberately absent, because it is caller-supplied and would let a
+# misconfigured device mint unbounded series — the cardinality failure FS-794 alerts on.
+# The metric name is still in the debug log for anyone investigating one tenant.
+TELEMETRY_SHED = Counter(
+    "opsgrid_telemetry_shed_total",
+    "Telemetry readings dropped by load shedding, by tenant and priority tier",
+    ["organization_id", "priority"],
+)

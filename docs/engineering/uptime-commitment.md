@@ -134,6 +134,22 @@ is FS-829/831; the compliance catalogue records it as OG-IR-002.
 | Definitions | `infra/prometheus/slo_rules.yml` |
 | Proof the instrument records an outage | `infra/prometheus/tests/slo_outage_test.yml` |
 | Dashboard | Grafana → SLO overview |
+| That the window is really 28 days | `--storage.tsdb.retention.time` on the Prometheus Deployment, against the longest `[...]` in `slo_rules.yml` — asserted by `test_the_retention_covers_the_slo_window.py` |
+
+**Corrected 2026-08-31 (FS-859).** Everything above described a rolling 28-day window, and
+until this date **Prometheus kept 15 days** (`--storage.tsdb.retention.time=15d` in
+Kubernetes; no flag at all in compose, which is the same 15 by default). The number was
+therefore computed over 28 days of which roughly half existed.
+
+Prometheus does not fail on that. `avg_over_time` averages the samples present in the
+window and ignores the absent ones, so the query returned a confident figure derived from
+the most recent fortnight — and because the missing half is always the OLDEST, a bad start
+to a month disappeared from its own budget. The error flattered.
+
+Retention is now 35 days, with the volume grown to match, and the requirement is derived
+from the rules rather than restated: widening a window without widening retention fails the
+build. This is the same shape as the finding in §4 — an instrument that looked right and
+was not — one layer further down, in the store rather than the expression.
 
 If `ProbeSignalMissing` is firing, **no availability figure from that period is valid** —
 the instrument was not reporting, which is a distinct state from the system being healthy

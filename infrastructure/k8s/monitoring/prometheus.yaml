@@ -102,7 +102,22 @@ spec:
           args:
             - "--config.file=/etc/prometheus/prometheus.yml"
             - "--storage.tsdb.path=/prometheus"
-            - "--storage.tsdb.retention.time=15d"
+            # FS-859. WAS 15d, AGAINST A 28-DAY SLA WINDOW. `slo_rules.yml` computes
+            # `job:slo_availability:ratio28d` as `avg_over_time(...[28d])`, and the error
+            # budget the contract rests on is derived from it — over a window nearly twice
+            # the retention.
+            #
+            # Prometheus does not error on that. `avg_over_time` skips absent samples and
+            # averages what exists, so the first ~13 days of every month were simply not in
+            # the number, and the omission FLATTERS: a bad first half of the month is
+            # invisible. It is the same class as the FS-770 finding that opened this sprint
+            # — a measurement that looks right and is not — reintroduced one layer down.
+            #
+            # 35d is 28 plus a week of headroom, so a late query or a clock skew still
+            # covers the contractual window. `test_the_retention_covers_the_slo_window.py`
+            # derives the requirement from the rules rather than restating it, so widening
+            # a window without widening retention fails the build.
+            - "--storage.tsdb.retention.time=35d"
             - "--web.enable-lifecycle"
           securityContext:
             allowPrivilegeEscalation: false
@@ -155,4 +170,8 @@ spec:
         accessModes: ["ReadWriteOnce"]
         resources:
           requests:
-            storage: 20Gi
+            # Scaled with the retention above: 20Gi held 15 days, so 35 days needs
+            # roughly 47. 64Gi leaves room for the series growth that FS-794's cardinality
+            # alert watches for — running out of disk is how a metrics store stops
+            # recording the outage it exists to record.
+            storage: 64Gi

@@ -133,6 +133,20 @@ class DataSheddingManager:
             self._tenant_priorities.get((tenant_id, "*"), base),
         )
 
+    def priority_of(
+        self,
+        metric_name: str,
+        organization_id: Optional[str] = None,
+    ) -> int:
+        """The tier a metric resolves to for this tenant, overrides included.
+
+        Public because the shed COUNTER needs the tier as a label and must not re-derive
+        it: a second copy of this resolution would disagree with the decision the moment
+        `_priority_for` changed, and the metric would then describe a policy that is not
+        the one being applied.
+        """
+        return self._priority_for(metric_name, organization_id).priority
+
     def should_shed(
         self,
         metric_name: str,
