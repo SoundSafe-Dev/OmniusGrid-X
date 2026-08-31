@@ -46,6 +46,7 @@ OmniusGrid component failures. Start here during any incident.
 | [tenant-isolation-breach.md](tenant-isolation-breach.md) | One organisation may have seen another's data. SEV-1 on suspicion, not confirmation — the 72-hour clocks start at discovery (FS-835) |
 | [bad-deploy-wrote-bad-data.md](bad-deploy-wrote-bad-data.md) | Rolling back the code does not undo the writes. Stop, measure, then choose the narrowest instrument (FS-836) |
 | [noisy-tenant.md](noisy-tenant.md) | One tenant degrading the platform — and why every containment option is blunt (FS-837) |
+| [engineer-offboarding.md](engineer-offboarding.md) | An engineer leaves — the two remotes, the 7-day refresh window, and the register entries that quietly stop having an owner. Written the day it was first needed (03.09.02) |
 | [application-rollback.md](application-rollback.md) | Roll back a bad release on Docker Compose and Kubernetes |
 | [rto-rpo-checklist.md](rto-rpo-checklist.md) | Verify recovery met its RTO/RPO targets before closing the incident |
 | [incident-communication-templates.md](incident-communication-templates.md) | Copy-paste templates for internal, customer, and status-page comms |

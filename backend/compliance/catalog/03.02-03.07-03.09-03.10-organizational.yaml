@@ -119,6 +119,16 @@ controls:
         scope of the 2026-08-15 force-push incident whose rotation is still outstanding.
         A departure 13 days after that incident is the worst time for this to be undefined.
 
+        CLOSED IN PART, 2026-08-31: `docs/runbooks/engineer-offboarding.md` is the missing
+        process, written the day after it was first needed rather than by its due date. It
+        leads with the constraints rather than the commands — two remotes, a 7-day refresh
+        window that outlives deactivating the account, deactivate-never-delete, and the
+        grep that finds register entries which have quietly stopped having an owner.
+        `test_the_offboarding_runbook_is_accurate.py` holds its load-bearing claims so the
+        document cannot age silently. What remains organizational is the trigger: somebody
+        has to notice a departure and open the page, and no code path observes a
+        resignation.
+
   - id: OG-PE-001
     title: Physical access is limited, monitored, logged and managed
     satisfies:
