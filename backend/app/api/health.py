@@ -962,6 +962,19 @@ async def health_kafka():
 @router.get("/metrics", responses={200: {"content": {"text/plain": {}}}})
 async def metrics():
     """Prometheus metrics endpoint"""
+    # FS-841. The pool gauges are read from SQLAlchemy HERE rather than maintained on
+    # every checkout, so they cannot drift from the pool they describe — a connection
+    # invalidated rather than returned would desynchronise hand-kept counters, and the
+    # moment that matters is exactly when the pool is under stress.
+    #
+    # `engine` is resolved at call time from the module that owns it, for the reason
+    # written out at `_vacuum_telemetry` below: `from ... import engine` captures a
+    # per-module copy the test harness rebinds, and this endpoint would report the
+    # placeholder's pool.
+    from app.core.http_metrics import observe_db_pool
+    from app.db import database as _database
+
+    observe_db_pool(_database.engine.pool)
     return Response(content=generate_latest(), media_type=CONTENT_TYPE_LATEST)
 
 

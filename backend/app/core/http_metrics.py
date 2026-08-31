@@ -119,3 +119,58 @@ CORRELATION_JOB_STORE_DEGRADED = Counter(
     "opsgrid_correlation_job_store_degraded_total",
     "Times the correlation job store fell back to in-process memory because Redis was unreachable",
 )
+
+
+# --- CONNECTION POOL (FS-841) -------------------------------------------------------
+#
+# WHY A COLLECTOR AND NOT COUNTERS. The pool's state is already held by SQLAlchemy —
+# `checkedout()`, `size()`, `overflow()` are exact at any instant. Incrementing our own
+# counters on checkout and return would duplicate that state and then drift from it the
+# first time a connection is invalidated rather than returned. Reading it at scrape time
+# cannot drift, and costs nothing between scrapes.
+#
+# WHAT THIS WATCHES FOR. `pg_connections_used` from postgres_exporter sees the database's
+# total and is the LATER signal: by the time it saturates, every client is already
+# failing. Saturation happens first inside one process's pool, where requests queue
+# against `pool_timeout` while the database still has capacity — the API is slow, the
+# database looks healthy, and nothing connects the two. FS-839 sized the pools; this is
+# how anyone finds out the sizing was wrong.
+
+DB_POOL_CONNECTIONS = Gauge(
+    "opsgrid_db_pool_connections",
+    "SQLAlchemy connection pool state for this process",
+    ["state"],
+)
+
+DB_POOL_LIMIT = Gauge(
+    "opsgrid_db_pool_limit",
+    "Connections this process's pool may open (pool_size + max_overflow)",
+)
+
+
+def observe_db_pool(pool) -> None:
+    """Refresh the pool gauges from a live SQLAlchemy pool.
+
+    Tolerant on purpose: `NullPool` and SQLite's pools implement none of these methods,
+    and a metrics scrape must not be the thing that raises. A pool that cannot report is
+    simply not reported — the absence is visible in Prometheus as a missing series, which
+    `absent()` alerting already treats as a fault rather than as health.
+    """
+    try:
+        checked_out = pool.checkedout()
+        size = pool.size()
+        overflow = pool.overflow()
+    except (AttributeError, NotImplementedError):
+        return
+    DB_POOL_CONNECTIONS.labels(state="in_use").set(checked_out)
+    DB_POOL_CONNECTIONS.labels(state="idle").set(max(0, size - checked_out))
+    # `overflow()` is NEGATIVE until the pool is full — it counts from -pool_size — so a
+    # raw export would read as a nonsense gauge for the entire healthy range.
+    DB_POOL_CONNECTIONS.labels(state="overflow").set(max(0, overflow))
+    # The ceiling, exported beside the usage so an alert can be written as a RATIO rather
+    # than against a literal. A threshold hard-coded in a rule is a second copy of the
+    # pool size that nobody updates when the manifest changes — and this platform runs two
+    # different pool sizes on purpose (API 10, workers 4), so one literal could not be
+    # right for both.
+    limit = getattr(pool, "_max_overflow", 0)
+    DB_POOL_LIMIT.set(size + max(0, limit))

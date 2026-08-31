@@ -147,6 +147,52 @@ groups:
           description: "{{ $value | humanizePercentage }} of max_connections is in use. New backends will be refused at 100%."
           runbook_url: "https://github.com/SoundSafe-Dev/OmniusGrid-X/blob/main/docs/runbooks/noisy-tenant.md"
 
+      # POOL SATURATION, WHICH HAPPENS FIRST (FS-841). The alert above watches the
+      # DATABASE's total and is the later signal: by the time `max_connections` saturates,
+      # every client is already being refused. Exhaustion begins inside one process's
+      # pool, where requests queue against `pool_timeout` while the database still has
+      # plenty of headroom — so the API is slow, the database dashboard is green, and
+      # nothing joins the two.
+      #
+      # A RATIO against the exported limit, not a literal: this platform runs two pool
+      # sizes on purpose — the API at 10 and the workers at 4 (FS-839) — so one hard-coded
+      # threshold could not be right for both, and would go stale the first time a
+      # manifest changed.
+      - alert: DatabasePoolSaturated
+        # `ignoring(state)` is load-bearing, not decoration. The left side carries
+        # `state="in_use"` and the right does not, so Prometheus's default one-to-one
+        # matching finds NO pairs and the rule evaluates to nothing — it lints clean,
+        # deploys, and never fires. Caught by this rule's promtool test returning `got:[]`,
+        # which is the only reason the unit test is mandatory here.
+        expr: |
+          opsgrid_db_pool_connections{state="in_use"}
+            / ignoring(state) clamp_min(opsgrid_db_pool_limit, 1) > 0.9
+        for: 5m
+        labels:
+          severity: high
+          team: platform
+        annotations:
+          summary: "A connection pool is above 90% checked out"
+          description: "{{ $labels.job }}/{{ $labels.instance }} has {{ $value | humanizePercentage }} of its pool in use. Requests queue against DB_POOL_TIMEOUT once it is full, so this is latency now and errors shortly."
+          runbook_url: "https://github.com/SoundSafe-Dev/OmniusGrid-X/blob/main/docs/runbooks/noisy-tenant.md"
+
+      # FULL, and staying full. Not a duplicate of the ratio above: 90% for five minutes
+      # is a capacity warning, while sustained 100% means every further request is already
+      # waiting DB_POOL_TIMEOUT and some are failing. Different number, different
+      # response, so a different alert.
+      - alert: DatabasePoolExhausted
+        expr: |
+          opsgrid_db_pool_connections{state="in_use"}
+            >= ignoring(state) clamp_min(opsgrid_db_pool_limit, 1)
+        for: 2m
+        labels:
+          severity: critical
+          team: platform
+        annotations:
+          summary: "A connection pool has been fully checked out for 2m"
+          description: "{{ $labels.job }}/{{ $labels.instance }} has every pooled connection in use. Requests wait DB_POOL_TIMEOUT seconds and then fail. Scaling out will not help if the database is the constraint — check DatabaseConnectionsNearLimit first."
+          runbook_url: "https://github.com/SoundSafe-Dev/OmniusGrid-X/blob/main/docs/runbooks/noisy-tenant.md"
+
   - name: opsgrid_edge_agents
     rules:
       # MEDIUM: Edge agent buffering (network issue)

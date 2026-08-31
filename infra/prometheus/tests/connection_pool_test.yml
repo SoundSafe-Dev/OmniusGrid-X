@@ -1,0 +1,128 @@
+# Unit tests for the connection-pool alerts (FS-841).
+#
+# FS-839 found that neither end of the connection budget had been chosen: SQLAlchemy's
+# default pool of 15 per process against PostgreSQL's default `max_connections` of 100,
+# with declared ceilings that measured 465 connections asked of 100 in staging. The sizing
+# is fixed and guarded at build time by `tests/k8s/check_connection_budget.py`.
+#
+# These two rules are how anyone finds out the sizing was WRONG at runtime, so each is
+# driven true and each is given a must-stay-quiet case. A pool alert that fires
+# unconditionally would be worse than none: it would train the on-call to ignore the one
+# signal that precedes a database-side outage.
+
+rule_files:
+  - ../alerts.yml
+
+evaluation_interval: 1m
+
+tests:
+  # ── saturation: the early signal, while the database still looks healthy ───────────
+  - interval: 1m
+    name: a pool above 90% checked out pages before the database notices
+    input_series:
+      - series: 'opsgrid_db_pool_connections{state="in_use",job="backend",instance="pod-a"}'
+        values: '10x30'
+      - series: 'opsgrid_db_pool_limit{job="backend",instance="pod-a"}'
+        values: '10x30'
+      # The database is FINE. This is the whole point of the rule: pool exhaustion is a
+      # per-process condition, so `pg_connections_used` sees nothing and a responder
+      # looking only at the database dashboard finds a green screen.
+      - series: 'pg_connections_used'
+        values: '20x30'
+      - series: 'pg_connections_limit_total'
+        values: '200x30'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: DatabasePoolSaturated
+        exp_alerts:
+          - exp_labels:
+              severity: high
+              team: platform
+              job: backend
+              instance: pod-a
+            exp_annotations:
+              summary: "A connection pool is above 90% checked out"
+              description: "backend/pod-a has 100% of its pool in use. Requests queue against DB_POOL_TIMEOUT once it is full, so this is latency now and errors shortly."
+              runbook_url: "https://github.com/SoundSafe-Dev/OmniusGrid-X/blob/main/docs/runbooks/noisy-tenant.md"
+      # And the database-side rule stays quiet, which is the asymmetry being asserted.
+      - eval_time: 10m
+        alertname: DatabaseConnectionsNearLimit
+        exp_alerts: []
+
+  # ── the must-stay-quiet half: a busy pool that is not saturated ────────────────────
+  - interval: 1m
+    name: a pool at 80% is busy, not saturated, and pages nobody
+    input_series:
+      - series: 'opsgrid_db_pool_connections{state="in_use",job="backend",instance="pod-a"}'
+        values: '8x30'
+      - series: 'opsgrid_db_pool_limit{job="backend",instance="pod-a"}'
+        values: '10x30'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: DatabasePoolSaturated
+        exp_alerts: []
+      - eval_time: 10m
+        alertname: DatabasePoolExhausted
+        exp_alerts: []
+
+  # ── the smaller worker pool fires on its own scale, not the API's ──────────────────
+  - interval: 1m
+    name: a worker pool saturates at 4 because the rule is a ratio
+    input_series:
+      # Workers run DB_POOL_SIZE=2 + DB_MAX_OVERFLOW=2 (FS-839). A literal threshold
+      # written for the API's 10 would never fire here, which is why the expression
+      # divides by the exported limit instead.
+      - series: 'opsgrid_db_pool_connections{state="in_use",job="ingestion-worker",instance="pod-w"}'
+        values: '4x30'
+      - series: 'opsgrid_db_pool_limit{job="ingestion-worker",instance="pod-w"}'
+        values: '4x30'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: DatabasePoolSaturated
+        exp_alerts:
+          - exp_labels:
+              severity: high
+              team: platform
+              job: ingestion-worker
+              instance: pod-w
+            exp_annotations:
+              summary: "A connection pool is above 90% checked out"
+              description: "ingestion-worker/pod-w has 100% of its pool in use. Requests queue against DB_POOL_TIMEOUT once it is full, so this is latency now and errors shortly."
+              runbook_url: "https://github.com/SoundSafe-Dev/OmniusGrid-X/blob/main/docs/runbooks/noisy-tenant.md"
+
+  # ── exhaustion: full and staying full ─────────────────────────────────────────────
+  - interval: 1m
+    name: a pool fully checked out for two minutes is critical
+    input_series:
+      - series: 'opsgrid_db_pool_connections{state="in_use",job="backend",instance="pod-a"}'
+        values: '10x30'
+      - series: 'opsgrid_db_pool_limit{job="backend",instance="pod-a"}'
+        values: '10x30'
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: DatabasePoolExhausted
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              team: platform
+              job: backend
+              instance: pod-a
+            exp_annotations:
+              summary: "A connection pool has been fully checked out for 2m"
+              description: "backend/pod-a has every pooled connection in use. Requests wait DB_POOL_TIMEOUT seconds and then fail. Scaling out will not help if the database is the constraint — check DatabaseConnectionsNearLimit first."
+              runbook_url: "https://github.com/SoundSafe-Dev/OmniusGrid-X/blob/main/docs/runbooks/noisy-tenant.md"
+
+  # ── a momentary spike is not an incident ──────────────────────────────────────────
+  - interval: 1m
+    name: a pool that fills for one minute and drains does not page
+    input_series:
+      # Full at t=0, then back to normal. `for: 2m` exists precisely so a burst that the
+      # pool absorbs — which is what a pool is FOR — does not wake anyone.
+      - series: 'opsgrid_db_pool_connections{state="in_use",job="backend",instance="pod-a"}'
+        values: '10 3 3 3 3 3 3 3 3 3'
+      - series: 'opsgrid_db_pool_limit{job="backend",instance="pod-a"}'
+        values: '10x10'
+    alert_rule_test:
+      - eval_time: 9m
+        alertname: DatabasePoolExhausted
+        exp_alerts: []
