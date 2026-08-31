@@ -15662,3 +15662,99 @@ lines that would otherwise invite them back.
 
 Backend 5,306 → **5,398**; frontend 1,211 → **1,223**; edge 477 → **490**, plus 109 DDIL
 scenarios. Method rules to **288**.
+
+## Wave 3 (FS-839..870) — capacity, and the numbers nobody had chosen
+
+Wave 1 asked whether the platform could see an outage. Wave 2 asked whether it could
+survive one. This wave asked what happens on an ordinary busy Tuesday, and the answer kept
+being the same shape: **a limit existed, it was chosen by an upstream project, and nobody
+here had ever looked at it.**
+
+### The connection budget: 465 against 100
+
+`create_async_engine` was called with no `pool_size`, so every process ran SQLAlchemy's
+default of 15 connections. The base StatefulSet set no `max_connections`, so that was
+PostgreSQL's default of 100. Two upstream projects had chosen the numbers governing this
+platform's scale-out.
+
+Reverting both halves and running the new check measures it: **staging demanded 465
+connections against 100**, DR 120 against 100 —
+
+    ingestion-worker  12 x 15 = 180      backend            2 x 15 =  30
+    export-worker      8 x 15 = 120      ota-rollout        1 x 15 =  15
+    compliance         6 x 15 =  90      rag-indexing       1 x 15 =  15
+
+Production never showed it, because the CNPG pooler multiplexes in front of the cluster.
+**Staging applies identical KEDA ceilings with no pooler**, so the environment that breaks
+is the one nobody load-tests — and past the limit PostgreSQL refuses the next connection
+from *anybody*, so the backend and every worker fail together, during the load spike that
+caused the scale-out meant to relieve it.
+
+The guard is the durable part: it sums each environment's worst case from the manifests and
+follows the pooler where it is in the path, checking clients against `max_client_conn` and
+what the pooler opens against the cluster's own limit — because multiplexing moves the
+ceiling rather than removing it.
+
+### The SLA was computed from half its data
+
+The same shape, one layer up. `slo_rules.yml` derives the contractual error budget from
+`avg_over_time(...[28d])`; Prometheus kept **15 days**. Nothing errored — `avg_over_time`
+averages the samples present and ignores the absent ones — so the number was confident,
+derived from a fortnight, and because the missing half is always the oldest, **a bad start
+to a month vanished from that month's budget. The error flattered.**
+
+That is the FS-770 finding again (`clamp_min` reading 1.0 during a total outage) with the
+expression correct and the store wrong. Wave 1 fixed what the query said; this fixed what
+it had to say it about. The customer-facing uptime commitment carries the correction,
+because it promised the 28-day window in writing.
+
+### Shedding was deliberate data loss with no signal
+
+`DataSheddingManager` was better than the plan assumed — already cloud-side, five tiers,
+per-tenant overrides, wired into the ingestion worker. What it did not do is say so. The
+only record of a dropped reading was `logger.debug("data_shedded", ...)`, and the deployed
+`LOG_LEVEL` is `info`. **On a production cluster a tenant's telemetry was discarded and
+nothing anywhere recorded it.** The first party able to notice was the customer, looking at
+a gap in a chart.
+
+### Which led to the item the plan had pointed in the wrong direction
+
+FS-865 asked for admission control on the ingest endpoint. That endpoint exists, is
+authenticated, has rate limiting and quarantine handling — and **nothing calls it**; its own
+header says so. The agent publishes straight to the broker.
+
+The real loss is upstream of shedding: the agent drains its buffer as fast as the link
+allows, Kafka gives a producer no view of consumer lag, and by the time the worker starts
+dropping readings those readings had been sitting safely in an encrypted durable buffer on
+the device. **The edge holds data well; the cloud under pressure holds it by dropping it.**
+So the answer was to slow the producer and leave the data where it is safest — carried on
+the heartbeat ack every agent already polls, with every failure direction resolving to
+"keep sending", because a mechanism that fails toward throttling silences a fleet on a typo.
+
+### The rest, briefly
+
+Per-tenant rate limits (a 500-user tenant had 500× the budget of a single-user one, so the
+noisiest neighbour was structurally the largest customer), volume quotas including a storage
+figure that had to be built before it could be enforced, a bulkhead so one tenant cannot
+take every connection in a pod, a request deadline because the ingress cut the client off at
+60s and nothing told the server, a circuit-breaker primitive, one Redis pool instead of
+seven, namespace quotas, `preStop` hooks, spread constraints, priority classes, and a
+startup probe for a database that was being **killed 60 seconds into WAL recovery** — each
+kill leaving more WAL to replay, so the loop diverged rather than converging.
+
+### What this wave says about the method
+
+Five of the findings were caught by guards written for something else, and four were in code
+written earlier in the same session. That is the system working, and it is worth stating
+plainly rather than quietly: **the guards found my new code as readily as anyone's.** The
+recurring failure was mine, not the codebase's — a check that could not distinguish the
+states it claimed to (rule 37), five separate times: a name-in-file match that survived
+deleting the code it guarded, a character-window that survived moving code out of its block,
+a line match located with `str.index` on a repeated line, a prefix match that could not tell
+a removed flag from its replacement, and a test that reloaded config and broke 27 others.
+
+Every one was found by mutation-testing rather than by reading. The habit is cheap and it is
+the only thing that reliably separates a guard from a decoration.
+
+Backend 5,171 → **5,510**; edge 477 → **515** plus 109 DDIL; frontend 1,223. Method rules to
+**293**. Twelve Kubernetes gates, 79 alert rules, 17 promtool suites.

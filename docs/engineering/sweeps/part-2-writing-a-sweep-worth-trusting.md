@@ -2125,6 +2125,33 @@ one of its findings. The habit that catches it:
      branches shared. A commit of yours that is an ancestor of *their* branch and not of yours
      is the signature. Before resolving a large conflict set, find out how many conflicts are
      about the work and how many are about the history — they need opposite treatments.
+289. **A cluster-scoped resource inside a namePrefixed base is silently multiplied.**
+     `PriorityClass` in `base/` became nine cluster-wide objects for three tiers, one set
+     per overlay, so a staging pod could outrank a production one on a shared cluster.
+     Kustomize cannot tell a Deployment from a ClusterRole — it renames whatever it is
+     given. Anything cluster-scoped belongs outside the tree the overlays prefix. Visible
+     only in the rendered output; every source file read correctly.
+290. **A test that reloads a config module poisons every test after it.** Reloading
+     `app.core.config` rebinds the `settings` singleton while every module that imported it
+     keeps the old object, so half the process reads one instance and half the other. One
+     such test passed alone and broke 27 unrelated ones. Passing in isolation is not
+     evidence for anything that touches module-level state.
+291. **When the window exceeds the retention, the query does not fail — it flatters.** The
+     28-day error budget was computed from 15 days of data; `avg_over_time` averages the
+     samples present and drops the oldest, so a bad start to a month vanished from its own
+     budget. For any window-based claim, check the store can hold the window — and that the
+     disk can hold the retention, or the database evicts the oldest blocks and the window
+     shortens again while the flag still reads correctly.
+292. **A limiter must fail toward permitting.** Backpressure that fails toward throttling
+     silences a fleet on a typo, a stale key or a cache outage, and a silenced fleet loses
+     data the same way an overloaded one does — only more quietly. The exception proves
+     it: a quota fails toward refusing, because a refusal is recoverable. The test is which
+     wrong answer can be undone.
+293. **Before guarding a door, check that anything comes through it.** An item asking for
+     admission control on the ingest endpoint would have produced a well-tested no-op: the
+     endpoint's own header records that nothing calls it. An item that names a mechanism is
+     describing a symptom, not prescribing a fix — verify what the mechanism is in the path
+     of, and expect the answer to move the work.
 ---
 
 ## Open observations, not yet tickets

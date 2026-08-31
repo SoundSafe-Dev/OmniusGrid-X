@@ -6340,3 +6340,116 @@ yours. `git log --author=<them> <merge-base>..<branch> -- <path>` decides it per
 The general form: **before resolving a large conflict set, find out how many of the conflicts
 are about the work and how many are about the history.** They need opposite treatments, and
 the ratio here was 21 to 134.
+
+## Rule 289 — a cluster-scoped resource inside a namePrefixed base is silently multiplied
+
+`PriorityClass` went into `base/` with the workloads that reference it, which is where a
+Kubernetes resource normally belongs. The overlays apply `namePrefix: prod-` /
+`staging-` / `dr-`, and kustomize rewrites both the objects and every reference to them —
+so three tiers became **nine cluster-wide objects**, and each environment quietly defined
+its own global priority scale. On a shared cluster a staging pod at
+`staging-platform-critical` (value 900000) outranks a production pod at
+`prod-platform-standard`.
+
+Nothing in the source files suggested it. The manifests were correct, the references
+resolved, `kustomize build` succeeded, and kubeconform passed. **It was visible only in the
+rendered output**, which is why the habit of reading what a build produces — rather than
+what its inputs say — keeps earning its cost.
+
+The general form: `namePrefix` is a namespace-scoped idea applied indiscriminately.
+Kustomize cannot tell a Deployment from a ClusterRole, a PriorityClass or a
+StorageClass — it renames whatever it is given. So **anything cluster-scoped belongs
+outside the tree the overlays prefix**, applied once per cluster, and that is a structural
+rule rather than a judgement call.
+
+The guard is worth the four lines: an overlay that renders a cluster-scoped object at all
+is the failure, so the check does not need to understand priorities, only to notice one
+appearing where it cannot be per-environment.
+
+## Rule 290 — a test that reloads a config module poisons every test after it
+
+A wiring test set `RATE_LIMIT_ENABLED=true`, reloaded `app.core.config` and `app.main`, and
+asserted the middleware appeared. It passed in isolation and **broke 27 unrelated tests**
+in the full suite — signed-URL tests, mostly, which have nothing to do with rate limiting.
+
+Reloading a config module rebinds the `settings` singleton. Every module that did
+`from app.core.config import settings` at import time keeps a reference to the OLD object,
+so after the reload half the process reads one instance and half reads another. The
+failures surface far from the cause, in whatever happens to run next, and they look like
+flakiness.
+
+Two things follow. **A test that mutates module-level state is not isolated no matter how
+carefully it cleans up**, because the cleanup restores the module and not the references
+other modules already hold. And **passing alone is not evidence**: this is the failure mode
+that a per-file run cannot see, which is an argument for running the whole suite before
+believing a new test.
+
+The replacement asserts the wiring by parsing `main.py`. Slower to write, and it cannot
+damage anything.
+
+## Rule 291 — when the window exceeds the retention, the query does not fail, it flatters
+
+`slo_rules.yml` computed the contractual error budget as
+`avg_over_time(job:slo_availability:ratio5m[28d])`. Prometheus was configured with
+`--storage.tsdb.retention.time=15d`.
+
+Nothing errored. `avg_over_time` averages the samples present in the window and ignores the
+absent ones, so the query returned a confident number derived from roughly half the period
+it claimed to describe — and the missing half is always the OLDEST, so a bad start to a
+month vanished from that month's budget. **The error was not random; it flattered.**
+
+This is the same shape as the finding that opened the sprint — `clamp_min` making
+availability read 1.0 during a total outage — one layer down: Wave 1 fixed the expression,
+this was the store underneath it. A measurement is a chain, and every link can be
+individually correct while the chain reports something untrue.
+
+So: **for any window-based claim, check the store can hold the window.** And note the
+follow-on, because the fix has its own version of the same trap — retention the disk cannot
+hold is not retention, since the database evicts the oldest blocks and the window silently
+shortens again while the flag still reads `35d`. The volume has to grow with the setting.
+
+The guard derives the requirement from the rules rather than restating it: widening a
+window without widening retention fails the build. Restating it would have created a third
+number to keep true.
+
+## Rule 292 — a limiter must fail toward permitting
+
+Backpressure, circuit breakers, quotas and rate limits all answer "should this proceed?",
+and all of them can be wrong in two directions. The directions are not symmetric.
+
+A backpressure signal that fails toward THROTTLING can silence a fleet on a Redis outage,
+an unrecognised value, a malformed response, or a stale key written by a worker that has
+since crashed. And a silenced fleet loses data exactly the way an overloaded one does —
+only more quietly, and for longer, because nothing is obviously wrong. Every one of those
+failure paths therefore resolves to `normal`, and the key carries a TTL specifically so a
+dead publisher cannot throttle the fleet forever.
+
+The same reasoning appears elsewhere in this codebase and is worth naming as one idea: the
+rate limiter falls back to in-memory counters rather than rejecting when Redis is
+unreachable; feature flags resolve to off rather than erroring; `_consumer_lag` returns 0
+when it cannot tell, because an unknown lag is not evidence of pressure.
+
+The exception proves it: a QUOTA fails toward refusing, because exceeding it is the thing
+being prevented and a refusal is recoverable. The test is not "which way is safer" in the
+abstract — it is **which wrong answer can be undone**.
+
+## Rule 293 — before guarding a door, check that anything comes through it
+
+FS-865 asked for load-shedding admission control on the ingest endpoint. The endpoint
+exists, is authenticated, has rate limiting and quarantine handling — and **nothing calls
+it**. Its own header says so: the edge agent publishes straight to the broker. Admission
+control there would have been a well-tested no-op, and it would have looked like the item
+was done.
+
+The plan was not wrong to ask; it was written from the code's shape rather than its
+traffic, and a route that exists reads exactly like a route that is used. What separated
+them was one grep and one comment already in the file.
+
+So the work became the same intent applied to the path that carries the data: slow the
+producer, so the pipeline stops destroying readings the device was holding safely. That is
+a better answer than the one requested, and it was only reachable by asking what the door
+was for before fitting the lock.
+
+Generally: **an item that names a mechanism is describing a symptom, not prescribing a
+fix.** Verify what the mechanism is actually in the path of, and be prepared for the answer
+to move the work somewhere else entirely.
