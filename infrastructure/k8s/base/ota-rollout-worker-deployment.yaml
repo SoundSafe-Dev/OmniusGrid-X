@@ -9,6 +9,19 @@ metadata:
     app.kubernetes.io/part-of: omniusgrid
 spec:
   replicas: 1
+  # FS-853. THIS ONE MUST NEVER HAVE TWO INSTANCES. It is the singleton OTA dispatcher —
+  # `services/rag_index_queue.py` names it as the counter-example to its own SKIP LOCKED
+  # design — so a surge during a deploy would put two dispatchers on the same rollout and
+  # send every device its command twice.
+  #
+  # `maxUnavailable: 1` on a single replica means it is fully down during the rollout, and
+  # that is correct: a rollout dispatcher pausing for a few seconds is invisible, two of
+  # them running is not.
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 0
+      maxUnavailable: 1
   selector:
     matchLabels:
       app.kubernetes.io/name: ota-rollout-worker

@@ -49,7 +49,7 @@ spec:
 #
 # The other single-replica workloads remain deliberately excluded per the header above:
 # export-worker and compliance-reports-worker have `minReplicaCount: 0` and scale to zero,
-# where a PDB protects nothing; timescaledb, redis, seaweedfs, jaeger and otel-collector
+# where a PDB protects nothing; timescaledb, redis, seaweedfs and jaeger
 # are true singletons whose availability needs replication, not a disruption budget.
 apiVersion: policy/v1
 kind: PodDisruptionBudget
@@ -61,3 +61,18 @@ spec:
   selector:
     matchLabels:
       app.kubernetes.io/name: ingestion-worker
+
+---
+# FS-855. Added when the collector went to `replicas: 2` — it is stateless, so unlike the
+# other singletons in the note above it can actually be made redundant. A PDB is what turns
+# two replicas into availability: without one, a node drain can evict both at once and the
+# redundancy is nominal.
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: otel-collector-pdb
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: otel-collector

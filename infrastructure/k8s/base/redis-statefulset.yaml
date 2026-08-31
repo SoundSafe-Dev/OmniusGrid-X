@@ -106,6 +106,15 @@ spec:
               command: ["redis-cli", "ping"]
             initialDelaySeconds: 5
             periodSeconds: 10
+          # FS-854. Liveness kills at 15 + 3x20 = 75s. Redis does not answer PING while it
+          # is loading an RDB or replaying an AOF, so a large keyspace restarts into a loop
+          # that never finishes loading. Three minutes to load, then liveness as before.
+          startupProbe:
+            exec:
+              command: ["redis-cli", "ping"]
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 36
           livenessProbe:
             exec:
               command: ["redis-cli", "ping"]

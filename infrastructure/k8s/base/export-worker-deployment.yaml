@@ -9,6 +9,13 @@ metadata:
     app.kubernetes.io/part-of: omniusgrid
 spec:
   replicas: 1
+  # FS-853. Same reasoning as the ingestion worker: a consumer-group member must not
+  # overlap with its replacement. An export delivered twice is an email sent twice.
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 0
+      maxUnavailable: 1
   selector:
     matchLabels:
       app.kubernetes.io/name: export-worker

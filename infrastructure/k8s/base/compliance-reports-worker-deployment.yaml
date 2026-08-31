@@ -9,6 +9,13 @@ metadata:
     app.kubernetes.io/part-of: omniusgrid
 spec:
   replicas: 1
+  # FS-853. Consumer-group member; no overlap. A compliance report generated twice is two
+  # signed artefacts for one request, which is worse than a slow rollout.
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 0
+      maxUnavailable: 1
   selector:
     matchLabels:
       app.kubernetes.io/name: compliance-reports-worker

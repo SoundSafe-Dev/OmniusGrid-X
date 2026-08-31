@@ -109,6 +109,17 @@ spec:
               memory: "2Gi"
               cpu: "1000m"
           
+          # FS-854. Liveness kills at 30 + 3x10 = 60s. Cluster formation on a cold start —
+          # a broker discovering peers, electing a controller, recovering its log segments —
+          # can exceed that, and a killed broker rejoins with more recovery to do. Five
+          # minutes to become ready, then liveness resumes its tight window.
+          startupProbe:
+            httpGet:
+              path: /v1/status/ready
+              port: admin
+            periodSeconds: 5
+            timeoutSeconds: 5
+            failureThreshold: 60
           livenessProbe:
             httpGet:
               path: /v1/status/ready

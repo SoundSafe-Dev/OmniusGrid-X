@@ -105,6 +105,28 @@ spec:
               memory: "4Gi"
               cpu: "2000m"
           
+          # FS-854. THE ONE THAT WOULD HAVE BEEN AN OUTAGE. The liveness probe below kills
+          # this container 30 + 3x10 = **60 seconds** after start, and a PostgreSQL that is
+          # replaying WAL after an unclean shutdown — or running initdb plus the TimescaleDB
+          # extension setup on first boot — routinely takes longer than that.
+          #
+          # The failure mode is not a slow start, it is a PERMANENT one: the kill leaves the
+          # recovery unfinished, so the next boot has at least as much WAL to replay, and the
+          # loop gets worse each time rather than converging. The database that a restore
+          # runbook depends on could not have started from a dirty shutdown.
+          #
+          # A startupProbe suspends liveness until it passes, so recovery gets 10 minutes
+          # (120 x 5s) and liveness keeps its tight 60-second window afterwards, when the
+          # process really is wedged rather than working.
+          startupProbe:
+            exec:
+              command:
+                - pg_isready
+                - -U
+                - $(POSTGRES_USER)
+            periodSeconds: 5
+            timeoutSeconds: 5
+            failureThreshold: 120
           livenessProbe:
             exec:
               command:

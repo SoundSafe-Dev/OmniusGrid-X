@@ -21,6 +21,20 @@ spec:
   #
   # KEDA owns the count once it is running; this is the value before it does.
   replicas: 2
+  # FS-853. The default is 25%/25%, which permits SURGE: a new pod starts while the old
+  # one is still consuming, so two members of the same consumer group hold the same
+  # partitions for a moment. Redpanda resolves that with a rebalance, and a rebalance
+  # mid-deploy on the live telemetry path means re-delivered offsets — at-least-once turns
+  # into visibly-twice, on the one workload where volume makes it noticeable.
+  #
+  # `maxSurge: 0` makes it stop-then-start: strictly one owner per partition at any moment.
+  # `maxUnavailable: 1` with a floor of 2 replicas (FS-512) keeps ingestion running
+  # throughout. The rollout is slower and that is the entire trade.
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 0
+      maxUnavailable: 1
   selector:
     matchLabels:
       app.kubernetes.io/name: ingestion-worker

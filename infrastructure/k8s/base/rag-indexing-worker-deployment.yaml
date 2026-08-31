@@ -12,6 +12,18 @@ spec:
   # FOR UPDATE SKIP LOCKED, so concurrent replicas never take the same
   # document. Starts at 1 only to match its siblings' footprint.
   replicas: 1
+  # FS-853. DELIBERATELY DIFFERENT from the other workers. This one claims rows with
+  # `FOR UPDATE SKIP LOCKED`, so two instances cannot take the same document and overlap is
+  # harmless — which means it can have the zero-downtime rollout the others cannot: start
+  # the replacement, then stop the old one.
+  #
+  # Written out because "all workers use maxSurge: 0" would look like the rule, and copying
+  # it here would trade a strictly better rollout for a consistency that does not exist.
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
   selector:
     matchLabels:
       app.kubernetes.io/name: rag-indexing-worker

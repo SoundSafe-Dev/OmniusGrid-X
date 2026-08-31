@@ -27,6 +27,9 @@ Design notes
 import csv
 import io
 import json
+
+from fastapi import HTTPException
+from redis.exceptions import RedisError
 import uuid
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
@@ -93,6 +96,23 @@ def _coerce_bool(value: Any, default: bool = True) -> bool:
         f"{', '.join(sorted(_TRUE_TOKENS | _FALSE_TOKENS))}"
     )
 
+
+
+def _job_state_unavailable(exc: Exception) -> HTTPException:
+    """A 503 that says which dependency is down, not a 500 that says we are broken.
+
+    FS-855. Job state lives in Redis and nothing else holds it, so an unreachable Redis is
+    a dependency outage rather than a defect here — and the distinction matters to the
+    caller, who should retry rather than report a bug.
+    """
+    logger.warning("job_state_unavailable", error=str(exc)[:200])
+    return HTTPException(
+        status_code=503,
+        detail=(
+            "Job state is temporarily unavailable. This is a dependency outage, not a "
+            "rejection of your request; the work itself is unaffected. Retry shortly."
+        ),
+    )
 
 class BulkOperationError(Exception):
     """Raised for a bulk request that fails validation before any work starts."""
@@ -208,8 +228,24 @@ class BulkProcessor:
         await self._save(job)
         return job
 
+    #: FS-855. Redis is NOT a cache for this service — it is where job state lives, and
+    #: nothing else holds it. Four other consumers degrade safely (rate limiting, feature
+    #: flags, idempotency and the correlation job store all have in-memory fallbacks); this
+    #: one and the export processor do not, which is what makes Redis a single point of
+    #: failure for real work rather than an optimisation.
+    #:
+    #: An in-memory fallback would be WORSE here, not better: job state is polled, and with
+    #: more than one replica the poll lands on a pod that never saw the job — so the caller
+    #: is told their import does not exist rather than that the platform is degraded. A
+    #: silent wrong answer beats no answer only if nobody acts on it.
+    #:
+    #: So the failure is made legible instead: 503 with a reason, not a 500. Moving this
+    #: state to Postgres is the real fix and is a larger change than a translation.
     async def get_job(self, job_id: str) -> Optional[dict]:
-        raw = await self._redis().get(f"{JOB_KEY_PREFIX}{job_id}")
+        try:
+            raw = await self._redis().get(f"{JOB_KEY_PREFIX}{job_id}")
+        except (RedisError, OSError) as exc:
+            raise _job_state_unavailable(exc) from exc
         return json.loads(raw) if raw else None
 
     async def cancel_job(

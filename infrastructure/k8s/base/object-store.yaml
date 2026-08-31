@@ -130,6 +130,16 @@ spec:
               port: 8333
             initialDelaySeconds: 10
             periodSeconds: 10
+          # FS-854. Liveness kills at 20 + 3x20 = 80s. SeaweedFS scans its volume files on
+          # start, which grows with the data it holds — so the workload most likely to be
+          # slow is the one that has been running longest and has the most to lose.
+          startupProbe:
+            httpGet:
+              path: /status
+              port: 8333
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 36
           livenessProbe:
             httpGet:
               path: /status

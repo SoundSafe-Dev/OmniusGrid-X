@@ -99,7 +99,14 @@ metadata:
     app.kubernetes.io/component: tracing
     app.kubernetes.io/part-of: omniusgrid
 spec:
-  replicas: 1
+  # FS-855. The collector is STATELESS — it receives spans and forwards them — so it is
+  # the one singleton here that HA costs nothing to fix. It was `replicas: 1`, which
+  # means a node drain silently stops trace collection: the platform keeps working and
+  # stops being able to explain itself, which is the worst moment to lose that.
+  #
+  # Jaeger below stays at 1 deliberately — it owns a badger volume, so a second replica
+  # would be a second, divergent trace store rather than redundancy.
+  replicas: 2
   selector:
     matchLabels:
       # `app`, not app.kubernetes.io/name. spec.selector is IMMUTABLE on an
@@ -124,6 +131,22 @@ spec:
       # FS-852. Observability is the first thing that should yield under pressure: losing traces
       # degrades diagnosis, losing the ingestion path degrades the product. Never
       # preempts, so it cannot displace the thing it exists to watch.
+      # FS-851. Two replicas on one node is not redundancy, and the guard that caught
+      # this is the one written for exactly that: a PDB says "keep one available", which a
+      # single node drain cannot honour if both are on that node.
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app.kubernetes.io/name: otel-collector
+        - maxSkew: 1
+          topologyKey: topology.kubernetes.io/zone
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app.kubernetes.io/name: otel-collector
       priorityClassName: platform-batch
       containers:
         - name: otel-collector
