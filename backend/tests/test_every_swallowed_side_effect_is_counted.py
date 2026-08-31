@@ -92,7 +92,7 @@ class TestTheDetectorHasSubjects:
         # SIX, not the five the plan listed. The sixth — `websocket_alarm_publish` — was
         # found by this guard after the survey that produced the list had finished, which is
         # the argument for writing the guard rather than fixing the five.
-        assert len(health_server.INGESTION_SIDE_EFFECTS) == 6
+        assert len(health_server.INGESTION_SIDE_EFFECTS) == 7
 
     @pytest.mark.parametrize("name,reason", sorted(UNCOUNTED.items()))
     def test_each_exemption_still_describes_a_real_handler(self, name: str, reason: str):

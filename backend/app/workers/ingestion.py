@@ -1,6 +1,7 @@
 """Ingestion Worker - Consumes from Redpanda and writes to TimescaleDB"""
 
 import asyncio
+import time
 import json
 import os
 import re
@@ -34,6 +35,7 @@ from app.db.models import (
     Telemetry,
 )
 from app.core.http_metrics import TELEMETRY_SHED
+from app.services import ingest_pressure
 from app.services.data_shedding import data_shedder
 from app.services.fleet_targeting import semver_asset_values
 from app.services.websocket_manager import websocket_manager
@@ -120,6 +122,7 @@ class IngestionWorker:
     def __init__(self):
         self.broker_url = os.getenv('REDPANDA_URL', 'redpanda:29092')
         self.consumer: Optional[AIOKafkaConsumer] = None
+        self._pressure_published_at = 0.0
         self._producer: Optional[AIOKafkaProducer] = None
         self._running = False
         self._topics = ['telemetry', 'state', 'alarms']
@@ -192,11 +195,77 @@ class IngestionWorker:
                     # auto-commits past it — otherwise it is silently lost.
                     await self._dead_letter(msg, e)
 
+                # OUTSIDE the per-message try/except, deliberately. Inside it, a failure
+                # to publish pressure would be caught by the handler above and DEAD-LETTER
+                # a message that had already processed perfectly well — turning a
+                # best-effort side effect into data loss of exactly the kind it exists to
+                # prevent.
+                await self._publish_ingest_pressure()
+
         finally:
             await self.consumer.stop()
             if self._producer is not None:
                 await self._producer.stop()
             logger.info("ingestion_worker_stopped")
+
+    #: How often to recompute and publish the pressure level. Not per message — that would
+    #: be a Redis round trip on the hot path — and not so rarely that an agent keeps
+    #: pushing for minutes after the pipeline gives up.
+    _PRESSURE_INTERVAL_SECONDS = 15.0
+
+    async def _publish_ingest_pressure(self) -> None:
+        """Tell agents what this pipeline can currently take (FS-866).
+
+        THE WORKER IS THE ONLY THING THAT KNOWS. Consumer lag is invisible to a producer
+        and invisible to the API; the shed count exists only here. So the component doing
+        the dropping is the one that has to say so, and the heartbeat endpoint is only
+        relaying it.
+
+        Wrapped so this can never be the reason ingestion stops: a worker that fails to
+        publish its own pressure is still a worker doing its job, and the level expires on
+        its own if this stops being called.
+        """
+        now = time.monotonic()
+        if now - self._pressure_published_at < self._PRESSURE_INTERVAL_SECONDS:
+            return
+        elapsed = max(1e-9, now - self._pressure_published_at)
+        self._pressure_published_at = now
+
+        try:
+            shed = data_shedder.take_shed_count()
+            level = ingest_pressure.level_for(
+                shed_rate_per_sec=shed / elapsed,
+                lag_messages=self._consumer_lag(),
+            )
+            await ingest_pressure.publish(level)
+        except Exception as exc:  # noqa: BLE001 - counted below, never fatal
+            INGESTION_SIDE_EFFECT_FAILED.labels(side_effect="ingest_pressure").inc()
+            logger.warning("ingest_pressure_publish_failed", error=str(exc))
+
+    def _consumer_lag(self) -> int:
+        """Best-effort lag across assigned partitions.
+
+        Returns 0 when it cannot be determined, which biases toward NOT throttling agents:
+        an unknown lag is not evidence of pressure, and guessing high would slow a fleet
+        on no information.
+
+        NO TRY/EXCEPT HERE, deliberately. An earlier version caught its own errors and
+        returned 0, which was a SECOND uncounted swallow on a path whose whole file is
+        held to "every swallow is counted" (FS-537). Letting it raise into
+        `_publish_ingest_pressure` gives one counted handler instead of two silent ones,
+        and the failure direction is unchanged: no publish that cycle, the key expires,
+        and agents return to full rate — which is the safe end state for an unknown lag.
+        """
+        consumer = self.consumer
+        if consumer is None:
+            return 0
+        total = 0
+        for partition in consumer.assignment():
+            position = consumer.last_stable_offset(partition)
+            highwater = consumer.highwater(partition)
+            if position is not None and highwater is not None:
+                total += max(0, highwater - position)
+        return total
 
     async def _dead_letter(self, msg, error: Exception) -> None:
         """Publish an unprocessable message to the ingestion DLQ (best-effort).

@@ -26,7 +26,7 @@ from app.middleware.rbac import require_admin
 from app.db.edge_fleet_models import EdgeAgentStatus
 from app.services.wire_codec import ADVERTISED_CODECS
 from app.services.edge_ca import AgentPrincipal
-from app.services import edge_fleet
+from app.services import edge_fleet, ingest_pressure
 
 router = APIRouter()
 logger = structlog.get_logger(__name__)
@@ -45,6 +45,18 @@ class HeartbeatPayload(BaseModel):
 class HeartbeatAck(BaseModel):
     ok: bool
     server_time: str
+    #: FS-866. What the CLOUD is asking the agent to do about its send rate.
+    #:
+    #: Kafka gives a producer no view of consumer lag, so before this the agent drained its
+    #: buffer as fast as the link allowed regardless of whether anything was keeping up —
+    #: and the pipeline's only recourse when it fell behind was to SHED, destroying
+    #: readings that had been sitting safely in a durable buffer on the device moments
+    #: earlier. Slowing the producer leaves the data where it is safest.
+    #:
+    #: Defaulted, so an OLD AGENT IS UNAFFECTED: it ignores an unknown field and behaves
+    #: exactly as it does today. The negotiation note below applies here too — this is a
+    #: hint the agent may honour, never an instruction it must.
+    ingest_pressure: str = "normal"
     #: FS-759. What THIS backend can decode on the uplink, so an agent knows whether it may
     #: compress. Negotiation is required in this direction and only this direction: a new
     #: backend reads an old agent's bare JSON unaided, but a new agent talking to an OLD
@@ -151,7 +163,16 @@ async def heartbeat(
             raise _claimed(agent)
 
     edge_fleet.update_fleet_metrics(agent.agent_id, payload.model_dump(), "online")
-    return HeartbeatAck(ok=True, server_time=now.isoformat())
+    # FS-866. Read per heartbeat rather than pushed: the agent already polls this endpoint
+    # on its own schedule, so the signal costs no new connection and inherits the retry
+    # behaviour the heartbeat already has. `current()` answers "normal" whenever it cannot
+    # say otherwise, so a Redis outage restores today's behaviour instead of throttling a
+    # fleet on a guess.
+    return HeartbeatAck(
+        ok=True,
+        server_time=now.isoformat(),
+        ingest_pressure=await ingest_pressure.current(),
+    )
 
 
 def _to_out(row: EdgeAgentStatus, now: datetime) -> AgentStatusOut:

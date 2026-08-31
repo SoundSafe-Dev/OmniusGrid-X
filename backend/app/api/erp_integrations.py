@@ -31,8 +31,13 @@ from app.services.erp_connector_factory import (
     ERPConnectorUnavailable,
     UnsupportedERPType,
 )
+from app.services.transport_errors import TRANSPORT_ERRORS
 
 logger = structlog.get_logger()
+
+#: What closing an ERP connector may legitimately raise: the remote is gone, or the
+#: socket is already dead. Everything else is a defect in the connector itself.
+_CONNECTOR_CLOSE_ERRORS = (OSError, *TRANSPORT_ERRORS)
 
 router = APIRouter(prefix="/api/v1/erp/integrations", tags=["erp-integrations"])
 
@@ -303,6 +308,8 @@ def _webhook_secret_conflict() -> HTTPException:
 
 
 @router.post("", response_model=ERPIntegrationResponse, responses={**conflict_response})
+
+
 async def create_integration(
     request: ERPIntegrationCreate,
     db: AsyncSession = Depends(get_tenant_db),
@@ -882,7 +889,15 @@ async def run_erp_sync(integration_id: str, organization_id: str, entity_types: 
         await db.commit()
         try:
             await connector.close()
-        except Exception:
+        except _CONNECTOR_CLOSE_ERRORS:
+            # NARROWED (FS-866's ratchet payment). Closing an HTTP/SOAP connector can fail
+            # because the remote went away — an outage there, not a defect here — and that
+            # is worth ignoring after a sync that already committed.
+            #
+            # A TypeError or AttributeError is a different thing entirely: it means this
+            # connector's `close()` is broken, and swallowing it hid that for every vendor
+            # in the suite. Unlike the `finally` twin above, this one is on the SUCCESS
+            # path, so raising here cannot mask an in-flight exception.
             pass
     return summary
 

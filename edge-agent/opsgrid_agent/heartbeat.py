@@ -44,6 +44,10 @@ class HeartbeatReporter:
         #: single missed heartbeat is not evidence the backend was downgraded, and
         #: oscillating the wire format on a flaky link is its own defect.
         self.wire_codecs: Tuple[str, ...] = ("raw",)
+        #: FS-866. What the cloud last said about its own ingest load. The drain loop reads
+        #: it to decide how hard to push; `normal` until told otherwise, so an OLD BACKEND
+        #: that omits the field leaves the agent behaving exactly as it does today.
+        self.ingest_pressure: str = "normal"
 
     def build_payload(self) -> Dict:
         """Snapshot current health into a heartbeat payload."""
@@ -79,6 +83,7 @@ class HeartbeatReporter:
         # drifted clock can calibrate back inside the freshness window.
         self._observe_server_time(resp)
         self._observe_wire_codecs(resp)
+        self._observe_ingest_pressure(resp)
 
         if status != 200:
             logger.warning("heartbeat_rejected", status=status)
@@ -106,6 +111,32 @@ class HeartbeatReporter:
         if names != self.wire_codecs:
             logger.info("wire_codecs_negotiated", codecs=list(names))
         self.wire_codecs = names
+
+    def _observe_ingest_pressure(self, resp) -> None:
+        """Record what the cloud says it can currently take (FS-866).
+
+        WHY THE AGENT SHOULD CARE. Kafka gives a producer no view of consumer lag, so this
+        agent drained its buffer as fast as the link allowed regardless of whether anything
+        upstream was keeping up. When the backend fell behind, its only recourse was to
+        SHED — destroying readings that were, moments earlier, sitting safely in this
+        device's durable buffer.
+
+        Slowing down is therefore not a concession, it is the better place to keep the
+        data: the buffer is encrypted, prioritised and measured in days, and the cloud's
+        overload response is measured in dropped rows.
+
+        UNKNOWN VALUES MEAN NORMAL. A backend that sends something this agent does not
+        understand must not be able to stop it sending — a typo upstream would otherwise
+        silence a fleet.
+        """
+        if not isinstance(resp, dict):
+            return
+        level = resp.get("ingest_pressure")
+        if level not in ("normal", "elevated", "critical"):
+            return
+        if level != self.ingest_pressure:
+            logger.info("ingest_pressure_changed", level=level)
+        self.ingest_pressure = level
 
     def _observe_server_time(self, resp) -> None:
         if self._skew is None or not isinstance(resp, dict):

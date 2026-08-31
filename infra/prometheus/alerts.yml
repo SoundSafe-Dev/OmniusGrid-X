@@ -227,6 +227,25 @@ groups:
           description: "Load shedding dropped a reading in the tier documented as never-shed (PackML state changes, alarms, emergency stops). This is a policy defect, not overload."
           runbook_url: "https://github.com/SoundSafe-Dev/OmniusGrid-X/blob/main/docs/runbooks/noisy-tenant.md"
 
+      # BACKPRESSURE IS VISIBLE, OR IT IS INDISTINGUISHABLE FROM A QUIET FLEET (FS-867).
+      # When the pipeline asks agents to slow down, ingest volume falls — which looks
+      # exactly like devices going offline, or a quiet shift, or a customer churning. The
+      # difference matters enormously and nothing on a dashboard would show it.
+      #
+      # Fires on lag WITHOUT shedding too, which is the case worth catching early: the
+      # queue is growing but nothing has been lost yet, so this is the window in which
+      # slowing producers still costs nothing.
+      - alert: IngestPipelineBehind
+        expr: redpanda_kafka_consumer_group_lag > 10000
+        for: 10m
+        labels:
+          severity: high
+          team: platform
+        annotations:
+          summary: "The ingestion pipeline is behind and agents are being asked to slow down"
+          description: "Consumer group lag has been above 10,000 for 10 minutes. Agents receive an `ingest_pressure` hint on their next heartbeat and hold data in their own buffers; if this persists, that buffer is what is protecting the readings."
+          runbook_url: "https://github.com/SoundSafe-Dev/OmniusGrid-X/blob/main/docs/runbooks/kafka-consumer-lag.md"
+
   - name: opsgrid_edge_agents
     rules:
       # MEDIUM: Edge agent buffering (network issue)

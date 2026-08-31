@@ -168,6 +168,11 @@ INGESTION_SIDE_EFFECTS = (
     # was written to the database and never reached the live feed — so the alarm exists,
     # the page does not update, and nothing says why.
     "websocket_alarm_publish",
+    # THE SEVENTH (FS-866). Publishing the pipeline's own pressure so agents can be asked
+    # to slow down. Its failure is not a lost reading — it is the loss of the mechanism
+    # that PREVENTS lost readings, which is quieter and worse: the fleet keeps pushing at
+    # full rate into a pipeline that has stopped saying it cannot cope.
+    "ingest_pressure",
 )
 
 

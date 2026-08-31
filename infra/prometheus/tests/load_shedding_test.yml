@@ -79,3 +79,36 @@ tests:
       - eval_time: 5m
         alertname: CriticalTelemetryShed
         exp_alerts: []
+
+  # ── backpressure: a growing queue is visible before anything is lost ──────────────
+  - interval: 1m
+    name: sustained lag pages while nothing has been shed yet
+    input_series:
+      - series: 'redpanda_kafka_consumer_group_lag'
+        values: '50000x30'
+    alert_rule_test:
+      - eval_time: 15m
+        alertname: IngestPipelineBehind
+        exp_alerts:
+          - exp_labels:
+              severity: high
+              team: platform
+            exp_annotations:
+              summary: "The ingestion pipeline is behind and agents are being asked to slow down"
+              description: "Consumer group lag has been above 10,000 for 10 minutes. Agents receive an `ingest_pressure` hint on their next heartbeat and hold data in their own buffers; if this persists, that buffer is what is protecting the readings."
+              runbook_url: "https://github.com/SoundSafe-Dev/OmniusGrid-X/blob/main/docs/runbooks/kafka-consumer-lag.md"
+      # And nothing claims data was lost, because none was.
+      - eval_time: 15m
+        alertname: TelemetryBeingShed
+        exp_alerts: []
+
+  # ── a queue that drains is a queue doing its job ──────────────────────────────────
+  - interval: 1m
+    name: a brief backlog that clears does not page
+    input_series:
+      - series: 'redpanda_kafka_consumer_group_lag'
+        values: '50000 40000 20000 5000 100 0 0 0 0 0 0 0 0 0 0'
+    alert_rule_test:
+      - eval_time: 14m
+        alertname: IngestPipelineBehind
+        exp_alerts: []

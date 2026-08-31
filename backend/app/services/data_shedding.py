@@ -133,6 +133,19 @@ class DataSheddingManager:
             self._tenant_priorities.get((tenant_id, "*"), base),
         )
 
+    def take_shed_count(self) -> int:
+        """Readings shed since the last call, resetting the counter.
+
+        Take-and-reset rather than a running total, because the caller wants a RATE and a
+        monotonic counter would make every reader compute deltas independently — three
+        readers, three chances to get the arithmetic wrong. The Prometheus counter in
+        `http_metrics` is the monotonic view; this is the one the worker uses to decide
+        what to tell agents.
+        """
+        count = self._dropped_count
+        self._dropped_count = 0
+        return count
+
     def priority_of(
         self,
         metric_name: str,
