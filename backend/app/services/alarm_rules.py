@@ -149,9 +149,9 @@ class RedisBreachStore:
 
     def _redis(self):
         if self._client is None:
-            import redis.asyncio as redis
+            from app.core.redis_client import get_redis
 
-            self._client = redis.from_url(self._url, decode_responses=True)
+            self._client = get_redis(url=self._url)
         return self._client
 
     async def get(self, key: str, now: Optional[float] = None) -> Optional[tuple[float, float]]:

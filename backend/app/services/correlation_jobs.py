@@ -52,7 +52,9 @@ class CorrelationJobManager:
         if self._redis_unavailable:
             return None
         if self._client is None:
-            self._client = redis.from_url(settings.REDIS_URL, decode_responses=True)
+            from app.core.redis_client import get_redis
+
+            self._client = get_redis()
         try:
             await self._client.ping()
             return self._client

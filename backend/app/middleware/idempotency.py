@@ -80,9 +80,12 @@ class RedisIdempotencyStore:
 
     def _redis(self):
         if self._client is None:
-            import redis.asyncio as redis
-            # decode_responses=False: bodies are raw bytes.
-            self._client = redis.from_url(self._url, decode_responses=False)
+            from app.core.redis_client import get_redis
+
+            # decode_responses=False: bodies are raw bytes. That is part of the accessor's
+            # cache key rather than something it normalises — handing a bytes caller a
+            # decoding client corrupts its reads in a way that reads as data loss.
+            self._client = get_redis(url=self._url, decode_responses=False)
         return self._client
 
     async def get(self, key: str) -> Optional[Tuple[int, bytes]]:

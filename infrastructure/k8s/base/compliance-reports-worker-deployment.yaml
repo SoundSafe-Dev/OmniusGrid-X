@@ -163,4 +163,29 @@ spec:
           emptyDir: {}
         - name: export-data
           emptyDir: {}
+      # FS-852. See base/priority-classes.yaml for what the three tiers mean.
+      priorityClassName: platform-batch
+      # FS-851. `topologySpreadConstraints` returned zero hits, so nothing stopped every
+      # replica of this workload landing on one node — or, on a multi-AZ cluster, in one
+      # zone. Only backend and redpanda had anti-affinity; everything else could be
+      # perfectly "highly available" at three replicas and lose all three to a single node
+      # drain, which is the ordinary event, not the disaster.
+      #
+      # `ScheduleAnyway` rather than `DoNotSchedule`: a hard constraint turns a
+      # single-node cluster, or one with fewer nodes than replicas, into pods that never
+      # schedule at all — trading a rare correlated failure for a guaranteed one. The
+      # scheduler honours it when it can.
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app.kubernetes.io/name: compliance-reports-worker
+        - maxSkew: 1
+          topologyKey: topology.kubernetes.io/zone
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app.kubernetes.io/name: compliance-reports-worker
       terminationGracePeriodSeconds: 30

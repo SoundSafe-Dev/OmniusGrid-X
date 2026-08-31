@@ -44,13 +44,23 @@ NOT_BEHIND_THE_BREAKER = {
         "class would be risk for no behavioural gain. Worth migrating only if that file "
         "is being changed for another reason."
     ),
-    "redis:the_other_five_clients": (
-        "THE REAL FINDING UNDER FS-846..848. There is no shared accessor for either "
-        "dependency: six modules call `redis.from_url` and five construct their own "
-        "`AIOKafkaProducer`, so there is no single seam to instrument and each site would "
-        "have to be wrapped by hand. Introducing shared accessors is the right fix and is "
-        "a refactor across eleven call sites in several lanes, which is a larger change "
-        "than adding a breaker and should be its own."
+    "redpanda:worker_producers": (
+        "The three producers in `workers/ingestion.py`, `services/compliance_report_queue.py` "
+        "and `services/export_delivery.py` publish from WORKERS, not from a request. A "
+        "broker outage there fails the job, which is retried by the consumer — nothing "
+        "holds a request, a connection or a bulkhead slot while it happens, so failing "
+        "fast buys nothing and a breaker would only add a state machine to a path that "
+        "already has one. Request-path coverage, which is what FS-846..848 was about, is "
+        "complete: `command_executor` is wrapped and `edge_ingest` has its own."
+    ),
+    "redis:health_probe": (
+        "`api/health.py` builds a short-lived client with its own connect timeout and "
+        "closes it, which is the OPPOSITE of what the shared accessor provides. A probe "
+        "answering from a pooled connection established minutes ago reports the state of "
+        "history rather than of Redis, and calling `aclose()` on the shared client would "
+        "close the pool every other caller is using. Exempt from both the accessor and "
+        "the breaker on purpose: a probe must be allowed to find out that the dependency "
+        "is down."
     ),
 }
 
@@ -278,3 +288,61 @@ class TestTheCoverageIsRecordedHonestly:
             "them is gone — so a dead database no longer fails fast and the decision not "
             "to add a breaker has to be revisited."
         )
+
+
+class TestRedisHasOneAccessorAndOnePool:
+    """Seven modules each called `redis.from_url` and cached their own client, so one API
+    process opened up to SEVEN connection pools against one Redis — the same unmeasured
+    resource use FS-839 found on the database side. It also meant there was no seam to put
+    a breaker on, which is why the first pass could only cover feature flags.
+    """
+
+    def test_only_the_accessor_and_the_health_probe_construct_a_client(self):
+        offenders = []
+        for path in sorted(APP.rglob("*.py")):
+            relative = str(path.relative_to(APP))
+            if relative in {"core/redis_client.py", "api/health.py"}:
+                continue
+            if "redis.from_url" in path.read_text():
+                offenders.append(relative)
+        assert not offenders, (
+            f"{offenders} construct their own Redis client instead of using "
+            f"`core/redis_client.get_redis()`. Each is a separate connection pool and a "
+            f"caller the shared breaker cannot cover."
+        )
+
+    def test_the_health_probe_exemption_is_still_deliberate(self):
+        """It is exempt because it needs a fresh, bounded, immediately-closed connection.
+        If it stops setting its own connect timeout, the reason has evaporated and it
+        should move to the accessor."""
+        source = (APP / "api/health.py").read_text()
+        assert "socket_connect_timeout" in source, (
+            "the health probe no longer bounds its own connect, so its exemption from the "
+            "shared accessor no longer has a reason behind it"
+        )
+
+    def test_one_client_is_reused_per_shape(self):
+        from app.core.redis_client import get_redis, reset_for_tests
+
+        reset_for_tests()
+        try:
+            assert get_redis() is get_redis()
+            assert get_redis() is not get_redis(decode_responses=False)
+        finally:
+            reset_for_tests()
+
+    def test_decode_responses_is_part_of_the_key_not_normalised(self):
+        """The idempotency middleware stores raw bytes and everything else stores strings.
+        Handing a bytes caller a decoding client corrupts its reads in a way that reads as
+        data loss rather than as a type error."""
+        source = (APP / "core/redis_client.py").read_text()
+        assert "key = (url or settings.REDIS_URL, decode_responses)" in source
+
+    def test_the_breaker_is_process_wide(self):
+        """Redis is one dependency; one process should reach one verdict about it. Seven
+        breakers would each learn separately that it is down."""
+        from app.core.redis_client import breaker
+        from app.services.feature_flags import FeatureFlagService
+
+        assert FeatureFlagService._breaker is breaker
+        assert breaker.dependency == "redis"

@@ -305,7 +305,9 @@ class ExportProcessor:
 
     def _redis(self) -> redis.Redis:
         if self._client is None:
-            self._client = redis.from_url(settings.REDIS_URL, decode_responses=True)
+            from app.core.redis_client import get_redis
+
+            self._client = get_redis()
         return self._client
 
     @asynccontextmanager

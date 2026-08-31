@@ -74,6 +74,33 @@ spec:
               memory: "256Mi"
               cpu: "500m"
           
+          # FS-850. THE RACE NOBODY SEES BUT EVERY DEPLOY RUNS. When a pod is deleted,
+          # kubelet sends SIGTERM and the endpoints controller removes the pod from the
+          # Service **in parallel**, with no ordering between them. Endpoint removal then
+          # has to propagate to kube-proxy on every node and to the ingress controller,
+          # which takes a moment. So the container can begin shutting down while traffic
+          # is still being routed to it, and those requests fail.
+          #
+          # `maxUnavailable: 0` does not prevent this: it governs how many replicas may be
+          # missing, not whether a terminating one is still in rotation. The result is a
+          # small number of 502s on EVERY rolling deploy — burning error budget on the one
+          # activity that is supposed to be safe, and looking like a flaky client rather
+          # than a deploy problem because it is spread thin and never reproduces on demand.
+          #
+          # The fix is to do nothing, on purpose: during preStop the container is still
+          # running and still serving, and SIGTERM is not sent until the hook returns. Five
+          # seconds is comfortably more than endpoint propagation and comfortably less than
+          # the 15s grace period, which still leaves the server time to finish
+          # in-flight work after SIGTERM.
+          #
+          # NOT ADDED TO THE WORKERS, deliberately. They sit behind no Service — they
+          # consume from Redpanda — so there is no endpoint to propagate and no race to
+          # lose. A preStop there would delay every shutdown by five seconds and prevent
+          # nothing.
+          lifecycle:
+            preStop:
+              exec:
+                command: ["sleep", "5"]
           livenessProbe:
             httpGet:
               path: /
@@ -100,6 +127,31 @@ spec:
         - name: run
           emptyDir: {}
       
+      # FS-852. See base/priority-classes.yaml for what the three tiers mean.
+      priorityClassName: platform-standard
+      # FS-851. `topologySpreadConstraints` returned zero hits, so nothing stopped every
+      # replica of this workload landing on one node — or, on a multi-AZ cluster, in one
+      # zone. Only backend and redpanda had anti-affinity; everything else could be
+      # perfectly "highly available" at three replicas and lose all three to a single node
+      # drain, which is the ordinary event, not the disaster.
+      #
+      # `ScheduleAnyway` rather than `DoNotSchedule`: a hard constraint turns a
+      # single-node cluster, or one with fewer nodes than replicas, into pods that never
+      # schedule at all — trading a rare correlated failure for a guaranteed one. The
+      # scheduler honours it when it can.
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app.kubernetes.io/name: frontend
+        - maxSkew: 1
+          topologyKey: topology.kubernetes.io/zone
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app.kubernetes.io/name: frontend
       terminationGracePeriodSeconds: 15
 ---
 apiVersion: v1

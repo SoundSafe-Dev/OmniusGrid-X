@@ -41,6 +41,9 @@ spec:
         fsGroup: 1000
         seccompProfile:
           type: RuntimeDefault
+      # FS-852. The in-cluster agent is a test/demo fixture rather than a customer's device; real
+      # agents run on-premises and are unaffected by this cluster's scheduling.
+      priorityClassName: platform-standard
       containers:
         - name: edge-agent
           image: omniusgrid/edge-agent:latest

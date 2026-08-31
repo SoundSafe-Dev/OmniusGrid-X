@@ -56,6 +56,11 @@ async def _check_redis() -> tuple[str, dict[str, Any]]:
     try:
         import redis.asyncio as redis
 
+        # DELIBERATELY NOT `core/redis_client.get_redis()` (FS-847). A health probe wants
+        # the opposite of what the shared accessor provides: a fresh connection with its
+        # own bounded connect timeout, closed immediately. Borrowing the shared pool would
+        # report "ok" from a connection established minutes ago, and `aclose()` on it
+        # would close the pool every other caller is using.
         client = redis.from_url(
             settings.REDIS_URL,
             socket_connect_timeout=BROKER_CHECK_TIMEOUT_SECONDS,

@@ -19,6 +19,10 @@ spec:
         app.kubernetes.io/name: timescaledb
         app.kubernetes.io/component: database
     spec:
+      # FS-852. Datastores rank above the interactive tier: an evicted API replica
+      # degrades service, an evicted database ends it for everyone. See
+      # base/priority-classes.yaml.
+      priorityClassName: platform-critical
       securityContext:
         runAsNonRoot: true
         runAsUser: 1000

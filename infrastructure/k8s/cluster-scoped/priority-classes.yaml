@@ -1,0 +1,61 @@
+# Scheduling priority (FS-852).
+#
+# `PriorityClass` returned ZERO hits across `infrastructure/k8s/`, so every pod in this
+# platform had the same priority: the cluster default, zero. Under node pressure the
+# kubelet's eviction ranking then falls back to QoS class and usage overshoot, which
+# cannot tell an ingestion worker from a batch export job — so the thing evicted to make
+# room is whichever pod happens to be furthest over its request. That is a coin toss, and
+# the live telemetry path is in the draw.
+#
+# Preemption also matters on the way in, not just on the way out: with equal priority a
+# scheduler that cannot place the ingestion worker simply leaves it Pending, rather than
+# making room by evicting something that can wait.
+#
+# THE ORDERING IS THE PRODUCT DECISION, and it is deliberately short. Three tiers, because
+# a scale with more rungs than there are real answers invites arguing about placement:
+#
+#   platform-critical  data that cannot be regenerated if it is dropped on the floor.
+#                      The ingestion path and the datastores it writes to.
+#   platform-standard  the interactive product. Losing a replica degrades service;
+#                      nothing is lost permanently.
+#   platform-batch     work that is queued, retried and has no user waiting on it.
+#
+# `globalDefault` is set on NONE of them, on purpose. A global default silently reprices
+# every pod in every namespace of the cluster, including ones this repository does not
+# own, and it is the kind of change that is discovered during an unrelated incident.
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata:
+  name: platform-critical
+value: 900000
+globalDefault: false
+preemptionPolicy: PreemptLowerPriority
+description: >-
+  Ingestion and the datastores. Telemetry arrives once; if this is evicted under pressure
+  the readings are not re-sent by the cloud, only by an edge agent's store-and-forward,
+  and only for as long as its buffer holds.
+---
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata:
+  name: platform-standard
+value: 500000
+globalDefault: false
+preemptionPolicy: PreemptLowerPriority
+description: >-
+  The interactive product — API and web. Degrades service when evicted; loses nothing
+  permanently, because a client can retry.
+---
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata:
+  name: platform-batch
+value: 100000
+globalDefault: false
+# Deliberately NEVER preempts. Batch work waiting is correct; batch work displacing the
+# ingestion path to run a report is not, and that is exactly what a uniform priority
+# allowed.
+preemptionPolicy: Never
+description: >-
+  Queued, retried, nobody waiting: exports, compliance reports, OTA rollout dispatch,
+  document indexing. Safe to evict first and safe to leave Pending.

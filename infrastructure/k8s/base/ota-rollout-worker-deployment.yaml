@@ -154,4 +154,6 @@ spec:
       volumes:
         - name: tmp
           emptyDir: {}
+      # FS-852. See base/priority-classes.yaml for what the three tiers mean.
+      priorityClassName: platform-batch
       terminationGracePeriodSeconds: 30

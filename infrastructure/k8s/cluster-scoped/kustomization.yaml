@@ -1,0 +1,24 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# CLUSTER-SCOPED RESOURCES, APPLIED ONCE PER CLUSTER (FS-852).
+#
+# These are deliberately NOT in `base/`, and the reason is a defect this directory exists
+# because of. `PriorityClass` is cluster-scoped, and the overlays apply
+# `namePrefix: prod-` / `staging-` / `dr-`. Kustomize rewrites the objects AND every
+# reference to them, so putting them in base produced `prod-platform-critical`,
+# `staging-platform-critical` and `dr-platform-critical` — **nine cluster-wide objects for
+# three tiers**, each environment silently defining its own global priority scale.
+#
+# Worse than untidy: deploying staging would have created a cluster-wide class at value
+# 900000, so a staging pod would outrank a production pod on any shared cluster. The
+# rendering showed it immediately; nothing about the source files did.
+#
+# A namespace-scoped resource can be safely per-environment. A cluster-scoped one cannot,
+# and `namePrefix` cannot tell the difference.
+#
+# Apply once, before the overlays that reference it:
+#     kubectl apply -k infrastructure/k8s/cluster-scoped
+
+resources:
+  - priority-classes.yaml

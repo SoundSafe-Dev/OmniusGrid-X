@@ -178,7 +178,9 @@ class BulkProcessor:
     def _redis(self) -> redis.Redis:
         """Lazily create a shared async Redis client (decoded strings)."""
         if self._client is None:
-            self._client = redis.from_url(settings.REDIS_URL, decode_responses=True)
+            from app.core.redis_client import get_redis
+
+            self._client = get_redis()
         return self._client
 
     # --- Job lifecycle --------------------------------------------------------

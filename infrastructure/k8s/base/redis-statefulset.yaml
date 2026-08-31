@@ -62,6 +62,10 @@ spec:
         app.kubernetes.io/name: redis
         app.kubernetes.io/component: cache
     spec:
+      # FS-852. Datastores rank above the interactive tier: an evicted API replica
+      # degrades service, an evicted database ends it for everyone. See
+      # base/priority-classes.yaml.
+      priorityClassName: platform-standard
       securityContext:
         runAsNonRoot: true
         runAsUser: 999      # redis

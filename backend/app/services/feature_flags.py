@@ -22,7 +22,8 @@ import redis.asyncio as redis
 import structlog
 from redis.exceptions import WatchError
 
-from app.core.circuit_breaker import CircuitBreaker, CircuitOpen
+from app.core import redis_client
+from app.core.circuit_breaker import CircuitOpen
 from sqlalchemy import text
 
 from app.core.config import settings
@@ -55,19 +56,17 @@ class FeatureFlagService:
     def __init__(self) -> None:
         self._client: Optional[redis.Redis] = None
 
-    #: One breaker per process for this service's Redis reads. Named so the metrics say
-    #: WHICH dependency tripped — `opsgrid_circuit_breaker_state{dependency=...}` is only
-    #: useful if the label distinguishes the six independent Redis clients this codebase
-    #: builds (see the register in test_the_circuit_breaker_fails_fast.py).
-    _breaker = CircuitBreaker("redis:feature_flags", failure_threshold=3)
+    #: THE PROCESS-WIDE Redis breaker, not one of this service's own. Redis is a single
+    #: dependency and one process should reach one verdict about it — a per-service
+    #: breaker would have to learn separately that it is down, which is one unnecessary
+    #: connect timeout per service. Was `redis:feature_flags` until the shared accessor
+    #: existed to hang it on.
+    _breaker = redis_client.breaker
 
     def _redis(self) -> redis.Redis:
-        """Lazily create a shared async Redis client (decoded strings)."""
+        """The process-wide client (decoded strings); see `core/redis_client.py`."""
         if self._client is None:
-            self._client = redis.from_url(
-                settings.REDIS_URL,
-                decode_responses=True,
-            )
+            self._client = redis_client.get_redis()
         return self._client
 
     # --- CRUD -----------------------------------------------------------------

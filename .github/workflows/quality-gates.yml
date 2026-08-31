@@ -763,6 +763,22 @@ jobs:
           # stops responding to load in exactly the way it was scaled to handle, and the
           # quota meant to contain a fault has caused one.
           ./tests/k8s/check_resource_quota_fits.py
+      - name: Deploys drain, replicas spread, and the kubelet can rank them
+        run: |
+          pip install pyyaml
+          # FS-850/851/852, all three of which read as zero hits across the k8s tree.
+          #
+          # preStop is the one that costs on ordinary days: SIGTERM and endpoint removal
+          # race, so a terminating pod can still be routed to. `maxUnavailable: 0` does
+          # not help — it counts replicas, it does not drain connections — and the symptom
+          # is a few 502s on EVERY rolling deploy, thin enough to be filed as a flaky
+          # client.
+          #
+          # Also asserts PriorityClasses stay OUT of base: they are cluster-scoped, and
+          # the overlays' namePrefix rewrites them into prod-/staging-/dr- copies, so each
+          # environment would define its own global priority scale and a staging pod could
+          # outrank a production one on a shared cluster.
+          ./tests/k8s/check_disruption_readiness.py
       - name: Manifests land in their declared namespace and name a real target
         run: |
           pip install pyyaml

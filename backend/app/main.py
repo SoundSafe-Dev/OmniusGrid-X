@@ -76,6 +76,7 @@ from app.services.error_tracker import error_tracker
 from slowapi.errors import RateLimitExceeded
 from slowapi.middleware import SlowAPIMiddleware
 
+from app.core import redis_client
 from app.middleware.bulkheads import (
     RequestDeadlineMiddleware,
     TenantBulkheadMiddleware,
@@ -161,6 +162,11 @@ async def lifespan(app: FastAPI):
     await export_processor.close()
     await oee_calculator.stop()
     await websocket_manager.disconnect()
+    # LAST, and after everything that uses it. Seven modules used to hold their own Redis
+    # client and none of them closed it; the shared accessor (FS-847) made that one pool
+    # with one owner, and this is the owner closing it. Ordering matters — closing before
+    # the schedulers above have stopped would hand a live caller a closed pool.
+    await redis_client.close_all()
 
 
 app = FastAPI(
