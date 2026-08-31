@@ -13,6 +13,7 @@ from app.core.config import settings
 from app.workers.health_server import start_health_server
 from app.db.database import AsyncSessionLocal
 from app.db.models import ExportDeliveryJob, ExportTemplate, ScheduledExport
+from app.services.tenant_quotas import check_storage_quota
 from app.services.export_delivery import (
     create_download_signature,
     send_export_email,
@@ -118,6 +119,19 @@ async def _finish_job(
         job.status = status
         job.file_path = path
         job.filename = filename
+        # FS-842. The artefact's size, recorded where it is actually known — the file is
+        # on this worker's disk right now and is deleted moments later, so this is the
+        # only point at which the number exists. Without it a tenant's storage footprint
+        # was recoverable only by listing the bucket, and the quota would have summed two
+        # of its three producers while reporting a total.
+        #
+        # Guarded rather than assumed: a failed job has no path, and a path that has
+        # already been cleaned up is not an error worth failing the completion over.
+        if path:
+            try:
+                job.size_bytes = os.path.getsize(path)
+            except OSError:
+                job.size_bytes = 0
         job.error = error
         job.completed_at = datetime.now(timezone.utc) if status == "completed" else None
         job.updated_at = datetime.now(timezone.utc)
@@ -125,6 +139,22 @@ async def _finish_job(
         schedule.last_status = status
         schedule.updated_at = datetime.now(timezone.utc)
         await session.commit()
+
+
+async def _storage_rejection(org_id: UUID):
+    """This org's storage quota verdict, on its own session.
+
+    A separate session on purpose: `process_job` does its work through the processor and
+    has no session of its own, and borrowing one from the completion helper would hold a
+    connection across the whole generation — which is exactly the pool pressure FS-839
+    sized against.
+    """
+    async with AsyncSessionLocal() as session:
+        await session.execute(
+            text("SELECT set_config('app.current_org_id', :org, true)"),
+            {"org": str(org_id)},
+        )
+        return await check_storage_quota(session, org_id)
 
 
 async def process_job(job_id: UUID, org_id: UUID) -> None:
@@ -135,6 +165,19 @@ async def process_job(job_id: UUID, org_id: UUID) -> None:
         return
     path = None
     try:
+        # FS-842. Checked BEFORE generating, because generation is the expensive half and
+        # an export's size is not knowable until it exists. A tenant already over its
+        # storage limit is refused here rather than producing another artefact and
+        # discovering the total afterwards.
+        #
+        # Marked `failed` with the quota's own message rather than raising into the retry
+        # path: a retry cannot succeed until somebody deletes something, so re-queueing
+        # would spin. The message reaches the operator through the job the caller polls.
+        rejection = await _storage_rejection(org_id)
+        if rejection is not None:
+            await _finish_job(job_id, org_id, "failed", error=rejection.detail)
+            return
+
         path, filename = await export_processor.generate_scheduled_export(
             data["export_type"],
             data["columns"],

@@ -32,17 +32,14 @@ APP = REPO / "backend/app"
 #: Resources FS-842 names that are NOT bounded yet, with why. An empty absence reads as a
 #: decision; this says plainly that it is not one.
 NOT_YET_BOUNDED = {
-    "storage_bytes": (
-        "No table holds a per-tenant byte total. Object storage is written by the export "
-        "and compliance paths and by the RAG document store, each with its own prefix, "
-        "and nothing sums them per organisation. A limit guessed without that figure "
-        "would refuse real work for the wrong reason."
-    ),
-    "export_size": (
-        "An export's size is known only once it is generated, so a quota has to bound "
-        "either the ROW COUNT requested (cheap, and already partly bounded by the "
-        "pagination ceilings) or the produced artefact (accurate, and refuses after the "
-        "work is done). Choosing between those is a product decision, not a defaulting."
+    "export_row_count": (
+        "An export's ARTEFACT size is now bounded — `check_storage_quota` refuses "
+        "generation for a tenant already over its limit, and migration 075 made the "
+        "figure exist. What is still unbounded is the number of ROWS a single export may "
+        "request: that is bounded incidentally by the pagination ceilings rather than "
+        "deliberately, so a very large export is refused only after it has been produced "
+        "and pushed the tenant over. Bounding it properly means predicting the artefact "
+        "from the query, which is a product decision about where to refuse."
     ),
 }
 
@@ -201,8 +198,10 @@ class TestTheGapIsRecordedRatherThanImplied:
     def test_the_bounded_ones_are_not_also_listed(self):
         """A register that names something already done is stale, and a stale register is
         worse than none — it reports solved work as outstanding."""
-        assert "assets" not in NOT_YET_BOUNDED
-        assert "seats" not in NOT_YET_BOUNDED
+        for done in ("assets", "seats", "storage_bytes", "export_size"):
+            assert done not in NOT_YET_BOUNDED, (
+                f"{done!r} is bounded now and still listed as outstanding."
+            )
 
 
 class TestUsageIsReadable:
@@ -217,3 +216,88 @@ class TestUsageIsReadable:
         assert reported["max_assets"] is None
         assert reported["max_seats"] == 25
         assert reported["assets"] == 7
+
+
+class TestTheStorageQuotaCountsEveryProducer:
+    """A storage quota that omits a producer is worse than none.
+
+    Three things write objects for a tenant: RAG documents, compliance reports and export
+    artefacts. Exports recorded no size at all until migration 075 — the processor
+    uploaded from a local path and discarded the figure — so a quota built before that
+    would have reported a tenant inside its limit while the class most likely to exceed it
+    went uncounted. Generating exports is exactly how a tenant would blow a storage
+    budget.
+    """
+
+    def test_all_three_producers_are_summed(self):
+        """SCOPED TO THE FUNCTION, not the file. The first version asked whether each
+        model name appeared anywhere in `tenant_quotas.py` — which still passed when the
+        export term was deleted from the sum, because the name remained in the import
+        list. Mutation-testing is the only reason that was found; rule 37 again, and the
+        second time in this sprint that a name-in-source check could not distinguish the
+        states it claimed to.
+        """
+        tree = ast.parse((APP / "services/tenant_quotas.py").read_text())
+        fn = next(
+            (
+                node
+                for node in ast.walk(tree)
+                if isinstance(node, ast.AsyncFunctionDef) and node.name == "storage_bytes"
+            ),
+            None,
+        )
+        assert fn is not None, "storage_bytes() has moved; this guard is now blind"
+        referenced = {
+            node.id for node in ast.walk(fn) if isinstance(node, ast.Name)
+        } | {
+            node.attr for node in ast.walk(fn) if isinstance(node, ast.Attribute)
+        }
+        for model in ("RagDocument", "ComplianceReportJob", "ExportDeliveryJob"):
+            assert model in referenced, (
+                f"{model} is not summed inside storage_bytes(), so that producer's "
+                f"objects are invisible to the quota and a tenant can exceed its storage "
+                f"limit entirely through them. Summed: {sorted(referenced)}"
+            )
+
+    def test_the_export_worker_records_the_size(self):
+        """The only moment the number exists: the file is on the worker's disk and is
+        deleted moments later."""
+        source = (APP / "workers/export_delivery.py").read_text()
+        assert "job.size_bytes = os.path.getsize(path)" in source, (
+            "the delivery worker no longer records the artefact size, so every new export "
+            "counts as 0 bytes and the storage quota silently stops seeing exports."
+        )
+
+    def test_generation_is_refused_before_the_expensive_half(self):
+        """An export's size is unknowable until it exists, so the check has to happen
+        before generation — otherwise a tenant over its limit produces the artefact and
+        the total is discovered afterwards."""
+        source = (APP / "workers/export_delivery.py").read_text()
+        body = source[source.index("async def process_job") :]
+        assert body.index("_storage_rejection") < body.index(
+            "generate_scheduled_export"
+        ), (
+            "process_job generates the export before checking the storage quota, so the "
+            "refusal costs exactly the work it was refusing to do."
+        )
+
+    @pytest.mark.asyncio
+    async def test_zero_means_unlimited_and_does_not_query(self, monkeypatch):
+        from app.core.config import settings
+        from app.services.tenant_quotas import check_storage_quota
+
+        monkeypatch.setattr(settings, "MAX_STORAGE_BYTES_PER_ORG", 0)
+        db = _db(999)
+        assert await check_storage_quota(db, "org-1") is None
+        db.execute.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_a_tenant_over_its_limit_is_refused(self, monkeypatch):
+        from app.core.config import settings
+        from app.services.tenant_quotas import check_storage_quota
+
+        monkeypatch.setattr(settings, "MAX_STORAGE_BYTES_PER_ORG", 3 * 1024 ** 3)
+        # _db returns the same scalar for each of the three sums: 3 x 2GiB = 6GiB.
+        rejection = await check_storage_quota(_db(2 * 1024 ** 3), "org-1")
+        assert rejection is not None and rejection.status == 409
+        assert "GiB" in rejection.detail

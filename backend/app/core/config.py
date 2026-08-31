@@ -118,6 +118,38 @@ class Settings(BaseSettings):
     # day it deployed, which is how a safety feature gets reverted instead of tuned.
     MAX_ASSETS_PER_ORG: int = 0
     MAX_USERS_PER_ORG: int = 0
+    #: Bytes across ALL THREE producers — RAG documents, compliance reports and export
+    #: artefacts. Summing only some of them would report a tenant inside its limit while
+    #: the class most likely to exceed it went uncounted.
+    MAX_STORAGE_BYTES_PER_ORG: int = 0
+
+    # PER-TENANT CONCURRENCY (FS-844). `Semaphore` returned zero hits across `backend/app`,
+    # so nothing bounded how many requests one tenant could have in flight at once. With
+    # DB_POOL_SIZE + DB_MAX_OVERFLOW = 10 connections per process (FS-839), a single
+    # tenant issuing eleven slow queries takes every connection in that pod and every
+    # other tenant's request queues behind it on `DB_POOL_TIMEOUT`.
+    #
+    # This is a BULKHEAD, not a rate limit: FS-843 bounds requests per minute, which does
+    # nothing about ten simultaneous slow ones. Per-process, because an asyncio.Semaphore
+    # is; across replicas the effective cap is this times the replica count, which still
+    # bounds any one tenant's share of any one pod's pool.
+    #
+    # 0 disables it. Default 4 of 10 connections: enough that a tenant's normal
+    # concurrency is unaffected, small enough that no tenant can starve the others.
+    MAX_CONCURRENT_REQUESTS_PER_TENANT: int = 4
+    #: Seconds to wait for a slot before giving up. Short on purpose — queueing for a long
+    #: time is the thing being prevented, so a full bulkhead should say so quickly.
+    BULKHEAD_ACQUIRE_TIMEOUT_SECONDS: float = 5.0
+
+    # GLOBAL REQUEST DEADLINE (FS-845). There was no server-level timeout at all. The
+    # ingress cuts the CLIENT off at 60s (`proxy-read-timeout`), but nothing told the
+    # server, so the handler kept running — holding its database connection and its
+    # bulkhead slot — to produce a response that nobody was left to read.
+    #
+    # 55 sits just under the ingress so the SERVER gives up first and the caller receives
+    # a real 504 instead of the proxy's opaque one. Cancelling the task is the point:
+    # asyncio cancellation unwinds the handler and returns its connection to the pool.
+    REQUEST_TIMEOUT_SECONDS: float = 55.0
     RATE_LIMIT_BURST: int = 10
     AUTH_LOGIN_RATE_LIMIT: str = "10/minute"
     AUTH_REGISTER_RATE_LIMIT: str = "5/hour"

@@ -76,6 +76,11 @@ from app.services.error_tracker import error_tracker
 from slowapi.errors import RateLimitExceeded
 from slowapi.middleware import SlowAPIMiddleware
 
+from app.middleware.bulkheads import (
+    RequestDeadlineMiddleware,
+    TenantBulkheadMiddleware,
+)
+
 from app.core.startup_checks import verify_installed_dependencies
 
 install_sensitive_query_access_log_filter()
@@ -303,6 +308,15 @@ if settings.RATE_LIMIT_ENABLED:
     # exhausted its whole budget should be refused without first spending a per-user
     # counter that its other users still need.
     app.add_middleware(TenantRateLimitMiddleware)
+
+# FS-844/845. Registered OUTSIDE the RATE_LIMIT_ENABLED block on purpose: these are not
+# rate limits. The bulkhead bounds a tenant's CONCURRENCY and the deadline bounds a single
+# request's duration, and both protect the connection pool rather than the request budget
+# — an operator who turns rate limiting off has not asked for one tenant to be able to
+# take every connection in a pod, nor for handlers to keep computing after the ingress has
+# already hung up on the caller. Each has its own 0-disables setting.
+app.add_middleware(TenantBulkheadMiddleware)
+app.add_middleware(RequestDeadlineMiddleware)
 
 # Unhandled-exception envelope, registered FIRST and therefore INNERMOST — deliberately
 # inside CORS below. Starlette's catch-all exception handler lives on the outermost

@@ -21,11 +21,16 @@ first per-tenant limit in this backend and got the important parts right:
   client to back off and try again, which will fail identically forever.
 * **0 means unlimited**, so the feature ships off and is turned on per deployment.
 
-WHAT IS DELIBERATELY NOT HERE. Storage bytes and export size are named in FS-842 and are
-not implemented: both need a measured figure per tenant that no table currently holds, and
-guessing one would produce a quota that refuses real work for the wrong reason.
-`test_tenant_quotas_are_enforced.py` records them as outstanding rather than letting the
-absence read as a decision.
+STORAGE IS SUMMED FROM ALL THREE PRODUCERS, and that was the hard part rather than the
+limit. Compliance reports and RAG documents already recorded a size; exports did not — the
+processor uploaded from a local path and discarded the figure — so migration 075 added
+`export_delivery_jobs.size_bytes` and the delivery worker records it at completion, which
+is the only moment the file still exists.
+
+**A storage quota that omitted exports would have been worse than none.** It would report a
+tenant inside its limit while the largest artefact class went uncounted, and generating
+exports is precisely how a tenant would exceed it. Two of three producers is not a quota,
+it is a number that looks like one.
 """
 from __future__ import annotations
 
@@ -36,7 +41,13 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
-from app.db.models import Asset, User
+from app.db.models import (
+    Asset,
+    ComplianceReportJob,
+    ExportDeliveryJob,
+    RagDocument,
+    User,
+)
 
 
 @dataclass(frozen=True)
@@ -55,6 +66,8 @@ class QuotaUsage:
     max_assets: int
     seats: int
     max_seats: int
+    storage_bytes: int
+    max_storage_bytes: int
 
     def as_dict(self) -> dict:
         return {
@@ -62,6 +75,8 @@ class QuotaUsage:
             "max_assets": self.max_assets or None,
             "seats": self.seats,
             "max_seats": self.max_seats or None,
+            "storage_bytes": self.storage_bytes,
+            "max_storage_bytes": self.max_storage_bytes or None,
         }
 
 
@@ -134,4 +149,66 @@ async def usage(db: AsyncSession, organization_id) -> QuotaUsage:
         max_assets=settings.MAX_ASSETS_PER_ORG,
         seats=await _count(db, User, organization_id),
         max_seats=settings.MAX_USERS_PER_ORG,
+        storage_bytes=await storage_bytes(db, organization_id),
+        max_storage_bytes=settings.MAX_STORAGE_BYTES_PER_ORG,
     )
+
+
+async def _sum(db: AsyncSession, model, column, organization_id) -> int:
+    """COALESCE(SUM(column), 0) for one org.
+
+    `COALESCE` matters: `SUM` over no rows is NULL, not 0, so a tenant that has produced
+    nothing would otherwise make the total NULL and the comparison below raise rather than
+    pass.
+    """
+    stmt = select(func.coalesce(func.sum(column), 0)).where(
+        model.organization_id == organization_id
+    )
+    return int((await db.execute(stmt)).scalar_one())
+
+
+async def storage_bytes(db: AsyncSession, organization_id) -> int:
+    """Every object this organisation owns, across all three producers.
+
+    Rows written before their producer recorded a size read as 0, which undercounts and is
+    therefore permissive — the same choice migrations 074 and 075 make, and for the same
+    reason: the true figure lives only in the object store, and blocking every tenant on
+    an unknown is the worse failure.
+    """
+    total = 0
+    total += await _sum(db, RagDocument, RagDocument.size_bytes, organization_id)
+    total += await _sum(
+        db, ComplianceReportJob, ComplianceReportJob.file_size, organization_id
+    )
+    total += await _sum(
+        db, ExportDeliveryJob, ExportDeliveryJob.size_bytes, organization_id
+    )
+    return total
+
+
+async def check_storage_quota(
+    db: AsyncSession, organization_id, *, adding_bytes: int = 0
+) -> Optional[QuotaRejection]:
+    """Refuse work that would take this org past `MAX_STORAGE_BYTES_PER_ORG`.
+
+    `adding_bytes` is for callers that know the size in advance. Export generation does
+    not — an export's size is known only once it is produced — so it checks the CURRENT
+    total before starting, which refuses a tenant already over its limit without pretending
+    to predict the artefact.
+    """
+    limit = settings.MAX_STORAGE_BYTES_PER_ORG
+    if limit <= 0:
+        return None
+    current = await storage_bytes(db, organization_id)
+    if current + adding_bytes > limit:
+        gib = limit / (1024 ** 3)
+        return QuotaRejection(
+            status=409,
+            detail=(
+                f"This organization has reached its storage limit of {gib:.1f} GiB "
+                f"({current / (1024 ** 3):.1f} GiB in use across documents, reports and "
+                f"exports). Delete some before generating more, or contact support to "
+                f"raise the limit."
+            ),
+        )
+    return None

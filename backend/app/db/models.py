@@ -2343,6 +2343,10 @@ class ExportDeliveryJob(Base):
     #: the parent it references — refused by Postgres, accepted silently by SQLite.
     #: `lazy="raise"` because nothing should traverse them: they exist to order
     #: inserts, and an accidental lazy load in async code is a MissingGreenlet.
+    #: Stored artefact size, for the per-tenant storage quota (FS-842, migration 075).
+    #: Recorded by `export_processor` at upload time; 0 for rows written before it.
+    size_bytes = Column(BigInteger, nullable=False, default=0, server_default="0")
+
     organization = relationship("Organization", foreign_keys="ExportDeliveryJob.organization_id", lazy="raise")
     scheduled_export = relationship("ScheduledExport", foreign_keys="ExportDeliveryJob.schedule_id", lazy="raise")
     export_template = relationship("ExportTemplate", foreign_keys="ExportDeliveryJob.template_id", lazy="raise")
