@@ -1303,7 +1303,8 @@ CLOSED IN PART, 2026-08-31: `docs/runbooks/engineer-offboarding.md` is the missi
 
 **Owner.** platform-security
 
-**Assessment.** Unusually well evidenced for this practice: 250 numbered method rules, each written after a specific defect and indexed by a guard, plus architectural invariants enforced as tests rather than as review conventions (no SQL string interpolation, no naive UTC, no handler taking its tenant from the body). PARTIAL because there is no threat model or data-flow trust-boundary document — the practice asks for security engineering principles applied to a described architecture, and the description is the missing half.
+**Assessment.** Unusually well evidenced for this practice: **293** numbered method rules — the figure read 250 until 2026-08-31, and is now asserted against the documents by `test_method_rules_are_indexed.py` so it cannot drift again — each written after a specific defect, plus architectural invariants enforced as tests rather than as review conventions: no SQL string interpolation, no naive UTC, no handler taking its tenant from the body, and since Wave 3 the CAPACITY invariants too — a workload's replica ceiling against the database's connection limit, the namespace quota against what those ceilings demand, and connection draining on anything a Service routes to. Those three derive their requirement from the manifests rather than restating a number, which is the same principle applied to the checks themselves.
+PARTIAL because there is no threat model or data-flow trust-boundary document — the practice asks for security engineering principles applied to a described architecture, and the description is still the missing half.
 
 **Planned completion.** 2027-03-31
 
@@ -1311,12 +1312,16 @@ CLOSED IN PART, 2026-08-31: `docs/runbooks/engineer-offboarding.md` is the missi
 
 - `docs/CODING_STANDARDS.md`
 - `docs/engineering/sweeps`
+- `tests/k8s/check_connection_budget.py`
+- `tests/k8s/check_disruption_readiness.py`
+- `tests/k8s/check_resource_quota_fits.py`
 
 **Evidence — automated tests, run on every build.**
 
 - `tests/test_method_rules_are_indexed.py`
 - `tests/test_no_two_guards_keep_the_same_list.py`
 - `tests/test_sql_is_not_built_by_interpolation.py`
+- `tests/test_the_connection_budget_is_enforced.py`
 
 
 ### OG-SC-010 — Split tunnelling is prevented on remote devices
