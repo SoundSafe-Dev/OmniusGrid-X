@@ -6512,3 +6512,42 @@ it is a false one.
 
 The tell, in general: an assertion whose truth depends on the fixture having a property the
 test never establishes.
+
+## Rule 296 — name the function exactly; a substring match measures whoever it finds first
+
+The fleet-OEE query needed measuring, so the guard located its handler with
+`"oee" in node.name.lower()`. That matched `get_asset_oee`, defined earlier in the same
+file for a different route — the guard passed, faithfully, while measuring a function the
+fix never touched. `get_fleet_oee` was never inspected.
+
+A substring or keyword selector over a file's function names is a bet that only one
+function in the file will ever match it. The bet is not stated anywhere, and nothing marks
+it as fragile — the guard reads as if it found the right thing, because it found *a*
+thing. Fixed with an exact match, `node.name == "get_fleet_oee"`, which fails loudly (an
+empty AST result, not a silent wrong-target pass) if the function is ever renamed.
+
+The general form: **when a guard finds its subject by matching on the file, match it
+exactly.** A prefix or substring test on a name is only safe once you have checked there is
+nothing else in the file it could catch — and by the time that matters, someone else has
+usually already added the thing it catches.
+
+## Rule 297 — a predicate string proves nothing if the string exists somewhere else in the file
+
+The tenant-scoping fix for `/fleet/oee` was checked with
+`assert "Asset.organization_id == org_id" in source`. It passed after the fix, and it
+passed just as happily after the join predicate was deliberately removed by mutation —
+because the same literal string already appears in the function's first query, the
+asset-fetch that precedes the one actually being changed.
+
+This is the sixth guard this sprint built on a check whose subject appears somewhere else
+in the same source: a docstring satisfying an `in source` test, a comment carrying the
+phrase a mutation was supposed to remove, and now a predicate that is genuinely present —
+just attached to the wrong query. Each looked like a real assertion and was actually
+counting a coincidence.
+
+Counting occurrences (`source.count(...) >= 2`, one for each place the predicate is meant
+to hold) turns the same string into a real check, because now removing either one is
+visible. The general fix is the same each time this rule recurs: **before trusting an `in
+source` assertion, ask how many places in the file would make it true, and assert the
+count you actually mean, not just presence.**
+

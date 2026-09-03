@@ -15834,3 +15834,31 @@ it, and both times mutation-testing was the only thing that noticed. Rules 294 a
 
 Backend **5,518**; edge 515 plus **119** DDIL scenarios; frontend 1,223. Method rules to
 **295**.
+
+### FS-880, FS-881 — the worst N+1 in the tree, and a fleet sent as a parameter
+
+`erp_integrations.py`'s sync ran one `SELECT ERPEntity` per record, nested inside the
+per-entity-type loop — a 10k-row SAP sync was 10k round trips. Fixed with one `IN`-batched
+pre-fetch keyed on `(entity_type, entity_id)`, built once per type before the record loop,
+with a same-batch duplicate-id guard (`existing_by_id[eid] = created` on insert, so a second
+record with the same id in one batch updates rather than re-inserting).
+
+`/fleet/oee` selected every active asset in the org into Python, then passed
+`.in_([a.id for a in assets])` back to Postgres — the id list, and the round trip to build
+it, both grow with the fleet. Replaced with a `JOIN` from `PackMLState` to `Asset` so the
+fleet never leaves the database as a parameter.
+
+### Two guards that measured the wrong thing, on the first attempt
+
+The `/fleet/oee` test located its target function with `"oee" in node.name.lower()`, which
+matched `get_asset_oee` — defined earlier in the same file — instead of `get_fleet_oee`.
+The guard passed while inspecting a function the fix never touched. Fixed with an exact
+name match.
+
+The tenant-scoping assertion, `assert "Asset.organization_id == org_id" in source`, passed
+both before and after the join predicate was removed by mutation, because the literal
+string already appears in the same function's earlier asset-fetch query. Sixth guard this
+sprint confounded by a subject that exists somewhere else in the file it's read from.
+Fixed by counting occurrences instead of presence. Rules 296 and 297.
+
+Backend **5,527**. Method rules to **297**.

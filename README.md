@@ -39,7 +39,7 @@
 | [Documentation](#documentation) | The rest of `docs/` |
 
 **Engineering method.** The sweeps and guards in this repository follow a set of numbered
-rules, each written after a defect that a weaker check had missed. Rules 21–295 are recorded in
+rules, each written after a defect that a weaker check had missed. Rules 21–297 are recorded in
 `docs/engineering/defect-class-sweeps.md`, with the reasoning for each; the short list at the
 top of that file is what most people read.
 

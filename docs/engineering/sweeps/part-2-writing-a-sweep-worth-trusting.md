@@ -2163,6 +2163,16 @@ one of its findings. The habit that catches it:
      the query was mutated to drop a population. The assertion was right; the inputs were
      invisible at the point of writing. Test a derivation where the inputs are yours, and
      leave the end-to-end test asserting only the shape it can actually support.
+296. **Name the function exactly; a substring match measures whoever it finds first.** An
+     AST selector matching `"oee" in node.name.lower()` found `get_asset_oee`, defined
+     earlier in the same file, instead of `get_fleet_oee` — the fix under test was never
+     inspected. A keyword or substring match on a name is a bet that nothing else in the
+     file matches it, and the bet is never stated. Match exactly.
+297. **A predicate string proves nothing if the string exists somewhere else in the file.**
+     `assert "Asset.organization_id == org_id" in source` passed before and after the
+     predicate was removed by mutation, because the literal also appears in the function's
+     other query. Sixth guard this sprint confounded by the same shape. Count occurrences
+     to the number you actually mean, not presence.
 ---
 
 ## Open observations, not yet tickets
