@@ -51,8 +51,19 @@ spec:
     podAntiAffinityType: required
 
   postgresql:
+    # FS-895. pg_stat_statements was missing here, which is worse than the extension
+    # being absent: 004_query_optimization.sql's `CREATE EXTENSION IF NOT EXISTS
+    # pg_stat_statements` succeeds either way — it only creates the SQL objects — and
+    # the guard in that migration checks `to_regclass('public.pg_stat_statements')`,
+    # which is also satisfied without preload. So `slow_queries` and the other
+    # monitoring views this database actually gets built, and every one of them
+    # raises "pg_stat_statements must be loaded via shared_preload_libraries" the
+    # first time anyone queries it — quietly, because nothing that runs at deploy
+    # time SELECTs from them. Preloading it here is what makes the views the
+    # migration built actually work.
     shared_preload_libraries:
       - timescaledb
+      - pg_stat_statements
     # Only tunables here. CNPG OWNS the replication parameters (wal_level,
     # max_wal_senders, max_replication_slots, hot_standby, archive_mode…) and
     # rejects any attempt to set them — the operator configures streaming
@@ -63,6 +74,12 @@ spec:
       effective_cache_size: "3GB"
       work_mem: "16MB"
       maintenance_work_mem: "256MB"
+      # FS-895. Slow-query visibility: anything over 1s is logged with its full text,
+      # so an incident does not have to wait for someone to think to check
+      # pg_stat_statements — the query is already in the log the moment it ran long.
+      log_min_duration_statement: "1000"
+      pg_stat_statements.track: "all"
+      pg_stat_statements.max: "10000"
       # FS-800. THIS IS THE PARAMETER THAT BOUNDS RPO, and it was not set.
       #
       # WAL archiving existing is not the same as RPO being bounded. Postgres archives a

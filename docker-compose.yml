@@ -37,7 +37,10 @@ services:
     image: timescale/timescaledb:latest-pg15
     container_name: omniusgrid-timescaledb
     restart: unless-stopped
-    command: postgres -c shared_preload_libraries=timescaledb,pg_stat_statements
+    # FS-895. log_min_duration_statement matches the k8s config (base/timescaledb-
+    # statefulset.yaml, database-ha/cluster.yaml) so a slow query is visible in local
+    # logs the same way it would be in any deployed environment.
+    command: postgres -c shared_preload_libraries=timescaledb,pg_stat_statements -c log_min_duration_statement=1000
     environment:
       POSTGRES_USER: omniusgrid
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-omniusgrid_dev_password}

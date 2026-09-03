@@ -66,6 +66,20 @@ spec:
           args:
             - "-c"
             - "max_connections=200"
+            # FS-895. The timescaledb image auto-preloads `timescaledb` via its own
+            # postgresql.conf, but a `shared_preload_libraries` value set here on the
+            # command line REPLACES that rather than appending to it — so
+            # pg_stat_statements cannot simply be added on its own line without
+            # silently dropping timescaledb. Both are named, matching
+            # docker-compose.yml's `command:` for the same image. Without this,
+            # 004_query_optimization.sql's monitoring views (slow_queries,
+            # query_performance_by_table, ...) get created successfully and raise on
+            # every SELECT — the extension existing is not the same as it collecting
+            # anything.
+            - "-c"
+            - "shared_preload_libraries=timescaledb,pg_stat_statements"
+            - "-c"
+            - "log_min_duration_statement=1000"
 
           ports:
             - name: postgres

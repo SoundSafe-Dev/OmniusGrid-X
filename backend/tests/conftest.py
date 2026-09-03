@@ -320,6 +320,16 @@ def pg_container():
         password="omniusgrid_dev_password",
         dbname="omniusgrid_test",
     )
+    # FS-895. Preload pg_stat_statements the same way docker-compose.yml and the k8s
+    # manifests do (this image auto-preloads `timescaledb` on its own, but a
+    # command-line shared_preload_libraries REPLACES that rather than appending, so
+    # both must be named together, same reasoning as base/timescaledb-statefulset.yaml).
+    # Without this the suite would have a "working" monitoring stack that no real
+    # deployment shared — the exact shape pgcrypto's migration 059 was written to
+    # close for a different extension.
+    container.with_command(
+        "postgres -c shared_preload_libraries=timescaledb,pg_stat_statements"
+    )
     container.start()
     try:
         # ``testcontainers`` returns a SQLAlchemy-style URL
