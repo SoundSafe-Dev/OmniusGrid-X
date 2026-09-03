@@ -15884,3 +15884,27 @@ Both guards were written matching their target function by exact name (rule 296)
 mutation-verified against the pre-fix code via `git stash` before committing.
 
 Backend **5,533** passing, 110 skipped.
+
+### FS-884, FS-885 — the same session-per-org shape, twice more
+
+`command_executor.expire_timed_out` and `workers/compliance_reports.recover_stale_jobs` are
+both periodic background sweeps — a timeout loop and a stale-job recovery loop — that run
+forever, unconditionally over every organisation, and both opened a fresh
+`AsyncSessionLocal()` per org on every pass: the identical shape FS-883 fixed in the fleet
+sweep. Both now reuse one session for the whole pass, re-setting the tenant GUC per org.
+
+Checked the same premise against `compliance_report_queue.recover_stale_publications` — the
+plan's other cited line — and it was already correct, one session reused from the start.
+`command_executor` has four other per-org loops (`get_command_status`, `cancel_command`,
+`handle_command_ack`, `get_pending_count`); all four resolve to a single org in production
+because every caller passes `organization_id`, so they were left alone rather than
+refactored for a path that isn't actually hot.
+
+Fixing FS-885 broke `test_worker_tenant_guc_hygiene.py`'s exception for the org-enumeration
+session — an 8-line proximity window had been crediting that untenanted read with the NEXT
+session's `_set_org` call, by coincidence, since before this sprint. Consolidating the
+per-org sessions moved that call outside the window and surfaced it. Same shape as rule
+297: a check satisfied by something nearby for an unrelated reason. Named the exception
+explicitly rather than leaving it to proximity.
+
+Backend **5,539** passing, 110 skipped.
