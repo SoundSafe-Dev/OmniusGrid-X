@@ -6453,3 +6453,62 @@ was for before fitting the lock.
 Generally: **an item that names a mechanism is describing a symptom, not prescribing a
 fix.** Verify what the mechanism is actually in the path of, and be prepared for the answer
 to move the work somewhere else entirely.
+
+## Rule 294 — when several limits apply at once, find the crossover, not the smallest
+
+An edge buffer is bounded three ways: age (24 hours), size (1 GB), and whether the agent
+drains faster than the collectors fill. Asked "how long does a device survive an outage",
+the instinct is to take the smallest bound and quote it. That is wrong in a way that
+misleads an operator precisely when they are trying to be careful.
+
+The bounds do not rank consistently. **Which one governs changes with the input rate**, and
+for this buffer the crossover is 62 readings per second: below it, age deletes the data
+first and raising `max_size_mb` buys nothing at all; above it, the size cap binds and the
+24-hour figure everyone quotes is no longer what the device delivers.
+
+So an operator sizing a device needs to know which side of the crossover it sits on, and
+that number was nowhere — the two knobs looked interchangeable and are not. Quoting the
+minimum would have been *arithmetically* right and *operationally* useless: it says how
+long, and not which lever to pull.
+
+The general form: **for any capacity question with more than one governing limit, the
+useful output is the crossover, not the answer at one operating point.** Compute where the
+binding constraint changes hands, and say so — a table of two regimes is worth more than a
+single conservative number, because it tells the reader which mechanism they are arguing
+with.
+
+And note what falls out of it: the second mechanism was strictly worse than the first. The
+size cap sheds by priority tier and gives up diagnostic telemetry; the disk-full path
+prunes the oldest 500 rows, which will discard an alarm to make room for a vibration
+reading. Knowing which regime a device is in is therefore not just a capacity question, it
+decides what gets lost.
+
+## Rule 295 — a test over a shared fixture proves only what the fixture contains
+
+`/overview` was collapsed from five queries to two, and the correctness argument rests on
+one identity: `total_assets` is now the SUM of the state histogram rather than its own
+`COUNT`, which holds only while the grouping covers the same population.
+
+So the guard asserted exactly that, over HTTP, against the suite's shared fixture. It
+passed. It also passed when the query was mutated to exclude NULL states — because **the
+fixture contains zero assets**, and `sum({}) == 0` is true no matter what the query does.
+
+The failure is not carelessness about vacuity; the assertion was the right one. It is that
+an end-to-end test inherits its population from a fixture written for someone else's
+purpose, and that population is invisible at the assertion. Nothing at the point of writing
+says "this will be empty".
+
+Two things follow.
+
+**Test a derivation where the inputs are yours.** The summing was extracted into a small
+function and given rows that include the case that can break it — an asset whose state is
+NULL, an empty population, and a subset invariant that catches a mis-ordered unpack. That
+test cannot be vacuous, because it constructs its own subject.
+
+**Leave the end-to-end test asserting only what it can.** It still checks the response
+shape, which is a real contract, and it no longer carries an arithmetic claim it cannot
+support. A test that asserts more than its inputs can distinguish is not a stronger test,
+it is a false one.
+
+The tell, in general: an assertion whose truth depends on the fixture having a property the
+test never establishes.

@@ -15758,3 +15758,79 @@ the only thing that reliably separates a guard from a decoration.
 
 Backend 5,171 → **5,510**; edge 477 → **515** plus 109 DDIL; frontend 1,223. Method rules to
 **293**. Twelve Kubernetes gates, 79 alert rules, 17 promtool suites.
+
+## FS-871..879 — closing Wave 3, and the first of Wave 4
+
+### How long does a device survive an outage, and what decides it
+
+No document answered that, so the answer was whatever the operator guessed. Measured
+against the real buffer: **195 bytes per reading on disk** — a full telemetry row after
+JSON framing and SQLite page overhead, checkpointed, because without the checkpoint the WAL
+hides a third of the writes and the figure comes out low in the one direction that matters
+when somebody is sizing a disk from it.
+
+The byte count is not the finding. **Which of the three limits governs changes with the
+reading rate**, and the crossover is 62 readings per second:
+
+    10/s     161 MB/day    retention (24h) binds     24.0 h of buffer
+   100/s   1,607 MB/day    size cap (1 GB) binds     14.9 h
+
+Below the crossover, raising `max_size_mb` buys nothing — age is deleting the data first.
+Above it, the 24-hour figure everyone quotes is no longer what the device delivers. The two
+knobs looked interchangeable and are not, and an operator had no way to know which one they
+were arguing with.
+
+What falls out of that is worse than a capacity question. The two full-buffer mechanisms
+lose *different data*: the size cap fires hourly and sheds by priority tier, while a full
+disk raises `SQLITE_FULL` and prunes the oldest 500 rows — age being all that path can
+express, so it will discard an alarm to make room for a vibration reading. A `max_size_mb`
+larger than the disk is not a bigger buffer; it is a buffer whose real limit is the blunt
+mechanism.
+
+### The DDIL case that eight scenarios missed
+
+Every existing scenario denies the link — deny it, flap it, lose packets, throttle it — and
+the agent's answer is always the same and always obvious: hold the data. FS-866 created a
+case none of them cover. **The link is perfect.** The backend is up and answering
+heartbeats. The pipeline behind it cannot keep up, so the cloud asks the device to slow
+down.
+
+That is the interesting one precisely because sending is the default and every instinct in
+the drain loop is to keep going — and the readings it would push are ones the cloud has
+already said it will drop, converting data that is safe in an encrypted local buffer into
+data that is gone. Ten scenarios, including the mirror case a naive `if level:` gets
+backwards: a malformed ack must not CLEAR a legitimate throttle either, because a malformed
+response is not evidence the cloud recovered.
+
+### Wave 4 opens: five questions where two would do
+
+`/overview` ran five queries — three reading `assets`, two reading the same `Alarm ⋈ Asset`
+join, each pair differing by one predicate. A subset asked as its own query pays a round
+trip, and for the alarms a second join, to re-ask something already in flight. It is polled
+every 30 seconds per open tab, against a pool of 10 connections per process.
+
+**The task pool's suggested remedy did not apply**, and that is the third time this sprint:
+"read from the continuous aggregates instead of recomputing" — but those roll up
+`telemetry`, and nothing here is time-series. They are row counts. The fix was `FILTER`
+clauses; five round trips became two.
+
+### The test that proved nothing
+
+The correctness of that collapse rests on one identity: `total_assets` is now the sum of the
+state histogram rather than its own `COUNT`, which holds only while the grouping covers the
+same population. The guard asserted exactly that, over HTTP.
+
+It passed. It also passed when the query was mutated to exclude NULL states — because the
+shared fixture holds **zero assets**, and `sum({}) == 0` regardless of what the query does.
+
+The assertion was right. What was wrong is that an end-to-end test inherits its population
+from a fixture written for someone else's purpose, and that population is invisible at the
+point of assertion. The derivation is now extracted and tested against inputs it constructs
+itself — a NULL state, an empty population, and a subset invariant that catches a
+mis-ordered unpack. That test cannot be vacuous.
+
+Second time this sprint a guard of mine proved nothing until something deliberately broke
+it, and both times mutation-testing was the only thing that noticed. Rules 294 and 295.
+
+Backend **5,518**; edge 515 plus **119** DDIL scenarios; frontend 1,223. Method rules to
+**295**.

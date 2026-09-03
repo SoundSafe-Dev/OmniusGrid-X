@@ -2152,6 +2152,17 @@ one of its findings. The habit that catches it:
      endpoint's own header records that nothing calls it. An item that names a mechanism is
      describing a symptom, not prescribing a fix — verify what the mechanism is in the path
      of, and expect the answer to move the work.
+294. **When several limits apply at once, find the crossover, not the smallest.** An edge
+     buffer is bounded by age, size and drain rate, and which one governs changes with the
+     reading rate — the crossover is 62/s, below which raising the size cap buys nothing.
+     Quoting the minimum is arithmetically right and operationally useless: it says how
+     long, not which lever to pull. And here the two regimes lose different data — the size
+     cap sheds by priority, the disk-full path sheds by age.
+295. **A test over a shared fixture proves only what the fixture contains.** An identity
+     asserted over HTTP passed against a fixture holding zero assets, and kept passing when
+     the query was mutated to drop a population. The assertion was right; the inputs were
+     invisible at the point of writing. Test a derivation where the inputs are yours, and
+     leave the end-to-end test asserting only the shape it can actually support.
 ---
 
 ## Open observations, not yet tickets
