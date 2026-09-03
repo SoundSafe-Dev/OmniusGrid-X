@@ -15948,3 +15948,12 @@ comment already in the module). Given the ceiling is 8 round trips on a request 
 high-frequency, the fix does not clear its own bar. **Not changed.** Corrected in place
 rather than implemented as written, per the house rule that a premise gets verified before
 it gets built around.
+
+### FS-887 — registered, HARSH's lane, not edited
+
+`api/kanban.py:1522-1560` `/workload` runs 4 aggregate queries per user (50 users = 201
+queries; collapsible to one `GROUP BY assigned_to` with `FILTER` clauses, the same shape
+FS-879's dashboard fix used) and `api/analysis_sessions.py:494-504` runs 2 `SELECT`s per
+session plus `len(...scalars().all())` to count — materialising whole rows to get a number.
+Both confirmed present at the cited lines. Correlation/MLOps is HARSH's lane; registered
+rather than edited, per the sprint's lane rule.
