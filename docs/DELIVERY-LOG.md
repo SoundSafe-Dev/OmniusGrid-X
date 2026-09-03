@@ -15993,3 +15993,25 @@ on `organization_id` (plus `is_active` or `id`), and both are covered.
 table with an `organization_id` column, was already passing before this item was opened,
 and would fail if any of these four regressed. **Not changed.** Corrected in place per the
 house rule — the premise did not reproduce.
+
+### FS-889, FS-891 — two more missing indexes; a repeated detector weakness fixed on sight
+
+`session_data_sources` and `session_messages` (FS-889) had a foreign key on `session_id`
+and no index leading with it — the only index on either table is a GIN on
+`shared_keys::jsonb`, unrelated to the join. Migration 077 adds both.
+
+`shipments` (FS-891) had one composite index, `(organization_id, created_at DESC)` from
+migration 043, and two other real access patterns with nothing: the shipments list filters
+`status` after the org predicate, and the driver panel filters `driver_id` + excluded
+statuses ordered by `scheduled_pickup`, with no index on `driver_id` at all. Migration 078
+adds both.
+
+FS-891's guard caught its own first-draft weakness before it shipped: a bare "no Seq Scan"
+check for the org+status query passed even WITHOUT the new index, because the pre-existing
+`ix_shipments_org_created` already lets the planner avoid a sequential scan on the
+`organization_id` equality alone, leaving `status` as an unindexed Filter step on top of an
+Index Scan. Same shape as rule 297 — a check satisfied by something already present for an
+unrelated reason. Fixed by naming the new index specifically in the assertion rather than
+checking for the absence of a scan type.
+
+Backend **5,548** passing, 110 skipped.
