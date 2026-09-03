@@ -16031,3 +16031,21 @@ without this migration. Named the new index specifically, verified the without-m
 EXPLAIN shows exactly that shape.
 
 Backend **5,550** passing, 110 skipped.
+
+### FS-893 — the remainder table, measured item by item
+
+`carriers` and `drivers` already carry `(organization_id, created_at DESC)` from migration
+043 — nothing to do. `analysis_sessions` had the same org index, but almost every route in
+`api/analysis_sessions.py` filters by `user_id` instead (fetch, list, delete), several also
+filtering `status` — neither column had an index. Migration 080 adds `(user_id, status)`.
+
+The rest of the plan's list does not need an index, measured rather than assumed:
+`asset_types` is a small global catalogue whose only non-PK filter is `category`;
+`organizations` and `data_retention_config` (keyed by `table_name`, "one config" per the
+module's own comment) are both small reference tables. And `telemetry_buffers`,
+`permissions`, `role_permissions`, `reward_metrics` have **zero references anywhere in
+`backend/app`** — no ORM model, no raw SQL, nothing queries them at all. Indexing a table
+nothing reads is pure waste; the real finding is that they're dormant. Registered for
+FS-913 (dormant services/tables) rather than indexed here.
+
+Backend **5,552** passing, 110 skipped.
