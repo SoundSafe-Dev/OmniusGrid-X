@@ -16063,3 +16063,45 @@ Explicit in its own docstring about what it is not. Gives future index work a pl
 register into rather than a false sense that the whole surface is covered.
 
 Backend **5,573** passing, 110 skipped.
+
+### FS-895 — pg_stat_statements was installed in both deploy targets and never worked
+
+Three defects, the second and third found only by writing and then running the guard
+rather than by reading the migration.
+
+**One.** `database-ha/cluster.yaml` (CNPG) preloaded only `timescaledb`;
+`base/timescaledb-statefulset.yaml` preloaded neither library at all. `CREATE EXTENSION
+pg_stat_statements` succeeds regardless of preload — it only creates the SQL objects — so
+`004_query_optimization.sql`'s monitoring views (`slow_queries`, `query_performance_trends`,
+`frequent_queries`) got built in both deploy targets and raised "must be loaded via
+shared_preload_libraries" the first time anyone queried them. Fixed both manifests to match
+what `docker-compose.yml` already had right, and added `log_min_duration_statement=1000`
+everywhere for the slow-query-logging half of this item.
+
+**Two.** `refresh_frequent_queries()` was unconditionally `REFRESH ... CONCURRENTLY`, which
+Postgres refuses on a matview that has never been populated — `frequent_queries` is created
+`WITH NO DATA`, so the function's first call ever, on any freshly migrated database, always
+raised. `POST /query-performance/refresh-frequent-queries` has never worked from a fresh
+install. Migration 081 checks `pg_matviews.ispopulated` and does a plain refresh exactly
+once.
+
+**Three, and the one that only showed up under the full suite's real query traffic**:
+`frequent_queries`'s unique index was on `queryid` alone, and `pg_stat_statements.queryid`
+is only unique per `(userid, dbid, toplevel)` — the same query text run by a different role
+or against a different database legitimately produces the same queryid under a different
+owner. This suite alone runs queries as four roles plus a scratch database (from
+`test_every_migration_can_be_rerun_realdb.py`), and the first time two of them ran a
+structurally identical query, refresh raised a UniqueViolation and the view never
+populated — reproducing three separate times across full-suite runs before its root cause
+was found. Migration 082 carries `userid`/`dbid` through, matching the real key.
+
+`conftest.py`'s test container now preloads both libraries the same way production does —
+before this the harness had a "working" monitoring stack no real deployment shared, the
+same shape pgcrypto's migration 059 was written to close for a different extension.
+
+The duplicate-queryid guard needed two of its own fixes before it was honest: it has to
+force the NON-concurrent refresh path (a concurrent refresh, the path taken once the view
+is already populated, diffs by row identity and doesn't hit the same failure), and each
+probe has to run over 100 times to clear the view's own `WHERE calls > 100` filter.
+
+Full backend suite green on two consecutive full runs: **5,582** passing, 110 skipped.
