@@ -16049,3 +16049,17 @@ nothing reads is pure waste; the real finding is that they're dormant. Registere
 FS-913 (dormant services/tables) rather than indexed here.
 
 Backend **5,552** passing, 110 skipped.
+
+### FS-894 — a register, not a sweep, and said so up front
+
+The plan's own item asked for "a test that every column a list route filters or orders on
+is either indexed or registered with a reason" — which, done honestly for the whole app,
+is its own project: an AST walk across ~60 API modules matched against a live schema,
+without becoming a shallow tool confident about the wrong thing (rule 296/297's territory,
+repeatedly hit this sprint). Built the scoped version instead: a register locking in the
+thirteen (table, column) pairs FS-888 through FS-893 actually measured, checked by index
+NAME against a real database, plus seven exemptions each carrying a non-empty reason.
+Explicit in its own docstring about what it is not. Gives future index work a place to
+register into rather than a false sense that the whole surface is covered.
+
+Backend **5,573** passing, 110 skipped.
