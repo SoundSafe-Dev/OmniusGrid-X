@@ -356,28 +356,38 @@ class ErrorTracker:
         if not batch:
             await self._maybe_prune()
             return
+        # Build both parameter lists up front so the flush issues exactly two
+        # statements regardless of batch size — a flood of fingerprints (worst
+        # exactly during an incident, when diversity spikes) used to mean one
+        # round trip per fingerprint plus one per hour bucket. executemany lets
+        # the driver pipeline every row of each statement in a single await.
+        event_params = [
+            {
+                "fingerprint": fp,
+                "exception_type": pending.exception_type,
+                "route": pending.route,
+                "method": pending.method,
+                "status_code": pending.status_code,
+                "message_sample": pending.message_sample,
+                "traceback_sample": pending.traceback_sample,
+                "count": pending.count,
+                "first_seen": pending.first_seen,
+                "last_seen": pending.last_seen,
+                "organization_id": pending.organization_id,
+            }
+            for fp, pending in batch.items()
+        ]
+        bucket_params = [
+            {"fingerprint": fp, "bucket_hour": hour, "count": n}
+            for fp, pending in batch.items()
+            for hour, n in pending.bucket_counts.items()
+        ]
         try:
             async with _db.AsyncSessionLocal() as session:
-                for fp, pending in batch.items():
-                    await session.execute(_UPSERT_EVENT, {
-                        "fingerprint": fp,
-                        "exception_type": pending.exception_type,
-                        "route": pending.route,
-                        "method": pending.method,
-                        "status_code": pending.status_code,
-                        "message_sample": pending.message_sample,
-                        "traceback_sample": pending.traceback_sample,
-                        "count": pending.count,
-                        "first_seen": pending.first_seen,
-                        "last_seen": pending.last_seen,
-                        "organization_id": pending.organization_id,
-                    })
-                    for hour, n in pending.bucket_counts.items():
-                        await session.execute(_UPSERT_BUCKET, {
-                            "fingerprint": fp,
-                            "bucket_hour": hour,
-                            "count": n,
-                        })
+                if event_params:
+                    await session.execute(_UPSERT_EVENT, event_params)
+                if bucket_params:
+                    await session.execute(_UPSERT_BUCKET, bucket_params)
                 await session.commit()
         except Exception as exc:  # noqa: BLE001
             ERROR_TRACKER_FLUSH_FAILURES_TOTAL.inc()

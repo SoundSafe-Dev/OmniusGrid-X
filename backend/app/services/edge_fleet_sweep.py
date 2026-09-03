@@ -102,12 +102,32 @@ class EdgeFleetSweep:
         refreshed = 0
         now = datetime.now(timezone.utc)
         for org_id in org_ids:
+            # One session per org, not two. Each org used to open a fresh
+            # AsyncSessionLocal for the agent query and a second for the asset
+            # query below — a fresh pool connection for the same GUC twice —
+            # which is direct pressure on the pool ceiling FS-839 sized against
+            # maxReplicas. Both reads share one org-scoped session instead.
             async with AsyncSessionLocal() as session:
                 await session.execute(
                     text("SELECT set_config('app.current_org_id', :org_id, true)"),
                     {"org_id": str(org_id)},
                 )
                 rows = (await session.execute(select(EdgeAgentStatus))).scalars().all()
+
+                # FS-774. The same question asked of ASSETS rather than agents, and for
+                # the alert that had no series at all. One agent serves many assets, so
+                # an online agent whose PLC stopped answering is invisible to every
+                # `edge_agent_*` gauge — which is the failure an operator most needs told.
+                #
+                # Inactive assets are skipped deliberately: a decommissioned machine has
+                # a last_seen that only ages, and publishing it would page forever.
+                assets = (
+                    await session.execute(
+                        select(Asset).where(
+                            Asset.is_active.is_(True), Asset.last_seen.isnot(None)
+                        )
+                    )
+                ).scalars().all()
             for row in rows:
                 live = agent_liveness(row.last_seen, now)
                 edge_agent_up.labels(agent_id=row.agent_id).set(1 if live == "online" else 0)
@@ -122,25 +142,6 @@ class EdgeFleetSweep:
                     )
                 refreshed += 1
 
-            # FS-774. The same question asked of ASSETS rather than agents, and for the
-            # alert that had no series at all. One agent serves many assets, so an
-            # online agent whose PLC stopped answering is invisible to every
-            # `edge_agent_*` gauge — which is the failure an operator most needs told.
-            #
-            # Inactive assets are skipped deliberately: a decommissioned machine has a
-            # last_seen that only ages, and publishing it would page forever.
-            async with AsyncSessionLocal() as session:
-                await session.execute(
-                    text("SELECT set_config('app.current_org_id', :org_id, true)"),
-                    {"org_id": str(org_id)},
-                )
-                assets = (
-                    await session.execute(
-                        select(Asset).where(
-                            Asset.is_active.is_(True), Asset.last_seen.isnot(None)
-                        )
-                    )
-                ).scalars().all()
             for asset in assets:
                 seen = (
                     asset.last_seen
