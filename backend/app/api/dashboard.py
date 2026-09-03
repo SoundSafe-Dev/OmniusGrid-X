@@ -79,6 +79,24 @@ class FleetOEEOut(BaseModel):
     assets: List[FleetAssetAvailability]
 
 
+
+def _summarise_assets(rows) -> tuple[dict, int, int]:
+    """Histogram, total and active count, from ONE grouped pass.
+
+    Extracted so the derivation can be tested against a population that includes the case
+    that matters: an asset whose `current_packml_state` is NULL. Postgres groups NULL as
+    its own group, so the sum of the histogram is the same population `COUNT(*)` counted —
+    but only while the query has no predicate excluding it, and an HTTP test against an
+    empty fixture cannot tell the difference. It was vacuous when first written (FS-879).
+    """
+    histogram = {state: total for state, total, _ in rows}
+    return (
+        histogram,
+        sum(total for _, total, _ in rows),
+        sum(active for _, _, active in rows),
+    )
+
+
 @router.get("/overview", response_model=DashboardOverview)
 async def get_dashboard_overview(
     org_id: UUID = Depends(get_tenant_org_id),
@@ -93,50 +111,54 @@ async def get_dashboard_overview(
     Using ``get_db`` here (which sets no GUC) is what made every tile render 0.
     """
     # Base query — explicit org filter on top of the RLS predicate.
-    base_query = select(Asset).where(Asset.organization_id == org_id)
+    # FS-879. FIVE ROUND TRIPS BECAME TWO, and the arithmetic is the reason: three of the
+    # five queries read `assets` and two read the same `Alarm ⋈ Asset` join, each pair
+    # differing only by one predicate. A `FILTER` clause answers a subset in the same pass
+    # the superset is already making, so the extra queries were paying a full round trip —
+    # and, for the alarms, a full second join — to re-ask a question already in flight.
+    #
+    # It matters because of who calls this: `Dashboard.tsx:159` polls every 30 seconds PER
+    # OPEN TAB, so the cost is five queries × every dashboard anyone has left open, against
+    # a connection pool sized at 10 per process (FS-839).
+    #
+    # NOT SERVED FROM THE CONTINUOUS AGGREGATES, despite what the task pool suggested.
+    # `002_continuous_aggregates.sql` rolls up `telemetry` — hourly temperature features and
+    # minute performance features. Nothing here is time-series: these are row counts in
+    # `assets` and `alarms`, and no aggregate over telemetry can answer them.
 
-    # Total assets
-    result = await db.execute(
-        select(func.count()).select_from(base_query.subquery())
-    )
-    total_assets = result.scalar()
-
-    # Active assets
-    result = await db.execute(
-        select(func.count())
-        .select_from(base_query.where(Asset.is_active == True).subquery())
-    )
-    active_assets = result.scalar()
-
-    # Assets by PackML state
-    state_query = (
-        select(Asset.current_packml_state, func.count())
-        .where(Asset.organization_id == org_id)
-        .group_by(Asset.current_packml_state)
-    )
-    result = await db.execute(state_query)
-    assets_by_state = {state: count for state, count in result.all()}
-
-    # Active alarms
-    alarms_query = (
-        select(Alarm)
-        .join(Asset, Alarm.asset_id == Asset.id)
-        .where(Alarm.is_active == True, Asset.organization_id == org_id)
-    )
-
-    result = await db.execute(
-        select(func.count()).select_from(alarms_query.subquery())
-    )
-    active_alarms = result.scalar()
-    
-    # Critical alarms
-    result = await db.execute(
-        select(func.count())
-        .select_from(
-            alarms_query.where(Alarm.severity == "critical").subquery()
+    # One pass over `assets`: the state histogram, and the two totals derived from it.
+    # Grouping includes the NULL state as its own group, so summing the groups is the same
+    # population `COUNT(*)` was counting.
+    state_rows = (
+        await db.execute(
+            select(
+                Asset.current_packml_state,
+                func.count().label("total"),
+                func.count().filter(Asset.is_active == True).label("active"),  # noqa: E712
+            )
+            .where(Asset.organization_id == org_id)
+            .group_by(Asset.current_packml_state)
         )
-    )
-    critical_alarms = result.scalar()
+    ).all()
+
+    assets_by_state, total_assets, active_assets = _summarise_assets(state_rows)
+
+    # One pass over the join: active alarms, and the critical subset of them.
+    alarm_counts = (
+        await db.execute(
+            select(
+                func.count().label("active"),
+                func.count()
+                .filter(Alarm.severity == "critical")
+                .label("critical"),
+            )
+            .select_from(Alarm)
+            .join(Asset, Alarm.asset_id == Asset.id)
+            .where(Alarm.is_active == True, Asset.organization_id == org_id)  # noqa: E712
+        )
+    ).one()
+    active_alarms = alarm_counts.active
+    critical_alarms = alarm_counts.critical
     
     return DashboardOverview(
         total_assets=total_assets,
