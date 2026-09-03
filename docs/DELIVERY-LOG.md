@@ -15928,3 +15928,23 @@ in four more files is its own pass, not a rider on FS-885. Registered for a dedi
 docstring ("nothing leaking today... a property of the current code, not of the
 mechanism") but the guard's own glob only scans `app/workers/*.py`, and `export_delivery.py`
 lives in `app/services/`. The known risk has no guard watching it. Registered.
+
+### FS-886 — premise verified and corrected: bounded, not data-scaling
+
+`verify_refs` in `core/tenant_refs.py` does run one query per registered FK field present
+on the request body, as the plan states. **Measured against the real population before
+touching it**: the ceiling is **8** (`TaskCreate`/`TaskUpdate`/`TaskResponse`), most models
+carry 1-4, and the number is fixed by the SCHEMA, not by data volume — unlike every other
+Wave 4 item so far (ERP records, fingerprint diversity, organisations on a timer), this cost
+does not grow with fleet size, error volume, or org count. It is a bounded per-request cost
+on a write path, not a loop that gets worse.
+
+Restructuring it into one combined query would mean a UNION across differently-shaped joins
+(`_direct`, `_via_asset`, `_via_board`) with a discriminator to recover which field failed,
+and losing the ability to catch a single malformed id (`DBAPIError`) without poisoning the
+whole batch — real complexity, in the file that carries this repo's tenant-isolation
+reasoning (FORCE RLS interaction, 404-never-403, the redundant-until-someone-breaks-it
+comment already in the module). Given the ceiling is 8 round trips on a request that isn't
+high-frequency, the fix does not clear its own bar. **Not changed.** Corrected in place
+rather than implemented as written, per the house rule that a premise gets verified before
+it gets built around.
