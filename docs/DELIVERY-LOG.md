@@ -16015,3 +16015,19 @@ unrelated reason. Fixed by naming the new index specifically in the assertion ra
 checking for the absence of a scan type.
 
 Backend **5,548** passing, 110 skipped.
+
+### FS-892 — the live-detention query scanned the org's whole trailer history
+
+`api/yard.py`'s live-detention query filters `check_in_at IS NOT NULL AND check_out_at IS
+NULL` — the currently-checked-in subset — but the only index touching that shape,
+`ix_yard_trailers_org_checkin` (migration 043), orders the org's FULL history. Migration 079
+adds a partial index on the open-row predicate, the same idiom `060_shop_floor_events.sql`
+already used for `labor_entries` and `downtime_events`.
+
+Its guard needed the same fix as FS-891's: the pre-existing index absorbs
+`organization_id` and `check_in_at IS NOT NULL` as an Index Cond, leaving `check_out_at IS
+NULL` as an unindexed Filter on top — a bare no-sequential-scan check would have passed
+without this migration. Named the new index specifically, verified the without-migration
+EXPLAIN shows exactly that shape.
+
+Backend **5,550** passing, 110 skipped.
