@@ -153,3 +153,68 @@ class TestTheEndpointStillAnswers:
         ):
             assert field in body, f"/overview stopped returning {field}"
         assert isinstance(body["assets_by_state"], dict)
+
+
+class TestTheFleetIsNotSentAsAParameter:
+    """`/fleet/oee` scoped its grouped query with `.in_([a.id for a in assets])` — an id
+    list as long as the organisation's asset count, serialised into the statement on every
+    call (FS-880).
+
+    That is the sequel to an N+1 fix rather than one of its own: replacing N queries with
+    one is right, but scoping the survivor by a literal list of every id re-introduces the
+    fleet size on the other side of the wire. At a few thousand assets it is a
+    multi-hundred-kilobyte parameter to plan and transmit, thirty seconds apart, and the
+    planner matches a literal list instead of the `organization_id` predicate that produced
+    it — so the index it would have used is not considered.
+
+    A join says the same restriction in a form the database can act on.
+    """
+
+    def _oee_source(self) -> str:
+        tree = ast.parse((APP / "api/dashboard.py").read_text())
+        fn = next(
+            (
+                node
+                for node in ast.walk(tree)
+                if isinstance(node, (ast.AsyncFunctionDef, ast.FunctionDef))
+                and node.name == "get_fleet_oee"
+            ),
+            None,
+        )
+        # NAMED EXACTLY, not matched on "oee". There are two OEE handlers in this module —
+        # `get_asset_oee` and `get_fleet_oee` — and a substring match picked the first,
+        # so the guard passed while measuring a function that never had the defect.
+        assert fn is not None, "get_fleet_oee has moved; this guard is blind"
+        return ast.unparse(fn)
+
+    def test_the_ids_do_not_cross_the_wire(self):
+        source = self._oee_source()
+        assert "in_([a.id for a in assets])" not in source, (
+            "the fleet's asset ids are being sent back as a query parameter. The list "
+            "grows with the organisation, is rebuilt on every 30-second poll, and stops "
+            "the planner from using the organization_id index it was derived from."
+        )
+
+    def test_the_restriction_is_expressed_as_a_join(self):
+        source = self._oee_source()
+        assert ".join(Asset" in source, (
+            "the grouped query no longer joins `assets`, so either the tenant restriction "
+            "is gone — which would read another organisation's PackML states — or it is "
+            "back to being a literal id list"
+        )
+
+    def test_the_tenant_predicate_survived_the_rewrite(self):
+        """THE HALF THAT MATTERS MORE THAN THE PERFORMANCE. The id list was doing two jobs:
+        bounding the query and scoping it to the caller's organisation. Replacing it with a
+        join that forgot the second would be fast and would leak."""
+        source = self._oee_source()
+        # COUNTED, NOT MATCHED. The handler restricts by organisation TWICE — once
+        # fetching the assets for the response, once in the grouped query — so an
+        # `in source` check passes even after the second is deleted. Removing it was
+        # verified to fail this only once the count was what mattered.
+        occurrences = source.count("Asset.organization_id == org_id")
+        assert occurrences >= 2, (
+            f"organization_id is constrained {occurrences} time(s) in get_fleet_oee, and "
+            f"both the asset fetch and the grouped aggregate need it. With only one, the "
+            f"aggregate runs across every tenant — fast, and a cross-tenant read."
+        )

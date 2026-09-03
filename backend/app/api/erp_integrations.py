@@ -805,23 +805,54 @@ async def run_erp_sync(integration_id: str, organization_id: str, entity_types: 
             status = "success"
             try:
                 records = await connector.fetch_data(etype) or []
-                for i, record in enumerate(records):
-                    eid = extract_entity_id(record, i)
-                    existing = (
+
+                # FS-881. ONE QUERY FOR THE WHOLE BATCH, not one per record. This loop
+                # issued a `SELECT ERPEntity` per record, nested inside the per-entity-type
+                # loop above — so a 10,000-row SAP sync was 10,000 round trips, each
+                # holding a pooled connection (10 per process, FS-839) for the duration of
+                # the sync.
+                #
+                # The ids come from the records themselves, so they are all known before
+                # the loop starts; there was never a reason to ask one at a time. Keyed on
+                # `(entity_type, entity_id)` because `entity_id` alone is not unique across
+                # types — two ERP objects can legitimately share an id, and matching on it
+                # alone would overwrite one with the other.
+                #
+                # The `IN` list is bounded by the batch the connector returned rather than
+                # by the table, which is the distinction that makes this safe where
+                # FS-880's unbounded id list was not.
+                ids_by_index = [extract_entity_id(record, i) for i, record in enumerate(records)]
+                existing_by_id: dict[str, ERPEntity] = {}
+                if ids_by_index:
+                    rows = (
                         await db.execute(
                             _select(ERPEntity).where(
                                 ERPEntity.integration_id == integration_id,
                                 ERPEntity.entity_type == etype,
-                                ERPEntity.entity_id == eid,
+                                ERPEntity.entity_id.in_(set(ids_by_index)),
                             )
                         )
-                    ).scalar_one_or_none()
+                    ).scalars().all()
+                    existing_by_id = {row.entity_id: row for row in rows}
+
+                for i, record in enumerate(records):
+                    eid = ids_by_index[i]
+                    existing = existing_by_id.get(eid)
                     if existing is None:
-                        db.add(ERPEntity(
+                        created = ERPEntity(
                             organization_id=organization_id, integration_id=integration_id,
                             entity_type=etype, entity_id=eid, entity_data=record,
                             source_system=source_system,
-                        ))
+                        )
+                        db.add(created)
+                        # REGISTERED IMMEDIATELY, so a second record carrying the same id
+                        # later in this same batch updates it instead of inserting a
+                        # duplicate. The per-record SELECT used to hide this: it saw
+                        # nothing pending either, but each insert was flushed against a
+                        # fresh query, so the duplicate surfaced as a constraint violation
+                        # rather than silently. A batched pre-fetch has to carry the
+                        # in-flight rows itself.
+                        existing_by_id[eid] = created
                     else:
                         existing.entity_data = record
                         existing.updated_at = datetime.now(timezone.utc)

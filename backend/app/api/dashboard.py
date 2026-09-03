@@ -286,12 +286,26 @@ async def get_fleet_oee(
     start_time = end_time - timedelta(hours=hours)
     total_time = hours * 3600
 
-    # One grouped query for the whole fleet. This used to run a SELECT per asset
-    # inside the loop below — an N+1 that grew with the fleet.
+    # One grouped query for the whole fleet. This used to run a SELECT per asset inside
+    # the loop below — an N+1 that grew with the fleet.
+    #
+    # FS-880: AND THEN IT SENT THE FLEET BACK AS A PARAMETER. The fix above replaced N
+    # queries with one, but scoped it by `.in_([a.id for a in assets])` — an id list as
+    # long as the org's asset count, serialised into the statement on every call. At a few
+    # thousand assets that is a multi-hundred-kilobyte parameter to plan and transmit
+    # thirty seconds apart, and it defeats the `(organization_id, ...)` index because the
+    # database is matching a literal list rather than the predicate that produced it.
+    #
+    # Joining `assets` states the SAME restriction in a form the planner can use, and the
+    # ids never cross the wire. The `assets` list is still fetched — the response needs the
+    # rows themselves — but it is no longer also an argument.
     run_rows = await db.execute(
         select(PackMLState.asset_id, func.sum(PackMLState.duration_seconds))
+        .select_from(PackMLState)
+        .join(Asset, Asset.id == PackMLState.asset_id)
         .where(
-            PackMLState.asset_id.in_([a.id for a in assets]) if assets else False,
+            Asset.organization_id == org_id,
+            Asset.is_active == True,  # noqa: E712
             PackMLState.state == 'Execute',
             PackMLState.state_entered_at >= start_time,
             PackMLState.state_entered_at <= end_time,
