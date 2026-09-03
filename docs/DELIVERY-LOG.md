@@ -15957,3 +15957,22 @@ FS-879's dashboard fix used) and `api/analysis_sessions.py:494-504` runs 2 `SELE
 session plus `len(...scalars().all())` to count — materialising whole rows to get a number.
 Both confirmed present at the cited lines. Correlation/MLOps is HARSH's lane; registered
 rather than edited, per the sprint's lane rule.
+
+### FS-888 — the largest table in the product had no index its own search could use
+
+`assets` carries ten indexes and none on `name`, while every list call orders by it and a
+search term filters `name.ilike('%search%')`. A leading wildcard cannot use a plain btree
+index — the match can start anywhere in the string — and none of the 75 prior migrations
+ever installed `pg_trgm`, so nothing could have served that filter even with an index
+present. Migration 076 adds `(organization_id, name)` for the ordering/RLS case and, guarded
+behind a `pg_extension` existence check, a `pg_trgm` GIN index for the search case — a
+restricted environment without extension privileges gets the composite index and a slow
+search rather than a broken migration.
+
+The guard runs against a real database rather than reading the migration file: it confirms
+the extension is actually installed (not merely attempted), the GIN index exists, and —
+since the test fixture's empty table would otherwise let the cost-based planner choose a
+sequential scan regardless of which indexes exist, the same vacuous-fixture shape as rule
+295 — asserts with `enable_seqscan` forced off that an index-based plan exists at all.
+
+Backend **5,542** passing, 110 skipped.
