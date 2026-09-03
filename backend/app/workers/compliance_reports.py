@@ -134,8 +134,12 @@ async def recover_stale_jobs() -> None:
     async with AsyncSessionLocal() as session:
         org_ids = (await session.execute(select(Organization.id))).scalars().all()
 
-    for org_id in org_ids:
-        async with AsyncSessionLocal() as session:
+    # One session reused for every org in this pass, not one opened per org
+    # (FS-885, the same shape FS-883/FS-884 fixed elsewhere): this runs on a
+    # timer, and RLS only needs the GUC re-set per org, not a fresh pooled
+    # connection per org.
+    async with AsyncSessionLocal() as session:
+        for org_id in org_ids:
             await _set_org(session, org_id)
             jobs = (
                 await session.execute(

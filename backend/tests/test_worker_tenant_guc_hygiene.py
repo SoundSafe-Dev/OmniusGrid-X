@@ -69,7 +69,18 @@ class TestTheBindingIsTransactionLocal:
 
 
 class TestEverySessionBindsATenant:
-    """The compliance worker is the one with a documented exception."""
+    """The compliance worker has two documented exceptions.
+
+    FS-885's session consolidation (one AsyncSessionLocal reused across a whole org loop,
+    rather than one per org) exposed that the second exception below used to pass by
+    ACCIDENT rather than by design: the org-enumeration session and the first per-org
+    session used to sit within 8 lines of each other, so the window below found the per-org
+    loop's `_set_org` call and credited it to the untenanted session above it — the same
+    shape as rule 297, a check satisfied by something that exists nearby for an unrelated
+    reason. Consolidating the per-org sessions moved `_set_org` outside that window and
+    surfaced it. The exception is real — `Organization` carries no RLS policy an
+    org-enumeration read needs to satisfy — it is now named rather than accidental.
+    """
 
     def test_compliance_sessions_bind_or_delegate(self):
         source = (WORKERS / "compliance_reports.py").read_text()
@@ -83,6 +94,12 @@ class TestEverySessionBindsATenant:
                 continue
             # The documented exception: handed to a callee that binds it itself.
             if "generate_and_store_report(" in window:
+                continue
+            # The other documented exception: an org-ID enumeration read against
+            # `Organization` itself, which carries no RLS policy to satisfy — the same
+            # untenanted-by-design pattern used in edge_fleet_sweep.py and
+            # compliance_report_queue.py.
+            if "select(Organization.id)" in window:
                 continue
             unbound.append(i + 1)
         assert not unbound, (

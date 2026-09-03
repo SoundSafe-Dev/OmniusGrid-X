@@ -507,11 +507,15 @@ class CommandExecutor:
 
         expired = 0
         now = _utcnow()
-        for org_id in await self._organization_ids():
-            if expired >= limit:
-                break
-            snapshots = []
-            async with self._sessions() as session:
+        # One session reused across every org in this pass, not one opened and
+        # closed per org (FS-884, the same shape as FS-883's fleet sweep): this
+        # loop runs on a timer forever, and RLS only needs the GUC re-set per
+        # org, not a fresh pooled connection per org.
+        async with self._sessions() as session:
+            for org_id in await self._organization_ids():
+                if expired >= limit:
+                    break
+                snapshots = []
                 await self._set_org(session, org_id)
                 commands = (
                     await session.execute(
@@ -543,17 +547,17 @@ class CommandExecutor:
                 if commands:
                     await session.commit()
 
-            for snapshot in snapshots:
-                await self._broadcast_safely(
-                    snapshot["organization_id"],
-                    snapshot["asset_id"],
-                    snapshot["command_id"],
-                    CommandStatus.TIMEOUT,
-                    snapshot["action_id"],
-                    error="Command acknowledgement timed out",
-                )
-                logger.warning("command_timeout", command_id=snapshot["command_id"])
-            expired += len(snapshots)
+                for snapshot in snapshots:
+                    await self._broadcast_safely(
+                        snapshot["organization_id"],
+                        snapshot["asset_id"],
+                        snapshot["command_id"],
+                        CommandStatus.TIMEOUT,
+                        snapshot["action_id"],
+                        error="Command acknowledgement timed out",
+                    )
+                    logger.warning("command_timeout", command_id=snapshot["command_id"])
+                expired += len(snapshots)
         return expired
 
     async def get_pending_count(self, organization_id: Optional[str] = None) -> int:
