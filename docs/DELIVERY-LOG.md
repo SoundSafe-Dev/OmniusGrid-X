@@ -15976,3 +15976,20 @@ sequential scan regardless of which indexes exist, the same vacuous-fixture shap
 295 — asserts with `enable_seqscan` forced off that an index-based plan exists at all.
 
 Backend **5,542** passing, 110 skipped.
+
+### FS-890 — premise did not reproduce: these four tables are already indexed
+
+The plan named `sites`, `fleet_tags`, `fleet_groups`, `fleet_cohorts` as having **no index
+at all**, including none on `organization_id` — which the RLS policy on each evaluates on
+every row. **Measured against a real database before touching it**: all four carry
+`UNIQUE (organization_id, key)` and `UNIQUE (organization_id, name)` constraints
+(065_fleet_targeting.sql), and a UNIQUE constraint in Postgres creates a backing btree
+index — `organization_id` leads both, exactly the shape migration 043 established for the
+tenant-scoping predicate. `sites` and `fleet_tags`/`fleet_groups`/`fleet_cohorts` are not
+doing a sequential scan on RLS's predicate; every route in `api/fleet_targeting.py` filters
+on `organization_id` (plus `is_active` or `id`), and both are covered.
+
+`test_schema_parity.test_org_scoped_tables_have_org_index` already asserts this for every
+table with an `organization_id` column, was already passing before this item was opened,
+and would fail if any of these four regressed. **Not changed.** Corrected in place per the
+house rule — the premise did not reproduce.
