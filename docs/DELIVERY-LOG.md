@@ -15862,3 +15862,25 @@ sprint confounded by a subject that exists somewhere else in the file it's read 
 Fixed by counting occurrences instead of presence. Rules 296 and 297.
 
 Backend **5,527**. Method rules to **297**.
+
+### FS-882, FS-883 — a flush that got slower during the incident it existed for
+
+`error_tracker._flush_once` upserted one `error_events` row per fingerprint and, nested
+inside that, one `error_event_buckets` row per hour bucket that fingerprint touched. Both
+counts grow with error DIVERSITY — a single root cause fanning out across routes and status
+codes produces more fingerprints, not more occurrences of one — so the flush got slower
+exactly when an incident made speed matter. Fixed by flattening the batch into two
+parameter lists (one per statement) and issuing each via `executemany`, so a flush costs
+two round trips no matter how large the batch.
+
+`edge_fleet_sweep.sweep_once` opened two fresh `AsyncSessionLocal()` per organisation per
+sweep interval — one to set the tenant GUC and read `EdgeAgentStatus`, a second to set the
+same GUC again and read `Asset`. A background loop that never serves a request was taking
+two pooled connections per org on a timer, direct pressure on the ceiling FS-839 sized
+against `maxReplicas × pool ≤ max_connections`. Both reads now share one org-scoped
+session.
+
+Both guards were written matching their target function by exact name (rule 296) and
+mutation-verified against the pre-fix code via `git stash` before committing.
+
+Backend **5,533** passing, 110 skipped.
