@@ -2173,6 +2173,17 @@ one of its findings. The habit that catches it:
      predicate was removed by mutation, because the literal also appears in the function's
      other query. Sixth guard this sprint confounded by the same shape. Count occurrences
      to the number you actually mean, not presence.
+298. **A column that looks unique in isolation may not be the extension's real key.**
+     `pg_stat_statements.queryid` never repeated in any manual check; its actual key is
+     `(userid, dbid, toplevel, queryid)`, and the first time real multi-role traffic
+     produced a genuine collision, a unique index built on queryid alone refused to
+     build. "Hasn't repeated yet" describes the test traffic, not the data.
+299. **A test for a first-time event must force "first time," not just run once.**
+     `pg_stat_statements` silently skips recording a brand-new query if it can't get an
+     insert lock immediately, and a materialized view's CONCURRENT refresh takes an
+     entirely different path than its first, non-concurrent one — so a test relying on
+     run order to catch either "first occurrence" state passed or failed by chance.
+     Force the precondition explicitly rather than trusting session history for it.
 ---
 
 ## Open observations, not yet tickets

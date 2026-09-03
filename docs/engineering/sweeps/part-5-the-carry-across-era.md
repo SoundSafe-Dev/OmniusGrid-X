@@ -6551,3 +6551,40 @@ visible. The general fix is the same each time this rule recurs: **before trusti
 source` assertion, ask how many places in the file would make it true, and assert the
 count you actually mean, not just presence.**
 
+
+## Rule 298 — a column that looks unique in isolation may not be the extension's real key
+
+`frequent_queries`' unique index was built on `pg_stat_statements.queryid` alone, because
+in every manual check — one role, one database, a handful of ad hoc queries — `queryid`
+never repeated. It is not actually unique: `pg_stat_statements`' real key is
+`(userid, dbid, toplevel, queryid)`, because the same query text run by a different role
+or against a different database legitimately hashes to the same `queryid` under a
+different owner. The first time two roles ran a structurally identical query for real —
+which took a full test suite exercising four database roles plus a scratch database to
+produce — the unique index refused to build and the view never populated.
+
+The column that looks unique from wherever you're standing is unique *for the population
+you happened to generate*, not for the thing it is actually keyed on. A monitoring or
+introspection view built on top of a system catalog or extension needs to use that
+source's own declared key, not whichever column has never repeated yet in testing —
+because "hasn't repeated yet" is a property of how little variety the test traffic had,
+not of the data.
+
+## Rule 299 — a test for a first-time event needs to force "first time," not just run once
+
+The guard for rule 298 initially passed and failed unpredictably depending on what else
+had run in the same session: `pg_stat_statements` silently skips recording a query's
+first-ever occurrence if it cannot immediately get the lock needed to insert a new entry,
+so a "run this new query once" test would sometimes see it and sometimes not, for reasons
+having nothing to do with the code under test. It also had to force the *non-concurrent*
+refresh path specifically — the concurrent path, taken once a view is already populated,
+diffs against the existing index by row identity and does not exercise the same failure
+at all, so a test that ran after some other test had already populated the view passed
+for the wrong reason.
+
+Both fixes were the same shape: don't assume "run it once" reproduces a first-time
+condition. **Force the precondition explicitly** — reset the extension's own state,
+or drop the view back to its unpopulated form — rather than relying on test order or
+session history to have left the world in the state the test needs. A test that only
+sometimes exercises its own subject is worse than a slow one: it looks like coverage and
+isn't.
