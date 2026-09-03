@@ -47,6 +47,7 @@ OmniusGrid component failures. Start here during any incident.
 | [bad-deploy-wrote-bad-data.md](bad-deploy-wrote-bad-data.md) | Rolling back the code does not undo the writes. Stop, measure, then choose the narrowest instrument (FS-836) |
 | [noisy-tenant.md](noisy-tenant.md) | One tenant degrading the platform — and why every containment option is blunt (FS-837) |
 | [engineer-offboarding.md](engineer-offboarding.md) | An engineer leaves — the two remotes, the 7-day refresh window, and the register entries that quietly stop having an owner. Written the day it was first needed (03.09.02) |
+| [edge-buffer-sizing.md](edge-buffer-sizing.md) | How long a device survives an outage — 195 bytes/reading measured, and the crossover at **62 readings/s** where the governing limit changes from age to size (FS-871..877) |
 | [application-rollback.md](application-rollback.md) | Roll back a bad release on Docker Compose and Kubernetes |
 | [rto-rpo-checklist.md](rto-rpo-checklist.md) | Verify recovery met its RTO/RPO targets before closing the incident |
 | [incident-communication-templates.md](incident-communication-templates.md) | Copy-paste templates for internal, customer, and status-page comms |
