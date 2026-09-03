@@ -15908,3 +15908,23 @@ per-org sessions moved that call outside the window and surfaced it. Same shape 
 explicitly rather than leaving it to proximity.
 
 Backend **5,539** passing, 110 skipped.
+
+### Registered, not fixed: the session-per-org shape recurs four more times
+
+A sweep for the FS-883/884/885 shape (`for org_id in ...` opening a fresh
+`AsyncSessionLocal()` per iteration, in a loop that runs forever) across `app/services` and
+`app/workers` found it again in `export_delivery.dispatch_due`,
+`rollout_orchestrator` (its own org loop), `report_scheduler.dispatch_due` (nested two
+levels deep — a session per org AND a session per due schedule inside that), and
+`posting_drain_scheduler`. Not fixed in this pass: several of these interleave an external
+publish (Kafka) between the per-item DB reads and writes, which is a legitimate reason for a
+narrower transaction boundary — the same reasoning that kept `command_executor.dispatch_pending`
+untouched — and distinguishing the safe consolidations from the correctness-motivated ones
+in four more files is its own pass, not a rider on FS-885. Registered for a dedicated sweep.
+
+**Separately, and unrelated to the session-count question:** `export_delivery.py:214` sets
+`app.current_org_id` with `is_local=false` — session-scoped, not transaction-local — twice.
+`test_worker_tenant_guc_hygiene.py` already documents this exact footgun in its own
+docstring ("nothing leaking today... a property of the current code, not of the
+mechanism") but the guard's own glob only scans `app/workers/*.py`, and `export_delivery.py`
+lives in `app/services/`. The known risk has no guard watching it. Registered.
