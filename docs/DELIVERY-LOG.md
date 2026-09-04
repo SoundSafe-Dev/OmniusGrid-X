@@ -16226,3 +16226,47 @@ those two tests by trying to open a real connection before the (already-mocked) 
 was ever reached.
 
 Backend **5,604** passing, 110 skipped.
+
+### FS-908, FS-909, FS-910 — three ratchets, lowered by declaring rather than hiding
+
+**FS-908.** `test_response_model_coverage_ratchet.py`'s `MAX_UNDECLARED` was exactly at its
+measured figure (52), with zero headroom. Of the 52 undeclared routes, only six were
+in-lane: `auth.py`'s `/register`, `/logout`, `/me`, and `telemetry.py`'s `/latest`,
+`/history`, `/metrics`. Declared all six, reading the shape straight off each handler's own
+`return` statements — `telemetry.py`'s `/latest` needed `response_model_exclude_none=True`
+since its two-shape return (a data point, or `{"message": ...}` when none exists) makes
+every data field Optional, and an unconditional dump would have put a stray `message: null`
+into a response a realdb test already asserted exact equality against. Declaring
+`/history`'s envelope also surfaced a genuine gap in
+`test_frontend_response_shapes_match.py`: named envelope types declared in
+`src/types/*.ts` (as `TelemetryHistoryPage` is) were being resolved against `src/api/*.ts`
+only, so a named type there silently fell back to "object" — which happened to match an
+equally-undeclared backend route until this fix gave it a real schema. Widened the
+search to both directories. `MAX_UNDECLARED`: 52 → 46. The remaining 46 are HARSH's
+correlation/MLOps and kanban/analysis_sessions routes, registered rather than edited.
+
+**FS-909.** `test_a_permissive_response_model_is_not_a_contract.py`'s `MAX_PERMISSIVE`
+counted 22 routes answering `Dict[str, Any]`/`List[Dict[str, Any]]` — declared enough to
+satisfy FS-908's ratchet, describing nothing. Thirteen were in-lane: six on `geotab.py`
+(device list/location/trips/diagnostics, driver HOS, fleet summary — `geotab_service`'s
+functions each build one fixed dict, most already stamped with `simulated_provenance()`),
+two on `registries.py` (registry/item risk scoring), three on `yard.py` (trailer checkout,
+dock-door assignment, the dock schedule list — the last needed a subclass of
+`DockAppointmentResponse` carrying the four joined display fields), and two `bulk_operations.py`
+job-status routes (`BulkJobStatus`, matching `BulkProcessor`'s Redis-persisted job record
+field for field). `MAX_PERMISSIVE`: 22 → 9. The remaining 9 are RAG (htreinen's lane, 3),
+correlation/MLOps (HARSH's lane, 1), and the five already-registered genuinely-dynamic
+routes (feature flags, simulation).
+
+**FS-910.** `test_the_swallow_surface_only_shrinks.py` held `MAX_SWALLOWING = 199` /
+`MIN_COUNTED = 14` at zero slack on the ceiling and two free regression slots on the floor
+(measured 16 counted against a stated 14). Narrowed one: `middleware/rate_limit.py`'s
+`get_user_id_from_request` caught bare `except Exception` around a `jwt.decode` call whose
+only real failures are `jwt.PyJWTError` subclasses — the same narrowing its sibling
+function two down already carried. Counted two more: `middleware/error_tracking.py`'s
+tracker-call failure (a tracker that silently stops recording is the same shape as FS-536's
+audit trail) and `services/edge_fleet_sweep.py`'s per-pass loop failure, both wired to new
+Prometheus counters. `MAX_SWALLOWING`: 199 → 198. `MIN_COUNTED`: 14 → 18.
+
+Every ratchet in this block was mutation-tested by stashing the code change and confirming
+the lowered/raised number fails against the unmodified source.
