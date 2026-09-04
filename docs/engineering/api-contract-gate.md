@@ -257,10 +257,30 @@ There are now two:
 
 | configuration | floor | derivation |
 |---|---|---|
-| a broker answered | **445** | pooled minimum 454, less the 9-operation spread (2026-08-17) |
-| no broker answered | **445** | the same, and the two configurations no longer separate |
+| a broker answered | **447** | matched to the no-broker floor (2026-09-04) — see below |
+| no broker answered | **447** | pooled minimum 456, less the 9-operation spread (2026-09-04) |
 
-**Both floors are 445 as of 2026-08-17, and the floor was re-baselined to 445 from four
+**Both floors were re-baselined again on 2026-09-04, and the floor was re-baselined to 447**
+after Wave 4 of the FS-769→968 sprint (backend correctness/performance, FS-879–913) landed.
+Two runs against the same throwaway database (Postgres 15 + Redis, freshly provisioned,
+`omniusgrid_contract` restricted role), no broker present:
+
+| configuration | conforming | operations returning 5xx |
+|---|---|---|
+| no broker, run 1 (2026-09-04) | 456 / 552 | 27 |
+| no broker, run 2 (2026-09-04) | 462 / 552 | — |
+
+Pooled minimum 456, less the same 9-operation spread: **447**. `EXPECTED_TOTAL` moved
+546 → 552 in the same window (six routes, well inside tolerance). This raise is smaller in
+relative terms than the raw numbers suggest — some of what Wave 4 added (FS-898's 17 newly
+paginated routes, FS-908/909's newly declared response models) had never been measured
+against this gate before and did not all conform on the first pass. **This run did not
+re-probe a broker-present configuration**; `BASELINE_WITH_BROKER` is raised to match
+`BASELINE_WITHOUT_BROKER` on the strength of the FS-738 finding immediately below (the
+broker distinction had already collapsed), not from a fresh with-broker measurement.
+Whoever next runs this gate with a reachable broker should confirm that independently.
+
+**Both floors were 445 as of 2026-08-17, and the floor was re-baselined to 445 from four
 runs (FS-738).** The gain arrived as a side effect: FS-736/737 closed the foreign-key tenancy
 class, so a request naming another tenant's row now answers a declared 404 instead of reaching
 Postgres and surfacing as a 500.
@@ -341,25 +361,39 @@ forced, and correct; the connection was simply exempt.
 `NOSUPERUSER NOBYPASSRLS` role explicitly because "superusers bypass RLS even with
 FORCE", so the isolation tests were sound. **This gate now does the same.**
 
-Two things follow, and the second is not answerable from this repository:
+Two things followed:
 
 1. ~~Give the contract job a restricted role, the way `conftest` does.~~ **Done, FS-307.**
    Conformance dropped by five, exactly as predicted, and the re-baseline is recorded in
    `contract_ratchet.py` with both measurements.
-2. **Check which role production connects as.** `DATABASE_URL` comes from the
-   `database-credentials` secret, which is not in the repo, so the answer is
-   operational. If that role is the cluster owner or otherwise carries `BYPASSRLS`, then
-   every RLS policy in the schema is decorative in production too, and the tenant model
-   rests on application-level scoping alone. Worth confirming rather than assuming — the
-   check is one query: `SELECT rolsuper, rolbypassrls FROM pg_roles WHERE rolname =
-   current_user;`
+2. ~~Check which role production connects as.~~ **Done, FS-912 (2026-09-03).** This used to
+   read "not answerable from this repository" — it needed an operational answer, not a code
+   change. Answered with a startup assertion instead of a one-time check:
+   `verify_rls_is_not_bypassed()` (`app/core/startup_checks.py`) runs exactly the query named
+   here — `SELECT rolsuper, rolbypassrls FROM pg_roles WHERE rolname = current_user` —
+   against the app's own connection right after `init_db()`, and refuses to boot if either is
+   true. So the question is no longer "which role does production connect as, as of the last
+   time somebody checked" — it is asserted on every start, permanently.
 
 ### So the realistic ceiling is not 451
 
+**STALE, as the number in its own title shows.** This section was written against a 451-
+operation schema; the schema is 552 operations as of 2026-09-04 (via 546 on 2026-08-14 and
+471 in between), and the two policy classes below have not been re-counted against the
+current surface — `AcceptedNegativeData` alone read 45 in the 2026-09-04 run
+(`contract_summary.py`'s output), not the ~31 this section's arithmetic assumes. **Do not
+read ~412 as the current target.** This is D2 from `docs/planning/task-pool-2026-08-08.md`,
+carried and still open: recount the two policy classes against the live schema and replace
+the paragraph below with a current figure, or delete it in favour of the ratchet's own
+measured floor, which needs no ceiling estimate to be useful. The original text follows
+for the reasoning, not the arithmetic:
+
 Roughly **37 operations cannot pass without a deliberate policy change**, and 2 more are the
-undeclared xlsx/Prometheus content types. The genuinely fixable population is the remaining
-`ServerError`s: unvalidated input reaching Postgres. Treat ~412 as the target, not 451, and
-do not let a future ratchet-raiser mistake the difference for remaining work.
+undeclared xlsx/Prometheus content types (measured against the 451-operation schema). The
+genuinely fixable population is the remaining `ServerError`s: unvalidated input reaching
+Postgres. That distinction — policy debt vs. genuine defect — is why `ServerError` and not
+raw non-conformance is the number `contract_summary.py` calls out, and it is why "raise the
+ratchet" and "close the ~37" are different projects, whatever the current count of either is.
 
 Demanding a green suite would leave two bad options: stay advisory (how this job spent
 weeks achieving nothing), or block every build until unrelated work lands. The ratchet is

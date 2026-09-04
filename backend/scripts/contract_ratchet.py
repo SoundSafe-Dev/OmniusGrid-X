@@ -221,7 +221,29 @@ from pathlib import Path
 #: broker floor 440 -> 445, and it stops asserting a difference the measurement does not
 #: show. Not pinned at 454: a gate that fails on its own documented spread is a gate
 #: somebody disables.
-BASELINE_WITHOUT_BROKER = 445
+#:
+#: RAISED 445 -> 447 on 2026-09-04, after Wave 4 of the FS-769->968 sprint (backend
+#: correctness/performance, FS-879-913) landed. Two runs, same throwaway database
+#: (Postgres 15 + Redis, freshly provisioned, `omniusgrid_contract` restricted role),
+#: no broker present, back to back:
+#:
+#:     run 1   456 / 552 conforming
+#:     run 2   462 / 552 conforming
+#:
+#: Pooled minimum 456, less the same 9-operation spread this file has always allowed: 447.
+#: EXPECTED_TOTAL moved 546 -> 552 in the same window (six routes; well inside tolerance) --
+#: so this is a smaller relative gain than the raw numbers suggest, correctly: some of what
+#: Wave 4 added (FS-898's 17 newly-paginated routes, FS-908/909's newly-declared response
+#: models) had never been measured against this gate before and did not all conform on the
+#: first pass. Not raised further than the pooled-minimum method allows even though one run
+#: reached 462 -- one run is not two.
+#:
+#: BOTH FLOORS MOVE TOGETHER AGAIN, per the FS-738 finding this file already records: the
+#: broker distinction collapsed to "the two configurations no longer separate," and nothing
+#: measured this round contradicts that. This round did not re-probe a broker-present
+#: configuration, so BASELINE_WITH_BROKER is raised to match rather than independently
+#: measured -- the honest thing to write down, not a claim of a fresh with-broker run.
+BASELINE_WITHOUT_BROKER = 447
 
 #: The floor for a run where a broker was reachable. 402 measured 2026-08-08, less the same
 #: 9-operation spread the lower floor allows for. Never lower it either — and note that this
@@ -241,7 +263,16 @@ BASELINE_WITHOUT_BROKER = 445
 #: **four** operations: 449 with a broker against 445 without. The gap between the two floors
 #: is therefore small, and that is a fact about the API — very little of it now blocks on the
 #: broker — rather than a mistake in either number.
-BASELINE_WITH_BROKER = 445
+#:
+#: RAISED 445 -> 447 on 2026-09-04, TO MATCH `BASELINE_WITHOUT_BROKER` rather than from an
+#: independent with-broker run — see that constant's history for the two runs this is based
+#: on. Doing anything else here would either violate `with_broker >= without` (leaving this
+#: at 445 while the other moved to 447) or claim a broker-present measurement that was not
+#: taken. The broker distinction has been "the two configurations no longer separate" since
+#: FS-738; nothing this round contradicts that, and nothing this round confirms it fresh
+#: either. Whoever next runs this gate WITH a reachable broker should re-measure this floor
+#: independently rather than assume it still tracks.
+BASELINE_WITH_BROKER = 447
 
 #: Kept as the name the CLI default and older callers use: the floor that holds when nothing
 #: is known about the broker.
@@ -262,7 +293,11 @@ BASELINE_PASSING = BASELINE_WITHOUT_BROKER
 #: exactly as measured — a floor of 380 against 546 is looser than it was against 452, and
 #: the honest fix for that is the next full gate run raising it, not a number written here
 #: from a guess. Re-measure both on the next run that completes.
-EXPECTED_TOTAL = 546
+#:
+#: **552 measured 2026-09-04**, read straight from `app.openapi()` in the two runs behind
+#: this file's latest floor raise. |552 - 546| = 6, well inside TOTAL_TOLERANCE — Wave 4
+#: (FS-879-913) added routes without the drift-check shape FS-724's merge triggered.
+EXPECTED_TOTAL = 552
 
 #: How far total may drift before the run is treated as untrustworthy. Routes get
 #: added legitimately; a 10% swing means something structural changed.
