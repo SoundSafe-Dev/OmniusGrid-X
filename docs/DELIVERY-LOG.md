@@ -16198,3 +16198,31 @@ realdb tests needed their calls moved from `params=` to `json=`; the three remai
 
 Backend **5,595** passing, 110 skipped (five fewer parametrized cases from the shrinking
 register, offset by new guard tests). Frontend **1,225** passing, `tsc --noEmit` clean.
+
+### FS-907, FS-912 — two genuine data-loss fields, and the BYPASSRLS question answered
+
+**FS-907.** Two of the nine `UNREAD` register entries were genuine data loss rather than
+computed fields wrongly declared on a Create schema. `POST /transportation/routes` dropped
+`is_active` — the other four dropped fields on that route are all computed by the route
+optimizer, but nothing computes `is_active`; a caller creating a route already marked
+inactive had that silently overridden. Wired through the service and handler.
+`POST /yard/driver-wait-times` dropped nine billing/lifecycle fields, every one of them
+computed by `close_driver_wait_time` at checkout — the fix here was schema-side, not
+wiring: `DriverWaitTimeCreate` no longer inherits `DriverWaitTimeBase` and redeclares only
+the six fields the handler actually reads, leaving `DriverWaitTimeResponse` untouched.
+
+**FS-912.** `docs/engineering/api-contract-gate.md` recorded an open question rather than
+a decided fact: whether `DATABASE_URL`'s role can bypass row-level security, and therefore
+whether every RLS policy in the schema is decorative in production. Answered with a
+startup assertion rather than a one-time check: `verify_rls_is_not_bypassed()` runs
+`SELECT rolsuper, rolbypassrls FROM pg_roles` against the app's own connection right after
+`init_db()` and refuses to boot if either is true. Proven against a real database both
+ways — testcontainers' superuser bootstrap role correctly fails it, `tenant_user` (already
+provisioned `NOSUPERUSER NOBYPASSRLS` for the realdb suite) correctly passes. Took the
+engine rather than an open connection specifically so it is one mockable call:
+`test_ota_worker_topology.py` exercises `lifespan()` directly against a placeholder
+database to test service start/stop ordering, and the first version of this check broke
+those two tests by trying to open a real connection before the (already-mocked) function
+was ever reached.
+
+Backend **5,604** passing, 110 skipped.
