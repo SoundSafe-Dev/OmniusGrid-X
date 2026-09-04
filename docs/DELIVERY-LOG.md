@@ -16297,3 +16297,33 @@ action:
 Put to the user directly rather than decided unilaterally, given the stakes (industrial
 actuation; SSO provisioning). Decision: leave all three exactly as they are. No code change
 for this item.
+
+### FS-911 — the contract gate's floor, raised by measurement
+
+Spun up a throwaway Postgres 15 + Redis (never the dev database, never `:5432` — `:5434`/
+`:6380` via plain `docker run`), migrated all 82 migrations clean, provisioned
+`omniusgrid_contract` `NOSUPERUSER NOBYPASSRLS`, and ran `tests/test_api_contract.py`
+against it twice, back to back, no broker present:
+
+    run 1   456 / 552 conforming
+    run 2   462 / 552 conforming
+
+Pooled minimum 456, less the file's own standing 9-operation spread allowance: **447**.
+`BASELINE_WITHOUT_BROKER`: 445 → 447. `EXPECTED_TOTAL`: 546 → 552 (six routes, well inside
+tolerance). `BASELINE_WITH_BROKER` raised to match (447) rather than independently
+measured — this run did not re-probe a broker-present configuration, and the alternative
+was either violating the `with_broker >= without` invariant or claiming a measurement that
+wasn't taken; the doc says so explicitly for whoever runs this gate with a broker next.
+
+Two stale sections of `docs/engineering/api-contract-gate.md` were corrected in the same
+pass rather than left to mislead the next reader: item 2 of the RLS section ("check which
+role production connects as... not answerable from this repository") was closed by FS-912
+three days earlier and the doc hadn't caught up; and "the realistic ceiling is not 451"
+was written against a 451-operation schema that's since grown to 552 via 546 — the ~37/2
+policy-class counts underneath it were never re-verified against the current surface
+(`AcceptedNegativeData` alone now reads 45, not ~31), so the section is flagged stale in
+place rather than left to read as current. Recounting it is carried forward as open (this
+is D2 from `docs/planning/task-pool-2026-08-08.md`).
+
+Both throwaway containers torn down after the runs. Backend suite run in full afterward
+per house rule before commit.
