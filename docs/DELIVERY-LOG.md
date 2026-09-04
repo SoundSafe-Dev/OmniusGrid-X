@@ -16166,3 +16166,35 @@ a resource with both a paginated GET and an admin-gated mutation. Registered as 
 questions about different methods rather than merged.
 
 Backend **5,601** passing, 110 skipped. Frontend **1,223** passing, `tsc --noEmit` clean.
+
+### FS-899, FS-900, FS-902 — ceilings, a dead frontend policy, and five split-input routes
+
+**FS-899.** `telemetry.py`'s history endpoint had `skip: int = Query(0, ge=0)` — no upper
+bound. The general guard for exactly this class couldn't see it: the module sits in
+`tests/_lane_failures.py`'s shared `LANE_ROUTERS` allowlist for reasons unrelated to
+pagination, which happened to also exempt it from the offset-ceiling check. Fixed directly
+with `le=MAX_OFFSET` rather than touch a cross-guard list for one file. Also lowered the
+`limit` ceiling 10000 → 5000 to match `historian.py`'s raw-query ceiling — this endpoint's
+rows are heavier (JSON metadata column, every metric by default) than historian's
+single-metric series point.
+
+**FS-900.** `DEFAULT_PAGE_SIZE`/`MAX_PAGE_SIZE` had zero consumers anywhere in the tree —
+not a violated policy so much as one that was never wired to anything. Four fleet-overview
+fetches used a bare `limit: 500`; `MAX_PAGE_SIZE` (100) is the wrong ceiling for them —
+clamping to it would make FS-967's known truncation bug worse on any fleet over 100 assets.
+Named the real intent instead: `FLEET_OVERVIEW_FETCH_LIMIT`. Historian.tsx's `limit: 5000`
+already matches `historian.py`'s own ceiling exactly and is commented as such rather than
+renamed. A new guard keeps a future large `limit` from reverting to an unnamed number.
+
+**FS-902.** Five of the eight `SPLIT_INPUT` routes were mine: `POST /api-keys/generate`,
+`POST /gdpr/processing-records`, `POST`+`PUT /compliance/vendor-assessments`, and
+`POST /data-residency/validate`. Each read some fields from the query string and others
+from the body — no single request fills both, so a body-only client got a 200 with the
+query-side fields silently defaulted (a key with no expiry, a GDPR record with a default
+legal basis, an assessment against a default vendor at a default risk, a residency check
+against the default region). Collapsed each to one Pydantic body model. Six existing
+realdb tests needed their calls moved from `params=` to `json=`; the three remaining
+`SPLIT_INPUT` entries are Harsh's lane, left registered.
+
+Backend **5,595** passing, 110 skipped (five fewer parametrized cases from the shrinking
+register, offset by new guard tests). Frontend **1,225** passing, `tsc --noEmit` clean.
