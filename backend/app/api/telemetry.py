@@ -15,6 +15,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy import select, func, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.pagination import MAX_OFFSET
 from app.middleware.tenant_isolation import get_tenant_org_id, get_tenant_db
 from app.db.models import Telemetry, Asset, PackMLState
 from app.middleware.rate_limit import rate_limit
@@ -145,8 +146,16 @@ async def get_telemetry_history(
     start_time: Optional[datetime] = Query(None),
     end_time: Optional[datetime] = Query(None),
     aggregation: Optional[str] = Query(None, enum=["1min", "5min", "1hour"]),
-    skip: int = Query(0, ge=0),
-    limit: int = Query(1000, ge=1, le=10000),
+    # FS-899. `skip` had no ceiling -- a value above Postgres's bigint OFFSET limit
+    # reaches asyncpg and 500s where the schema promises a 4xx (the same gap
+    # test_generated_input_cannot_five_hundred.py closes for in-lane routes; this file
+    # is on the shared other-lanes allowlist for unrelated reasons and the check does
+    # not reach it). `limit`'s ceiling is lowered from 10000 to 5000, matching
+    # historian.py's raw-query ceiling: this endpoint's rows carry a JSON metadata
+    # column and default to EVERY metric on the asset (no metric_name filter is
+    # required), so a row here is heavier than historian's single-metric series point.
+    skip: int = Query(0, ge=0, le=MAX_OFFSET),
+    limit: int = Query(1000, ge=1, le=5000),
     org_id: UUID = Depends(get_tenant_org_id),
     db: AsyncSession = Depends(get_tenant_db),
 ):

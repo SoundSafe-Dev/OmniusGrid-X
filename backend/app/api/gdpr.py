@@ -57,6 +57,23 @@ class ProcessingRecordCreated(BaseModel):
     message: str
 
 
+class ProcessingRecordCreate(BaseModel):
+    """FS-902. `processing_activity`, `retention_period` and `legal_basis` used to be
+    bare query parameters beside `data_categories`/`purposes` (lists, so FastAPI reads
+    them from the body) -- a caller posting one JSON document had the lists accepted and
+    the three scalars silently fall to their query-string defaults. A GDPR processing
+    record created that way carries a default LEGAL BASIS and a default retention
+    period, which is the entire regulatory content of the record. One body model."""
+
+    processing_activity: str
+    data_categories: List[str]
+    purposes: List[str]
+    recipients: Optional[List[str]] = None
+    retention_period: Optional[str] = None
+    security_measures: Optional[List[str]] = None
+    legal_basis: Optional[str] = None
+
+
 class UserDataExport(BaseModel):
     """A GDPR Article 15 subject-access export.
 
@@ -391,13 +408,7 @@ async def get_processing_records(
 @rate_limit("10/minute")
 async def create_processing_record(
     request: Request,
-    processing_activity: str,
-    data_categories: List[str],
-    purposes: List[str],
-    recipients: Optional[List[str]] = None,
-    retention_period: Optional[str] = None,
-    security_measures: Optional[List[str]] = None,
-    legal_basis: Optional[str] = None,
+    body: ProcessingRecordCreate,
     current_user: User = Depends(get_current_active_user),
     db: AsyncSession = Depends(get_tenant_db)
 ):
@@ -407,30 +418,30 @@ async def create_processing_record(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Organization required"
         )
-    
+
     record = DataProcessingRecord(
         organization_id=current_user.organization_id,
-        processing_activity=processing_activity,
-        data_categories=data_categories,
-        purposes=purposes,
-        recipients=recipients,
-        retention_period=retention_period,
-        security_measures=security_measures,
-        legal_basis=legal_basis
+        processing_activity=body.processing_activity,
+        data_categories=body.data_categories,
+        purposes=body.purposes,
+        recipients=body.recipients,
+        retention_period=body.retention_period,
+        security_measures=body.security_measures,
+        legal_basis=body.legal_basis
     )
-    
+
     db.add(record)
     await db.commit()
     await db.refresh(record)
-    
+
     logger.info(
         "processing_record_created",
         record_id=str(record.id),
         organization_id=str(current_user.organization_id)
     )
-    
+
     return {
         "id": str(record.id),
-        "processing_activity": processing_activity,
+        "processing_activity": body.processing_activity,
         "message": "Data processing record created successfully"
     }

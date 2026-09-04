@@ -51,7 +51,7 @@ class TestTheEndpointRuns:
     async def test_validate_returns_200_and_not_a_key_error(self, client_a):
         """The assertion that would have caught the stale logger key. Deliberately the
         first test in the file: everything below is worthless if the body cannot execute."""
-        response = await client_a.post(VALIDATE, json=["assets"])
+        response = await client_a.post(VALIDATE, json={"table_names": ["assets"]})
         assert response.status_code == 200, response.text
 
 
@@ -59,18 +59,18 @@ class TestItDoesNotClaimCoverageItLacks:
     async def test_untagged_and_total_are_null_not_zero(self, client_a):
         """Zero would assert that nothing is untagged, which is the original defect stated
         as a number instead of a formula."""
-        body = (await client_a.post(VALIDATE, json=["assets"])).json()
+        body = (await client_a.post(VALIDATE, json={"table_names": ["assets"]})).json()
         assert body["untagged_records"] is None
         assert body["total_records"] is None
 
     async def test_the_response_says_what_it_could_not_see(self, client_a):
-        body = (await client_a.post(VALIDATE, json=["assets"])).json()
+        body = (await client_a.post(VALIDATE, json={"table_names": ["assets"]})).json()
         assert "not visible to this check" in body["coverage_warning"]
 
     async def test_the_old_field_name_is_gone(self, client_a):
         """`compliance_percentage` is the claim this endpoint cannot support: it reads as a
         statement about the table while being computed over the tagged subset."""
-        body = (await client_a.post(VALIDATE, json=["assets"])).json()
+        body = (await client_a.post(VALIDATE, json={"table_names": ["assets"]})).json()
         assert "compliance_percentage" not in body
         assert "tagged_region_percentage" in body
 
@@ -90,7 +90,7 @@ class TestTheRatioItDoesComputeIsRight:
         await _tag(client_a, table, "rec-2", "USA")
 
         body = (
-            await client_a.post(VALIDATE, json=[table], params={"expected_region": "EU"})
+            await client_a.post(VALIDATE, json={"table_names": [table], "expected_region": "EU"})
         ).json()
         assert body["tagged_records"] == 2
         assert body["correct_region_records"] == 0
@@ -105,7 +105,7 @@ class TestTheRatioItDoesComputeIsRight:
         table = f"probe_{uuid.uuid4().hex[:8]}"
         await _tag(client_a, table, "rec-1", "USA")
 
-        body = (await client_a.post(VALIDATE, json=[table])).json()
+        body = (await client_a.post(VALIDATE, json={"table_names": [table]})).json()
         assert body["tagged_region_percentage"] == pytest.approx(100.0)
         assert body["untagged_records"] is None, (
             "100% of the tagged rows must still not imply that none are untagged"
@@ -113,6 +113,6 @@ class TestTheRatioItDoesComputeIsRight:
 
     async def test_no_tags_is_zero_percent_and_not_a_division_error(self, client_a):
         table = f"empty_{uuid.uuid4().hex[:8]}"
-        body = (await client_a.post(VALIDATE, json=[table])).json()
+        body = (await client_a.post(VALIDATE, json={"table_names": [table]})).json()
         assert body["tagged_records"] == 0
         assert body["tagged_region_percentage"] == 0.0

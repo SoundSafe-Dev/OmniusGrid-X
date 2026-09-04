@@ -5,6 +5,7 @@ import { Card, Badge, SkeletonCard } from '../../components';
 import { Tooltip, TooltipTrigger, TooltipContent, ErrorState } from '../../components/ui';
 import { AnnotatedChart, FacilityHeatmap } from '../../components/charts';
 import { assetsApi, dashboardApi, telemetryApi, maintenanceApi } from '../../api';
+import { FLEET_OVERVIEW_FETCH_LIMIT } from '../../utils/constants';
 import {
   LineChart,
   Line,
@@ -22,7 +23,7 @@ const RUNNING_STATES = ['Execute', 'Idle'];
 const AT_RISK_STATES = ['Held', 'Holding', 'Suspended', 'Aborted', 'Aborting', 'Stopped', 'Stopping'];
 
 export const AssetHealth: FC = () => {
-  const { data: assetsPage, isLoading, isError, refetch, isFetching } = useQuery({ queryKey: ['assethealth-assets'], queryFn: () => assetsApi.list({ limit: 500 }) });
+  const { data: assetsPage, isLoading, isError, refetch, isFetching } = useQuery({ queryKey: ['assethealth-assets'], queryFn: () => assetsApi.list({ limit: FLEET_OVERVIEW_FETCH_LIMIT }) });
   const assets = assetsPage?.items ?? [];
 
   if (isLoading) {
@@ -166,7 +167,7 @@ export const TelemetryCharts: FC = () => {
   // Real data: first asset's telemetry history, current fleet OEE, and the
   // fleet's PackML-state distribution. (Nozzle/bed/vibration were 3D-printer
   // demo metrics; the chart now plots whatever metrics the asset actually has.)
-  const { data: assetsPage, isLoading: assetsLoading, isError: assetsError } = useQuery({ queryKey: ['analytics-assets'], queryFn: () => assetsApi.list({ limit: 500 }) });
+  const { data: assetsPage, isLoading: assetsLoading, isError: assetsError } = useQuery({ queryKey: ['analytics-assets'], queryFn: () => assetsApi.list({ limit: FLEET_OVERVIEW_FETCH_LIMIT }) });
   const assets = assetsPage?.items ?? [];
   // Falls back to the first asset so the page still renders something on arrival — the
   // behaviour it had — while the selector decides from then on.

@@ -44,6 +44,36 @@ class VendorAssessmentCreated(CreatedWithMessage):
     vendor_name: str
 
 
+class VendorAssessmentCreate(BaseModel):
+    """FS-902. `vendor_name`, `risk_level` and `assessment_date` (among others) used to
+    be bare query parameters beside `findings`/`controls` (lists, so FastAPI reads them
+    from the body) -- a body-only client filed an assessment against a DEFAULT vendor at
+    a DEFAULT risk level. One body model closes the gap."""
+
+    vendor_name: str
+    vendor_type: Optional[str] = None
+    risk_level: Optional[str] = None
+    assessment_date: Optional[date] = None
+    next_review_date: Optional[date] = None
+    findings: Optional[List[str]] = None
+    controls: Optional[List[str]] = None
+
+
+class VendorAssessmentUpdate(BaseModel):
+    """FS-902. `risk_level` and `status` used to be bare query parameters beside
+    `findings`/`controls` (lists, read from the body) -- no single request a client
+    sends fills both halves, so a caller posting `{"findings": [...]}` had no way to
+    ALSO send `risk_level` in the same document; it silently stayed query-string-default
+    (unset), and the handler's `if risk_level:` guard then left the stored value
+    untouched even when the caller's intent was to change it in the same call."""
+
+    risk_level: Optional[str] = None
+    next_review_date: Optional[date] = None
+    findings: Optional[List[str]] = None
+    controls: Optional[List[str]] = None
+    status: Optional[str] = None
+
+
 class SecurityAssetCreated(CreatedWithMessage):
     asset_name: str
 
@@ -115,28 +145,22 @@ async def list_vendor_assessments(
 @rate_limit("10/minute")
 async def create_vendor_assessment(
     request: Request,
-    vendor_name: str,
-    vendor_type: Optional[str] = None,
-    risk_level: Optional[str] = None,
-    assessment_date: Optional[date] = None,
-    next_review_date: Optional[date] = None,
-    findings: Optional[List[str]] = None,
-    controls: Optional[List[str]] = None,
+    body: VendorAssessmentCreate,
     current_user: User = Depends(get_current_active_user),
     org_id: UUID = Depends(get_tenant_org_id),
     db: AsyncSession = Depends(get_tenant_db),
 ):
     """Create vendor risk assessment"""
     assessment = VendorRiskAssessment(
-        vendor_name=vendor_name,
-        vendor_type=vendor_type,
-        risk_level=risk_level,
-        assessment_date=assessment_date or date.today(),
-        next_review_date=next_review_date,
+        vendor_name=body.vendor_name,
+        vendor_type=body.vendor_type,
+        risk_level=body.risk_level,
+        assessment_date=body.assessment_date or date.today(),
+        next_review_date=body.next_review_date,
         assessor_id=current_user.id,
         organization_id=org_id,
-        findings=findings,
-        controls=controls,
+        findings=body.findings,
+        controls=body.controls,
         status="pending"
     )
 
@@ -146,13 +170,13 @@ async def create_vendor_assessment(
     logger.info(
         "vendor_assessment_created",
         assessment_id=str(assessment.id),
-        vendor_name=vendor_name,
+        vendor_name=body.vendor_name,
         organization_id=str(org_id),
     )
 
     return {
         "id": str(assessment.id),
-        "vendor_name": vendor_name,
+        "vendor_name": body.vendor_name,
         "message": "Vendor risk assessment created successfully"
     }
 
@@ -162,11 +186,7 @@ async def create_vendor_assessment(
 async def update_vendor_assessment(
     request: Request,
     assessment_id: UUID,
-    risk_level: Optional[str] = None,
-    next_review_date: Optional[date] = None,
-    findings: Optional[List[str]] = None,
-    controls: Optional[List[str]] = None,
-    status: Optional[str] = None,
+    body: VendorAssessmentUpdate,
     current_user: User = Depends(get_current_active_user),
     org_id: UUID = Depends(get_tenant_org_id),
     db: AsyncSession = Depends(get_tenant_db),
@@ -186,16 +206,16 @@ async def update_vendor_assessment(
             detail="Vendor assessment not found"
         )
 
-    if risk_level:
-        assessment.risk_level = risk_level
-    if next_review_date:
-        assessment.next_review_date = next_review_date
-    if findings:
-        assessment.findings = findings
-    if controls:
-        assessment.controls = controls
-    if status:
-        assessment.status = status
+    if body.risk_level:
+        assessment.risk_level = body.risk_level
+    if body.next_review_date:
+        assessment.next_review_date = body.next_review_date
+    if body.findings:
+        assessment.findings = body.findings
+    if body.controls:
+        assessment.controls = body.controls
+    if body.status:
+        assessment.status = body.status
 
     assessment.updated_at = datetime.now(timezone.utc)
     await db.commit()

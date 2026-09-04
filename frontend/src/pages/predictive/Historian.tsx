@@ -13,6 +13,7 @@ import {
 } from 'recharts';
 import { Card, Button } from '../../components';
 import { assetsApi, historianApi, telemetryApi } from '../../api';
+import { FLEET_OVERVIEW_FETCH_LIMIT } from '../../utils/constants';
 import type {
   HistorianGranularity,
   HistorianQueryParams,
@@ -74,7 +75,7 @@ export const Historian: FC = () => {
   // time something is wrong.
   const { data: assetsPage, isError: assetsError, isLoading: assetsLoading } = useQuery({
     queryKey: ['historian-assets'],
-    queryFn: () => assetsApi.list({ limit: 500 }),
+    queryFn: () => assetsApi.list({ limit: FLEET_OVERVIEW_FETCH_LIMIT }),
   });
   const assets = assetsPage?.items ?? [];
 
@@ -125,6 +126,9 @@ export const Historian: FC = () => {
       granularity,
       start: start.toISOString(),
       end: now.toISOString(),
+      // FS-900. Matches historian.py's own `le=5000` ceiling on GET /historian/query
+      // exactly -- not the frontend's MAX_PAGE_SIZE, which governs paginated tables,
+      // not a bounded single-metric time-series pull.
       limit: 5000,
     });
   };

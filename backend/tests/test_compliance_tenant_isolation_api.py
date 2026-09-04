@@ -14,7 +14,7 @@ import pytest
 async def _create_vendor_assessment(client, vendor_name: str) -> dict:
     response = await client.post(
         "/api/v1/compliance/vendor-assessments",
-        params={"vendor_name": vendor_name},
+        json={"vendor_name": vendor_name},  # FS-902: moved into the body model
     )
     assert response.status_code == 200, response.text
     return response.json()
@@ -88,7 +88,7 @@ class TestVendorAssessmentTenantIsolation:
 
         foreign = await client_b.put(
             f"/api/v1/compliance/vendor-assessments/{created['id']}",
-            params={"status": "completed"},
+            json={"status": "completed"},  # FS-902: moved into the body model
         )
         assert foreign.status_code == 404
 

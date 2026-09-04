@@ -74,6 +74,20 @@ export const CHART_COLORS = [
 export const DEFAULT_PAGE_SIZE = 20;
 export const MAX_PAGE_SIZE = 100;
 
+// FS-900. Four pages fetch "the whole fleet" for a client-side aggregate (a KPI tile,
+// an org tree, a chart) rather than a paginated table, and all four used a bare `500`
+// with no shared name and no link to what actually bounds it: the backend's
+// `GET /api/v1/assets` ceiling is `le=1000` (app/api/assets.py). MAX_PAGE_SIZE (100) is
+// the wrong constant for this — clamping a fleet-overview fetch to it would make
+// FS-967's truncation bug worse, not fix it, by lowering the cutoff from 500 to 100 assets.
+//
+// 500 is kept rather than raised to the 1000 ceiling: raising it does not fix FS-967 (a
+// large enough fleet still exceeds any fixed number silently), and moving the actual fix
+// to real pagination or a server-computed total is that item's job, not this constant's.
+// Named so every call site says the same thing about why, instead of four copies of a
+// number nobody could trace.
+export const FLEET_OVERVIEW_FETCH_LIMIT = 500;
+
 export const REFRESH_INTERVALS = {
   dashboard: 30000, // 30 seconds
   telemetry: 5000, // 5 seconds

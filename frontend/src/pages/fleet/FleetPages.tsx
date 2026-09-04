@@ -3,13 +3,14 @@ import { useQuery } from '@tanstack/react-query';
 import { Building2, MapPin, Users, ChevronRight, ChevronDown, Factory, Box, Activity } from 'lucide-react';
 import { Card, Badge, SkeletonCard } from '../../components';
 import { Tooltip, TooltipTrigger, TooltipContent, ErrorState } from '../../components/ui';
+import { FLEET_OVERVIEW_FETCH_LIMIT } from '../../utils/constants';
 import { GeoTabIntegration } from '../../components/fleet/GeoTabIntegration';
 import { workcellsApi, assetsApi, organizationsApi } from '../../api';
 import { AgentOperationsPanel } from './AgentOperationsPanel';
 
 export const FleetOverview: FC = () => {
   const { data: workcells, isLoading: workcellsLoading, isError: workcellsError, refetch: refetchWorkcells } = useQuery({ queryKey: ['fleet-workcells'], queryFn: () => workcellsApi.list() });
-  const { data: assetsPage, isLoading: assetsLoading, isError: assetsError, refetch: refetchAssets } = useQuery({ queryKey: ['fleet-assets'], queryFn: () => assetsApi.list({ limit: 500 }) });
+  const { data: assetsPage, isLoading: assetsLoading, isError: assetsError, refetch: refetchAssets } = useQuery({ queryKey: ['fleet-assets'], queryFn: () => assetsApi.list({ limit: FLEET_OVERVIEW_FETCH_LIMIT }) });
   // THE THIRD QUERY IS THE ONE THAT MATTERED. It was destructured for `data` alone,
   // and its result gates the live vehicle map below — `{orgId && <GeoTabIntegration …>}`.
   // On a failed request `orgs` is undefined, `orgId` is undefined, and the map simply
@@ -150,7 +151,7 @@ const packmlStatus = (state?: string): string => {
 export const OrganizationTree: FC = () => {
   const { data: orgs, isLoading: orgsLoading, isError: orgsError, refetch: refetchTreeOrgs } = useQuery({ queryKey: ['orgtree-orgs'], queryFn: () => organizationsApi.list() });
   const { data: workcells, isLoading: workcellsLoading, isError: workcellsError, refetch: refetchTreeWorkcells } = useQuery({ queryKey: ['orgtree-workcells'], queryFn: () => workcellsApi.list() });
-  const { data: assetsPage, isLoading: assetsLoading, isError: assetsError, refetch: refetchTreeAssets } = useQuery({ queryKey: ['orgtree-assets'], queryFn: () => assetsApi.list({ limit: 500 }) });
+  const { data: assetsPage, isLoading: assetsLoading, isError: assetsError, refetch: refetchTreeAssets } = useQuery({ queryKey: ['orgtree-assets'], queryFn: () => assetsApi.list({ limit: FLEET_OVERVIEW_FETCH_LIMIT }) });
 
   const org = orgs?.[0];
   // Constant root node id so the default-expanded set stays valid once the org

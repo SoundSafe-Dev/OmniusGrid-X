@@ -42,6 +42,11 @@ MUTATING = {"POST", "PUT", "PATCH", "DELETE"}
 #: Routes that take some parameters in the query and some in the body. **ONLY SHRINKS.**
 #: Measured 2026-08-14; `/operations/{id}/complete` was the tenth and is closed.
 #:
+#: FS-902 (2026-09-03) closed the five that were mine: `/api-keys/generate`,
+#: `/gdpr/processing-records`, `/compliance/vendor-assessments` (POST and PUT), and
+#: `/data-residency/validate` — each collapsed to one body model. The three that remain
+#: are Harsh's; left recorded rather than fixed, per the lane rule.
+#:
 #: Every entry here is silent by construction — each has at least one DEFAULTED query
 #: parameter, so a client posting one JSON body gets a 200 and a value it did not send.
 #: They are recorded rather than fixed because each is a published contract change in
@@ -58,23 +63,6 @@ SPLIT_INPUT: dict[str, str] = {
     "POST /api/v1/nlp/sessions/{session_id}/data/upload":
         "Harsh's lane. `data_type` in the query beside a multipart file; a caller that omits "
         "it gets the default type applied to whatever it uploaded.",
-    "POST /api/v1/api-keys/generate":
-        "`name` and `expires_in_days` in the query, `scopes` in the body. A body-only client "
-        "mints a key with the default name and the default lifetime, and the scopes it asked "
-        "for — a credential whose expiry nobody chose.",
-    "POST /api/v1/gdpr/processing-records":
-        "`processing_activity`, `retention_period` and `legal_basis` in the query. A "
-        "processing record created from one body carries a default LEGAL BASIS and a default "
-        "retention period, which is the entire content of the record.",
-    "POST /api/v1/compliance/vendor-assessments":
-        "Five in the query, including `vendor_name`, `risk_level` and `assessment_date`. A "
-        "body-only client files an assessment against a default vendor at a default risk.",
-    "PUT /api/v1/compliance/vendor-assessments/{assessment_id}":
-        "Same shape on the update: `risk_level` and `status` in the query, `findings` in the "
-        "body — so a re-assessment that posts new findings silently resets the risk level.",
-    "POST /api/v1/data-residency/validate":
-        "`expected_region` in the query, `table_names` in the body. A body-only call "
-        "validates the named tables against the DEFAULT region and reports a pass.",
 }
 
 

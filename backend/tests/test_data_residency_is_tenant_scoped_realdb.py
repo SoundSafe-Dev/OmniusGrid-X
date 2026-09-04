@@ -146,12 +146,11 @@ class TestTheAggregatesCountOnlyTheCallersOwn:
     async def test_validate_does_not_count_the_other_tenant(
         self, client_a, tags_for_both_orgs
     ):
-        # `table_names: List[str]` IS the body, and `expected_region` is a query
-        # parameter — a bare non-Pydantic default on a POST (the FS-379/FS-420 shape).
+        # FS-902: table_names and expected_region are now one body model instead of
+        # a body/query split.
         response = await client_a.post(
             "/api/v1/data-residency/validate",
-            json=[TABLE],
-            params={"expected_region": "us-east-1"},
+            json={"table_names": [TABLE], "expected_region": "us-east-1"},
         )
         assert response.status_code == 200, response.text
         assert response.json()["tagged_records"] == 1, (

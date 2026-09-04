@@ -60,14 +60,16 @@ async def _asset(client, name: str, status: str | None = None):
 
 
 async def _vendor(client, name: str, status: str | None = None):
+    # FS-902: vendor_name/vendor_type/risk_level moved from query params into one body
+    # model.
     response = await client.post(
         "/api/v1/compliance/vendor-assessments",
-        params={"vendor_name": name, "vendor_type": "saas", "risk_level": "low"},
+        json={"vendor_name": name, "vendor_type": "saas", "risk_level": "low"},
     )
     if status and response.status_code < 300:
         await client.put(
             f"/api/v1/compliance/vendor-assessments/{response.json()['id']}",
-            params={"status": status},
+            json={"status": status},
         )
     return response
 

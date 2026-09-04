@@ -339,12 +339,21 @@ async def get_residency_summary(
     return summary
 
 
+class DataResidencyValidateRequest(BaseModel):
+    """FS-902. `expected_region` used to be a bare query parameter beside `table_names`
+    (a list, read from the body) -- a body-only call (`{"table_names": [...]}`) had
+    `expected_region` silently fall to `DEFAULT_REGION` and reported a pass against a
+    region the caller never named. One body model."""
+
+    table_names: List[str]
+    expected_region: str = DEFAULT_REGION
+
+
 @router.post("/validate", response_model=ResidencyValidation, summary="Validate data residency", description="Validate that all data in specified tables is tagged with correct residency.", dependencies=[Depends(require_admin)])
 @rate_limit("10/minute")
 async def validate_data_residency(
     request: Request,
-    table_names: List[str],
-    expected_region: str = DEFAULT_REGION,
+    body: DataResidencyValidateRequest,
     current_user: User = Depends(get_current_active_user),
     db: AsyncSession = Depends(get_tenant_db)
 ):
@@ -352,7 +361,7 @@ async def validate_data_residency(
     this can and cannot see — the untagged rows are the finding, and they are invisible
     here until FS-311 provides a cross-tenant read path."""
     validation_results: Dict[str, Any] = {
-        "expected_region": expected_region,
+        "expected_region": body.expected_region,
         "tables": {},
         "tagged_records": 0,
         "correct_region_records": 0,
@@ -366,8 +375,8 @@ async def validate_data_residency(
             "tagged rows are in the expected region, NOT that the table is compliant."
         ),
     }
-    
-    for table_name in table_names:
+
+    for table_name in body.table_names:
         # Get all tags for this table
         result = await db.execute(
             select(DataResidencyTag).where(
@@ -376,9 +385,9 @@ async def validate_data_residency(
             )
         )
         tags = result.scalars().all()
-        
+
         # Count tagged records with correct region
-        correct_tags = [t for t in tags if t.region == expected_region]
+        correct_tags = [t for t in tags if t.region == body.expected_region]
 
         validation_results["tables"][table_name] = {
             "tagged_count": len(tags),
@@ -402,8 +411,8 @@ async def validate_data_residency(
     
     logger.info(
         "data_residency_validation",
-        table_names=table_names,
-        expected_region=expected_region,
+        table_names=body.table_names,
+        expected_region=body.expected_region,
         # Renamed with the field. Logging it as `compliance_percentage` would put the
         # claim this endpoint cannot support into the log line instead of the response,
         # where a dashboard built on structlog would pick it up unchallenged.

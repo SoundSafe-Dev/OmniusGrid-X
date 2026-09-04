@@ -63,6 +63,19 @@ class APIKeyRevoked(BaseModel):
     message: str
 
 
+class APIKeyGenerateRequest(BaseModel):
+    """FS-902. `name` and `expires_in_days` used to be bare query parameters beside a
+    `scopes: List[str]` body -- FastAPI resolves query vs body by TYPE, not by author
+    intent, so a caller posting one JSON document (`{"name": ..., "scopes": [...],
+    "expires_in_days": ...}`) had `scopes` accepted from the body and `name`/
+    `expires_in_days` silently fall to their query-string defaults: a key minted with a
+    default name and no expiry, answering 200. One body model closes the gap."""
+
+    name: str
+    scopes: List[str] = ["read"]
+    expires_in_days: Optional[int] = None
+
+
 def generate_api_key() -> str:
     """Generate a secure API key"""
     return secrets.token_urlsafe(32)
@@ -114,44 +127,42 @@ async def verify_api_key(
 @rate_limit("10/hour")
 async def generate_api_key_endpoint(
     request: Request,
-    name: str,
-    scopes: List[str] = ["read"],
-    expires_in_days: Optional[int] = None,
+    body: APIKeyGenerateRequest,
     current_user: User = Depends(get_current_active_user),
     db: AsyncSession = Depends(get_db)
 ):
     """Generate a new API key"""
     # Validate scopes
     valid_scopes = ["read", "write", "admin"]
-    for scope in scopes:
+    for scope in body.scopes:
         if scope not in valid_scopes:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=f"Invalid scope: {scope}. Valid scopes: {valid_scopes}"
             )
-    if "admin" in scopes and current_user.role != "admin":
+    if "admin" in body.scopes and current_user.role != "admin":
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Admin scope requires admin role"
         )
-    
+
     # Generate API key
     api_key = generate_api_key()
     key_hash = hash_api_key(api_key)
     key_prefix = get_key_prefix(api_key)
-    
+
     # Calculate expiration
     expires_at = None
-    if expires_in_days:
-        expires_at = datetime.now(timezone.utc) + timedelta(days=expires_in_days)
-    
+    if body.expires_in_days:
+        expires_at = datetime.now(timezone.utc) + timedelta(days=body.expires_in_days)
+
     # Create API key record
     api_key_obj = APIKey(
         key_hash=key_hash,
         key_prefix=key_prefix,
-        name=name,
+        name=body.name,
         organization_id=current_user.organization_id,
-        scopes=scopes,
+        scopes=body.scopes,
         expires_at=expires_at,
         created_by=current_user.id
     )
@@ -172,8 +183,8 @@ async def generate_api_key_endpoint(
         "id": str(api_key_obj.id),
         "key": api_key,  # Only shown once
         "key_prefix": key_prefix,
-        "name": name,
-        "scopes": scopes,
+        "name": body.name,
+        "scopes": body.scopes,
         "expires_at": expires_at.isoformat() if expires_at else None,
         "warning": "Store this key securely. It will not be shown again."
     }
