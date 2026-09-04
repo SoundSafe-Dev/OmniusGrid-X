@@ -11,7 +11,7 @@ from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, Field
 from uuid import UUID
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -20,7 +20,7 @@ from app.db.database import get_db
 from app.db.models import Asset, AssetType, Workcell, Organization, User
 from app.services.tenant_quotas import check_asset_quota
 from app.api.auth import get_current_active_user
-from app.core.pagination import MAX_OFFSET, PaginatedResponse, paginate
+from app.core.pagination import MAX_OFFSET, PaginatedResponse, mark_truncated, paginate
 from app.middleware.rbac import require_admin
 from app.middleware.rate_limit import rate_limit
 from app.core.tenant import get_tenant_db
@@ -271,7 +271,10 @@ async def delete_asset(
 @rate_limit("100/minute")
 async def list_asset_types(
     request: Request,
+    response: Response,
     category: Optional[str] = None,
+    limit: int = Query(100, ge=1, le=500),
+    offset: int = Query(0, ge=0, le=MAX_OFFSET),
     db: AsyncSession = Depends(get_tenant_db),
     current_user: User = Depends(get_current_active_user),
 ):
@@ -280,9 +283,10 @@ async def list_asset_types(
 
     if category:
         query = query.where(AssetType.category == category)
+    query = query.order_by(AssetType.id).offset(offset).limit(limit + 1)
 
     result = await db.execute(query)
-    return result.scalars().all()
+    return mark_truncated(response, result.scalars().all(), limit)
 
 
 @router.get("/{asset_id}/status", response_model=AssetStatusOut, summary="Get asset status", description="Retrieve the current operational status of an asset including PackML state, active status, last seen timestamp, and connection configuration. Returns 404 if the asset belongs to a different organization.")

@@ -1,4 +1,5 @@
 import { api } from './client';
+import { toListResult } from './listResult';
 import { mockApi } from './mockApi';
 import {
   Asset,
@@ -109,7 +110,7 @@ export const assetsApi = {
     const response = await api.get<AssetType[]>('/api/v1/assets/types/', {
       params: category ? { category } : undefined,
     });
-    return response.data;
+    return toListResult(response).items;
   },
 
   /**

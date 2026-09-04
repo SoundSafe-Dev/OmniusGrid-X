@@ -1,4 +1,5 @@
 import { api } from './client';
+import { toListResult } from './listResult';
 import {
   AgentRelease,
   AgentReleaseCreate,
@@ -93,7 +94,10 @@ export const fleetApi = {
 
   sites: async (): Promise<FleetSite[]> => {
     const response = await api.get<FleetSite[]>(`${BASE}/sites`);
-    return response.data;
+    // FS-898/FS-485: read via toListResult so the X-Result-Truncated flag the
+    // backend now sends is not silently dropped. Not yet surfaced in the UI --
+    // registered as a follow-up rather than left unread.
+    return toListResult(response).items;
   },
 
   createSite: async (payload: FleetNamedCreate): Promise<FleetSite> => {
@@ -119,7 +123,7 @@ export const fleetApi = {
       `${BASE}/maintenance-windows`,
       { params: { include_disabled: true } }
     );
-    return response.data;
+    return toListResult(response).items;
   },
 
   createMaintenanceWindow: async (
@@ -164,7 +168,7 @@ export const fleetApi = {
 
   workcells: async (): Promise<FleetWorkcell[]> => {
     const response = await api.get<FleetWorkcell[]>(`${BASE}/workcells`);
-    return response.data;
+    return toListResult(response).items;
   },
 
   assignWorkcellSite: async (
@@ -180,7 +184,7 @@ export const fleetApi = {
 
   tags: async (): Promise<FleetTag[]> => {
     const response = await api.get<FleetTag[]>(`${BASE}/tags`);
-    return response.data;
+    return toListResult(response).items;
   },
 
   createTag: async (payload: FleetTagCreate): Promise<FleetTag> => {
@@ -221,7 +225,7 @@ export const fleetApi = {
 
   groups: async (): Promise<FleetGroup[]> => {
     const response = await api.get<FleetGroup[]>(`${BASE}/groups`);
-    return response.data;
+    return toListResult(response).items;
   },
 
   createGroup: async (payload: FleetNamedCreate): Promise<FleetGroup> => {
@@ -268,7 +272,7 @@ export const fleetApi = {
 
   cohorts: async (): Promise<FleetCohort[]> => {
     const response = await api.get<FleetCohort[]>(`${BASE}/cohorts`);
-    return response.data;
+    return toListResult(response).items;
   },
 
   cohort: async (cohortId: string): Promise<FleetCohort> => {

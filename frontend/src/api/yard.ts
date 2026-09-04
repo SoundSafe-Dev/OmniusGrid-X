@@ -1,4 +1,5 @@
 import { api } from './client';
+import { toListResult } from './listResult';
 import { YARD_ALIASES, YARD_OUT_ALIASES } from './transform';
 import { registerTransform } from './transformRegistry';
 import { 
@@ -360,7 +361,7 @@ export const yardApi = {
       return mockDockDoors;
     }
     const response = await api.get<DockDoor[]>('/api/v1/yard/dock/doors');
-    return response.data;
+    return toListResult(response).items;
   },
 
   // Appointments
@@ -501,7 +502,7 @@ export const yardApi = {
       ];
     }
     const response = await api.get<DetentionAlert[]>('/api/v1/yard/detention-alerts');
-    return response.data;
+    return toListResult(response).items;
   },
 };
 

@@ -6,7 +6,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, List, Literal, Optional
 from uuid import UUID, uuid4
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
 from pydantic import BaseModel, Field
 from sqlalchemy import and_, delete, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
@@ -16,6 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.responses import conflict_response
 from app.api.auth import get_current_active_user
 from app.core.config import settings
+from app.core.pagination import MAX_OFFSET, mark_truncated
 from app.core.tenant import get_tenant_db, get_tenant_org_id
 from app.db.models import (
     AgentRelease,
@@ -361,14 +362,21 @@ async def _tenant_asset(asset_id: UUID, org_id: UUID, db: AsyncSession) -> Asset
 @rate_limit("100/minute")
 async def list_sites(
     request: Request,
+    response: Response,
     include_inactive: bool = False,
+    limit: int = Query(100, ge=1, le=500),
+    offset: int = Query(0, ge=0, le=MAX_OFFSET),
     org_id: UUID = Depends(get_tenant_org_id),
     db: AsyncSession = Depends(get_tenant_db),
 ):
     query = select(Site).where(Site.organization_id == org_id)
     if not include_inactive:
         query = query.where(Site.is_active.is_(True))
-    sites = (await db.execute(query.order_by(Site.name, Site.id))).scalars().all()
+    # limit + 1: how mark_truncated tells "exactly a full page" from "there is more",
+    # without a second COUNT query.
+    query = query.order_by(Site.name, Site.id).offset(offset).limit(limit + 1)
+    sites = (await db.execute(query)).scalars().all()
+    sites = mark_truncated(response, sites, limit)
     return [_site_response(site) for site in sites]
 
 
@@ -508,6 +516,9 @@ async def deactivate_site(
 @rate_limit("100/minute")
 async def list_workcells(
     request: Request,
+    response: Response,
+    limit: int = Query(100, ge=1, le=500),
+    offset: int = Query(0, ge=0, le=MAX_OFFSET),
     org_id: UUID = Depends(get_tenant_org_id),
     db: AsyncSession = Depends(get_tenant_db),
 ):
@@ -523,8 +534,11 @@ async def list_workcells(
             )
             .where(Workcell.organization_id == org_id)
             .order_by(Workcell.name, Workcell.id)
+            .offset(offset)
+            .limit(limit + 1)
         )
     ).all()
+    rows = mark_truncated(response, rows, limit)
     return [
         {
             "id": str(workcell.id),
@@ -602,14 +616,19 @@ async def assign_workcell_site(
 @rate_limit("100/minute")
 async def list_tags(
     request: Request,
+    response: Response,
     include_inactive: bool = False,
+    limit: int = Query(100, ge=1, le=500),
+    offset: int = Query(0, ge=0, le=MAX_OFFSET),
     org_id: UUID = Depends(get_tenant_org_id),
     db: AsyncSession = Depends(get_tenant_db),
 ):
     query = select(FleetTag).where(FleetTag.organization_id == org_id)
     if not include_inactive:
         query = query.where(FleetTag.is_active.is_(True))
-    tags = (await db.execute(query.order_by(FleetTag.name, FleetTag.id))).scalars().all()
+    query = query.order_by(FleetTag.name, FleetTag.id).offset(offset).limit(limit + 1)
+    tags = (await db.execute(query)).scalars().all()
+    tags = mark_truncated(response, tags, limit)
     return [_tag_response(tag) for tag in tags]
 
 
@@ -1005,14 +1024,19 @@ async def bulk_tag_assignments(
 @rate_limit("100/minute")
 async def list_groups(
     request: Request,
+    response: Response,
     include_inactive: bool = False,
+    limit: int = Query(100, ge=1, le=500),
+    offset: int = Query(0, ge=0, le=MAX_OFFSET),
     org_id: UUID = Depends(get_tenant_org_id),
     db: AsyncSession = Depends(get_tenant_db),
 ):
     query = select(FleetGroup).where(FleetGroup.organization_id == org_id)
     if not include_inactive:
         query = query.where(FleetGroup.is_active.is_(True))
-    groups = (await db.execute(query.order_by(FleetGroup.name, FleetGroup.id))).scalars().all()
+    query = query.order_by(FleetGroup.name, FleetGroup.id).offset(offset).limit(limit + 1)
+    groups = (await db.execute(query)).scalars().all()
+    groups = mark_truncated(response, groups, limit)
     return [_group_response(group) for group in groups]
 
 
@@ -1268,14 +1292,19 @@ async def remove_group_member(
 @rate_limit("100/minute")
 async def list_cohorts(
     request: Request,
+    response: Response,
     include_inactive: bool = False,
+    limit: int = Query(100, ge=1, le=500),
+    offset: int = Query(0, ge=0, le=MAX_OFFSET),
     org_id: UUID = Depends(get_tenant_org_id),
     db: AsyncSession = Depends(get_tenant_db),
 ):
     query = select(FleetCohort).where(FleetCohort.organization_id == org_id)
     if not include_inactive:
         query = query.where(FleetCohort.is_active.is_(True))
-    cohorts = (await db.execute(query.order_by(FleetCohort.name, FleetCohort.id))).scalars().all()
+    query = query.order_by(FleetCohort.name, FleetCohort.id).offset(offset).limit(limit + 1)
+    cohorts = (await db.execute(query)).scalars().all()
+    cohorts = mark_truncated(response, cohorts, limit)
     return [_cohort_response(cohort) for cohort in cohorts]
 
 

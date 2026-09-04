@@ -12,7 +12,7 @@ heartbeat uses agent-certificate auth so identity comes from the cert, not body.
 from datetime import datetime, timezone
 from typing import List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
@@ -27,6 +27,7 @@ from app.db.edge_fleet_models import EdgeAgentStatus
 from app.services.wire_codec import ADVERTISED_CODECS
 from app.services.edge_ca import AgentPrincipal
 from app.services import edge_fleet, ingest_pressure
+from app.core.pagination import MAX_OFFSET, mark_truncated
 
 router = APIRouter()
 logger = structlog.get_logger(__name__)
@@ -190,7 +191,12 @@ def _to_out(row: EdgeAgentStatus, now: datetime) -> AgentStatusOut:
 
 
 @router.get("/api/v1/edge/fleet", response_model=List[AgentStatusOut], tags=["Edge"])
-async def list_fleet(user: User = Depends(require_admin)) -> List[AgentStatusOut]:
+async def list_fleet(
+    response: Response,
+    user: User = Depends(require_admin),
+    limit: int = Query(100, ge=1, le=500),
+    offset: int = Query(0, ge=0, le=MAX_OFFSET),
+) -> List[AgentStatusOut]:
     """List this organization's agents. Backs the /admin/collectors page.
 
     Was gated on get_current_active_user with an unscoped `select(...)`. At the time
@@ -206,11 +212,14 @@ async def list_fleet(user: User = Depends(require_admin)) -> List[AgentStatusOut
     async with tenant_session(user.organization_id) as session:
         rows = (
             await session.execute(
-                select(EdgeAgentStatus).where(
-                    EdgeAgentStatus.organization_id == str(user.organization_id)
-                )
+                select(EdgeAgentStatus)
+                .where(EdgeAgentStatus.organization_id == str(user.organization_id))
+                .order_by(EdgeAgentStatus.agent_id)
+                .offset(offset)
+                .limit(limit + 1)
             )
         ).scalars().all()
+    rows = mark_truncated(response, rows, limit)
     return [_to_out(r, now) for r in rows]
 
 

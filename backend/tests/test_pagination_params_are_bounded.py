@@ -100,3 +100,73 @@ def test_the_bounds_are_the_right_way_round(name: str, floor: int):
     assert not wrong, (
         f"`{name}` must not go below {floor}:\n  " + "\n  ".join(sorted(wrong))
     )
+
+
+# FS-898/901. 41 collection endpoints across my lanes returned an unbounded `List[...]`
+# with no `limit`/`offset` at all -- a different defect from the one above (a parameter
+# that exists but has no floor). Named by (method, path) rather than counted, for the
+# same reason NOT_RERUNNABLE in test_every_migration_can_be_rerun_realdb.py is named: a
+# count can be satisfied by deleting a route from this list, which would make the guard
+# pass while fixing nothing. Every entry here was measured and paginated in this pass;
+# a route added to this list without also being paginated is a regression, not a
+# registration.
+PAGINATED_IN_FS_898 = {
+    ("GET", "/api/v1/fleet/sites"),
+    ("GET", "/api/v1/fleet/workcells"),
+    ("GET", "/api/v1/fleet/tags"),
+    ("GET", "/api/v1/fleet/groups"),
+    ("GET", "/api/v1/fleet/cohorts"),
+    ("GET", "/api/v1/transportation/carriers"),
+    ("GET", "/api/v1/transportation/drivers"),
+    ("GET", "/api/v1/transportation/routes"),
+    ("GET", "/api/v1/yard/dock/doors"),
+    ("GET", "/api/v1/yard/detention-alerts"),
+    ("GET", "/api/v1/edge/fleet"),
+    ("GET", "/api/v1/geotab/devices"),
+    ("GET", "/api/v1/geotab/devices/{device_id}/trips"),
+    ("GET", "/api/v1/assets/types/"),
+    ("GET", "/api/v1/shop-floor/downtime/open"),
+    ("GET", "/api/v1/fleet/maintenance-windows"),
+    ("GET", "/api/v1/notifications/subscriptions"),
+}
+
+
+def _has_limit_and_offset(path: str, method: str) -> bool:
+    spec = app.openapi()
+    operation = spec.get("paths", {}).get(path, {}).get(method.lower())
+    if not operation:
+        return False
+    names = {p.get("name") for p in operation.get("parameters", [])}
+    return {"limit", "offset"} <= names
+
+
+class TestTheFS898RoutesStayPaginated:
+    def test_the_list_is_not_empty(self):
+        """A guard that checks nothing passes for the wrong reason."""
+        assert len(PAGINATED_IN_FS_898) >= 15
+
+    def test_every_named_route_still_exists(self):
+        """If a route was renamed or removed, this list is stale -- and a stale entry
+        makes the next test vacuous for that route rather than failing loudly."""
+        spec = app.openapi()
+        missing = [
+            f"{method} {path}"
+            for method, path in PAGINATED_IN_FS_898
+            if method.lower() not in spec.get("paths", {}).get(path, {})
+        ]
+        assert not missing, (
+            f"these FS-898 routes no longer exist at the path this guard checks -- "
+            f"update the register (renamed, moved, or removed):\n  "
+            + "\n  ".join(sorted(missing))
+        )
+
+    def test_every_named_route_declares_limit_and_offset(self):
+        offenders = [
+            f"{method} {path}"
+            for method, path in PAGINATED_IN_FS_898
+            if not _has_limit_and_offset(path, method)
+        ]
+        assert not offenders, (
+            "these routes were paginated in FS-898 and no longer declare both `limit` "
+            "and `offset`:\n  " + "\n  ".join(sorted(offenders))
+        )

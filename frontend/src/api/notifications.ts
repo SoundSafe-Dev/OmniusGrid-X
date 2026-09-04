@@ -126,7 +126,7 @@ export const notificationsApi = {
       return [...mockSubscriptions];
     }
     const response = await api.get<NotificationSubscription[]>(`${BASE}/subscriptions`);
-    return response.data;
+    return toListResult(response).items;
   },
 
   createSubscription: async (body: SubscriptionCreate): Promise<SubscriptionCreated> => {

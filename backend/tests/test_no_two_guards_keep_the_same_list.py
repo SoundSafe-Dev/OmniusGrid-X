@@ -277,6 +277,21 @@ DIFFERENT_QUESTIONS: Dict[frozenset, str] = {
         "and merging two lists on a resemblance is how a guard quietly widens or narrows. "
         "Recorded so the next person to touch either one sees the other."
     ),
+    frozenset({
+        "test_pagination_params_are_bounded.py::PAGINATED_IN_FS_898",
+        "test_route_auth_walk.py::ADMIN_ROUTE_INVENTORY",
+    }): (
+        "The six shared strings are base paths -- /api/v1/fleet/sites and its five "
+        "siblings -- because each of those resources has BOTH a paginated GET list "
+        "(PAGINATED_IN_FS_898) and an admin-gated mutation on a path-parameterised "
+        "sibling (ADMIN_ROUTE_INVENTORY's DELETE .../{cohort_id} etc.), which the "
+        "detector's substring view of the constant pool cannot tell apart from the same "
+        "path twice. The two lists ask unrelated questions of unrelated methods: one "
+        "verifies every named GET declares bounded limit/offset (FS-898); the other "
+        "verifies every named mutation keeps the canonical admin dependency. Neither can "
+        "be derived from the other without conflating a read contract with a write "
+        "authorisation contract on resources that merely happen to share a name."
+    ),
 }
 
 

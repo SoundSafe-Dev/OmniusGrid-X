@@ -1,4 +1,5 @@
 import { api } from './client';
+import { toListResult } from './listResult';
 import { registerTransform } from './transformRegistry';
 
 /**
@@ -182,7 +183,7 @@ export const shopFloorApi = {
   // floor can see and close it — and a reload no longer strands an in-progress event.
   openDowntime: async (): Promise<DowntimeEvent[]> => {
     const response = await api.get<DowntimeEvent[]>('/api/v1/shop-floor/downtime/open');
-    return response.data;
+    return toListResult(response).items;
   },
 
   startDowntime: async (body: {

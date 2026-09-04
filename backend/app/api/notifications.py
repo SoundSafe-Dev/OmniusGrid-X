@@ -3,7 +3,7 @@
 from uuid import UUID
 from typing import Any, Dict, List, Optional
 
-from app.core.pagination import mark_truncated
+from app.core.pagination import MAX_OFFSET, mark_truncated
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from pydantic import BaseModel, Field
 from sqlalchemy import select, delete
@@ -171,15 +171,23 @@ async def create_subscription(
 
 @router.get("/subscriptions", response_model=List[SubscriptionResponse])
 async def list_subscriptions(
+    response: Response,
+    limit: int = Query(100, ge=1, le=500),
+    offset: int = Query(0, ge=0, le=MAX_OFFSET),
     organization_id=Depends(get_tenant_org_id),
 ) -> List[Dict[str, Any]]:
     async with tenant_session(organization_id) as session:
         # UNCONDITIONAL. The `if org is not None` that used to wrap this returned every
         # tenant's subscriptions for a user with no organisation.
-        stmt = select(NotificationSubscription).where(
-            NotificationSubscription.organization_id == str(organization_id)
+        stmt = (
+            select(NotificationSubscription)
+            .where(NotificationSubscription.organization_id == str(organization_id))
+            .order_by(NotificationSubscription.id)
+            .offset(offset)
+            .limit(limit + 1)
         )
         rows = (await session.execute(stmt)).scalars().all()
+    rows = mark_truncated(response, rows, limit)
     return [{"id": str(r.id), "name": r.name, "channel": r.channel, "target": r.target,
              "min_severity": r.min_severity, "domain": r.domain, "asset_id": r.asset_id,
              "enabled": r.enabled} for r in rows]

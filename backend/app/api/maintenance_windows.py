@@ -6,7 +6,9 @@ from datetime import datetime, time, timezone
 from typing import Any
 from uuid import UUID, uuid4
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
+
+from app.core.pagination import MAX_OFFSET, mark_truncated
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
@@ -232,8 +234,11 @@ def _validated_recurrence(
 @rate_limit("100/minute")
 async def list_maintenance_windows(
     request: Request,
+    response: Response,
     include_disabled: bool = False,
     site_id: UUID | None = None,
+    limit: int = Query(100, ge=1, le=500),
+    offset: int = Query(0, ge=0, le=MAX_OFFSET),
     org_id: UUID = Depends(get_tenant_org_id),
     db: AsyncSession = Depends(get_tenant_db),
 ):
@@ -258,8 +263,11 @@ async def list_maintenance_windows(
                 MaintenanceWindow.name,
                 MaintenanceWindow.id,
             )
+            .offset(offset)
+            .limit(limit + 1)
         )
     ).all()
+    rows = mark_truncated(response, rows, limit)
     return [
         _window_response(window, site_name=site_name)
         for window, site_name in rows

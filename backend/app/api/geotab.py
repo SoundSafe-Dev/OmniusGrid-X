@@ -9,7 +9,9 @@ from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel
 from uuid import UUID
-from fastapi import APIRouter, Depends, Header, HTTPException, Query
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Response
+
+from app.core.pagination import MAX_OFFSET, mark_truncated
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import get_current_active_user
@@ -79,7 +81,10 @@ webhook_router = APIRouter(prefix="/geotab", tags=["geotab"],
 
 @router.get("/devices", response_model=List[Dict[str, Any]])
 async def get_geotab_devices(
+    response: Response,
     organization_id: UUID = Depends(get_tenant_org_id),
+    limit: int = Query(100, ge=1, le=500),
+    offset: int = Query(0, ge=0, le=MAX_OFFSET),
     db: AsyncSession = Depends(get_tenant_db)
 ):
     """List GeoTab devices (drivers' ELD assignments + device registry)"""
@@ -91,10 +96,13 @@ async def get_geotab_devices(
     # transportation handlers; these six were missed because their queries live in the
     # SERVICE, so the get_db guard — which inspects handler bodies for RLS models —
     # cannot see them.
-    return await geotab_service.get_devices(
+    devices = await geotab_service.get_devices(
         organization_id=organization_id,
-        db=db
+        db=db,
+        limit=limit,
+        offset=offset,
     )
+    return mark_truncated(response, devices, limit)
 
 
 @router.get("/devices/{device_id}/location", response_model=Dict[str, Any])
@@ -125,8 +133,11 @@ async def get_device_location(
 @router.get("/devices/{device_id}/trips", response_model=List[Dict[str, Any]])
 async def get_device_trips(
     device_id: str,
+    response: Response,
     from_time: Optional[datetime] = Query(None, alias="from"),
     to_time: Optional[datetime] = Query(None, alias="to"),
+    limit: int = Query(100, ge=1, le=500),
+    offset: int = Query(0, ge=0, le=MAX_OFFSET),
     organization_id: UUID = Depends(get_tenant_org_id),
     db: AsyncSession = Depends(get_tenant_db)
 ):
@@ -140,13 +151,16 @@ async def get_device_trips(
     # SERVICE, so the get_db guard — which inspects handler bodies for RLS models —
     # cannot see them.
     now = datetime.now(timezone.utc)
-    return await geotab_service.get_device_trips(
+    trips = await geotab_service.get_device_trips(
         device_id=device_id,
         from_time=from_time or (now - timedelta(hours=24)),
         to_time=to_time or now,
         organization_id=organization_id,
-        db=db
+        db=db,
+        limit=limit,
+        offset=offset,
     )
+    return mark_truncated(response, trips, limit)
 
 
 @router.get(

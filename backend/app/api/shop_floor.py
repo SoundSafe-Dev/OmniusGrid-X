@@ -26,7 +26,9 @@ from uuid import UUID
 from typing import Any, List, Optional
 
 import structlog
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
+
+from app.core.pagination import MAX_OFFSET, mark_truncated
 from pydantic import BaseModel, Field, model_validator
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -581,6 +583,9 @@ async def report_problem(
 # ------------------------------------------------------------------------ downtime events
 @router.get("/downtime/open", response_model=List[DowntimeEventOut])
 async def open_downtime_events(
+    response: Response,
+    limit: int = Query(100, ge=1, le=500),
+    offset: int = Query(0, ge=0, le=MAX_OFFSET),
     org_id=Depends(get_tenant_org_id),
     db: AsyncSession = Depends(get_tenant_db),
 ):
@@ -600,9 +605,10 @@ async def open_downtime_events(
             select(DowntimeEvent).where(
                 DowntimeEvent.organization_id == str(org_id),
                 DowntimeEvent.ended_at.is_(None),
-            ).order_by(DowntimeEvent.started_at.desc())
+            ).order_by(DowntimeEvent.started_at.desc()).offset(offset).limit(limit + 1)
         )
     ).scalars().all()
+    events = mark_truncated(response, events, limit)
     return [
         DowntimeEventOut(
             id=str(event.id), asset_id=str(event.asset_id),

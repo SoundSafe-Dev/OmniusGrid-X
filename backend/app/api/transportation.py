@@ -7,13 +7,13 @@ from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from typing import Any, Dict, List, Optional
 from uuid import UUID
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
 
 from app.api.auth import get_current_active_user
-from app.core.pagination import MAX_OFFSET, PaginatedResponse, paginate
+from app.core.pagination import MAX_OFFSET, PaginatedResponse, mark_truncated, paginate
 from app.db.database import get_db
 from app.middleware.tenant_isolation import get_tenant_db, get_tenant_org_id
 from app.core.tenant_refs import verify_refs
@@ -221,8 +221,11 @@ async def get_carriers(
     # even work: on get_db no tenant GUC is set, and these tables have FORCE row
     # level security, so the policy filtered EVERY row. This endpoint returned an
     # empty list to every caller, including for its own organization.
+    response: Response,
     organization_id: UUID = Depends(get_tenant_org_id),
     is_active: Optional[bool] = Query(True),
+    limit: int = Query(100, ge=1, le=500),
+    offset: int = Query(0, ge=0, le=MAX_OFFSET),
     db: AsyncSession = Depends(get_tenant_db)
 ):
     """Get carriers for organization"""
@@ -231,9 +234,12 @@ async def get_carriers(
     )
     if is_active is not None:
         query = query.where(Carrier.is_active == is_active)
-    
+    # A stable ORDER BY is what makes offset/limit paging deterministic across calls --
+    # without one, Postgres is free to return rows in a different order per query plan.
+    query = query.order_by(Carrier.id).offset(offset).limit(limit + 1)
+
     result = await db.execute(query)
-    return result.scalars().all()
+    return mark_truncated(response, result.scalars().all(), limit)
 
 
 @router.get("/carriers/{carrier_id}", response_model=CarrierResponse)
@@ -539,6 +545,7 @@ def _hours_remaining(stored, consumed, limit):
 
 @router.get("/drivers", response_model=List[DriverListItem])
 async def get_drivers(
+    response: Response,
     # organization_id comes from the TOKEN. As a required client-supplied query
     # parameter it was the IDOR shape app/core/tenant.py forbids — and it did not
     # even work: on get_db no tenant GUC is set, and these tables have FORCE row
@@ -547,6 +554,8 @@ async def get_drivers(
     organization_id: UUID = Depends(get_tenant_org_id),
     carrier_id: Optional[UUID] = None,
     is_active: Optional[bool] = Query(True),
+    limit: int = Query(100, ge=1, le=500),
+    offset: int = Query(0, ge=0, le=MAX_OFFSET),
     db: AsyncSession = Depends(get_tenant_db)
 ):
     """Get drivers for organization (adds carrierName + MISSING UI columns)."""
@@ -557,8 +566,10 @@ async def get_drivers(
         query = query.where(Driver.carrier_id == carrier_id)
     if is_active is not None:
         query = query.where(Driver.is_active == is_active)
+    query = query.order_by(Driver.id).offset(offset).limit(limit + 1)
 
     drivers = (await db.execute(query)).scalars().all()
+    drivers = mark_truncated(response, drivers, limit)
 
     # Resolve carrier names for the listed drivers in one query (the UI shows
     # the carrier, not just its id) — mirrors get_vehicles.
@@ -943,6 +954,7 @@ async def create_route(
 
 @router.get("/routes", response_model=List[RouteResponse])
 async def get_routes(
+    response: Response,
     # organization_id comes from the TOKEN. As a required client-supplied query
     # parameter it was the IDOR shape app/core/tenant.py forbids — and it did not
     # even work: on get_db no tenant GUC is set, and these tables have FORCE row
@@ -950,6 +962,8 @@ async def get_routes(
     # empty list to every caller, including for its own organization.
     organization_id: UUID = Depends(get_tenant_org_id),
     is_active: Optional[bool] = Query(True),
+    limit: int = Query(100, ge=1, le=500),
+    offset: int = Query(0, ge=0, le=MAX_OFFSET),
     db: AsyncSession = Depends(get_tenant_db)
 ):
     """Get routes for organization"""
@@ -958,9 +972,10 @@ async def get_routes(
     )
     if is_active is not None:
         query = query.where(Route.is_active == is_active)
-    
+    query = query.order_by(Route.id).offset(offset).limit(limit + 1)
+
     result = await db.execute(query)
-    return result.scalars().all()
+    return mark_truncated(response, result.scalars().all(), limit)
 
 
 @router.put("/routes/{route_id}", response_model=RouteResponse, dependencies=[Depends(require_operator_or_admin)])

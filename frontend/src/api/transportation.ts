@@ -1,4 +1,5 @@
 import { api } from './client';
+import { toListResult } from './listResult';
 import { TRANSPORT_ALIASES, TRANSPORT_OUT_ALIASES } from './transform';
 import { registerTransform } from './transformRegistry';
 import {
@@ -463,13 +464,16 @@ export const transportationApi = {
       };
     }
     const response = await api.get<Carrier[]>('/api/v1/transportation/carriers');
-    const items = response.data;
+    // FS-898/FS-485: `total`/`hasMore` used to be faked from `items.length`, which
+    // reads as "this is everyone" even on a capped page. toListResult reads the
+    // server's own X-Result-Truncated/X-Result-Limit instead.
+    const { items, truncated, limit } = toListResult(response);
     return {
       items,
       total: items.length,
       skip: 0,
-      limit: items.length,
-      hasMore: false,
+      limit,
+      hasMore: truncated,
     };
   },
 
@@ -513,13 +517,13 @@ export const transportationApi = {
       };
     }
     const response = await api.get<Driver[]>('/api/v1/transportation/drivers', { params: { carrier_id: carrierId } });
-    const items = response.data;
+    const { items, truncated, limit } = toListResult(response);
     return {
       items,
       total: items.length,
       skip: 0,
-      limit: items.length,
-      hasMore: false,
+      limit,
+      hasMore: truncated,
     };
   },
 
@@ -781,7 +785,7 @@ export const transportationApi = {
       return mockRoutes;
     }
     const response = await api.get<Route[]>('/api/v1/transportation/routes');
-    return response.data;
+    return toListResult(response).items;
   },
 
   // Analytics

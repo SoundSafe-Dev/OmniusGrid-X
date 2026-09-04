@@ -494,7 +494,9 @@ class GeoTabService:
     async def get_devices(
         self,
         organization_id: Optional[UUID] = None,
-        db: AsyncSession = None
+        db: AsyncSession = None,
+        limit: int = 100,
+        offset: int = 0,
     ) -> List[Dict[str, Any]]:
         """List GeoTab devices: drivers' ELD assignments (DB) + the device registry.
 
@@ -548,7 +550,14 @@ class GeoTabService:
                 if entry["last_communication"] is None:
                     entry["last_communication"] = info["last_seen"].isoformat()
 
-        return sorted(devices.values(), key=lambda d: d["id"])
+        # FS-898. The merge above (DB drivers + a 500-trip enrichment window + the
+        # optional simulated registry) has no natural SQL LIMIT of its own -- it is
+        # paginated here, on the assembled result, rather than by bounding any one of
+        # the three sources individually. limit + 1: the route's mark_truncated call
+        # tells "exactly a full page" from "there is more" from the extra entry, the
+        # same probe idiom every SQL-level page in this file uses.
+        ordered = sorted(devices.values(), key=lambda d: d["id"])
+        return ordered[offset : offset + limit + 1]
 
     async def get_device_location(
         self,
@@ -633,7 +642,9 @@ class GeoTabService:
         from_time: datetime,
         to_time: datetime,
         organization_id: Optional[UUID] = None,
-        db: AsyncSession = None
+        db: AsyncSession = None,
+        limit: int = 100,
+        offset: int = 0,
     ) -> List[Dict[str, Any]]:
         """Trips for a device in [from_time, to_time], frontend-shaped.
 
@@ -652,6 +663,12 @@ class GeoTabService:
                 GeoTabTrip.start_time <= to_time,
             )
             .order_by(GeoTabTrip.start_time.desc())
+            # FS-898. The default window is 24h, but both ends are caller-supplied --
+            # nothing stopped a multi-year range from returning every trip a device
+            # ever logged. limit + 1: the route's mark_truncated call tells "exactly a
+            # full page" from "there is more" from the extra row.
+            .offset(offset)
+            .limit(limit + 1)
         )
         if organization_id:
             stmt = stmt.where(GeoTabTrip.organization_id == organization_id)

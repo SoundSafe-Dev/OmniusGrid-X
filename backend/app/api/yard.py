@@ -7,12 +7,12 @@ from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from typing import Any, Dict, List, Optional
 from uuid import UUID
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import get_current_active_user
-from app.core.pagination import MAX_OFFSET, PaginatedResponse, paginate
+from app.core.pagination import MAX_OFFSET, PaginatedResponse, mark_truncated, paginate
 from app.db.database import get_db  # noqa: F401  (kept for any non-tenant reads)
 from app.middleware.tenant_isolation import get_tenant_db, get_tenant_org_id
 from app.core.tenant_refs import verify_refs
@@ -370,6 +370,7 @@ async def update_dock_door(
 
 @router.get("/dock/doors", response_model=List[DockDoorResponse])
 async def get_dock_doors(
+    response: Response,
     # organization_id comes from the TOKEN, not the query string. It was a
     # required client-supplied query parameter — the IDOR shape this codebase
     # forbids (see app/core/tenant.py), and the WHERE clause below used the
@@ -380,6 +381,8 @@ async def get_dock_doors(
     # call — none of which sent it — got a 422.
     organization_id: UUID = Depends(get_tenant_org_id),
     status: Optional[str] = Query(None),
+    limit: int = Query(100, ge=1, le=500),
+    offset: int = Query(0, ge=0, le=MAX_OFFSET),
     db: AsyncSession = Depends(get_tenant_db)
 ):
     """Get all dock doors"""
@@ -387,7 +390,9 @@ async def get_dock_doors(
     query = select(DockDoor).where(DockDoor.organization_id == organization_id)
     if status:
         query = query.where(DockDoor.status == status)
+    query = query.order_by(DockDoor.id).offset(offset).limit(limit + 1)
     doors = (await db.execute(query)).scalars().all()
+    doors = mark_truncated(response, doors, limit)
 
     # `trailerLicensePlate` is what the door card prints to identify the trailer at the
     # dock, and it was never sent — the plate is on `yard_trailers`, reached through
@@ -820,7 +825,10 @@ def build_detention_alert(
 
 @router.get("/detention-alerts", response_model=List[dict])
 async def get_detention_alerts(
+    response: Response,
     organization_id: UUID = Depends(get_tenant_org_id),
+    limit: int = Query(100, ge=1, le=500),
+    offset: int = Query(0, ge=0, le=MAX_OFFSET),
     db: AsyncSession = Depends(get_tenant_db)
 ):
     """Live detention exposure for trailers still in the yard.
@@ -838,8 +846,10 @@ async def get_detention_alerts(
     # bare request filtered by nothing — every other handler in this file was moved to
     # `get_tenant_org_id` and this one was missed.
     query = query.where(YardTrailer.organization_id == str(organization_id))
+    query = query.order_by(YardTrailer.id).offset(offset).limit(limit + 1)
 
     trailers = (await db.execute(query)).scalars().all()
+    trailers = mark_truncated(response, trailers, limit)
     now = datetime.now(timezone.utc)
     alerts = []
     at_risk = []

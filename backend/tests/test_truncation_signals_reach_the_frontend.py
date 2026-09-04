@@ -71,6 +71,14 @@ def _router_prefixes() -> dict[str, str]:
     source = (REPO / "backend" / "app" / "main.py").read_text()
     for m in re.finditer(r'app\.include_router\(\s*(\w+)\.router,\s*prefix="([^"]*)"', source):
         prefixes[m.group(1)] = m.group(2)
+    # A FOURTH way to declare it: included with NO `prefix=` kwarg at all, because every
+    # route on the router already spells its full path (`edge_fleet.py`'s
+    # `@router.get("/api/v1/edge/fleet", ...)`). That is prefix="", not "unresolved" —
+    # conflating the two would make a router with no prefix indistinguishable from one
+    # this reader has never heard of, which is exactly the silent-drop the three-router
+    # fix above exists to prevent.
+    for m in re.finditer(r'app\.include_router\(\s*(\w+)\.router\s*,', source):
+        prefixes.setdefault(m.group(1), "")
     return prefixes
 
 
