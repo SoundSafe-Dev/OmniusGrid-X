@@ -16270,3 +16270,30 @@ Prometheus counters. `MAX_SWALLOWING`: 199 → 198. `MIN_COUNTED`: 14 → 18.
 
 Every ratchet in this block was mutation-tested by stashing the code change and confirming
 the lowered/raised number fails against the unmodified source.
+
+### FS-913 — three dormant services, reviewed and left as they are
+
+Read all three against the plan's own framing ("wire to a real sink or delete it"), and
+found each already sitting in its own correct terminal state rather than in need of either
+action:
+
+- **`services/tactical_engine.py`'s `_dispatch_command`** refuses by design — the docstring
+  is explicit that wiring it "switches on autonomous actuation of industrial assets, which
+  is a deliberate decision with a safety review attached, not a side effect of a naming
+  fix." The module is not in `test_no_new_unreachable_modules.py`'s baseline (it IS
+  imported; only its own dispatch path is unreachable in practice, which that guard does
+  not check for), so there is no registration to touch either.
+- **`services/erp_database_replication.py`** is genuine unimplemented CDC scaffolding, but
+  its own module docstring already refuses to be wired and is already registered in
+  `test_no_new_unreachable_modules.py` with the reason: deleting it would preempt open
+  question `#37`/`#36` (whether ERP data belongs on Kafka at all) — somebody else's decision
+  to make, not a side effect of this sprint.
+- **`services/keycloak_service.py`'s `fetch_user_from_keycloak`** already returns honest,
+  unpersisted data rather than faking a write, and its own docstring says why it stops
+  there: SSO provisioning semantics (create vs. update, which organization, what happens to
+  a changed email) were never specified, and inferring them would be guessing at a decision
+  nobody has made.
+
+Put to the user directly rather than decided unilaterally, given the stakes (industrial
+actuation; SSO provisioning). Decision: leave all three exactly as they are. No code change
+for this item.
