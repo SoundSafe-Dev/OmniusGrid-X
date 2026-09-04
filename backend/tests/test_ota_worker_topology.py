@@ -87,6 +87,11 @@ async def test_worker_cleans_up_when_command_start_fails():
 
 def _mock_main_lifecycle(monkeypatch, main_module):
     monkeypatch.setattr(main_module, "init_db", AsyncMock())
+    # FS-912. verify_rls_is_not_bypassed needs a real Postgres connection --
+    # main.py's own module-level `engine` is bound to a placeholder DATABASE_URL at
+    # import time (nothing in this file uses a real database), so it must be mocked
+    # the same way init_db is, not exercised.
+    monkeypatch.setattr(main_module, "verify_rls_is_not_bypassed", AsyncMock())
     for service, methods in (
         (main_module.websocket_manager, ("connect", "disconnect")),
         (main_module.command_executor, ("start", "stop")),

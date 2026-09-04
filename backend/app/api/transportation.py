@@ -947,6 +947,11 @@ async def create_route(
         waypoints=data.waypoints,
         route_name=data.route_name,
         optimization_criteria=data.optimization_criteria,
+        # FS-907. `is_active` was declared on RouteCreate and never read -- genuine
+        # creation input (unlike the fields above the FROM-THE-TOKEN comment), not a
+        # server-computed value, so a caller creating a route already marked inactive
+        # had that silently overridden to the column default.
+        is_active=data.is_active,
         db=db
     )
     return route

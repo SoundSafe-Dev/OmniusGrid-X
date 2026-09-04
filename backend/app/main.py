@@ -40,7 +40,7 @@ from app.api import model_monitoring, query_performance
 from app.core.config import settings
 from app.core.responses import common_responses, unavailable_responses
 from app.core.logging_filters import install_sensitive_query_access_log_filter
-from app.db.database import init_db
+from app.db.database import init_db, engine
 from app.services.websocket_manager import websocket_manager
 from app.services.command_executor import command_executor
 from app.services.compliance_report_queue import compliance_report_dispatcher
@@ -82,7 +82,7 @@ from app.middleware.bulkheads import (
     TenantBulkheadMiddleware,
 )
 
-from app.core.startup_checks import verify_installed_dependencies
+from app.core.startup_checks import verify_installed_dependencies, verify_rls_is_not_bypassed
 
 install_sensitive_query_access_log_filter()
 
@@ -97,6 +97,13 @@ async def lifespan(app: FastAPI):
     # python-jose, restart-looping with nothing saying "rebuild the image".
     verify_installed_dependencies()
     await init_db()
+    # FS-912. `SELECT rolsuper, rolbypassrls FROM pg_roles` was an open question sitting
+    # in docs/engineering/api-contract-gate.md rather than a decided fact: if the role
+    # DATABASE_URL connects as can bypass RLS, every tenant-isolation policy in this
+    # schema is decorative and the app never knew. Checked once, at boot, in the one
+    # place an operator sees it before traffic arrives — not just answered and written
+    # down, so it cannot silently become true again after being confirmed false once.
+    await verify_rls_is_not_bypassed(engine)
     # When an operator enables Gemma, confirm the configured base model and
     # LoRA adapter before accepting traffic. A broken adapter must be visible
     # at deployment time rather than silently falling back to heuristics.

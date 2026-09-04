@@ -33,6 +33,7 @@ from pathlib import Path
 from typing import Iterable, Optional
 
 import structlog
+from sqlalchemy import text
 
 logger = structlog.get_logger()
 
@@ -110,3 +111,59 @@ def verify_installed_dependencies(required: Optional[set[str]] = None) -> None:
         f"Outside a container, the same message means this environment is behind "
         f"requirements.txt — `pip install -r requirements.txt`."
     )
+
+
+class TenantIsolationRestsOnNothing(RuntimeError):
+    """Raised at startup when the app's own database role can bypass RLS.
+
+    Postgres documents this plainly and this repository has already been bitten by a
+    milder version of it once (docs/engineering/api-contract-gate.md): a superuser or a
+    BYPASSRLS role sees every row regardless of policy, FORCE or not. Every tenant
+    boundary this codebase enforces at the database layer — every `CREATE POLICY`, every
+    `FORCE ROW LEVEL SECURITY`, the guard in `test_every_tenant_table_has_a_policy.py` —
+    is decorative the moment the connection the app actually uses can ignore it, and
+    nothing before this printed that in the one place an operator would see it before
+    traffic arrived.
+    """
+
+
+async def verify_rls_is_not_bypassed(engine) -> None:
+    """Refuse to start if the app's own role can bypass row-level security (FS-912).
+
+    Takes the ENGINE rather than an open connection so this is one mockable call at
+    the lifespan call site — a connection-taking version would need `engine.connect()`
+    to succeed before this function is ever reached, which made it untestable in
+    `test_ota_worker_topology.py` without a real database (that file only tests
+    startup/shutdown ORDERING, and mocks `init_db` for the same reason).
+
+    SQLite (the whole unit-test suite) has no roles or RLS at all and is skipped --
+    this is a Postgres-specific guarantee, checked against whatever the app is actually
+    connecting as. `tests/conftest.py` already provisions a `NOSUPERUSER NOBYPASSRLS`
+    role for the real-DB suite for the same reason this check exists: "superusers bypass
+    RLS even with FORCE" is Postgres's own documentation, not a hypothetical.
+    """
+    async with engine.connect() as conn:
+        if conn.dialect.name != "postgresql":
+            return
+
+        result = await conn.execute(
+            text("SELECT rolsuper, rolbypassrls FROM pg_roles WHERE rolname = current_user")
+        )
+        row = result.one()
+        is_superuser, bypasses_rls = row[0], row[1]
+        if is_superuser or bypasses_rls:
+            raise TenantIsolationRestsOnNothing(
+                f"the database role this application connects as "
+                f"(rolsuper={is_superuser}, rolbypassrls={bypasses_rls}) can see every "
+                f"tenant's rows regardless of row-level security policy. Every "
+                f"`CREATE POLICY` and `FORCE ROW LEVEL SECURITY` in this schema is "
+                f"decorative under this connection, and the tenant model rests on "
+                f"application-level scoping alone. Provision a NOSUPERUSER NOBYPASSRLS "
+                f"role for DATABASE_URL and grant it exactly the privileges "
+                f"scripts/provision_app_role.py declares."
+            )
+        logger.info(
+            "rls_bypass_check_passed",
+            rolsuper=is_superuser,
+            rolbypassrls=bypasses_rls,
+        )

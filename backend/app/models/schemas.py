@@ -448,7 +448,7 @@ class DriverWaitTimeBase(BaseModel):
     metadata: JsonMetadata = Field(default_factory=dict, validation_alias=AliasChoices('meta_data', 'metadata'), serialization_alias='metadata')
 
 
-class DriverWaitTimeCreate(DriverWaitTimeBase):
+class DriverWaitTimeCreate(BaseModel):
     # FS-523. `organization_id` was declared here and REQUIRED, while the handler
     # derives the tenant from the token and never reads the body's value — its own
     # comment says "FROM THE TOKEN, NEVER THE REQUEST". So the schema forced every
@@ -461,6 +461,24 @@ class DriverWaitTimeCreate(DriverWaitTimeBase):
     # still sending one is unaffected.
     driver_id: UUID
     trailer_id: Optional[UUID] = None
+
+    # FS-907. Does NOT inherit DriverWaitTimeBase (unlike DriverWaitTimeResponse below,
+    # which needs every one of its fields to report them back). Nine of Base's fields —
+    # check_out_at, docked_at, unloaded_at, total_wait_minutes, detention_minutes,
+    # demurrage_minutes, detention_charge, demurrage_charge, is_billed — are all
+    # computed by `close_driver_wait_time` at checkout; nothing in this handler ever
+    # read a caller-supplied value for any of them. Declaring them here let a caller
+    # believe they could set an arrival time or a billed flag at creation, and the API
+    # silently ignored it. Redeclared explicitly instead of inherited-and-dropped: only
+    # the fields this route's handler genuinely reads.
+    check_in_at: datetime
+    detention_rate: Optional[float] = None
+    demurrage_rate: Optional[float] = None
+    metadata: JsonMetadata = Field(
+        default_factory=dict,
+        validation_alias=AliasChoices('meta_data', 'metadata'),
+        serialization_alias='metadata',
+    )
 
 
 class DriverWaitTimeResponse(DriverWaitTimeBase):

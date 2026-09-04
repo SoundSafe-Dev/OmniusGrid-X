@@ -788,6 +788,7 @@ class TransportationManagementService:
         waypoints: Optional[List[Dict]] = None,
         route_name: Optional[str] = None,
         optimization_criteria: str = 'balanced',
+        is_active: bool = True,
         db: Optional[AsyncSession] = None
     ) -> Route:
         """Create optimized route"""
@@ -813,7 +814,8 @@ class TransportationManagementService:
                 estimated_duration_hours=optimization['estimated_duration_hours'],
                 fuel_cost_estimate=optimization['fuel_cost_estimate'],
                 toll_cost_estimate=optimization['toll_cost_estimate'],
-                optimization_criteria=optimization_criteria
+                optimization_criteria=optimization_criteria,
+                is_active=is_active
             )
             session.add(route)
             await session.commit()

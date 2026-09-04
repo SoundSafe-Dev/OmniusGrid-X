@@ -75,12 +75,15 @@ UNREAD: dict[str, list[str]] = {
     "nlp_correlation:POST /intake/cross-correlate": ["auto_integrate"],
     #: SCHEMA-SIDE. `create_route` always runs the optimizer and sets all four from its
     #: result, so honouring a caller's value would let somebody override a computed route
-    #: distance — and that distance is billed per mile. `is_active` is the exception:
-    #: nothing computes it, and it is genuine creation input.
-    "transportation:POST /routes": ["estimated_duration_hours", "fuel_cost_estimate", "is_active", "toll_cost_estimate", "total_distance_miles"],
-    #: SCHEMA-SIDE. Every figure is COMPUTED by `close_driver_wait_time` at checkout.
-    #: Honouring a caller's `detention_charge` would let an operator bill their own number.
-    "yard:POST /driver-wait-times": ["check_out_at", "demurrage_charge", "demurrage_minutes", "detention_charge", "detention_minutes", "docked_at", "is_billed", "total_wait_minutes", "unloaded_at"],
+    #: distance — and that distance is billed per mile. `is_active` WAS HERE and is CLOSED
+    #: (FS-907): it was the genuine-input exception in this entry — nothing computes it —
+    #: and is now wired through create_route.
+    "transportation:POST /routes": ["estimated_duration_hours", "fuel_cost_estimate", "toll_cost_estimate", "total_distance_miles"],
+    #: "yard:POST /driver-wait-times": [nine billing/lifecycle fields] WAS HERE AND IS
+    #: CLOSED (FS-907). Every one of them is computed by `close_driver_wait_time` at
+    #: checkout, so honouring a caller's value would have let an operator bill their own
+    #: number — the fix was schema-side: DriverWaitTimeCreate no longer inherits
+    #: DriverWaitTimeBase and redeclares only the fields this route's handler reads.
     #: DELIBERATE. The service sets 'checked_in'; honouring a caller's status would let
     #: somebody check a trailer straight to 'checked_out' without it entering the yard.
     "yard:POST /trailers/checkin": ["status"],
