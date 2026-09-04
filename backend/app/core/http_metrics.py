@@ -121,6 +121,26 @@ CORRELATION_JOB_STORE_DEGRADED = Counter(
 )
 
 
+#: The error-tracking middleware's own tracker call failing (FS-910). The middleware is
+#: right to swallow this -- "a bug in the tracker must never change what the client
+#: receives" -- but a tracker that silently stops recording is the same class of failure
+#: as an audit trail that silently goes empty (FS-536): the symptom is an incident with no
+#: fingerprint in error_tracker rather than an error anywhere loud enough to be noticed.
+ERROR_TRACKER_RECORD_FAILURES = Counter(
+    "opsgrid_error_tracker_record_failed_total",
+    "Times the error-tracking middleware could not record an exception it caught",
+)
+
+
+#: The edge fleet sweep's per-pass loop failing (FS-910). `_run` is right to keep looping --
+#: one bad pass must not end the sweep -- but a sweep that keeps failing silently degrades
+#: `EdgeAgentStatus`/`Asset` freshness for every organisation with nothing to alert on.
+EDGE_FLEET_SWEEP_FAILURES = Counter(
+    "opsgrid_edge_fleet_sweep_failed_total",
+    "Times one pass of the edge fleet sweep raised and was skipped",
+)
+
+
 # --- CONNECTION POOL (FS-841) -------------------------------------------------------
 #
 # WHY A COLLECTOR AND NOT COUNTERS. The pool's state is already held by SQLAlchemy —

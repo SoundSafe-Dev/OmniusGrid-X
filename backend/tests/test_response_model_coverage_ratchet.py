@@ -45,7 +45,12 @@ from tests._route_tree import http_routes
 #: `_*_response` builders were read and declared, so the 48 arrived already covered, and
 #: `auth.py`'s duplicate `GET /users` was removed in favour of his (which declares one).
 #: The number went DOWN across a merge that added a tenth of the API.
-MAX_UNDECLARED = 52
+#:
+#: 52 -> 46 on 2026-09-03 (FS-908). Of the 52, only six were in-lane: `auth.py`'s
+#: `/register`, `/logout`, `/me`, and `telemetry.py`'s `/latest`, `/history`, `/metrics`.
+#: Declared all six. The remaining 46 are correlation/MLOps and kanban/analysis_sessions
+#: routes -- HARSH's lane -- and stay undeclared here rather than edited out of lane.
+MAX_UNDECLARED = 46
 
 #: Total routes when that number was measured. A large swing means something
 #: structural changed and the ratchet's denominator is no longer comparable.

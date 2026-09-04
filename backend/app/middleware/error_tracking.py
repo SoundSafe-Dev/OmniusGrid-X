@@ -21,6 +21,7 @@ import structlog
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 
+from app.core.http_metrics import ERROR_TRACKER_RECORD_FAILURES
 from app.services.error_tracker import error_tracker
 
 logger = structlog.get_logger()
@@ -87,6 +88,7 @@ class ErrorTrackingMiddleware(BaseHTTPMiddleware):
                     organization_id=_organization_id(request),
                 )
             except Exception:  # noqa: BLE001
+                ERROR_TRACKER_RECORD_FAILURES.inc()
                 logger.exception("error_tracker_record_failed")
             raise
 

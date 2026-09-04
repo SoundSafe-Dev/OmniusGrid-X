@@ -4,6 +4,7 @@ Endpoints for managing actionable registries (compliance and operational)
 """
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
+from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, and_, or_
 from typing import List, Optional
@@ -468,7 +469,31 @@ async def delete_registry_item(
 
 # ============ Scoring and Analytics ============
 
-@router.get("/{registry_id}/score", response_model=dict, dependencies=[Depends(require_admin)])
+class RegistryScoreResponse(BaseModel):
+    registry_id: str
+    registry_name: str
+    compliance_score: int
+    total_items: int
+    completed_items: int
+    overdue_items: int
+    at_risk_items: int
+
+
+class ItemRiskFactors(BaseModel):
+    severity: int
+    overdue: int
+    required: int
+    compliance: float
+
+
+class ItemRiskScoreResponse(BaseModel):
+    item_id: str
+    item_name: str
+    risk_score: int
+    factors: ItemRiskFactors
+
+
+@router.get("/{registry_id}/score", response_model=RegistryScoreResponse, dependencies=[Depends(require_admin)])
 async def get_registry_score(
     registry_id: uuid.UUID,
     current_user: User = Depends(require_admin),
@@ -541,7 +566,7 @@ async def get_registry_score(
     }
 
 
-@router.post("/items/{item_id}/score", response_model=dict, dependencies=[Depends(require_admin)])
+@router.post("/items/{item_id}/score", response_model=ItemRiskScoreResponse, dependencies=[Depends(require_admin)])
 async def calculate_item_risk_score(
     item_id: uuid.UUID,
     current_user: User = Depends(require_admin),

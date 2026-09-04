@@ -35,6 +35,13 @@ import pytest
 from app.main import app
 
 FRONTEND_API = pathlib.Path(__file__).resolve().parents[2] / "frontend" / "src" / "api"
+#: Named envelope/response interfaces frequently live beside the domain model in
+#: `src/types/`, not in the client that uses them -- `TelemetryHistoryPage` (FS-908) is
+#: declared in `types/telemetry.ts` and imported into `api/telemetry.ts`. Resolving named
+#: types against `api/*.ts` alone silently fell back to "object" for every such type,
+#: which happened to match an equally-undeclared backend route -- two wrongs that agreed
+#: until the route gained a real `response_model`. Search both directories.
+FRONTEND_TYPES = pathlib.Path(__file__).resolve().parents[2] / "frontend" / "src" / "types"
 
 #: `api.get<Foo[]>('/path')` — the type argument is what the frontend asserts it gets.
 TYPED_CALL = re.compile(
@@ -163,7 +170,9 @@ def _typed_calls() -> List[tuple]:
 #: resolves. Read once at import; these are small files and the parametrisation needs them
 #: before collection.
 _API_SOURCES = [
-    f.read_text() for f in sorted(FRONTEND_API.glob("*.ts")) if ".test." not in f.name
+    f.read_text()
+    for f in sorted(FRONTEND_API.glob("*.ts")) + sorted(FRONTEND_TYPES.glob("*.ts"))
+    if ".test." not in f.name
 ]
 
 SHAPES = _response_shapes()

@@ -413,6 +413,11 @@ async def login(
     }
 
 
+class RegisterResponse(BaseModel):
+    message: str
+    user_id: str
+
+
 @router.post(
     "/register",
     summary="Register a new user",
@@ -420,6 +425,7 @@ async def login(
         "Create a new user account. WARNING: this endpoint is for "
         "development only and should be disabled in production."
     ),
+    response_model=RegisterResponse,
 )
 @auth_rate_limit(settings.AUTH_REGISTER_RATE_LIMIT)
 async def register(
@@ -517,10 +523,15 @@ class LogoutRequest(BaseModel):
     refresh_token: Optional[str] = Field(default=None, alias="refreshToken")
 
 
+class LogoutResponse(BaseModel):
+    message: str
+
+
 @router.post(
     "/logout",
     summary="Revoke current authentication session",
     description="Revoke the current access token and linked refresh session.",
+    response_model=LogoutResponse,
 )
 @auth_rate_limit(settings.AUTH_LOGOUT_RATE_LIMIT)
 async def logout(
@@ -572,10 +583,20 @@ async def logout(
     return {"message": "Logged out"}
 
 
+class CurrentUserResponse(BaseModel):
+    id: str
+    email: str
+    full_name: Optional[str] = None
+    role: str
+    organization_id: Optional[str] = None
+    last_login: Optional[str] = None
+
+
 @router.get(
     "/me",
     summary="Get current user information",
     description="Retrieve the authenticated user's profile information.",
+    response_model=CurrentUserResponse,
 )
 async def get_current_user_info(
     current_user: User = Depends(get_current_active_user),

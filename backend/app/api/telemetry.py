@@ -12,6 +12,7 @@ from typing import List, Optional
 from uuid import UUID
 from datetime import datetime, timedelta, timezone
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from pydantic import BaseModel
 from sqlalchemy import select, func, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -102,7 +103,64 @@ async def _verify_asset_in_org(
         raise HTTPException(status_code=404, detail="Asset not found")
 
 
-@router.get("/{asset_id}/latest", summary="Get latest telemetry", description="Retrieve the most recent telemetry data point for a specific asset, optionally filtered by metric name. Returns 404 if the asset belongs to a different organization.")
+class LatestTelemetryResponse(BaseModel):
+    """Either a data point, or `message` alone when the asset has none yet.
+
+    Both shapes are legitimate -- an asset with no telemetry recorded is not an
+    error -- so every data field is Optional and callers branch on their presence,
+    the same way the handler's own two `return` statements already do.
+    """
+
+    message: Optional[str] = None
+    asset_id: Optional[str] = None
+    timestamp: Optional[str] = None
+    metric_name: Optional[str] = None
+    value: Optional[float] = None
+    unit: Optional[str] = None
+    packml_state: Optional[str] = None
+    metadata: Optional[dict] = None
+
+
+class TelemetryMetricsResponse(BaseModel):
+    asset_id: str
+    metrics: List[str]
+
+
+class TelemetryHistoryItem(BaseModel):
+    """Raw rows carry `packml_state`/`metadata`; aggregated buckets carry
+    `min`/`max`/`count`/`aggregation` instead -- the two query paths in
+    `get_telemetry_history` never populate both sets, so every field past the
+    three every row has is Optional."""
+
+    timestamp: str
+    metric_name: str
+    value: float
+    unit: Optional[str] = None
+    packml_state: Optional[str] = None
+    metadata: Optional[dict] = None
+    min: Optional[float] = None
+    max: Optional[float] = None
+    count: Optional[int] = None
+    aggregation: Optional[str] = None
+
+
+class TelemetryHistoryMeta(BaseModel):
+    count: int
+    skip: int
+    limit: int
+    has_more: bool
+    start_time: str
+    end_time: str
+    newest: Optional[str] = None
+    oldest: Optional[str] = None
+
+
+class TelemetryHistoryResponse(BaseModel):
+    items: List[TelemetryHistoryItem]
+    meta: TelemetryHistoryMeta
+
+
+@router.get("/{asset_id}/latest", summary="Get latest telemetry", description="Retrieve the most recent telemetry data point for a specific asset, optionally filtered by metric name. Returns 404 if the asset belongs to a different organization.", response_model=LatestTelemetryResponse, response_model_exclude_none=True)
 @rate_limit("100/minute")
 async def get_latest_telemetry(
     request: Request,
@@ -137,7 +195,7 @@ async def get_latest_telemetry(
     }
 
 
-@router.get("/{asset_id}/history", summary="Get telemetry history", description="Retrieve historical telemetry data for an asset with optional time range, metric filtering, and aggregation. Defaults to last 24 hours if no time range specified. Returns 404 if the asset belongs to a different organization.")
+@router.get("/{asset_id}/history", summary="Get telemetry history", description="Retrieve historical telemetry data for an asset with optional time range, metric filtering, and aggregation. Defaults to last 24 hours if no time range specified. Returns 404 if the asset belongs to a different organization.", response_model=TelemetryHistoryResponse)
 @rate_limit("60/minute")
 async def get_telemetry_history(
     request: Request,
@@ -262,7 +320,7 @@ async def get_telemetry_history(
     )
 
 
-@router.get("/{asset_id}/metrics", summary="List available metrics", description="Retrieve a list of all metric names that have been recorded for a specific asset. Returns 404 if the asset belongs to a different organization.")
+@router.get("/{asset_id}/metrics", summary="List available metrics", description="Retrieve a list of all metric names that have been recorded for a specific asset. Returns 404 if the asset belongs to a different organization.", response_model=TelemetryMetricsResponse)
 @rate_limit("100/minute")
 async def get_available_metrics(
     request: Request,

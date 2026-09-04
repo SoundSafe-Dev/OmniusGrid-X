@@ -66,6 +66,40 @@ class BulkJobAccepted(BaseModel):
     status_url: str
 
 
+class BulkJobError(BaseModel):
+    position: Optional[int] = None
+    ref: Optional[Any] = None
+    error: Optional[str] = None
+
+
+class BulkJobStatus(BaseModel):
+    """The full job record `bulk_processor` persists in Redis (FS-909).
+
+    `GET /jobs/{job_id}` and `POST /jobs/{job_id}/cancel` both return this dict
+    verbatim -- see `BulkProcessor.create_job`/`cancel_job`. The cancel-only fields
+    are Optional because they are only ever set once a cancellation happens.
+    """
+
+    job_id: str
+    type: str
+    status: str
+    total: int
+    processed: int
+    succeeded: int
+    failed: int
+    errors: List[BulkJobError]
+    # Every job `create_job` writes carries both, but `get_job`/`cancel_job` return
+    # whatever the store handed back, and a mocked or hand-built record (test fixtures,
+    # a future migration of the store) is not guaranteed to -- Optional here means a
+    # partial record still renders instead of 500ing the poll endpoint.
+    created_at: Optional[str] = None
+    updated_at: Optional[str] = None
+    organization_id: Optional[str] = None
+    actor_id: Optional[str] = None
+    cancelled_by: Optional[str] = None
+    cancelled_at: Optional[str] = None
+
+
 def _job_accepted(job: dict) -> dict:
     """Shape the 202 response so the client knows where to poll."""
     return {
@@ -308,7 +342,7 @@ async def bulk_create_registry_items(
 
 
 @router.get("/jobs/{job_id}",
-    response_model=Dict[str, Any], summary="Get bulk job status and progress")
+    response_model=BulkJobStatus, summary="Get bulk job status and progress")
 async def get_bulk_job(
     job_id: str,
     current_user: User = Depends(get_current_active_user),
@@ -332,7 +366,7 @@ async def get_bulk_job(
 
 
 @router.post("/jobs/{job_id}/cancel",
-    response_model=Dict[str, Any], summary="Cancel a pending or running bulk job", dependencies=[Depends(require_admin)], responses={**conflict_response})
+    response_model=BulkJobStatus, summary="Cancel a pending or running bulk job", dependencies=[Depends(require_admin)], responses={**conflict_response})
 async def cancel_bulk_job(
     job_id: str,
     current_user: User = Depends(get_current_active_user),

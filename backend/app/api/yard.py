@@ -8,6 +8,7 @@ from types import SimpleNamespace
 from typing import Any, Dict, List, Optional
 from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
+from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -39,6 +40,34 @@ from app.services.yard_management import (
 from app.middleware.rbac import require_operator_or_admin
 
 router = APIRouter(tags=["yard_management"], dependencies=[Depends(get_current_active_user)])
+
+
+# FS-909. Three routes answered `dict` / `List[Dict[str, Any]]`, which satisfies
+# `test_response_model_coverage_ratchet.py` without describing anything.
+
+class TrailerCheckoutResponse(BaseModel):
+    message: str
+    trailer_id: str
+    trailer_number: str
+
+
+class DockDoorAssignmentResponse(BaseModel):
+    message: str
+    dock_door_id: str
+    trailer_id: str
+    door_number: str
+
+
+class DockScheduleItemResponse(DockAppointmentResponse):
+    """`get_dock_schedule` joins carrier/trailer/driver names onto the base
+    appointment shape with three literal (pre-transformed) keys and one snake_case
+    key -- see the comment above `assign_trailer_to_dock` on why the split casing
+    is deliberate rather than an oversight."""
+
+    carrierName: Optional[str] = None
+    trailer_license_plate: Optional[str] = None
+    driverPhone: Optional[str] = None
+    driverName: Optional[str] = None
 
 
 def _iso(dt):
@@ -183,7 +212,7 @@ async def trailer_check_in(
     return trailer
 
 
-@router.post("/trailers/{trailer_id}/checkout", response_model=dict, dependencies=[Depends(require_operator_or_admin)])
+@router.post("/trailers/{trailer_id}/checkout", response_model=TrailerCheckoutResponse, dependencies=[Depends(require_operator_or_admin)])
 async def trailer_check_out(
     trailer_id: UUID,
     db: AsyncSession = Depends(get_tenant_db)
@@ -411,7 +440,7 @@ async def get_dock_doors(
     return items
 
 
-@router.post("/dock/doors/{door_id}/assign/{trailer_id}", response_model=dict, dependencies=[Depends(require_operator_or_admin)])
+@router.post("/dock/doors/{door_id}/assign/{trailer_id}", response_model=DockDoorAssignmentResponse, dependencies=[Depends(require_operator_or_admin)])
 async def assign_trailer_to_dock(
     door_id: UUID,
     trailer_id: UUID,
@@ -553,7 +582,7 @@ async def update_dock_appointment(
     return appointment
 
 
-@router.get("/dock/appointments", response_model=List[Dict[str, Any]])
+@router.get("/dock/appointments", response_model=List[DockScheduleItemResponse])
 async def get_dock_schedule(
     # organization_id comes from the TOKEN, not the query string. It was a
     # required client-supplied query parameter — the IDOR shape this codebase

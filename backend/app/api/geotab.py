@@ -66,6 +66,115 @@ class GeotabWebhookAck(BaseModel):
     timestamp: str
 
 
+# ---- FS-909: the six routes below carried `Dict[str, Any]` / `List[Dict[str, Any]]`
+# and counted as "declared" without describing anything. `geotab_service`'s functions
+# each build one fixed dict shape (mock or DB-backed, per the docstrings above them),
+# so the shape below is read directly off the service, the same way GeotabExceptionsResponse
+# already was. `simulated_provenance()`'s three fields are Optional where the service only
+# spreads them conditionally (get_device_location) rather than unconditionally.
+
+class GeotabDevice(BaseModel):
+    id: str
+    device_type: str
+    serial_number: Optional[str] = None
+    vehicle_id: Optional[str] = None
+    driver_id: Optional[str] = None
+    is_active: bool
+    last_communication: Optional[str] = None
+    firmware_version: Optional[str] = None
+
+
+class GeotabDeviceLocationResponse(BaseModel):
+    latitude: Optional[float] = None
+    longitude: Optional[float] = None
+    speed: Optional[float] = None
+    heading: Optional[float] = None
+    timestamp: str
+    address: Optional[str] = None
+    #: Present only when `get_device_location` invented the fix -- a real GPS reading
+    #: is never stamped simulated, so these three stay Optional rather than defaulted.
+    simulated: Optional[bool] = None
+    data_source: Optional[str] = None
+    warning: Optional[str] = None
+
+
+class GeotabTrip(BaseModel):
+    id: str
+    device_id: str
+    driver_id: Optional[str] = None
+    vehicle_id: Optional[str] = None
+    start_time: str
+    end_time: Optional[str] = None
+    distance: float
+    duration: int
+    start_location: Optional[Dict[str, Any]] = None
+    end_location: Optional[Dict[str, Any]] = None
+    max_speed: Optional[float] = None
+    average_speed: Optional[float] = None
+    idle_time: int
+    harsh_braking_events: int
+    harsh_acceleration_events: int
+    speeding_events: int
+
+
+class GeotabDiagnosticsDetail(BaseModel):
+    dtc_codes: List[str]
+    check_engine_light: bool
+    battery_voltage: float
+    fuel_level: float
+    odometer: int
+    engine_hours: float
+
+
+class GeotabReeferStatus(BaseModel):
+    temperature_setpoint: float
+    temperature_actual: float
+    status: str
+    defrost_cycle: bool
+
+
+class GeotabDeviceDiagnosticsResponse(BaseModel):
+    device_id: str
+    status: str
+    last_seen: str
+    diagnostics: GeotabDiagnosticsDetail
+    reefer_status: Optional[GeotabReeferStatus] = None
+    simulated: bool = True
+    data_source: str = "geotab_simulator"
+    warning: Optional[str] = None
+
+
+class GeotabDriverHOSResponse(BaseModel):
+    driver_id: str
+    current_status: str
+    drive_hours_today: float
+    on_duty_hours_today: float
+    cycle_hours: float
+    drive_hours_remaining: float
+    cycle_hours_remaining: float
+    violations_today: int
+    next_break_required: str
+    simulated: bool = True
+    data_source: str = "geotab_simulator"
+    warning: Optional[str] = None
+
+
+class GeotabFleetSummaryResponse(BaseModel):
+    organization_id: str
+    total_devices: int
+    active_devices: int
+    total_drivers: int
+    drivers_on_duty: int
+    drivers_driving: int
+    exceptions_today: int
+    hos_violations_today: int
+    average_fuel_efficiency: float
+    total_miles_today: float
+    simulated: bool = True
+    data_source: str = "geotab_simulator"
+    warning: Optional[str] = None
+
+
 
 async def verify_geotab_webhook(x_webhook_secret: Optional[str] = Header(None)):
     """Guard the external webhook with a shared secret (no user JWT available)."""
@@ -79,7 +188,7 @@ webhook_router = APIRouter(prefix="/geotab", tags=["geotab"],
                            dependencies=[Depends(verify_geotab_webhook)])
 
 
-@router.get("/devices", response_model=List[Dict[str, Any]])
+@router.get("/devices", response_model=List[GeotabDevice])
 async def get_geotab_devices(
     response: Response,
     organization_id: UUID = Depends(get_tenant_org_id),
@@ -105,7 +214,7 @@ async def get_geotab_devices(
     return mark_truncated(response, devices, limit)
 
 
-@router.get("/devices/{device_id}/location", response_model=Dict[str, Any])
+@router.get("/devices/{device_id}/location", response_model=GeotabDeviceLocationResponse)
 async def get_device_location(
     device_id: str,
     organization_id: UUID = Depends(get_tenant_org_id),
@@ -130,7 +239,7 @@ async def get_device_location(
         raise HTTPException(status_code=404, detail=str(e))
 
 
-@router.get("/devices/{device_id}/trips", response_model=List[Dict[str, Any]])
+@router.get("/devices/{device_id}/trips", response_model=List[GeotabTrip])
 async def get_device_trips(
     device_id: str,
     response: Response,
@@ -216,7 +325,7 @@ async def get_geotab_exceptions(
     #: List here was a guess from the plural route name, and
     #: test_frontend_response_shapes_match caught it against the frontend's own
     #: type: an envelope typed as an array throws `.map is not a function`.
-    response_model=Dict[str, Any],
+    response_model=GeotabDeviceDiagnosticsResponse,
     dependencies=[Depends(get_current_active_user)],
 )
 async def get_device_diagnostics(
@@ -271,7 +380,7 @@ async def geotab_webhook(
 
 @router.get(
     "/drivers/{driver_id}/hos",
-    response_model=Dict[str, Any],
+    response_model=GeotabDriverHOSResponse,
     dependencies=[Depends(get_current_active_user)],
 )
 async def get_driver_hos_geotab(
@@ -301,7 +410,7 @@ async def get_driver_hos_geotab(
 
 @router.get(
     "/fleet/summary",
-    response_model=Dict[str, Any],
+    response_model=GeotabFleetSummaryResponse,
     dependencies=[Depends(get_current_active_user)],
 )
 async def get_fleet_summary(

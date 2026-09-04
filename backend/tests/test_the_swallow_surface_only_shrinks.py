@@ -44,7 +44,12 @@ from tests.test_every_swallowed_side_effect_is_counted import (
 APP = pathlib.Path(__file__).resolve().parents[1] / "app"
 
 #: Broad handlers that never re-raise. **Only ever goes down.** Measured 2026-08-08.
-MAX_SWALLOWING = 199
+#: 199 -> 198 on 2026-09-03 (FS-910). `middleware/rate_limit.py`'s `get_user_id_from_request`
+#: caught `except Exception` around a bare `jwt.decode` -- the only thing in that try body
+#: that can fail, and PyJWT's own failures are all `jwt.PyJWTError` -- narrowed to match the
+#: sibling catch in `get_tenant_key_from_request` two functions down, which already carried
+#: this exact narrowing.
+MAX_SWALLOWING = 198
 
 #: Swallowing handlers that increment a counter. **Only ever goes up.** Measured 2026-08-08.
 #: Eleven, not the ten a body-only scan reports: `ingestion.py`'s top-level handler counts
@@ -67,7 +72,13 @@ MAX_SWALLOWING = 199
 #: mattered — a Redis ping failure silently demoting the correlation job store to process
 #: memory, where a second API worker turns every job into a 404 — and it is now counted
 #: (`opsgrid_correlation_job_store_degraded_total`).
-MIN_COUNTED = 14
+#: 14 -> 18 on 2026-09-03 (FS-910). Measured at 16 before this change (2 above the stated
+#: floor -- free regression room nobody had claimed) and 18 after wiring two more:
+#: `middleware/error_tracking.py`'s tracker-call failure
+#: (`opsgrid_error_tracker_record_failed_total` -- the same "silently stops recording" risk
+#: FS-536 names for the audit trail) and `services/edge_fleet_sweep.py`'s per-pass loop
+#: failure (`opsgrid_edge_fleet_sweep_failed_total`).
+MIN_COUNTED = 18
 
 #: Files whose swallows are all counted, and must stay that way. A regression here is a
 #: specific failure going dark again, which the totals above cannot show: swapping a counted

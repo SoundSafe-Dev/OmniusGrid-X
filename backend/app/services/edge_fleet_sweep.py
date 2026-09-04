@@ -37,6 +37,7 @@ import structlog
 from sqlalchemy import select, text
 
 from app.core.config import settings
+from app.core.http_metrics import EDGE_FLEET_SWEEP_FAILURES
 from app.db.database import AsyncSessionLocal
 from app.db.edge_fleet_models import EdgeAgentStatus
 from app.db.models import Asset, Organization
@@ -90,6 +91,7 @@ class EdgeFleetSweep:
                 self._consecutive_failures = 0
             except Exception as exc:  # noqa: BLE001 - one bad pass must not end the loop
                 self._consecutive_failures += 1
+                EDGE_FLEET_SWEEP_FAILURES.inc()
                 logger.error("edge_fleet_sweep_failed", error=str(exc))
             await asyncio.sleep(settings.EDGE_FLEET_SWEEP_INTERVAL_SECONDS)
 

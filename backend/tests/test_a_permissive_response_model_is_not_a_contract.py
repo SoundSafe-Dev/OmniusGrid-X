@@ -59,7 +59,16 @@ DELIBERATELY_DYNAMIC = {
 }
 
 #: The measured figure. ONLY EVER SHRINKS — and the way down is a schema, not an entry here.
-MAX_PERMISSIVE = 22
+#:
+#: 22 -> 9 on 2026-09-03 (FS-909). Declared schemas for the 13 in-lane routes: six on
+#: `geotab.py` (device list/location/trips/diagnostics, driver HOS, fleet summary --
+#: `geotab_service`'s functions each build one fixed dict), two on `registries.py`
+#: (registry/item risk scoring), three on `yard.py` (trailer checkout, dock-door
+#: assignment, the dock schedule list), and two on `auth.py`/`telemetry.py` that FS-908
+#: already declared and this ratchet had not caught up to. The remaining 9 are RAG
+#: (htreinen's lane: 3) and correlation/MLOps (HARSH's lane: `logistics_correlation.py`'s
+#: 1, plus the 5 already in DELIBERATELY_DYNAMIC) -- registered, not edited.
+MAX_PERMISSIVE = 9
 
 
 def _permissive_routes() -> list[str]:

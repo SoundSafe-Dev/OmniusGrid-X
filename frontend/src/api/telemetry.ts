@@ -82,7 +82,12 @@ export const telemetryApi = {
     // Backend now returns a {items, meta} time-series envelope (FS-89). getHistory
     // stays a plain point array for existing chart consumers; use getHistoryPage
     // when you need the has_more / cursor metadata to page through a large range.
-    const response = await api.get<{ items: TelemetryPoint[] }>(`/api/v1/telemetry/${assetId}/history`, { params });
+    // Typed as the real envelope (not a narrowed `{ items }` literal) since FS-908
+    // gave the route a declared response_model -- the actual JSON always carries
+    // `meta` alongside `items`, and typing only the field this call reads is an
+    // accurate-but-incomplete assertion the shape guard can no longer distinguish
+    // from a genuine array/envelope mismatch.
+    const response = await api.get<TelemetryHistoryPage>(`/api/v1/telemetry/${assetId}/history`, { params });
     return response.data.items;
   },
 

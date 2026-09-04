@@ -65,7 +65,11 @@ def get_user_id_from_request(request: Request) -> str:
                 sub = claims.get("sub")
                 if sub:
                     return f"user:{sub}"
-            except Exception:
+            # FS-910. `jwt.decode` is the only thing this try can fail on, and its
+            # failures are all `jwt.PyJWTError` subclasses -- the same narrowing
+            # `get_tenant_key_from_request`'s sibling catch already carries. `except
+            # Exception` here was one broad catch too many for the same fallback.
+            except jwt.PyJWTError:
                 pass
             return f"user:{hashlib.sha256(token.encode()).hexdigest()[:32]}"
     except Exception:
