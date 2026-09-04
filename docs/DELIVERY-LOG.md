@@ -16105,3 +16105,26 @@ is already populated, diffs by row identity and doesn't hit the same failure), a
 probe has to run over 100 times to clear the view's own `WHERE calls > 100` filter.
 
 Full backend suite green on two consecutive full runs: **5,582** passing, 110 skipped.
+
+### FS-896, FS-897 — Redis was used for eight things and none of them was caching
+
+`/overview` and `/fleet/oee` are polled every 30s per open dashboard tab. FS-879/880
+already collapsed each to a small fixed number of queries, but that number still
+multiplies by every tab a customer leaves open. `core/aggregate_cache.py` adds a short
+(15s), TTL-bounded cache for both — bounded rather than invalidated on write, because a
+write-invalidated cache needs every mutation path that could change the answer to
+remember to clear it, and one missed site is silently wrong forever, which is worse than
+being briefly stale. It fails open through the shared Redis breaker: a Redis outage
+computes the answer directly rather than taking the dashboard down with it.
+
+`feature_flags.list_flags` ran one Redis `GET` per key in a loop — one round trip per
+flag on every admin page load. Replaced with `MGET`, which introduces a failure shape the
+per-key loop didn't have: `MGET` returns positional `None` for any key whose document is
+gone (a `WATCH`-aborted delete can leave the index and the document briefly out of step),
+handled the same way the loop's `if raw:` did.
+
+Running the full suite for this slice also caught the README's own test-count floor
+(`test_readme_test_count_is_not_stale.py`) drifting past its 600-test tolerance from a
+sprint's worth of added tests — raised 5,100+ to 5,600+.
+
+Backend **5,597** passing, 110 skipped.
