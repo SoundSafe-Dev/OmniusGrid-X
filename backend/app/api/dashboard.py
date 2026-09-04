@@ -10,6 +10,7 @@ from sqlalchemy import select, func, and_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import get_current_active_user
+from app.core.aggregate_cache import cached_aggregate
 from app.core.tenant import get_tenant_db, get_tenant_org_id
 from app.db.models import Asset, Alarm, PackMLState, Organization, Telemetry
 from app.models.schemas import DashboardOverview, OEEMetrics
@@ -126,47 +127,53 @@ async def get_dashboard_overview(
     # minute performance features. Nothing here is time-series: these are row counts in
     # `assets` and `alarms`, and no aggregate over telemetry can answer them.
 
-    # One pass over `assets`: the state histogram, and the two totals derived from it.
-    # Grouping includes the NULL state as its own group, so summing the groups is the same
-    # population `COUNT(*)` was counting.
-    state_rows = (
-        await db.execute(
-            select(
-                Asset.current_packml_state,
-                func.count().label("total"),
-                func.count().filter(Asset.is_active == True).label("active"),  # noqa: E712
+    # FS-896. Two queries is still two queries × every dashboard anyone has left open,
+    # polled every 30s (Dashboard.tsx:159). A short, TTL-bounded cache collapses however
+    # many tabs one organisation has open onto one DB round trip per cache lifetime —
+    # see core/aggregate_cache.py for why this is bounded rather than invalidated on write.
+    async def _compute() -> dict:
+        # One pass over `assets`: the state histogram, and the two totals derived from it.
+        # Grouping includes the NULL state as its own group, so summing the groups is the
+        # same population `COUNT(*)` was counting.
+        state_rows = (
+            await db.execute(
+                select(
+                    Asset.current_packml_state,
+                    func.count().label("total"),
+                    func.count().filter(Asset.is_active == True).label("active"),  # noqa: E712
+                )
+                .where(Asset.organization_id == org_id)
+                .group_by(Asset.current_packml_state)
             )
-            .where(Asset.organization_id == org_id)
-            .group_by(Asset.current_packml_state)
-        )
-    ).all()
+        ).all()
 
-    assets_by_state, total_assets, active_assets = _summarise_assets(state_rows)
+        assets_by_state, total_assets, active_assets = _summarise_assets(state_rows)
 
-    # One pass over the join: active alarms, and the critical subset of them.
-    alarm_counts = (
-        await db.execute(
-            select(
-                func.count().label("active"),
-                func.count()
-                .filter(Alarm.severity == "critical")
-                .label("critical"),
+        # One pass over the join: active alarms, and the critical subset of them.
+        alarm_counts = (
+            await db.execute(
+                select(
+                    func.count().label("active"),
+                    func.count()
+                    .filter(Alarm.severity == "critical")
+                    .label("critical"),
+                )
+                .select_from(Alarm)
+                .join(Asset, Alarm.asset_id == Asset.id)
+                .where(Alarm.is_active == True, Asset.organization_id == org_id)  # noqa: E712
             )
-            .select_from(Alarm)
-            .join(Asset, Alarm.asset_id == Asset.id)
-            .where(Alarm.is_active == True, Asset.organization_id == org_id)  # noqa: E712
-        )
-    ).one()
-    active_alarms = alarm_counts.active
-    critical_alarms = alarm_counts.critical
-    
-    return DashboardOverview(
-        total_assets=total_assets,
-        active_assets=active_assets,
-        assets_by_state=assets_by_state,
-        active_alarms=active_alarms,
-        critical_alarms=critical_alarms
-    )
+        ).one()
+
+        return {
+            "total_assets": total_assets,
+            "active_assets": active_assets,
+            "assets_by_state": assets_by_state,
+            "active_alarms": alarm_counts.active,
+            "critical_alarms": alarm_counts.critical,
+        }
+
+    payload = await cached_aggregate(f"dashboard_overview:{org_id}", _compute)
+    return DashboardOverview(**payload)
 
 
 @router.get("/workcells/{workcell_id}/status", response_model=WorkcellStatusOut)
@@ -275,82 +282,88 @@ async def get_fleet_oee(
     Org comes from the JWT — the old optional ``organization_id`` query param
     let a caller read another tenant's fleet.
     """
-    query = select(Asset).where(
-        Asset.is_active == True, Asset.organization_id == org_id
-    )
-
-    result = await db.execute(query)
-    assets = result.scalars().all()
-
-    end_time = datetime.now(timezone.utc)
-    start_time = end_time - timedelta(hours=hours)
-    total_time = hours * 3600
-
-    # One grouped query for the whole fleet. This used to run a SELECT per asset inside
-    # the loop below — an N+1 that grew with the fleet.
-    #
-    # FS-880: AND THEN IT SENT THE FLEET BACK AS A PARAMETER. The fix above replaced N
-    # queries with one, but scoped it by `.in_([a.id for a in assets])` — an id list as
-    # long as the org's asset count, serialised into the statement on every call. At a few
-    # thousand assets that is a multi-hundred-kilobyte parameter to plan and transmit
-    # thirty seconds apart, and it defeats the `(organization_id, ...)` index because the
-    # database is matching a literal list rather than the predicate that produced it.
-    #
-    # Joining `assets` states the SAME restriction in a form the planner can use, and the
-    # ids never cross the wire. The `assets` list is still fetched — the response needs the
-    # rows themselves — but it is no longer also an argument.
-    run_rows = await db.execute(
-        select(PackMLState.asset_id, func.sum(PackMLState.duration_seconds))
-        .select_from(PackMLState)
-        .join(Asset, Asset.id == PackMLState.asset_id)
-        .where(
-            Asset.organization_id == org_id,
-            Asset.is_active == True,  # noqa: E712
-            PackMLState.state == 'Execute',
-            PackMLState.state_entered_at >= start_time,
-            PackMLState.state_entered_at <= end_time,
+    # FS-896. Same bounded cache as /overview, keyed additionally by `hours` since the
+    # time range changes the answer.
+    async def _compute() -> dict:
+        query = select(Asset).where(
+            Asset.is_active == True, Asset.organization_id == org_id
         )
-        .group_by(PackMLState.asset_id)
-    ) if assets else None
-    run_seconds = {r[0]: float(r[1] or 0) for r in run_rows.all()} if run_rows else {}
 
-    oee_results = []
-    for asset in assets:
-        availability = (
-            run_seconds.get(asset.id, 0.0) / total_time if total_time > 0 else 0
+        result = await db.execute(query)
+        assets = result.scalars().all()
+
+        end_time = datetime.now(timezone.utc)
+        start_time = end_time - timedelta(hours=hours)
+        total_time = hours * 3600
+
+        # One grouped query for the whole fleet. This used to run a SELECT per asset
+        # inside the loop below — an N+1 that grew with the fleet.
+        #
+        # FS-880: AND THEN IT SENT THE FLEET BACK AS A PARAMETER. The fix above replaced
+        # N queries with one, but scoped it by `.in_([a.id for a in assets])` — an id
+        # list as long as the org's asset count, serialised into the statement on every
+        # call. At a few thousand assets that is a multi-hundred-kilobyte parameter to
+        # plan and transmit thirty seconds apart, and it defeats the
+        # `(organization_id, ...)` index because the database is matching a literal
+        # list rather than the predicate that produced it.
+        #
+        # Joining `assets` states the SAME restriction in a form the planner can use,
+        # and the ids never cross the wire. The `assets` list is still fetched — the
+        # response needs the rows themselves — but it is no longer also an argument.
+        run_rows = await db.execute(
+            select(PackMLState.asset_id, func.sum(PackMLState.duration_seconds))
+            .select_from(PackMLState)
+            .join(Asset, Asset.id == PackMLState.asset_id)
+            .where(
+                Asset.organization_id == org_id,
+                Asset.is_active == True,  # noqa: E712
+                PackMLState.state == 'Execute',
+                PackMLState.state_entered_at >= start_time,
+                PackMLState.state_entered_at <= end_time,
+            )
+            .group_by(PackMLState.asset_id)
+        ) if assets else None
+        run_seconds = {r[0]: float(r[1] or 0) for r in run_rows.all()} if run_rows else {}
+
+        oee_results = []
+        for asset in assets:
+            availability = (
+                run_seconds.get(asset.id, 0.0) / total_time if total_time > 0 else 0
+            )
+            oee_results.append({
+                "asset_id": str(asset.id),
+                "asset_name": asset.name,
+                "availability": round(availability, 4),
+                # Availability only — NOT full OEE. Performance needs each asset's
+                # ideal cycle time and quality needs part counters, neither of which
+                # fits one grouped query. Use /api/v1/dashboard/assets/{id}/oee for
+                # the real three-factor figure. The old code returned this value
+                # under the key "oee", which overstated every asset.
+                "availability_only": True,
+            })
+
+        # AN AVERAGE OF NOTHING IS NOT ZERO. With no assets in the fleet this returned
+        # 0, which renders as 0% availability — a fleet-wide outage, reported because
+        # there was nothing to average. `None` cannot be mistaken for a measurement,
+        # and `assets_measured` says how many rows the figure rests on.
+        avg_availability = (
+            sum(r["availability"] for r in oee_results) / len(oee_results)
+            if oee_results
+            else None
         )
-        oee_results.append({
-            "asset_id": str(asset.id),
-            "asset_name": asset.name,
-            "availability": round(availability, 4),
-            # Availability only — NOT full OEE. Performance needs each asset's
-            # ideal cycle time and quality needs part counters, neither of which
-            # fits one grouped query. Use /api/v1/dashboard/assets/{id}/oee for
-            # the real three-factor figure. The old code returned this value
-            # under the key "oee", which overstated every asset.
+
+        return {
+            "time_range": f"Last {hours} hours",
+            "asset_count": len(assets),
+            "fleet_average_availability": (
+                round(avg_availability, 4) if avg_availability is not None else None
+            ),
+            "assets_measured": len(oee_results),
+            # `fleet_average_oee` used to be this same availability number. Callers
+            # wanting a fleet OEE trend should use /api/v1/dashboard/oee/trend,
+            # which is explicit about being availability-only.
             "availability_only": True,
-        })
+            "assets": oee_results,
+        }
 
-    # AN AVERAGE OF NOTHING IS NOT ZERO. With no assets in the fleet this returned 0,
-    # which renders as 0% availability — a fleet-wide outage, reported because there was
-    # nothing to average. `None` cannot be mistaken for a measurement, and
-    # `assets_measured` says how many rows the figure rests on.
-    avg_availability = (
-        sum(r["availability"] for r in oee_results) / len(oee_results)
-        if oee_results
-        else None
-    )
-
-    return {
-        "time_range": f"Last {hours} hours",
-        "asset_count": len(assets),
-        "fleet_average_availability": (
-            round(avg_availability, 4) if avg_availability is not None else None
-        ),
-        "assets_measured": len(oee_results),
-        # `fleet_average_oee` used to be this same availability number. Callers
-        # wanting a fleet OEE trend should use /api/v1/dashboard/oee/trend,
-        # which is explicit about being availability-only.
-        "availability_only": True,
-        "assets": oee_results,
-    }
+    return await cached_aggregate(f"fleet_oee:{org_id}:{hours}", _compute)

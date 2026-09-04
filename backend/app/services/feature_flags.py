@@ -75,12 +75,14 @@ class FeatureFlagService:
         keys = await client.smembers(FLAG_INDEX_KEY)
         if not keys:
             return []
-        flags: list[dict[str, Any]] = []
-        for key in sorted(keys):
-            raw = await client.get(f"{FLAG_KEY_PREFIX}{key}")
-            if raw:
-                flags.append(json.loads(raw))
-        return flags
+        # FS-897. One GET per key in a loop was N round trips for a list call; MGET
+        # fetches every flag in one. A key can be in the index with no document yet
+        # (delete removes the doc before the index entry, so a WATCH-aborted delete can
+        # leave the two briefly out of step) -- raw entries line up positionally with
+        # sorted_keys, so None is filtered the same way a missing GET was.
+        sorted_keys = sorted(keys)
+        raw_values = await client.mget([f"{FLAG_KEY_PREFIX}{key}" for key in sorted_keys])
+        return [json.loads(raw) for raw in raw_values if raw]
 
     async def get_flag(self, key: str) -> Optional[dict[str, Any]]:
         client = self._redis()
