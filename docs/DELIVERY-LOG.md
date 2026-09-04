@@ -16128,3 +16128,41 @@ Running the full suite for this slice also caught the README's own test-count fl
 sprint's worth of added tests — raised 5,100+ to 5,600+.
 
 Backend **5,597** passing, 110 skipped.
+
+### FS-898 — 17 collection endpoints, and two guards that turned "add a limit" into a real fix
+
+`sites`, `workcells`, `tags`, `groups`, `cohorts` (fleet_targeting); `carriers`, `drivers`,
+`routes` (transportation); `dock/doors`, `detention-alerts` (yard); `edge/fleet`; GeoTab
+devices and device trips; `assets/types`; shop-floor `downtime/open`;
+`fleet/maintenance-windows`; `notifications/subscriptions` — 17 GET collection endpoints
+returning every row a tenant had, no bound anywhere. Added `limit`/`offset` with the
+house convention, and an `ORDER BY` wherever one was missing (unordered paging repeats and
+skips rows across calls).
+
+**Two pre-existing guards turned this into more than "add a Query parameter" for every
+one of the 17.** `test_capped_lists_cannot_grow.py` (a zero-tolerance ratchet against
+bare-array endpoints that cap without a way to tell a full page from the complete set)
+flagged all 17 the moment they gained a `limit` — its own docstring explicitly warns that
+capping without signalling is a *second* defect, not half a fix. Closed with
+`mark_truncated` (the `limit + 1` probe + `X-Result-Truncated` header already used by
+`/api/v1/rul` and the ERP list endpoints).
+
+`test_truncation_signals_reach_the_frontend.py` then caught the signal being dropped on
+the way in: all 13 of the 17 with a frontend caller returned `response.data` directly (or,
+for `getCarriers`/`getDrivers`, an envelope whose `total`/`hasMore` were fabricated from
+`items.length` — reading as "this is everyone" on a capped page). Wired `toListResult` at
+the API-client layer for all 13. Not yet surfaced as a UI banner on most of them — recorded
+as a follow-up rather than pretended finished, the same shape this repo's own
+`ACCEPTED_WITHOUT_THE_FLAG` register already uses for a deliberate partial fix.
+
+That guard had its own gap, found only because `edge_fleet.router` had never triggered it
+before: the router is mounted in `main.py` with no `prefix=` kwarg (every route already
+spells its full path), which the guard's prefix reader treated as "unresolved" — the same
+class as a module never included at all. Fixed the reader to tell "prefix is empty" from
+"module not found."
+
+`PAGINATED_IN_FS_898`'s register overlapped `ADMIN_ROUTE_INVENTORY` on six base paths —
+a resource with both a paginated GET and an admin-gated mutation. Registered as different
+questions about different methods rather than merged.
+
+Backend **5,601** passing, 110 skipped. Frontend **1,223** passing, `tsc --noEmit` clean.
