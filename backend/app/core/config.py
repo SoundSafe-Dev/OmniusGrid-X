@@ -169,6 +169,25 @@ class Settings(BaseSettings):
     AUTH_LOGOUT_RATE_LIMIT: str = "30/minute"
     AUTH_INVITE_VALIDATE_RATE_LIMIT: str = "30/minute"
     AUTH_INVITE_ACCEPT_RATE_LIMIT: str = "10/minute"
+    #: FS-1018. The three MFA management endpoints carried no limiter of their own.
+    #:
+    #: NARROWER THAN IT FIRST LOOKED, and the correction is worth keeping: the
+    #: brute-force-a-TOTP-at-login path is NOT one of these. Login-time verification runs
+    #: inside `auth.py`'s `login`, which is already bounded by AUTH_LOGIN_RATE_LIMIT.
+    #: These three require an authenticated session, so an attacker reaching them already
+    #: holds the account. They are bounded anyway because `disable` is a security
+    #: downgrade, `enroll` regenerates a secret on every call, and `confirm` accepts an
+    #: 8-character recovery-code-shaped input with nothing counting attempts -- and
+    #: because every other auth-adjacent state change in this codebase is limited, so an
+    #: unlimited one reads as an oversight whether or not it is exploitable today.
+    AUTH_MFA_ENROLL_RATE_LIMIT: str = "10/hour"
+    AUTH_MFA_CONFIRM_RATE_LIMIT: str = "10/minute"
+    AUTH_MFA_DISABLE_RATE_LIMIT: str = "5/hour"
+    #: FS-1018. `POST /sso/login/callback` is UNAUTHENTICATED, takes a caller-supplied
+    #: Keycloak token, and provisions a local user row on success. It was the most exposed
+    #: of the endpoints the rate-limit guard found -- more so than the MFA routes the
+    #: finding started from, which at least require a session.
+    AUTH_SSO_CALLBACK_RATE_LIMIT: str = "20/minute"
     USER_INVITE_PUBLIC_BASE_URL: str = "http://localhost:3000"
     USER_INVITE_EXPIRE_HOURS: int = Field(default=72, ge=1, le=720)
     USER_INVITE_EMAIL_MAX_ATTEMPTS: int = Field(default=3, ge=1, le=10)

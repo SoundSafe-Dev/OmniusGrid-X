@@ -210,8 +210,23 @@ class ExportScheduler:
             await self._publish_queued_for_org(org_id)
 
     async def _set_org(self, session, org_id: Any) -> None:
+        # `true` = TRANSACTION-local, and the third argument is the whole point (FS-1017).
+        #
+        # This was the only `set_config('app.current_org_id', ..., false)` in the
+        # codebase; the other eleven call sites all pass `true`. With `false` the setting
+        # is SESSION-level: it outlives the transaction, and SQLAlchemy's default
+        # `reset_on_return="rollback"` issues a ROLLBACK on pool return, which clears
+        # transaction-local settings and leaves session-level ones standing. The tenant id
+        # therefore rode the pooled connection out of this worker and into whatever
+        # checked it out next.
+        #
+        # WHY THAT IS WORSE THAN IT SOUNDS. A later code path that touches an RLS table
+        # WITHOUT binding a tenant normally reads zero rows -- the policy matches nothing,
+        # which fails closed and is loud. Inheriting a stale `app.current_org_id` turns
+        # that same path into a successful read of somebody else's rows. It converts a
+        # fail-closed bug into a cross-tenant one.
         await session.execute(
-            text("SELECT set_config('app.current_org_id', :org, false)"),
+            text("SELECT set_config('app.current_org_id', :org, true)"),
             {"org": str(org_id)},
         )
 
@@ -283,6 +298,20 @@ class ExportScheduler:
                 job.published_at = datetime.now(timezone.utc)
                 job.updated_at = datetime.now(timezone.utc)
                 await session.commit()
+                # RE-BIND AFTER THE COMMIT (FS-1017). The GUC above is transaction-local,
+                # and this loop commits per job on purpose ("a crash re-publishes at most
+                # one job"). Each commit therefore ends the transaction the tenant binding
+                # belonged to, and without this line every LATER iteration would issue its
+                # UPDATE with no tenant bound -- which under FORCE ROW LEVEL SECURITY
+                # matches nothing and silently updates zero rows, marking nothing as
+                # published while reporting success.
+                #
+                # This is why the original code used a SESSION-scoped GUC: it was
+                # load-bearing for the per-job commit, not an oversight. Session scope
+                # solved it by leaking the tenant onto the pooled connection instead,
+                # which is the trade this replaces -- same correctness inside the loop,
+                # without the value outliving the worker.
+                await self._set_org(session, org_id)
 
 
 export_scheduler = ExportScheduler()

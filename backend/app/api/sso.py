@@ -4,7 +4,7 @@ Does not expose the full keycloak_auth.py admin surface. Endpoints here are
 safe entry points for the frontend SSO flow and status checks.
 """
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from typing import List, Optional
 
 from pydantic import BaseModel
@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import get_current_active_user
 from app.core.config import settings
+from app.middleware.rate_limit import auth_rate_limit
 from app.core.sso import (
     SSOValidationError,
     upsert_user_from_sso_claims,
@@ -101,7 +102,9 @@ async def sso_me(current_user: User = Depends(get_current_active_user)):
 
 
 @router.post("/login/callback", response_model=SSOLoginResult)
+@auth_rate_limit(settings.AUTH_SSO_CALLBACK_RATE_LIMIT)
 async def sso_login_callback(
+    request: Request,
     payload: SSOCallbackRequest,
     db: AsyncSession = Depends(get_db),
 ):

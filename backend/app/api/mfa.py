@@ -25,17 +25,20 @@ from datetime import datetime, timezone
 from typing import List, Optional
 
 import structlog
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import get_current_active_user
 from app.core import mfa as totp
+from app.core.config import settings
 from app.core.responses import conflict_response
 from app.core.tenant import get_tenant_db
 from app.db.models import User, UserMFA
 from app.services.audit import record_audit
+
+from app.middleware.rate_limit import auth_rate_limit
 
 logger = structlog.get_logger()
 router = APIRouter()
@@ -89,7 +92,9 @@ async def mfa_status(
     summary="Begin TOTP enrolment",
     responses={**conflict_response},
 )
+@auth_rate_limit(settings.AUTH_MFA_ENROLL_RATE_LIMIT)
 async def enroll(
+    request: Request,
     current_user: User = Depends(get_current_active_user),
     db: AsyncSession = Depends(get_tenant_db),
 ):
@@ -133,7 +138,9 @@ async def enroll(
     summary="Activate TOTP",
     responses={**conflict_response},
 )
+@auth_rate_limit(settings.AUTH_MFA_CONFIRM_RATE_LIMIT)
 async def confirm(
+    request: Request,
     body: ConfirmRequest,
     current_user: User = Depends(get_current_active_user),
     db: AsyncSession = Depends(get_tenant_db),
@@ -174,7 +181,9 @@ async def confirm(
 
 
 @router.delete("/", status_code=204, summary="Disable TOTP for this account")
+@auth_rate_limit(settings.AUTH_MFA_DISABLE_RATE_LIMIT)
 async def disable(
+    request: Request,
     body: ConfirmRequest,
     current_user: User = Depends(get_current_active_user),
     db: AsyncSession = Depends(get_tenant_db),
