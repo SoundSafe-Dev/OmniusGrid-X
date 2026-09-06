@@ -80,6 +80,18 @@ class InforConnector(ERPConnectorBase):
             "`pu` and `ot` fields from the service account's .ionapi document."
         )
 
+
+    def _session(self) -> aiohttp.ClientSession:
+        """One session factory, so timeouts are set in exactly one place (FS-1008).
+
+        Bare `aiohttp.ClientSession()` has no total timeout: a host that accepts the
+        connection and then stops responding hangs the coroutine forever, holding a pool
+        slot and never reaching the retry classifier or the circuit breaker.
+        """
+        return aiohttp.ClientSession(
+            timeout=aiohttp.ClientTimeout(total=self.config.timeout)
+        )
+
     async def authenticate(self) -> str:
         """Obtain an ION access token via OAuth2.
 
@@ -202,7 +214,7 @@ class InforConnector(ERPConnectorBase):
                 "Infor-Tenant-ID": self.tenant_id
             }
             
-            async with aiohttp.ClientSession() as session:
+            async with self._session() as session:
                 async with session.get(entity_url, headers=headers, params=params) as response:
                     if response.status == 200:
                         data = await response.json()

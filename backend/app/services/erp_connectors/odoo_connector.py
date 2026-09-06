@@ -50,6 +50,14 @@ class OdooConnector(ERPConnectorBase):
         # Odoo-specific configuration
         self.db_name = config.configuration.get("db_name")
         self.api_type = config.configuration.get("api_type", "rest")  # rest or xmlrpc
+        # XML-RPC IS ON A CLOCK (FS-1003). Odoo deprecated `/xmlrpc`, `/xmlrpc/2` and
+        # `/jsonrpc` in v19 (Oct 2025) in favour of a bearer-token JSON-2 API, with
+        # removal targeted for Odoo Online around 19.1/21.1 and later for on-premise.
+        #
+        # It is not migrated here because `api_type` defaults to "rest": an operator only
+        # reaches the deprecating path by explicitly selecting it, and rewriting a
+        # protocol this repository cannot exercise against a live Odoo would be a guess
+        # shipped as a fix. What is resolvable is that the choice stops being silent.
         
         # Build base URL
         if self.api_type == "rest":
@@ -63,7 +71,30 @@ class OdooConnector(ERPConnectorBase):
             api_type=self.api_type,
             db_name=self.db_name
         )
+        if self.api_type != "rest":
+            logger.warning(
+                "odoo_connector_using_deprecated_xmlrpc",
+                api_type=self.api_type,
+                detail=(
+                    "Odoo deprecated XML-RPC/JSON-RPC in v19 in favour of a "
+                    "bearer-token JSON-2 API, with removal targeted for Odoo Online "
+                    "around 19.1/21.1. `api_type: rest` is the default and is not "
+                    "affected; this instance has explicitly selected the older protocol."
+                ),
+            )
     
+
+    def _session(self) -> aiohttp.ClientSession:
+        """One session factory, so timeouts are set in exactly one place (FS-1008).
+
+        Bare `aiohttp.ClientSession()` has no total timeout: a host that accepts the
+        connection and then stops responding hangs the coroutine forever, holding a pool
+        slot and never reaching the retry classifier or the circuit breaker.
+        """
+        return aiohttp.ClientSession(
+            timeout=aiohttp.ClientTimeout(total=self.config.timeout)
+        )
+
     async def authenticate(self) -> str:
         """Authenticate with Odoo.
 
@@ -230,7 +261,7 @@ class OdooConnector(ERPConnectorBase):
                 "Content-Type": "application/json"
             }
             
-            async with aiohttp.ClientSession() as session:
+            async with self._session() as session:
                 async with session.get(entity_url, headers=headers, params=params) as response:
                     if response.status == 200:
                         data = await response.json()

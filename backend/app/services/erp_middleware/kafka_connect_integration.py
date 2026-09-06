@@ -42,6 +42,25 @@ class KafkaConnectIntegrationService:
             bootstrap_servers=self.bootstrap_servers
         )
     
+
+    def _session(self) -> aiohttp.ClientSession:
+        """One session factory, so timeouts are set in exactly one place (FS-1008).
+
+        Every `aiohttp.ClientSession()` in this file used to be constructed bare, which
+        means aiohttp's default of **no total timeout**: a middleware host that accepts a
+        connection and then stops responding holds the coroutine open indefinitely. The
+        connector layer next door (`erp_connectors/*`) has always passed an explicit
+        `ClientTimeout` built from `config.timeout`; the middleware layer never did, and
+        the difference was invisible because both look like a session.
+
+        A hung ERP middleware call is worse than a failed one: it consumes a slot in the
+        pool FS-839 sized, it never reaches the retry classifier, and the circuit breaker
+        in `erp_connector_base` cannot count a failure that has not happened yet.
+        """
+        return aiohttp.ClientSession(
+            timeout=aiohttp.ClientTimeout(total=self.config.timeout)
+        )
+
     async def create_source_connector(
         self,
         connector_name: str,
@@ -87,7 +106,7 @@ class KafkaConnectIntegrationService:
             "Accept": "application/json"
         }
         
-        async with aiohttp.ClientSession() as session:
+        async with self._session() as session:
             async with session.post(
                 f"{self.connect_url}/connectors",
                 headers=headers,
@@ -145,7 +164,7 @@ class KafkaConnectIntegrationService:
             "Accept": "application/json"
         }
         
-        async with aiohttp.ClientSession() as session:
+        async with self._session() as session:
             async with session.post(
                 f"{self.connect_url}/connectors",
                 headers=headers,
@@ -182,7 +201,7 @@ class KafkaConnectIntegrationService:
             "Accept": "application/json"
         }
         
-        async with aiohttp.ClientSession() as session:
+        async with self._session() as session:
             async with session.get(
                 f"{self.connect_url}/connectors/{connector_name}/status",
                 headers=headers
@@ -215,7 +234,7 @@ class KafkaConnectIntegrationService:
             "Accept": "application/json"
         }
         
-        async with aiohttp.ClientSession() as session:
+        async with self._session() as session:
             async with session.delete(
                 f"{self.connect_url}/connectors/{connector_name}",
                 headers=headers
@@ -244,7 +263,7 @@ class KafkaConnectIntegrationService:
             "Accept": "application/json"
         }
         
-        async with aiohttp.ClientSession() as session:
+        async with self._session() as session:
             async with session.get(
                 f"{self.connect_url}/connectors",
                 headers=headers
@@ -273,7 +292,7 @@ class KafkaConnectIntegrationService:
             "Accept": "application/json"
         }
         
-        async with aiohttp.ClientSession() as session:
+        async with self._session() as session:
             async with session.get(
                 f"{self.connect_url}/connectors/{connector_name}/config",
                 headers=headers
@@ -302,7 +321,7 @@ class KafkaConnectIntegrationService:
             "Accept": "application/json"
         }
         
-        async with aiohttp.ClientSession() as session:
+        async with self._session() as session:
             async with session.post(
                 f"{self.connect_url}/connectors/{connector_name}/restart",
                 headers=headers
@@ -337,7 +356,7 @@ class KafkaConnectIntegrationService:
             "Accept": "application/json"
         }
         
-        async with aiohttp.ClientSession() as session:
+        async with self._session() as session:
             async with session.put(
                 f"{self.connect_url}/connectors/{connector_name}/pause",
                 headers=headers
@@ -372,7 +391,7 @@ class KafkaConnectIntegrationService:
             "Accept": "application/json"
         }
         
-        async with aiohttp.ClientSession() as session:
+        async with self._session() as session:
             async with session.put(
                 f"{self.connect_url}/connectors/{connector_name}/resume",
                 headers=headers

@@ -37,7 +37,12 @@ class ModelArtifactRegistry:
     async def check_for_updates(self, current_version: str) -> Optional[Dict]:
         """Check if newer model version available"""
         try:
-            async with aiohttp.ClientSession() as session:
+            # A small metadata GET: bounded by total elapsed time (FS-1008).
+            async with aiohttp.ClientSession(
+                timeout=aiohttp.ClientTimeout(
+                    total=settings.MODEL_REGISTRY_TIMEOUT_SECONDS
+                )
+            ) as session:
                 headers = {'Authorization': f'Bearer {self.api_key}'}
                 
                 async with session.get(
@@ -82,7 +87,17 @@ class ModelArtifactRegistry:
         logger.info("downloading_model", version=version, url=download_url)
         
         try:
-            async with aiohttp.ClientSession() as session:
+            # A model artifact, not a metadata call: bounded by time-BETWEEN-BYTES rather
+            # than total elapsed (FS-1008). A `total` bound here would abort a healthy
+            # transfer of a large model for the crime of being large; what must not
+            # happen is a socket that goes quiet and never returns.
+            async with aiohttp.ClientSession(
+                timeout=aiohttp.ClientTimeout(
+                    total=None,
+                    sock_connect=settings.MODEL_REGISTRY_TIMEOUT_SECONDS,
+                    sock_read=settings.MODEL_DOWNLOAD_STALL_TIMEOUT_SECONDS,
+                )
+            ) as session:
                 headers = {'Authorization': f'Bearer {self.api_key}'}
                 
                 async with session.get(

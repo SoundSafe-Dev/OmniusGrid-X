@@ -53,6 +53,20 @@ class SAPConnector(ERPConnectorBase):
         
         # SAP-specific configuration
         self.service_path = config.configuration.get("service_path", "/sap/opu/odata/sap")
+        # WHICH ODATA DIALECT THIS IS TALKING (FS-1001). SAP routes V2 under
+        # `/sap/opu/odata/` and V4 under `/sap/opu/odata4/`, so the configured service
+        # path is the honest signal -- there is no version negotiation to ask.
+        #
+        # NOT MIGRATED, and that is a decision rather than an omission. SAP is
+        # standardising NEW API delivery on V4 from 2025, but V2 remains supported for
+        # existing services and no dated sunset applies to the ones this connector calls
+        # (per-service deprecations are tracked in SAP Note 2836302, which is the thing to
+        # check before assuming a specific service is safe). A V2 -> V4 rewrite changes
+        # entity paths and query syntax on every call, and performing it blind against a
+        # system this repository cannot exercise is precisely how the defects this sprint
+        # keeps finding were written. What IS resolvable here is that an operator on the
+        # older dialect learns it from a log line rather than from a future outage.
+        self.odata_version = "v4" if "/odata4" in self.service_path else "v2"
         self.service_name = config.configuration.get("service_name", "API_PURCHASE_ORDER_SRV")
         self.system_id = config.configuration.get("system_id")
         self.client = config.configuration.get("client", "001")
@@ -81,7 +95,31 @@ class SAPConnector(ERPConnectorBase):
             system_id=self.system_id,
             client=self.client
         )
+        if self.odata_version == "v2":
+            logger.warning(
+                "sap_connector_using_odata_v2",
+                service_path=self.service_path,
+                service_name=self.service_name,
+                detail=(
+                    "SAP is standardising new API delivery on OData V4. V2 remains "
+                    "supported for existing services and this connector is not being "
+                    "migrated blind -- but check SAP Note 2836302 for whether the "
+                    "specific services in use have a published End of Development date."
+                ),
+            )
     
+
+    def _session(self) -> aiohttp.ClientSession:
+        """One session factory, so timeouts are set in exactly one place (FS-1008).
+
+        Bare `aiohttp.ClientSession()` has no total timeout: a host that accepts the
+        connection and then stops responding hangs the coroutine forever, holding a pool
+        slot and never reaching the retry classifier or the circuit breaker.
+        """
+        return aiohttp.ClientSession(
+            timeout=aiohttp.ClientTimeout(total=self.config.timeout)
+        )
+
     async def authenticate(self) -> str:
         """Authenticate with SAP using the client-credentials grant.
 
@@ -154,7 +192,7 @@ class SAPConnector(ERPConnectorBase):
                 "Content-Type": "application/json"
             }
             
-            async with aiohttp.ClientSession() as session:
+            async with self._session() as session:
                 async with session.get(entity_url, headers=headers, params=params) as response:
                     if response.status == 200:
                         data = await response.json()
@@ -211,7 +249,7 @@ class SAPConnector(ERPConnectorBase):
                 "Content-Type": "application/json"
             }
             
-            async with aiohttp.ClientSession() as session:
+            async with self._session() as session:
                 async with session.get(entity_url, headers=headers, params=params) as response:
                     if response.status == 200:
                         data = await response.json()
@@ -265,7 +303,7 @@ class SAPConnector(ERPConnectorBase):
                 "Accept": "multipart/mixed"
             }
             
-            async with aiohttp.ClientSession() as session:
+            async with self._session() as session:
                 async with session.post(batch_url, headers=headers, data=batch_body) as response:
                     if response.status == 202:
                         return await self._parse_batch_response(await response.text(), batch_boundary)

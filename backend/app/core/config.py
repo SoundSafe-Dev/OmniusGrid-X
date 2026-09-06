@@ -223,6 +223,16 @@ class Settings(BaseSettings):
     MODEL_REGISTRY_API_KEY: str = ""
     LOCAL_MODEL_DIR: str = "./models"
     MODEL_POLL_INTERVAL: int = 300  # 5 minutes
+    #: FS-1008. Both registry calls used a bare `aiohttp.ClientSession()`, i.e. no
+    #: timeout at all, and they need DIFFERENT bounds rather than one number:
+    #:
+    #:   * the metadata check is a small GET and a `total` bound is right for it;
+    #:   * the artifact download is a large file, where a `total` bound is actively
+    #:     wrong -- it would abort a healthy transfer of a big model purely for taking
+    #:     a while. What must not happen there is a socket that STALLS, so the download
+    #:     is bounded by time-between-bytes (`sock_read`) instead.
+    MODEL_REGISTRY_TIMEOUT_SECONDS: float = 30.0
+    MODEL_DOWNLOAD_STALL_TIMEOUT_SECONDS: float = 120.0
     TACTICAL_MODEL_PATH: str = "./models/tactical_v1.pt"
     # Cloud-side registry artifact store (backend writes trained .pt here)
     MODEL_STORAGE_PATH: str = "/var/lib/omniusgrid/models"
@@ -489,6 +499,8 @@ class Settings(BaseSettings):
     GEOTAB_DATABASE: str = ""   # MyGeotab database name (live mode)
     GEOTAB_USERNAME: str = ""
     GEOTAB_PASSWORD: str = ""
+    #: FS-987. Live MyGeotab calls are bounded like every other outbound call (FS-1008).
+    GEOTAB_TIMEOUT_SECONDS: float = 30.0
 
     # Routing/distance provider for shipment ETA + freight costing.
     # "haversine" (default, always available) | "osrm" (self-hosted road routing).

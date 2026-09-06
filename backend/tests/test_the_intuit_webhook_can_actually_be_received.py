@@ -153,6 +153,87 @@ class TestTheCurrentIntuitFormat:
         assert first["event_id"] != second["event_id"]
 
 
+class TestABatchedDeliveryKeepsEveryChange:
+    """QuickBooks batches, and the first adapter kept only the first change (FS-996).
+
+    One POST can hold several notifications (one per realm), each holding a list of
+    entities. Returning `entities[0]` of `eventNotifications[0]` accepted the delivery,
+    answered 200, and dropped the rest -- worse than the 400 it replaced, because a
+    rejection is visible to the sender while a partial accept tells Intuit the whole
+    batch was handled.
+    """
+
+    BATCH = {
+        "eventNotifications": [
+            {"realmId": "R1", "dataChangeEvent": {"entities": [
+                {"name": "Invoice", "id": "1", "operation": "Create", "lastUpdated": "t1"},
+                {"name": "Invoice", "id": "2", "operation": "Update", "lastUpdated": "t2"},
+            ]}},
+            {"realmId": "R2", "dataChangeEvent": {"entities": [
+                {"name": "Payment", "id": "7", "operation": "Create", "lastUpdated": "t4"},
+            ]}},
+        ]
+    }
+
+    async def test_every_entity_in_the_batch_is_stored(self):
+        from sqlalchemy import select
+
+        Session = await _session_factory()
+        result = await _deliver(Session, self.BATCH)
+        async with Session() as s:
+            rows = (await s.execute(select(ERPIntegrationEvent))).scalars().all()
+        assert len(rows) == 3, (
+            f"{len(rows)} of 3 changes stored. A batched delivery must not lose the "
+            "entities after the first -- the sender is told the whole batch was handled."
+        )
+        assert {r.entity_id for r in rows} == {"1", "2", "7"}
+        assert result["accepted"] == 3
+
+    async def test_entities_from_every_realm_survive(self):
+        """Two notifications, two realms. Iterating only the first notification loses an
+        entire company's changes rather than a single record's."""
+        from sqlalchemy import select
+
+        Session = await _session_factory()
+        await _deliver(Session, self.BATCH)
+        async with Session() as s:
+            rows = (await s.execute(select(ERPIntegrationEvent))).scalars().all()
+        assert {r.event_type for r in rows} == {
+            "invoice.create", "invoice.update", "payment.create"
+        }
+
+    async def test_one_already_seen_change_does_not_discard_the_new_ones(self):
+        """The reason dedup is per row rather than per delivery. Intuit retries a batch
+        that partly overlaps one already processed; a single IntegrityError on a shared
+        transaction would roll back the entities that WERE new."""
+        from sqlalchemy import select
+
+        Session = await _session_factory()
+        # Deliver one change on its own first.
+        single = {"eventNotifications": [
+            {"realmId": "R1", "dataChangeEvent": {"entities": [
+                {"name": "Invoice", "id": "1", "operation": "Create", "lastUpdated": "t1"},
+            ]}}
+        ]}
+        await _deliver(Session, single)
+        # Now the batch containing it plus two new ones.
+        result = await _deliver(Session, self.BATCH)
+        async with Session() as s:
+            rows = (await s.execute(select(ERPIntegrationEvent))).scalars().all()
+        assert len(rows) == 3, (
+            f"{len(rows)} rows: a batch overlapping one already-seen change must still "
+            "store the new ones"
+        )
+        assert result["accepted"] == 2 and result["duplicate"] == 1
+
+    async def test_a_single_event_response_shape_is_unchanged(self):
+        """Batch fields appear only when there is a batch, so every existing caller of a
+        one-event vendor sees exactly the response it saw before."""
+        Session = await _session_factory()
+        result = await _deliver(Session, INTUIT_LEGACY)
+        assert set(result) == {"status", "event_id"}
+
+
 class TestTheCloudEventsFormatIntuitRequiresFrom2026:
     async def test_a_cloudevents_delivery_is_accepted(self):
         Session = await _session_factory()

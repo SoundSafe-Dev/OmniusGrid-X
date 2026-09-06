@@ -45,6 +45,25 @@ class AzureServiceBusIntegrationService:
             resource_group=self.resource_group
         )
     
+
+    def _session(self) -> aiohttp.ClientSession:
+        """One session factory, so timeouts are set in exactly one place (FS-1008).
+
+        Every `aiohttp.ClientSession()` in this file used to be constructed bare, which
+        means aiohttp's default of **no total timeout**: a middleware host that accepts a
+        connection and then stops responding holds the coroutine open indefinitely. The
+        connector layer next door (`erp_connectors/*`) has always passed an explicit
+        `ClientTimeout` built from `config.timeout`; the middleware layer never did, and
+        the difference was invisible because both look like a session.
+
+        A hung ERP middleware call is worse than a failed one: it consumes a slot in the
+        pool FS-839 sized, it never reaches the retry classifier, and the circuit breaker
+        in `erp_connector_base` cannot count a failure that has not happened yet.
+        """
+        return aiohttp.ClientSession(
+            timeout=aiohttp.ClientTimeout(total=self.config.timeout)
+        )
+
     async def authenticate(self) -> str:
         """
         Authenticate with Azure using OAuth2.
@@ -57,7 +76,7 @@ class AzureServiceBusIntegrationService:
         # OAuth2 authentication with Azure AD
         token_url = f"https://login.microsoftonline.com/{auth_config.get('tenant_id')}/oauth2/token"
         
-        async with aiohttp.ClientSession() as session:
+        async with self._session() as session:
             async with session.post(
                 token_url,
                 data={
@@ -117,7 +136,7 @@ class AzureServiceBusIntegrationService:
             "Content-Type": "application/json"
         }
         
-        async with aiohttp.ClientSession() as session:
+        async with self._session() as session:
             async with session.put(
                 f"{self.api_url}/queues/{queue_name}?api-version=2022-10-01-preview",
                 headers=headers,
@@ -175,7 +194,7 @@ class AzureServiceBusIntegrationService:
             "Content-Type": "application/json"
         }
         
-        async with aiohttp.ClientSession() as session:
+        async with self._session() as session:
             async with session.put(
                 f"{self.api_url}/topics/{topic_name}?api-version=2022-10-01-preview",
                 headers=headers,
@@ -233,7 +252,7 @@ class AzureServiceBusIntegrationService:
             "Content-Type": "application/json"
         }
         
-        async with aiohttp.ClientSession() as session:
+        async with self._session() as session:
             async with session.put(
                 f"{self.api_url}/topics/{topic_name}/subscriptions/{subscription_name}?api-version=2022-10-01-preview",
                 headers=headers,
@@ -299,7 +318,7 @@ class AzureServiceBusIntegrationService:
         else:
             url = f"{self.api_url}/topics/{queue_or_topic}/messages?api-version=2022-10-01-preview"
         
-        async with aiohttp.ClientSession() as session:
+        async with self._session() as session:
             async with session.post(url, headers=headers, json=message_body) as response:
                 if response.status == 201:
                     logger.info(
@@ -346,7 +365,7 @@ class AzureServiceBusIntegrationService:
             topic, subscription = queue_or_subscription.split("/")
             url = f"{self.api_url}/topics/{topic}/subscriptions/{subscription}/messages/head?api-version=2022-10-01-preview&maxcount={max_messages}"
         
-        async with aiohttp.ClientSession() as session:
+        async with self._session() as session:
             async with session.post(url, headers=headers) as response:
                 if response.status == 200:
                     data = await response.json()
@@ -377,7 +396,7 @@ class AzureServiceBusIntegrationService:
             "Content-Type": "application/json"
         }
         
-        async with aiohttp.ClientSession() as session:
+        async with self._session() as session:
             async with session.delete(
                 f"{self.api_url}/queues/{queue_name}?api-version=2022-10-01-preview",
                 headers=headers

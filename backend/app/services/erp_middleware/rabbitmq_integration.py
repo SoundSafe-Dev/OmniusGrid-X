@@ -43,6 +43,25 @@ class RabbitMQIntegrationService:
             vhost=self.vhost
         )
     
+
+    def _session(self) -> aiohttp.ClientSession:
+        """One session factory, so timeouts are set in exactly one place (FS-1008).
+
+        Every `aiohttp.ClientSession()` in this file used to be constructed bare, which
+        means aiohttp's default of **no total timeout**: a middleware host that accepts a
+        connection and then stops responding holds the coroutine open indefinitely. The
+        connector layer next door (`erp_connectors/*`) has always passed an explicit
+        `ClientTimeout` built from `config.timeout`; the middleware layer never did, and
+        the difference was invisible because both look like a session.
+
+        A hung ERP middleware call is worse than a failed one: it consumes a slot in the
+        pool FS-839 sized, it never reaches the retry classifier, and the circuit breaker
+        in `erp_connector_base` cannot count a failure that has not happened yet.
+        """
+        return aiohttp.ClientSession(
+            timeout=aiohttp.ClientTimeout(total=self.config.timeout)
+        )
+
     async def create_queue(
         self,
         queue_name: str,
@@ -83,7 +102,7 @@ class RabbitMQIntegrationService:
         
         headers["Authorization"] = f"Basic {credentials}"
         
-        async with aiohttp.ClientSession() as session:
+        async with self._session() as session:
             async with session.put(
                 f"{self.management_url}/api/queues/{self.vhost}/{queue_name}",
                 headers=headers,
@@ -141,7 +160,7 @@ class RabbitMQIntegrationService:
         
         headers["Authorization"] = f"Basic {credentials}"
         
-        async with aiohttp.ClientSession() as session:
+        async with self._session() as session:
             async with session.put(
                 f"{self.management_url}/api/exchanges/{self.vhost}/{exchange_name}",
                 headers=headers,
@@ -201,7 +220,7 @@ class RabbitMQIntegrationService:
         
         headers["Authorization"] = f"Basic {credentials}"
         
-        async with aiohttp.ClientSession() as session:
+        async with self._session() as session:
             async with session.post(
                 f"{self.management_url}/api/bindings/{self.vhost}/e/{exchange_name}/q/{queue_name}",
                 headers=headers,
@@ -277,7 +296,7 @@ class RabbitMQIntegrationService:
         
         headers["Authorization"] = f"Basic {credentials}"
         
-        async with aiohttp.ClientSession() as session:
+        async with self._session() as session:
             async with session.post(
                 f"{self.management_url}/api/exchanges/{self.vhost}/{exchange_name}/publish",
                 headers=headers,
@@ -327,7 +346,7 @@ class RabbitMQIntegrationService:
         
         headers["Authorization"] = f"Basic {credentials}"
         
-        async with aiohttp.ClientSession() as session:
+        async with self._session() as session:
             async with session.post(
                 f"{self.management_url}/api/queues/{self.vhost}/{queue_name}/get",
                 headers=headers,
@@ -371,7 +390,7 @@ class RabbitMQIntegrationService:
         
         headers["Authorization"] = f"Basic {credentials}"
         
-        async with aiohttp.ClientSession() as session:
+        async with self._session() as session:
             async with session.delete(
                 f"{self.management_url}/api/queues/{self.vhost}/{queue_name}",
                 headers=headers
@@ -411,7 +430,7 @@ class RabbitMQIntegrationService:
         
         headers["Authorization"] = f"Basic {credentials}"
         
-        async with aiohttp.ClientSession() as session:
+        async with self._session() as session:
             async with session.get(
                 f"{self.management_url}/api/queues/{self.vhost}/{queue_name}",
                 headers=headers
@@ -444,7 +463,7 @@ class RabbitMQIntegrationService:
             
             headers["Authorization"] = f"Basic {credentials}"
             
-            async with aiohttp.ClientSession() as session:
+            async with self._session() as session:
                 async with session.get(
                     f"{self.management_url}/api/overview",
                     headers=headers

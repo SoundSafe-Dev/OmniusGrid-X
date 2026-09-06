@@ -42,6 +42,25 @@ class BoomiIntegrationService:
             environment=self.environment
         )
     
+
+    def _session(self) -> aiohttp.ClientSession:
+        """One session factory, so timeouts are set in exactly one place (FS-1008).
+
+        Every `aiohttp.ClientSession()` in this file used to be constructed bare, which
+        means aiohttp's default of **no total timeout**: a middleware host that accepts a
+        connection and then stops responding holds the coroutine open indefinitely. The
+        connector layer next door (`erp_connectors/*`) has always passed an explicit
+        `ClientTimeout` built from `config.timeout`; the middleware layer never did, and
+        the difference was invisible because both look like a session.
+
+        A hung ERP middleware call is worse than a failed one: it consumes a slot in the
+        pool FS-839 sized, it never reaches the retry classifier, and the circuit breaker
+        in `erp_connector_base` cannot count a failure that has not happened yet.
+        """
+        return aiohttp.ClientSession(
+            timeout=aiohttp.ClientTimeout(total=self.config.timeout)
+        )
+
     async def authenticate(self) -> str:
         """
         Authenticate with Boomi using API key.
@@ -94,7 +113,7 @@ class BoomiIntegrationService:
             "Accept": "application/json"
         }
         
-        async with aiohttp.ClientSession() as session:
+        async with self._session() as session:
             async with session.post(
                 f"{self.api_url}/deploy/{self.account_id}",
                 headers=headers,
@@ -149,7 +168,7 @@ class BoomiIntegrationService:
             "Accept": "application/json"
         }
         
-        async with aiohttp.ClientSession() as session:
+        async with self._session() as session:
             async with session.post(
                 f"{self.api_url}/executeProcess/{self.account_id}",
                 headers=headers,
@@ -190,7 +209,7 @@ class BoomiIntegrationService:
             "Accept": "application/json"
         }
         
-        async with aiohttp.ClientSession() as session:
+        async with self._session() as session:
             async with session.get(
                 f"{self.api_url}/executionStatus/{self.account_id}/{execution_id}",
                 headers=headers
@@ -226,7 +245,7 @@ class BoomiIntegrationService:
             "Accept": "application/json"
         }
         
-        async with aiohttp.ClientSession() as session:
+        async with self._session() as session:
             async with session.get(
                 f"{self.api_url}/executionLogs/{self.account_id}/{execution_id}",
                 headers=headers
@@ -269,7 +288,7 @@ class BoomiIntegrationService:
             "Accept": "application/json"
         }
         
-        async with aiohttp.ClientSession() as session:
+        async with self._session() as session:
             async with session.post(
                 f"{self.api_url}/connector/{self.account_id}",
                 headers=headers,
@@ -310,7 +329,7 @@ class BoomiIntegrationService:
             "Accept": "application/json"
         }
         
-        async with aiohttp.ClientSession() as session:
+        async with self._session() as session:
             async with session.get(
                 f"{self.api_url}/connectorStatus/{self.account_id}/{connector_id}",
                 headers=headers
@@ -350,7 +369,7 @@ class BoomiIntegrationService:
         if filter_config:
             params.update(filter_config)
         
-        async with aiohttp.ClientSession() as session:
+        async with self._session() as session:
             async with session.get(
                 f"{self.api_url}/process/{self.account_id}",
                 headers=headers,

@@ -41,6 +41,25 @@ class MuleSoftIntegrationService:
             environment=self.environment
         )
     
+
+    def _session(self) -> aiohttp.ClientSession:
+        """One session factory, so timeouts are set in exactly one place (FS-1008).
+
+        Every `aiohttp.ClientSession()` in this file used to be constructed bare, which
+        means aiohttp's default of **no total timeout**: a middleware host that accepts a
+        connection and then stops responding holds the coroutine open indefinitely. The
+        connector layer next door (`erp_connectors/*`) has always passed an explicit
+        `ClientTimeout` built from `config.timeout`; the middleware layer never did, and
+        the difference was invisible because both look like a session.
+
+        A hung ERP middleware call is worse than a failed one: it consumes a slot in the
+        pool FS-839 sized, it never reaches the retry classifier, and the circuit breaker
+        in `erp_connector_base` cannot count a failure that has not happened yet.
+        """
+        return aiohttp.ClientSession(
+            timeout=aiohttp.ClientTimeout(total=self.config.timeout)
+        )
+
     async def authenticate(self) -> str:
         """
         Authenticate with MuleSoft using OAuth2.
@@ -53,7 +72,7 @@ class MuleSoftIntegrationService:
         # OAuth2 authentication with MuleSoft
         token_url = f"{self.api_manager_url}/accounts/login/oauth2/token"
         
-        async with aiohttp.ClientSession() as session:
+        async with self._session() as session:
             async with session.post(
                 token_url,
                 data={
@@ -101,7 +120,7 @@ class MuleSoftIntegrationService:
             "Content-Type": "application/json"
         }
         
-        async with aiohttp.ClientSession() as session:
+        async with self._session() as session:
             if method == "GET":
                 async with session.get(api_url, headers=headers) as response:
                     return await self._handle_response(response)
@@ -187,7 +206,7 @@ class MuleSoftIntegrationService:
             "Content-Type": "application/json"
         }
         
-        async with aiohttp.ClientSession() as session:
+        async with self._session() as session:
             async with session.post(
                 subscription_url,
                 headers=headers,
@@ -241,7 +260,7 @@ class MuleSoftIntegrationService:
             "Content-Type": "application/json"
         }
         
-        async with aiohttp.ClientSession() as session:
+        async with self._session() as session:
             async with session.post(
                 event_url,
                 headers=headers,
@@ -282,7 +301,7 @@ class MuleSoftIntegrationService:
             "Content-Type": "application/json"
         }
         
-        async with aiohttp.ClientSession() as session:
+        async with self._session() as session:
             async with session.get(policies_url, headers=headers) as response:
                 if response.status == 200:
                     data = await response.json()

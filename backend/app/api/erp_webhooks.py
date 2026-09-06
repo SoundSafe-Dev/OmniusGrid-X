@@ -283,46 +283,94 @@ async def receive_erp_webhook(
     # and was then rejected 400 for lacking fields it has never sent, so QuickBooks
     # webhooks had never once been accepted. Explicit headers still win over everything —
     # an operator who configures the sending side keeps full control.
-    vendor_fields, vendor_format = normalise_webhook_payload(erp_type, event_data)
-    if vendor_fields:
+    #
+    # A LIST, because one delivery is not one event: QuickBooks batches several changes
+    # (across several realms) into a single POST. Recording only the first would answer
+    # 200 for work never stored, which is worse than the 400 it replaced — a rejection is
+    # at least visible to the sender.
+    vendor_events, vendor_format = normalise_webhook_payload(erp_type, event_data)
+    if vendor_events:
         logger.info(
             "erp_webhook_payload_normalised",
             erp_type=erp_type,
             payload_format=vendor_format,
+            event_count=len(vendor_events),
         )
 
-    event_type = x_event_type or event_data.get("event_type") or vendor_fields.get("event_type")
-    event_id = x_event_id or event_data.get("event_id") or vendor_fields.get("event_id")
-    source_system = x_source_system or event_data.get("source_system") or erp_type
-    entity_type = (
-        event_data.get("entity_type") or vendor_fields.get("entity_type") or "unknown"
-    )
-    entity_id = event_data.get("entity_id") or vendor_fields.get("entity_id")
-    if not event_type or not event_id:
-        raise HTTPException(status_code=400, detail="missing event_type or event_id")
+    # The generic envelope is one event; a vendor body may be many. Both become a list so
+    # there is a single insertion path rather than two that can drift.
+    if vendor_events and not (x_event_id or event_data.get("event_id")):
+        candidates = vendor_events
+    else:
+        candidates = [{
+            "event_type": x_event_type or event_data.get("event_type"),
+            "event_id": x_event_id or event_data.get("event_id"),
+            "entity_type": event_data.get("entity_type"),
+            "entity_id": event_data.get("entity_id"),
+        }]
 
-    # Idempotent insert. Dedup is enforced by the UNIQUE(source_system,
-    # event_id) constraint, not a check-then-insert: two concurrent deliveries
-    # of the same event (providers retry aggressively) would both pass a
-    # pre-check SELECT and then collide at INSERT. Let the constraint decide and
-    # treat the conflict as the duplicate — race-safe, and one fewer query on the
-    # common first-delivery path.
-    db.add(ERPIntegrationEvent(
-        organization_id=integration.organization_id,
-        integration_id=integration.id,
-        event_type=str(event_type),
-        event_id=str(event_id),
-        source_system=str(source_system),
-        entity_type=str(entity_type),
-        entity_id=entity_id,
-        event_data=event_data,
-        processing_status="pending",
-    ))
-    try:
-        await db.commit()
-    except IntegrityError:
-        await db.rollback()
-        logger.info("erp_webhook_duplicate", erp_type=erp_type, event_id=str(event_id))
-        return {"status": "duplicate", "event_id": str(event_id)}
-    logger.info("erp_webhook_received", erp_type=erp_type, event_type=event_type, event_id=event_id)
-    return {"status": "accepted", "event_id": str(event_id)}
+    source_system = x_source_system or event_data.get("source_system") or erp_type
+
+    resolved = []
+    for candidate in candidates:
+        event_type = x_event_type or candidate.get("event_type")
+        event_id = x_event_id or candidate.get("event_id")
+        if not event_type or not event_id:
+            raise HTTPException(status_code=400, detail="missing event_type or event_id")
+        resolved.append((
+            str(event_type),
+            str(event_id),
+            str(candidate.get("entity_type") or "unknown"),
+            candidate.get("entity_id"),
+        ))
+
+    # PER-EVENT DEDUP, VIA SAVEPOINTS. Dedup is enforced by the UNIQUE(source_system,
+    # event_id) constraint rather than a check-then-insert: two concurrent deliveries of
+    # the same event (providers retry aggressively) would both pass a pre-check SELECT and
+    # then collide at INSERT. With several events in one delivery that has to be per row —
+    # a single IntegrityError on the shared transaction would roll back the entities that
+    # were new, so a batch containing one already-seen change would discard all the others.
+    accepted, duplicates = [], []
+    for event_type, event_id, entity_type, entity_id in resolved:
+        try:
+            async with db.begin_nested():
+                db.add(ERPIntegrationEvent(
+                    organization_id=integration.organization_id,
+                    integration_id=integration.id,
+                    event_type=event_type,
+                    event_id=event_id,
+                    source_system=str(source_system),
+                    entity_type=entity_type,
+                    entity_id=entity_id,
+                    event_data=event_data,
+                    processing_status="pending",
+                ))
+        except IntegrityError:
+            duplicates.append(event_id)
+            continue
+        accepted.append(event_id)
+
+    await db.commit()
+
+    if not accepted:
+        logger.info("erp_webhook_duplicate", erp_type=erp_type, event_id=duplicates[0])
+        return {"status": "duplicate", "event_id": duplicates[0]}
+
+    # SINGLE-EVENT SHAPE IS UNCHANGED, deliberately: every existing caller and test sees
+    # exactly the response it saw before. The batch fields appear only when there is
+    # genuinely a batch, so a vendor that sends one event at a time is unaffected.
+    response = {"status": "accepted", "event_id": accepted[0]}
+    if len(resolved) > 1:
+        response.update(
+            accepted=len(accepted), duplicate=len(duplicates), event_ids=accepted
+        )
+    event_type, event_id = resolved[0][0], accepted[0]
+    logger.info(
+        "erp_webhook_received",
+        erp_type=erp_type,
+        event_type=event_type,
+        event_id=event_id,
+        accepted=len(accepted),
+        duplicates=len(duplicates),
+    )
+    return response
