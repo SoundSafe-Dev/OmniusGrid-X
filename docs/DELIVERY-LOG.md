@@ -16327,3 +16327,129 @@ is D2 from `docs/planning/task-pool-2026-08-08.md`).
 
 Both throwaway containers torn down after the runs. Backend suite run in full afterward
 per house rule before commit.
+
+### FS-969 → FS-986 — Wave A: security and dependency hygiene, and eight premises that did not reproduce
+
+The first wave of the FS-969→1218 sprint. Half of it was derived from vendor research rather
+than from a grep of this tree, and **that half was largely already handled** — which is the
+wave's most useful result, recorded here rather than quietly dropped:
+
+| Item | Premise | Measured 2026-09-05 |
+|---|---|---|
+| FS-971 | Qdrant's deprecated `search`/`recommend`/`discover` endpoints need migrating | `vector_store.py` already uses `query_points`, the unified Query API. Nothing to register. |
+| FS-973 | The S3 client may still be on SigV2 | All three stores (`export_store`, `document_store`, `rag_ingestion`) already set `signature_version="s3v4"` explicitly. |
+| FS-974 | Keycloak's WildFly→Quarkus move may need a path change | No `/auth/realms` anywhere; `core/sso.py:61` and `api/sso.py:80` already use the Quarkus `/realms/{realm}` layout. |
+| FS-975 | Cluster may be on an EOL Kubernetes minor | No k8s version is pinned in-repo; clusters are external. An operational check, not a repository change. |
+| FS-976 | `policy/v1beta1` / `autoscaling/v2beta2` may linger in manifests | Measured across `infrastructure/k8s/`: 5× `policy/v1`, 3× `autoscaling/v2`. Zero deprecated versions. |
+| FS-984 | Prometheus Remote-Write v2 renamed a field; the OTel exporter may break | No `prometheusremotewrite` exporter is configured at all. Does not apply. |
+| FS-985 | Grafana 13 deprecated legacy alert-rule provisioning | `infra/grafana/provisioning/` contains only `dashboards/` and `datasources/`. No alerting provisioning exists. |
+| FS-986 | aiokafka deprecated the `api_version` constructor param | The only `api_version` in the tree is Oracle's REST API version. Not aiokafka's. |
+
+The plan predicted this class would need premise-checking harder than a grep-derived one —
+a vendor's deprecation notice is a fact about the vendor, not about this repository. Eight of
+nine research items closed on measurement. Written down because the alternative is
+rediscovering them next sprint.
+
+**FS-969 — PyJWT 2.10.1 → 2.13.0.** CVE-2026-48526 (algorithm confusion: a raw-JWK decode
+with mixed HMAC/asymmetric algorithms lets a public key forge an HS256 token) and
+CVE-2026-48523 (verifier allow-list bypass with a PyJWK key, 2.9.0–2.12.1). **Neither path is
+exercised here**, checked rather than assumed: no `PyJWK`, no `from_jwk`, no JWKS anywhere in
+`app/`; `JWT_ALGORITHM` is HS256; every verifying `decode` passes an explicit
+single-algorithm allow-list. Bumped anyway — a Keycloak/OIDC integration is precisely what
+would introduce a JWKS decode later.
+
+**And the bump found something.** PyJWT 2.13.0 added an `InsecureKeyLengthWarning` for HMAC
+keys under 32 bytes, which the suite immediately started emitting. The production gate at
+`core/config.py:618` checked that `JWT_SECRET_KEY` was neither empty nor the dev default —
+and nothing else. `JWT_SECRET_KEY=hunter2` passed it: seven bytes against SHA-256, where
+RFC 7518 §3.2 requires the key be no shorter than the hash output. Added the length check at
+startup, where a deployment can still be stopped, rather than leaving it as a runtime warning
+that fires after the tokens are already signed. Guarded in both directions plus the boundary
+(31 refused, exactly 32 accepted) and in bytes rather than characters, so 31 multi-byte
+characters — 93 bytes of real key material — is not rejected by a `len(str)` check.
+
+**FS-970 — the outer catch in `get_user_id_from_request`, and a premise of my own that was
+wrong.** FS-910 narrowed the inner catch around `jwt.decode` and left the outer
+`except Exception: pass`. The first draft of this fix also caught `UnicodeError`, reasoning
+that a raw `0xE9` in the Authorization header would survive Starlette's latin-1 decode as a
+lone surrogate and break `token.encode()`. **The test written for it failed**: latin-1 maps
+every byte to U+0000–U+00FF, all UTF-8-encodable, so the header arrives as `'Bearer abcédef'`
+and hashes fine. Narrowed to `AttributeError` alone, with the disproven premise recorded in
+the code and pinned by a test, so nobody re-adds `UnicodeError` on the same reasoning. The
+fallback is now logged: every request landing there is bucketed by IP instead of by user, so
+a whole NAT shares one budget — and if extraction broke for *all* requests, the per-user rate
+limit would silently become a per-IP one.
+
+**FS-972 — `greenlet` was a bare pin with no reason attached.** SQLAlchemy 2.1 stops
+installing it by default and every session here is async. The pin existed but sat unexplained
+between ML packages and profiling, where anyone tidying transitives would delete it and break
+every async session at *runtime*. Moved the declaration to `sqlalchemy[asyncio]` where the
+reason is visible, kept the version pin, and said so on both lines.
+
+**FS-978 — a Grafana datasource that has never once connected.** The finding was "a plaintext
+password"; the password was the least of it. Three things were wrong simultaneously, each
+fatal alone: `database: opsgrid` (compose creates `omniusgrid`), `user: opsgrid_readonly` (no
+`CREATE ROLE` for it exists in any migration or script — the string appeared on exactly one
+line in the repository, its own), and `password: readonly_password` (set nowhere). The panel
+has been empty since the file was written and the committed secret was protecting a login
+that did not exist. `infrastructure/k8s/monitoring/grafana-datasource.yml` faced the same
+choice and omitted the datasource entirely, reasoning that "a secret in git is a worse problem
+than a missing panel" — right for a cluster, and it did not notice the compose copy had taken
+the worse option *and* lost the panel. Fixed for compose (real database, real user, password
+via `$POSTGRES_PASSWORD`, and the variable actually passed to the Grafana service — without
+that the substitution silently resolves to empty and nothing changes). A read-only role
+belongs in `scripts/provision_app_role.py`; until it exists this is dev-only, and says so.
+
+New guard `test_the_grafana_datasources_could_connect.py` asks the question a YAML-shape check
+cannot: do the credentials name things that exist? Four checks, each failing independently
+against the original config.
+
+**FS-981/982 — two bare `except:` handlers, and why the spelling matters.** `except:` catches
+BaseException, which includes `asyncio.CancelledError`.
+`collectors/opcua_collector.py:396` browsed a server's address space child-by-child inside
+one: on a wide address space, a shutdown cancelling that task had the cancellation absorbed
+and the loop kept going — the agent appeared to *hang* rather than stop.
+`erp_middleware/mulesoft_integration.py:128` wrapped `await response.json()` in another, so a
+cancellation was reported to the caller as `{"status": "success"}` with no data. Both narrowed
+to what actually raises, both now logged, and a skipped-children count added to the OPC-UA
+browse so "the server denied every child" stops being indistinguishable from "the address
+space is empty". New guard `test_nothing_swallows_baseexception.py` closes the class across
+both trees at zero — it can be zero-tolerance rather than a ratchet because the population is
+now zero. FS-981 also made the DNP3 master's bind address configurable (`master_bind_ip`,
+default unchanged at `0.0.0.0`): all-interfaces is right for a single-NIC gateway and wrong
+for the multi-homed OT/management split that edge gateways routinely have.
+
+**FS-979 — the placeholder-secret guard was reading a different manifest set than the pipeline
+applies.** The finding was "no CI guard covers `database-ha`'s committed dev credentials".
+That was wrong — `tests/k8s/check_placeholder_secrets.py` covers it by name. What was true,
+and narrower, is that it built `infrastructure/k8s/{monitoring,database-ha}` while every apply
+in `ci-cd.yml` names `infrastructure/k8s/platform/<env>/<stack>`. The bases are included *by*
+those platform stacks, so the proxy agreed with reality — right up until a platform overlay
+contributes or patches a Secret of its own, which is what an overlay is for. Pointed the guard
+at the paths actually applied, and taught it to skip a stack an environment doesn't have (the
+DR site carries only the overlay — it applies neither stack, which is now stated rather than
+crashing the checker).
+
+**FS-983 did not reproduce either.** `collectors/file_watcher.py:196`'s
+`except ValueError: pass  # Keep as string` is a narrow, correct, documented type-coercion
+fallback — a non-numeric metadata value staying a string is the intended behaviour, not a
+swallowed collection failure.
+
+**The new guard tripped an old one, and the old one was right.** Adding
+`test_nothing_swallows_baseexception.py` failed
+`test_no_two_guards_keep_the_same_list.py`: its private `TREES` constant named the same
+source roots that `test_every_alert_watches_a_series_something_exports.py::CODE_ROOTS`,
+`test_no_unapproved_primitive_is_reachable.py::ROOTS` and
+`test_the_session_arc_is_a_real_range.py::SEARCH_ROOTS` each already wrote out
+independently — four copies of "which trees do we walk", where adding a fifth top-level
+package means finding it in four places and a sweep that walks three of four still passes,
+just over less than it claims.
+
+Extracted `tests/_source_trees.py` (`PACKAGE_ROOTS` for shipped code, `ALL_ROOTS` for
+text-level sweeps — different questions, both named so the next guard doesn't invent a third
+spelling). The first attempt migrated only the new file and left the three originals, on the
+reasoning that moving four sweeps at once is how one quietly starts walking a different set.
+The overlap guard immediately flagged the new shared file against all three — the correct
+reading: **a fifth copy that merely offers to be the single declaration is still a fifth
+copy.** All four are migrated, and each was verified by comparing its resolved paths as a
+set before and after rather than by trusting that the literals looked the same.
