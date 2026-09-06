@@ -15,6 +15,7 @@ from app.services.erp_connector_base import (
     ERPConnectorBase,
     ERPConfig,
 )
+from app.middleware.request_context import outbound_correlation_headers
 
 logger = structlog.get_logger()
 
@@ -52,10 +53,16 @@ class InforConnector(ERPConnectorBase):
         )
     
     def _http_session(self) -> aiohttp.ClientSession:
-        """One session factory, so timeouts are configured in a single place."""
-        return aiohttp.ClientSession(
-            timeout=aiohttp.ClientTimeout(total=self.config.timeout)
-        )
+        """Delegates to `_session` (FS-1014).
+
+        This file had TWO session factories -- this one, and the `_session` added by
+        FS-1008 when the bare `ClientSession()` at line 205 was found. Two factories in one
+        file is how one of them quietly stops matching the other: the correlation headers
+        would have had to be added in both places, and the next change would have had to
+        remember both again. One implementation, the older name kept so existing call
+        sites are untouched.
+        """
+        return self._session()
 
     def _token_endpoint(self) -> str:
         """ION's OAuth2 token URL.
@@ -89,7 +96,12 @@ class InforConnector(ERPConnectorBase):
         slot and never reaching the retry classifier or the circuit breaker.
         """
         return aiohttp.ClientSession(
-            timeout=aiohttp.ClientTimeout(total=self.config.timeout)
+            timeout=aiohttp.ClientTimeout(total=self.config.timeout),
+            # FS-1014. Carries this request's correlation id outbound, so a failing ERP
+            # call and the request that caused it can be joined. Empty outside a request
+            # (a scheduled sync), because a freshly minted id would look like correlation
+            # and correlate nothing.
+            headers=outbound_correlation_headers(),
         )
 
     async def authenticate(self) -> str:

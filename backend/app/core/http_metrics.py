@@ -22,10 +22,44 @@ HTTP_REQUEST_DURATION = Histogram(
 )
 
 
-def record_http(method: str, status_code: int, duration_seconds: float) -> None:
+#: WHICH route failed, not merely that one did (FS-1015).
+#:
+#: `http_requests_total` is labelled by method and status class only, so a 500 on
+#: `POST /yard/trailers/checkin` and a 500 anywhere else in the API are the same series.
+#: `api/yard.py`, `api/transportation.py`, `api/shop_floor.py` and `api/fleet_targeting.py`
+#: carry no counters of their own -- measured: zero `Counter(`, `_total` or `.inc()` across
+#: all four -- so every write in the logistics and shop-floor surface was visible only as
+#: an anonymous contribution to a global 5xx rate. An operator seeing that rate rise had no
+#: way to narrow it without reading logs.
+#:
+#: LABELLED ONLY ON FAILURE, deliberately. Adding a `route` label to `http_requests_total`
+#: would answer the same question and multiply the series count by every route in the API
+#: -- roughly 550 of them -- for traffic that is overwhelmingly successful. Errors are rare,
+#: so this stays small while carrying exactly the dimension the global counter lacks. The
+#: route value is the matched TEMPLATE (`/assets/{asset_id}`), never the concrete path, or
+#: every id would become its own series.
+HTTP_ROUTE_ERRORS = Counter(
+    "opsgrid_http_route_errors_total",
+    "Non-2xx responses by matched route template, method and status class",
+    ["route", "method", "status_class"],
+)
+
+
+def record_http(
+    method: str,
+    status_code: int,
+    duration_seconds: float,
+    route: str | None = None,
+) -> None:
     status_class = f"{status_code // 100}xx"
     HTTP_REQUESTS.labels(method=method, status_class=status_class).inc()
     HTTP_REQUEST_DURATION.labels(method=method).observe(duration_seconds)
+    # `route` is optional so any existing caller keeps working; without it the failure is
+    # still counted globally, just not located.
+    if status_code >= 400 and route:
+        HTTP_ROUTE_ERRORS.labels(
+            route=route, method=method, status_class=status_class
+        ).inc()
 
 
 # ---------------------------------------------------------------------------

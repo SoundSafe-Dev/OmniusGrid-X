@@ -35,6 +35,7 @@ from app.services.erp_connectors.netsuite_auth import (
     parse_oauth2_token_response,
     rest_base_url,
 )
+from app.middleware.request_context import outbound_correlation_headers
 
 logger = structlog.get_logger()
 
@@ -210,7 +211,12 @@ class NetSuiteConnector(ERPConnectorBase):
     def _http_session(self) -> aiohttp.ClientSession:
         """One session factory, so timeouts are set in exactly one place."""
         return aiohttp.ClientSession(
-            timeout=aiohttp.ClientTimeout(total=self.config.timeout)
+            timeout=aiohttp.ClientTimeout(total=self.config.timeout),
+            # FS-1014. Carries this request's correlation id outbound, so a failing ERP
+            # call and the request that caused it can be joined. Empty outside a request
+            # (a scheduled sync), because a freshly minted id would look like correlation
+            # and correlate nothing.
+            headers=outbound_correlation_headers(),
         )
 
     async def _request_headers(self, method: str, url: str) -> Dict[str, str]:

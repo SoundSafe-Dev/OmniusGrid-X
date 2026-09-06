@@ -18,6 +18,7 @@ from app.services.erp_connector_base import (
 )
 
 from app.services.erp_connectors.oauth2 import fetch_client_credentials_token
+from app.middleware.request_context import outbound_correlation_headers
 
 logger = structlog.get_logger()
 
@@ -65,7 +66,12 @@ class EpicorConnector(ERPConnectorBase):
         slot and never reaching the retry classifier or the circuit breaker.
         """
         return aiohttp.ClientSession(
-            timeout=aiohttp.ClientTimeout(total=self.config.timeout)
+            timeout=aiohttp.ClientTimeout(total=self.config.timeout),
+            # FS-1014. Carries this request's correlation id outbound, so a failing ERP
+            # call and the request that caused it can be joined. Empty outside a request
+            # (a scheduled sync), because a freshly minted id would look like correlation
+            # and correlate nothing.
+            headers=outbound_correlation_headers(),
         )
 
     async def authenticate(self) -> str:

@@ -75,7 +75,11 @@ class RequestContextMiddleware(BaseHTTPMiddleware):
 
         elapsed = time.perf_counter() - start
         response.headers[REQUEST_ID_HEADER] = request_id
-        record_http(request.method, response.status_code, elapsed)
+        # The matched TEMPLATE, not the concrete path (FS-1015): `/assets/{asset_id}`
+        # rather than `/assets/9f2c...`, or every id becomes its own metric series. Only
+        # read on the response path, where `scope["route"]` is still present.
+        route = getattr(request.scope.get("route"), "path", None)
+        record_http(request.method, response.status_code, elapsed, route=route)
         logger.info(
             "request_completed",
             method=request.method,
@@ -85,3 +89,33 @@ class RequestContextMiddleware(BaseHTTPMiddleware):
         )
         structlog.contextvars.unbind_contextvars("request_id")
         return response
+
+
+def outbound_correlation_headers() -> dict:
+    """Headers carrying this request's correlation id to an OUTBOUND call (FS-1014).
+
+    THE ID STOPPED AT THE PROCESS BOUNDARY. `RequestContextMiddleware` binds
+    `request_id` into structlog's contextvars, so every log line this process writes
+    carries it — and then every ERP connector, every middleware integration and the MLOps
+    registry client opened an `aiohttp` session with no correlation header at all.
+    `grep -n "correlation_id" services/erp_connectors/ services/erp_middleware/` returned
+    nothing across both directories.
+
+    So a failing ERP webhook and the request that triggered it could not be joined: our
+    side of the call is traceable, the vendor's side records an unattributed request, and
+    the operator correlating them has a timestamp and hope. The counters and the retry
+    classifier all work; what is missing is the thread between two systems.
+
+    Read from structlog's contextvars rather than passed down through every call
+    signature, because the alternative is threading a `request_id` parameter through the
+    connector base class, five middleware services and their forty-odd call sites — which
+    is the change nobody makes, which is why the header was never added.
+
+    Returns an EMPTY dict outside a request (a scheduled worker, a startup task), rather
+    than minting an id: a fresh id on an outbound call would look like correlation and
+    correlate nothing, which is worse than its absence because it invites the reader to
+    trust it.
+    """
+    bound = structlog.contextvars.get_contextvars()
+    request_id = bound.get("request_id")
+    return {REQUEST_ID_HEADER: str(request_id)} if request_id else {}

@@ -127,6 +127,8 @@ def parse_pdf_structure(
     all_tables: List[Dict[str, Any]] = []
     page_count = 0
     truncated = False
+    # Counted, not just logged: a debug line nobody greps is the same silence.
+    pages_words_failed = pages_text_failed = pages_tables_failed = 0
 
     with pdfplumber.open(io.BytesIO(content)) as pdf:
         page_count = len(pdf.pages)
@@ -134,22 +136,36 @@ def parse_pdf_structure(
             if idx >= max_pages:
                 truncated = True
                 break
+            # A PAGE THAT FAILED TO EXTRACT IS NOT AN EMPTY PAGE (FS-1010), and these
+            # three swallows made the two indistinguishable. Continuing is right — one
+            # malformed page must not fail a 400-page document — but doing it silently
+            # meant a PDF whose every page threw produced `text: ""` for all of them and
+            # reported success. Downstream that is chunked as nothing, embedded as
+            # nothing, and retrieved as nothing, and the only symptom is an answer that
+            # does not know something the document said. That is the identical failure
+            # the FS-454 note below describes for truncation, which this file already
+            # decided was worth reporting.
             try:
                 words = page.extract_words(extra_attrs=["size"]) or []
-            except Exception:
+            except Exception as exc:  # noqa: BLE001 - pdfplumber raises broadly per page
+                logger.debug("pdf_page_words_failed", page=idx + 1, error=str(exc))
+                pages_words_failed += 1
                 words = []
             headers = _extract_headers_from_words(words)
             try:
                 text = page.extract_text() or ""
-            except Exception:
+            except Exception as exc:  # noqa: BLE001 - as above
+                logger.debug("pdf_page_text_failed", page=idx + 1, error=str(exc))
+                pages_text_failed += 1
                 text = ""
             tables: List[List[List[Any]]] = []
             try:
                 for table in (page.extract_tables() or []):
                     tables.append(table)
                     all_tables.append({"page_num": idx + 1, "rows": table})
-            except Exception:
-                pass
+            except Exception as exc:  # noqa: BLE001 - as above
+                logger.debug("pdf_page_tables_failed", page=idx + 1, error=str(exc))
+                pages_tables_failed += 1
             page_keys = extract_keys_from_text(text)
             # THE CAP NOW SAYS IT CAPPED (FS-454). This was `text[:20000]` with no signal,
             # and the document-level `truncated` flag covers only pages dropped past
@@ -194,6 +210,12 @@ def parse_pdf_structure(
         #: the confusion between the two is what let a cut page report success.
         "truncated": truncated,
         "pages_text_truncated": sum(1 for p in pages if p["text_truncated"]),
+        #: EXTRACTION FAILURES, distinct from truncation and from an genuinely empty page.
+        #: A caller seeing `pages_text_failed == pages_parsed` is looking at a document
+        #: that yielded nothing because every page threw, not at a blank PDF.
+        "pages_words_failed": pages_words_failed,
+        "pages_text_failed": pages_text_failed,
+        "pages_tables_failed": pages_tables_failed,
         "text_chars_dropped": sum(p["text_chars_dropped"] for p in pages),
         "pages": pages,
         "tables": all_tables,

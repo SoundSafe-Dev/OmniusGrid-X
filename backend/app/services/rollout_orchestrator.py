@@ -150,6 +150,23 @@ class RolloutOrchestrator:
             )
 
     async def dispatch_rollout(self, rollout_id: UUID, org_id: UUID) -> None:
+        # ONE SESSION PER ROLLOUT IS DELIBERATE -- do not consolidate it (FS-1017).
+        #
+        # This was registered as a session-per-iteration defect alongside three others,
+        # and it is the one that should NOT be changed. The SELECT below takes
+        # `with_for_update(skip_locked=True)`: a row lock, held for the lifetime of its
+        # transaction. A session per rollout means a transaction per rollout means a lock
+        # released as soon as that rollout is dispatched, which is exactly what lets a
+        # second worker skip the locked row and take the next one.
+        #
+        # Consolidating to one session per org would hold the lock on every rollout in
+        # that org until the whole loop committed, so a second worker would skip all of
+        # them and the parallelism `skip_locked` exists to provide would quietly vanish.
+        # The pool cost is real and is the smaller of the two.
+        #
+        # (`export_delivery` in the same sweep genuinely did open two sessions per org for
+        # two reads with no locking, and was consolidated. The shapes look identical from
+        # a grep and are not.)
         async with AsyncSessionLocal() as session:
             await self._set_org(session, org_id)
             rollout = (

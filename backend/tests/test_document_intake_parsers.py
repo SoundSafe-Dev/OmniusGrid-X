@@ -275,3 +275,94 @@ def _page_dict(text: str) -> dict:
         "text_truncated": len(text) > cap,
         "text_chars_dropped": max(len(text) - cap, 0),
     }
+
+
+class TestAFailedExtractionIsNotAnEmptyDocument:
+    """Three silent swallows made a broken PDF indistinguishable from a blank one (FS-1010).
+
+    `parse_pdf_structure` continues past a page whose word, text or table extraction
+    raises — correctly, because one malformed page must not fail a 400-page document. It
+    did so *silently*, so a PDF where every page threw returned `text: ""` for all of them
+    and reported success. Downstream that is chunked as nothing, embedded as nothing and
+    retrieved as nothing, and the only symptom is an answer that does not know something
+    the document said.
+
+    This file already decided that class of silence was worth fixing once: the FS-454 note
+    in `pdf_parser.py` records the same reasoning for text truncation ("the cap now says it
+    capped"). Extraction failure now says so too.
+    """
+
+    class _ExplodingPage:
+        """A page whose every extraction raises, as a scanned or malformed PDF does."""
+
+        def extract_words(self, **_kwargs):
+            raise ValueError("no text layer")
+
+        def extract_text(self):
+            raise ValueError("no text layer")
+
+        def extract_tables(self):
+            raise ValueError("no text layer")
+
+    class _BlankPage:
+        """A page that genuinely has nothing on it — the case that must stay distinct."""
+
+        def extract_words(self, **_kwargs):
+            return []
+
+        def extract_text(self):
+            return ""
+
+        def extract_tables(self):
+            return []
+
+    def _parse_with(self, monkeypatch, pages):
+        class _Doc:
+            def __init__(self):
+                self.pages = pages
+                self.metadata = {}
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc):
+                return False
+
+        class _Plumber:
+            @staticmethod
+            def open(*_args, **_kwargs):
+                return _Doc()
+
+        # `pdfplumber` is imported INSIDE parse_pdf_structure, so patching the module
+        # attribute does nothing -- the local import re-fetches the real package. Patch
+        # sys.modules so the in-function import resolves to the fake.
+        import sys
+
+        monkeypatch.setitem(sys.modules, "pdfplumber", _Plumber)
+        # pypdf metadata extraction is a separate try/except that logs and continues; the
+        # fake bytes make it fail there, which is the behaviour under test elsewhere.
+        return pdf_parser.parse_pdf_structure(b"%PDF-1.4 fake", "x.pdf")
+
+    def test_a_document_whose_pages_all_fail_reports_the_failures(self, monkeypatch):
+        result = self._parse_with(monkeypatch, [self._ExplodingPage(), self._ExplodingPage()])
+        assert result["pages_text_failed"] == 2, (
+            "a PDF where every page threw reported no failures. It is indistinguishable "
+            "from a blank document, and downstream it is embedded as nothing."
+        )
+        assert result["pages_words_failed"] == 2
+        assert result["pages_tables_failed"] == 2
+
+    def test_a_genuinely_blank_document_reports_none(self, monkeypatch):
+        """The other direction, so the counter cannot be satisfied by always incrementing:
+        a blank page is not a failure, and conflating them would make the signal useless."""
+        result = self._parse_with(monkeypatch, [self._BlankPage(), self._BlankPage()])
+        assert result["pages_text_failed"] == 0
+        assert result["pages_words_failed"] == 0
+        assert result["pages_tables_failed"] == 0
+
+    def test_one_bad_page_does_not_fail_the_document(self, monkeypatch):
+        """The behaviour being preserved. Continuing past a bad page is the correct call;
+        the defect was only ever the silence."""
+        result = self._parse_with(monkeypatch, [self._ExplodingPage(), self._BlankPage()])
+        assert result["pages_parsed"] == 2
+        assert result["pages_text_failed"] == 1
