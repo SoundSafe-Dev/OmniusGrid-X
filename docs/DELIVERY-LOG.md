@@ -16525,3 +16525,79 @@ migration path does not apply either. Odoo defaults to `api_type="rest"` with XM
 as an opt-in, so Odoo 19's XML-RPC deprecation reaches this codebase only for an operator
 who has explicitly selected it. Both are real future work and neither is safe to perform
 blind against a system this repository cannot exercise.
+
+### FS-987 → FS-1008 (completion) — the three Wave B items that were registered rather than resolved
+
+Wave B shipped with three deferrals. Each is now closed, and the reasoning for how differs
+per item — a blind protocol rewrite against a system this repository cannot exercise is the
+exact mechanism that produced the defects this sprint keeps finding, so "resolve in full"
+does not mean "rewrite everything and hope".
+
+**FS-996 (completion) — the batched delivery that silently lost changes.** The first fix
+made QuickBooks webhooks work; it also introduced a smaller version of the same defect. The
+adapter returned `entities[0]` of `eventNotifications[0]`, and QuickBooks **batches**: one
+POST can hold several notifications (one per realm), each holding a list of entities.
+Measured on a realistic delivery — 4 entities across 2 realms — the receiver stored 1 and
+answered 200. That is worse than the 400 it replaced: a rejection is visible to the sender,
+while a partial accept tells Intuit the whole batch was handled and it never retries.
+
+The adapter now returns every event, and the receiver inserts each in its own **savepoint**.
+That last part is the subtle half: dedup is enforced by `UNIQUE(source_system, event_id)`
+rather than check-then-insert, so with several events in one transaction a single
+`IntegrityError` on an already-seen change would roll back the entities that were new. A
+batch overlapping one processed change would have discarded all the others. Verified:
+4-entity delivery stores 4; a batch overlapping one seen change stores the 2 new ones and
+reports `accepted=2, duplicate=1`; and the single-event response shape is **byte-identical**
+to before, so no existing caller sees a change.
+
+**FS-987..993 — the live MyGeotab client now exists.** Every GeoTab surface was gated
+behind `_require_simulated`, so the product served `random`-generated demo data or refused.
+`services/geotab_client.py` implements the real protocol: JSON-RPC over `/apiv1`, the
+`Authenticate` → `sessionId` exchange, the **server redirect** (Geotab shards databases, so
+authenticating at `my.geotab.com` for a database living elsewhere succeeds and names the
+real server in `path` — ignoring it sends every later call to a host without the data),
+session re-authentication on expiry, the vendor's error taxonomy decoded from HTTP **200**
+bodies (Geotab reports most failures that way, so a client checking only `response.status`
+sees every failure as a success), `Retry-After` honoured on `OverLimitException`, and
+`GetFeed` paging with its 50,000-record cap and ≥1010ms inter-call guidance.
+
+**It is unverified against a live account and says so, in the module docstring and in this
+entry.** There are no MyGeotab credentials here and Geotab publishes no isolated sandbox —
+a test database there is a real database. Sixteen tests drive it against a fake transport
+and assert the *wire*: exact request bodies, the redirect, the session lifecycle, the error
+taxonomy, the paging arithmetic and the resumption token. What they cannot prove is that
+Geotab agrees, so one live smoke call is still required and `GEOTAB_SIMULATED` remains the
+default until somebody makes it. Asserting on the wire rather than on mocks of the client's
+own methods is the difference between a test that proves the caller works and one that
+proves the bytes are right.
+
+**FS-1001/1003 — SAP OData V2 and Odoo XML-RPC are now detected and announced, not
+migrated.** SAP routes V2 under `/sap/opu/odata/` and V4 under `/sap/opu/odata4/`, so the
+configured service path is the honest signal; the connector now derives `odata_version` and
+warns once at startup when it is V2. V2 remains supported for existing services and no
+dated sunset applies to the ones this connector calls — per-service deprecations live in
+SAP Note 2836302 — while a V2→V4 rewrite changes entity paths and query syntax on every
+call. Odoo is the same shape: `api_type` defaults to `rest`, so an operator only reaches
+the deprecated XML-RPC path by explicitly selecting it, and now learns from a log line
+rather than from Odoo 19.1's removal. The risk each carried was that the deprecating path
+was *silent*; that is what has been fixed.
+
+**FS-1008 — 46 outbound sessions, none of them bounded.** The research named 36 in
+`erp_middleware/*`. The AST guard written for it found **10 more in the connector layer**
+(`epicor`, `infor`, `odoo`, `oracle` ×2, `sap` ×3, `mlops_pipeline` ×2) — files a grep for
+`ClientTimeout` had reported as compliant because they set one *somewhere*, just not at
+every call site. `infor_connector.py` passes a timeout at line 57 and constructed a bare
+session at line 205.
+
+Bare `aiohttp.ClientSession()` has no total timeout, so a host that accepts the connection
+and stops responding hangs the coroutine forever: it holds a slot in the pool FS-839 sized,
+never reaches the retry classifier, and cannot be counted by the circuit breaker — a
+failure that has not happened yet. All 46 now build through a `_session()` factory.
+
+`mlops_pipeline` needed two *different* bounds rather than one, and this is why a blanket
+fix would have been wrong: the metadata check is a small GET where `total` is right, while
+the artifact download is a large file where `total` would abort a healthy transfer for the
+crime of being large. The download is bounded by time-between-bytes (`sock_read`) instead.
+New guard `test_every_outbound_http_call_has_a_timeout.py` closes the class at the AST
+level, because `ClientSession(` appears in these files' own docstrings and a text search
+cannot tell a construction from a description of one.
