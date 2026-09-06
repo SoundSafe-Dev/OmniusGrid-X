@@ -2184,6 +2184,32 @@ one of its findings. The habit that catches it:
      entirely different path than its first, non-concurrent one — so a test relying on
      run order to catch either "first occurrence" state passed or failed by chance.
      Force the precondition explicitly rather than trusting session history for it.
+300. **A vendor's deprecation notice is a fact about the vendor, not about your code.**
+     Eight of nine research-derived items in one wave did not reproduce: Qdrant already
+     migrated, every S3 client already on SigV4, Keycloak already on the Quarkus path, no
+     deprecated Kubernetes API versions present. None of the research was wrong; the
+     unstated inference was — *they deprecated X, therefore we use X*. A grep finding is an
+     observation, a vendor finding is a hypothesis, and they deserve different trust before
+     work starts. Record the ones that closed, or the next sprint researches them again.
+301. **When a fix is "flip the flag", find out why the flag was set that way.**
+     One `set_config(..., is_local=false)` against eleven `true`s looked like an obvious
+     outlier in a file about tenant isolation. It was load-bearing: the publish loop commits
+     per job, so transaction scope would have died at the first commit and every later
+     UPDATE would have matched nothing under FORCE RLS — zero rows, no error, success
+     reported. An outlier is evidence of a defect or of a constraint, and the two look
+     identical from the diff.
+302. **A guard that quotes the bug will find its own explanation.**
+     The comment written above a corrected call site explained the defect by quoting it,
+     and the text-matching guard promptly flagged the fix. Third appearance of rule 297's
+     shape, first where the offending prose was written by the same change as the guard.
+     Strip comments, or match structurally — `ast` knows a call from a sentence about one.
+303. **Assert on the wire, not on your own abstraction, when you cannot reach the server.**
+     A client for a vendor with no sandbox and no credentials here cannot be verified
+     end-to-end. Testing it by mocking its own methods proves the caller works and nothing
+     about whether a single byte would be accepted. Assert the request bodies, the session
+     lifecycle, the error taxonomy and the paging arithmetic — then write down, in the
+     module, that a live smoke call is still required. Untestable against the real thing is
+     a property to record, not a reason to test something easier.
 ---
 
 ## Open observations, not yet tickets

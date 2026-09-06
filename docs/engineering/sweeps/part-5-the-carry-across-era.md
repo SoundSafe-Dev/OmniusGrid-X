@@ -6588,3 +6588,86 @@ or drop the view back to its unpopulated form — rather than relying on test or
 session history to have left the world in the state the test needs. A test that only
 sometimes exercises its own subject is worse than a slow one: it looks like coverage and
 isn't.
+
+## Rule 300 — a vendor's deprecation notice is a fact about the vendor, not about your code
+
+The FS-969→1218 sprint was planned from six research passes: three greps of this tree and
+three of the public record (a telematics vendor, eight ERP vendors, a dozen platform
+dependencies). The two halves did not behave alike, and the difference is worth a rule.
+
+**Of the nine research-derived items in Wave A, eight did not reproduce.** Qdrant's
+deprecated endpoints — already migrated. SigV2 — every S3 client already passed
+`s3v4`. Keycloak's Quarkus path change — already on `/realms/`. Deprecated Kubernetes API
+versions — none present. The Prometheus remote-write break — no such exporter configured.
+Wave B repeated it: QuickBooks minor version already at 75, Oracle already on OAuth 2.0,
+Dynamics already on the Entra v2.0 endpoint.
+
+None of that research was wrong. Every deprecation was real and correctly dated. What was
+wrong was the unstated inference: *this vendor deprecated X, therefore we use X.* A grep
+finding says "this line exists in this file"; a vendor finding says "the world changed",
+and whether it reached you is a separate question nobody answered.
+
+The rule is not "skip the research" — it found the NetSuite auth trap and the QuickBooks
+CloudEvents deadline, both real. It is that **a vendor-derived item is a hypothesis and a
+grep-derived item is an observation**, and they deserve different amounts of trust before
+work starts. Budget for the check; expect most of them to close on it; write down the ones
+that closed, because otherwise the next sprint researches the same eight again.
+
+## Rule 301 — when a fix is "flip the flag", find out why the flag was set that way
+
+`export_delivery.py` bound its tenant with `set_config(..., is_local=false)` where eleven
+other call sites passed `true`. Session-scoped rather than transaction-scoped, so the
+tenant id outlived the worker and rode the pooled connection to whatever checked it out
+next — worse than an unbound reader, which sees zero rows and fails closed, because
+inheriting a stale tenant makes the same code path a successful read of someone else's
+data. One outlier against eleven, in a file about tenant isolation. The fix is obvious.
+
+The fix was wrong. `_publish_queued_for_org` commits **per job inside its loop**,
+deliberately and with a comment saying why ("a crash re-publishes at most one job"). A
+transaction-local binding dies at the first commit, so every later iteration would have
+issued its UPDATE unbound — and under FORCE ROW LEVEL SECURITY an unbound UPDATE matches
+nothing: zero rows changed, no exception raised, the worker reporting success having
+published nothing. The `false` was load-bearing for a design decision three functions away.
+
+**An outlier is evidence of a defect or evidence of a constraint, and the two look
+identical from the diff.** Before normalising one, read what depends on it — here, that
+meant noticing a commit inside a loop that no part of the finding mentioned. The shipped
+fix was neither the original nor the obvious correction: transaction scope, re-bound after
+each commit, which keeps the crash semantics and drops the leak. Both halves are guarded,
+because they fail differently — the leak is silent cross-tenant reads, the regression is
+silent zero-row updates.
+
+## Rule 302 — a guard that quotes the bug will find its own explanation
+
+The guard written for rule 301 failed on the very fix it was written to protect. The
+comment above the corrected call site explains the defect by *quoting* it —
+`set_config(..., false)` — and a text search cannot tell a description of a bug from the
+bug.
+
+This is the third appearance of the shape rule 297 named (a docstring satisfying an
+`in source` check), and the first where the offending text was written by the same change
+as the guard. Strip comments before matching, or match structurally: `ast` knows the
+difference between a call and a sentence about a call. The tell is a guard that fails
+immediately on a tree you have just fixed — check whether it is reading your prose before
+you conclude the fix did not land.
+
+## Rule 303 — assert on the wire, not on your own abstraction, when you cannot reach the server
+
+The live MyGeotab client could not be verified against a real account: there are no
+credentials here, and Geotab publishes no isolated sandbox — a test database there is a
+real database. The temptation in that position is to test the client by mocking its own
+methods, which proves the *caller* works and nothing about whether Geotab would accept a
+single byte of it.
+
+The tests instead assert the request bodies: the exact `Authenticate` params, the shard
+redirect being followed, the session being reused and re-acquired on expiry, the error
+taxonomy decoded from HTTP **200** bodies (the vendor reports most failures that way, so a
+client checking `response.status` sees every failure as a success), `Retry-After` read
+rather than ignored, and the feed's resumption token being sent back. Sixteen tests that
+pin the bytes.
+
+That still cannot prove the vendor agrees, and the module says so in its own docstring
+rather than in a commit message nobody re-reads. **Untestable against the real thing is a
+property to write down, not a reason to test something easier.** A client whose tests
+assert its own mocks is how this repository produced a Grafana datasource that could not
+connect and a webhook receiver that rejected every real delivery.

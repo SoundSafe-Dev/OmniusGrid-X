@@ -16661,3 +16661,84 @@ session across the whole org loop (more consolidated than the FS-883 pattern), a
 "session-per-org" shape genuinely remains only in `rollout_orchestrator.py`, which opens
 one per *rollout* — carried forward, since `dispatch_rollout` is a public entry point and
 needs an optional-session parameter rather than inlining.
+
+### FS-1010, FS-1014, FS-1015 — Wave C: silent extraction, a correlation id that stopped at the process edge, and a 5xx nobody could locate
+
+**FS-1010 — a broken PDF and a blank one were the same document.** `pdf_parser.py` swallowed
+three extractions per page (words, text, tables) with bare `except: pass`. Continuing is
+right — one malformed page must not fail a 400-page document — but silently meant a PDF
+where **every** page threw returned `text: ""` for all of them and reported success.
+Downstream that is chunked as nothing, embedded as nothing, retrieved as nothing, and the
+only symptom is an answer that does not know something the document said.
+
+This file had already decided that exact class was worth fixing once: the FS-454 note a few
+lines below records the same reasoning for truncation ("the cap now says it capped"). The
+three failures are now counted and surfaced as `pages_words_failed` / `pages_text_failed` /
+`pages_tables_failed`, so `pages_text_failed == pages_parsed` reads as "this document
+yielded nothing because every page threw" rather than as a blank PDF. Guarded in both
+directions — a genuinely empty document must report zero, or the signal is noise.
+
+**FS-1014 — the correlation id stopped at the process boundary.** `RequestContextMiddleware`
+binds `request_id` into structlog's contextvars, so every log line this process writes
+carries it. Every outbound ERP call then opened a session with no correlation header at
+all: `grep -n "correlation_id"` across `erp_connectors/` and `erp_middleware/` returned
+nothing in either directory. A failing ERP webhook and the request that caused it could not
+be joined — our side traceable, the vendor's side recording an unattributed request, and
+the operator correlating them holding a timestamp and hope.
+
+The `_session()` factories introduced by FS-1008 turned out to be the thing that made this
+cheap: one injection point per file instead of forty-odd call sites. The id is read from
+contextvars rather than threaded through every signature, because threading a `request_id`
+parameter through the connector base class and five middleware services is the change
+nobody makes — which is why the header was never added. Outside a request it returns an
+**empty** dict rather than minting an id: a fresh id on a scheduled sync would look like
+correlation and correlate nothing, which is worse than absence because it invites trust.
+
+The guard written for it immediately found a file the sweep had missed —
+`infor_connector.py` had **two** session factories, a pre-existing `_http_session()` and the
+`_session()` added by FS-1008. Two factories in one file is how one quietly stops matching
+the other: the headers would have had to be added twice, and the next change would have had
+to remember both. Consolidated to one implementation with the old name delegating.
+
+**FS-1015 — the 5xx was counted, not located.** `http_requests_total` carries method and
+status class only, so a 500 on `POST /yard/trailers/checkin` and a 500 anywhere else in the
+API are the same series. That mattered most exactly where there was nothing else:
+`api/yard.py`, `api/transportation.py`, `api/shop_floor.py` and `api/fleet_targeting.py`
+have **zero** counters between them — measured, no `Counter(`, no `_total`, no `.inc()` —
+so the whole logistics and shop-floor write surface was an anonymous contribution to a
+global number.
+
+Fixed as a class rather than four instances: a route-labelled counter in the middleware
+covers every router, not just the four the finding named. Labelled **only on failure**,
+deliberately — adding a `route` label to `http_requests_total` answers the same question and
+multiplies the series count by roughly 550 routes for traffic that is overwhelmingly
+successful, whereas errors are rare, so cardinality stays proportional to how often things
+actually break. And the label is the matched *template* (`/assets/{asset_id}`), never the
+concrete path, or the metric added to help becomes the cardinality incident. All three
+properties are guarded, including the one that would otherwise only be discovered in
+production.
+
+**FS-1017 (tail) — the fourth "session-per-iteration" case is load-bearing, and was left
+alone.** `rollout_orchestrator.dispatch_rollout` opens a session per rollout, which reads
+from a grep exactly like the `export_delivery` defect fixed above. It is the opposite.
+
+The SELECT takes `with_for_update(skip_locked=True)` — a row lock held for the lifetime of
+its transaction. One session per rollout means one transaction per rollout means the lock is
+released as soon as that rollout is dispatched, which is precisely what lets a second worker
+skip the locked row and take the next one. Consolidating to one session per org would hold
+locks on **every** rollout in that org until the whole loop committed, so a second worker
+would skip all of them and the parallelism `skip_locked` exists to provide would quietly
+vanish. The pool cost is real and is the smaller of the two problems.
+
+Recorded in the code rather than only here, because the next person to run this sweep will
+see the same shape and reach for the same fix. This is rule 301 twice in one wave: the
+`export_delivery` flag that looked wrong and was load-bearing, and the session loop that
+looked wrong and was load-bearing — in opposite directions, three files apart.
+
+**Wave C's premise scorecard.** Grep-derived items did behave differently from Wave A/B's
+vendor research, as predicted — but not uniformly. Of the four registered session-per-org
+sites, one was a real defect (`export_delivery`), one was already correct
+(`compliance_report_queue`, which reuses a single session across the whole loop), one was
+already correct in a different way (`report_scheduler`, one session per org and no lock),
+and one is deliberately per-iteration (`rollout_orchestrator`). A shape is not a defect;
+what the shape is protecting decides that.
