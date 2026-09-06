@@ -16601,3 +16601,63 @@ crime of being large. The download is bounded by time-between-bytes (`sock_read`
 New guard `test_every_outbound_http_call_has_a_timeout.py` closes the class at the AST
 level, because `ClientSession(` appears in these files' own docstrings and a text search
 cannot tell a construction from a description of one.
+
+### FS-1009 → FS-1026 (first batch) — Wave C: rate limits, and a tenant GUC that outlived its worker
+
+**FS-1018 — the finding was narrower than stated, and the guard found a bigger one.** The
+premise was that a 6–8 digit MFA code had "only the app-wide default limiter" against it.
+Checked first: **false for the path that matters.** Login-time MFA verification runs inside
+`auth.py`'s `login`, which already carries `AUTH_LOGIN_RATE_LIMIT` — the brute-force-a-TOTP
+fear was already handled. What was genuinely unbounded were the three MFA *management*
+endpoints, which require a session, so anyone reaching them already holds the account.
+
+Bounded anyway: `DELETE /mfa` is a security downgrade, `enroll` regenerates a secret per
+call, `confirm` takes an 8-character recovery-code-shaped input with nothing counting
+attempts, and every other auth-adjacent state change here is limited — a convention with a
+hole in it is one nobody can rely on.
+
+Then the guard written for it found **four more**, and one mattered much more than the
+three the finding started from: `POST /sso/login/callback` is **unauthenticated**, accepts
+a caller-supplied Keycloak token, and **provisions a local user row** on success. It is now
+limited; the three read-only routes (`GET /me`, `sso_status`, `sso_me`) are registered as
+exempt with reasons.
+
+**FS-1017 — one `false` where eleven say `true`, and the fix that would have broken it.**
+`set_config('app.current_org_id', …, is_local)` takes a third argument deciding how long
+the binding lives. Eleven call sites pass `true` (transaction-scoped). `export_delivery.py`
+passed `false` — **session-scoped**, which for a pooled connection means the tenant id
+survives the worker. SQLAlchemy's default `reset_on_return="rollback"` clears
+transaction-local settings and leaves session-level ones standing, so the leak survives
+exactly the mechanism that looks like it would clean it up.
+
+That is worse than a missing binding, not better: a later path reading an RLS table with no
+tenant bound normally sees **zero rows** — fails closed, loud, findable. Inheriting a stale
+`app.current_org_id` turns the same path into a *successful read of another tenant's rows*,
+and nothing in the reading code looks wrong.
+
+**The obvious fix was wrong, and checking is what caught it.** Flipping to `true` removes
+the leak and silently breaks the publisher: `_publish_queued_for_org` commits **per job
+inside its loop**, deliberately ("a crash re-publishes at most one job"). The first commit
+ends the transaction the binding belonged to, so every later iteration issues its UPDATE
+unbound — under FORCE ROW LEVEL SECURITY that matches nothing, so zero rows change, no
+error is raised, and the worker reports success having published nothing. **The `false` was
+load-bearing for the per-job commit, not an oversight.** The shipped fix is neither
+alternative: transaction scope, re-bound after each commit. Same correctness inside the
+loop, without the value outliving the worker.
+
+Two guards, because the two halves fail differently:
+`test_the_tenant_guc_is_transaction_scoped.py` closes the leak class across both packages,
+and `test_the_publish_loop_keeps_its_tenant_after_each_commit.py` pins the re-bind — the
+half whose failure mode is silence rather than an exception.
+
+That first guard also failed on its own fix at first: the explanatory comment written above
+the corrected call site *quotes* the defect, and a text search cannot tell a description of
+a bug from the bug. Comments are stripped before matching now — the same trap this
+repository has hit before with a docstring satisfying an `in source` check.
+
+**Premises that did not reproduce:** `compliance_report_queue.py` already reuses one
+session across the whole org loop (more consolidated than the FS-883 pattern), and
+`report_scheduler.py` already opens exactly one session per org. The registered
+"session-per-org" shape genuinely remains only in `rollout_orchestrator.py`, which opens
+one per *rollout* — carried forward, since `dispatch_rollout` is a public entry point and
+needs an optional-session parameter rather than inlining.
