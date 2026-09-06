@@ -282,6 +282,11 @@ collectors:
       port: 20000
       master_addr: 1
       outstation_addr: 1024
+      # Local address the master station binds. "0.0.0.0" (all interfaces) is the default
+      # and is right for a single-NIC gateway; set it explicitly on a multi-homed device
+      # so the outstation sees a source address on the OT VLAN rather than whichever
+      # interface the kernel picks (FS-981).
+      master_bind_ip: "0.0.0.0"
       poll_interval: 10
       points:
         - name: "bus_voltage"

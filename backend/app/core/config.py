@@ -585,6 +585,9 @@ settings = get_settings()
 # Insecure defaults that must not ship to production (task 17).
 _INSECURE_JWT = "dev_secret_key_change_in_production"
 
+#: RFC 7518 s3.2: an HMAC key must be at least as long as the hash output. SHA-256 -> 32 bytes.
+_MIN_HS256_KEY_BYTES = 32
+
 
 def validate_settings(s: "Settings" = None) -> list[str]:
     """Return a list of production-safety problems (empty when OK).
@@ -617,6 +620,19 @@ def validate_settings(s: "Settings" = None) -> list[str]:
     if s.ENVIRONMENT.lower() == "production":
         if not s.JWT_SECRET_KEY or s.JWT_SECRET_KEY == _INSECURE_JWT:
             problems.append("JWT_SECRET_KEY is unset or the insecure dev default")
+        # LENGTH, NOT JUST PRESENCE (FS-969). The check above passes for `hunter2` -- seven
+        # bytes, not the dev default, not empty. RFC 7518 s3.2 requires an HMAC key at least
+        # as long as the hash output, so HS256 needs 32 bytes; a shorter key narrows the
+        # brute-force space against every token this service has ever signed, and nothing
+        # here said so. PyJWT 2.13.0 warns about exactly this at decode time
+        # (`InsecureKeyLengthWarning`), which is where it was noticed -- but a runtime
+        # warning in a log nobody reads is not a gate, and by then the tokens are signed.
+        elif len(s.JWT_SECRET_KEY.encode()) < _MIN_HS256_KEY_BYTES:
+            problems.append(
+                f"JWT_SECRET_KEY is {len(s.JWT_SECRET_KEY.encode())} bytes; HS256 needs at "
+                f"least {_MIN_HS256_KEY_BYTES} (RFC 7518 s3.2 -- the key must be no shorter "
+                f"than the hash output). Generate one with `openssl rand -base64 48`"
+            )
         if s.DEBUG:
             problems.append("DEBUG must be false in production")
         if not s.EDGE_BOOTSTRAP_TOKEN:

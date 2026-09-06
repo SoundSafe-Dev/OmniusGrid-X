@@ -77,6 +77,13 @@ class DNP3Collector(BaseCollector):
         self.host = config.get("host") or config.get("ip_address")
         self.port = config.get("port", 20000)
         self.master_addr = config.get("master_addr", 1)
+        # FS-981. The local address the master station binds, previously hardcoded to
+        # "0.0.0.0" at the call site. All-interfaces is the right DEFAULT and stays the
+        # default -- but an edge gateway is routinely multi-homed (an OT VLAN plus a
+        # management NIC), and on those the master must bind the OT interface specifically
+        # or the outstation sees a source address it does not expect. That was not
+        # expressible without editing this file.
+        self.master_bind_ip = config.get("master_bind_ip", "0.0.0.0")
         self.outstation_addr = config.get("outstation_addr", 1024)
         self.poll_interval = config.get("poll_interval", 10)
         self.points: List[Dict[str, Any]] = config.get("points", [])
@@ -119,7 +126,7 @@ class DNP3Collector(BaseCollector):
 
     def _open_master(self) -> Any:
         master = MyMasterNew(
-            masterstation_ip_str="0.0.0.0",
+            masterstation_ip_str=self.master_bind_ip,
             outstation_ip_str=self.host,
             port=self.port,
             master_id=self.master_addr,

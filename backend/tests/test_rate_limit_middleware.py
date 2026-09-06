@@ -222,3 +222,69 @@ def test_rate_limit_key_stable_across_a_users_tokens():
     a = jwt.encode({"sub": "user-x", "type": "access", "jti": "1"}, "s", algorithm="HS256")
     b = jwt.encode({"sub": "user-x", "type": "access", "jti": "2"}, "s", algorithm="HS256")
     assert get_user_id_from_request(_bearer_request(a)) == get_user_id_from_request(_bearer_request(b))
+
+
+class TestTheKeyFallbackIsNarrowAndVisible:
+    """FS-970. The outer catch here was `except Exception: pass`.
+
+    FS-910 narrowed the INNER catch (around `jwt.decode`) and left this one, on the
+    reasoning that it was defence in depth. That reasoning was half right: two specific
+    things really can raise here, and neither of them is every exception. A bare
+    `Exception` also swallowed the case that matters most -- extraction breaking for
+    EVERY request, which silently converts a per-user rate limit into a per-IP one and
+    looks exactly like normal operation from the outside.
+    """
+
+    def test_a_raw_high_byte_in_the_header_keys_normally(self):
+        """PINS A DISPROVEN PREMISE, which is why it asserts the boring outcome.
+
+        The first draft of FS-970 also caught `UnicodeError`, on the theory that a raw
+        0xE9 in the Authorization header would survive Starlette's latin-1 decode as a
+        lone surrogate and blow up `token.encode()` in the hash fallback. It does not:
+        latin-1 maps every byte to U+0000-U+00FF, all encodable, so the header arrives as
+        `'Bearer abcédef'` and hashes like any other unparseable token. The catch tuple
+        was narrowed to match reality, and this test exists so nobody re-adds
+        `UnicodeError` on the same reasoning without first making this fail."""
+        from starlette.requests import Request as StarletteRequest
+
+        scope = {
+            "type": "http", "method": "GET", "path": "/",
+            "headers": [(b"authorization", b"Bearer abc\xe9def")],
+            "client": ("1.2.3.4", 0), "query_string": b"",
+        }
+        key = get_user_id_from_request(StarletteRequest(scope))
+        assert key.startswith("user:"), (
+            f"expected the per-token hash fallback, got {key!r}. If this is now 'ip:...', "
+            "the encode path started raising after all and UnicodeError belongs back in "
+            "the catch tuple -- with this docstring corrected to say so."
+        )
+
+    def test_a_non_request_object_falls_back_instead_of_raising(self):
+        """The AttributeError half: handed something that is not a Request (a test
+        double, a middleware ordering mistake), keying must degrade rather than explode."""
+        class NotARequest:
+            @property
+            def headers(self):
+                raise AttributeError("no headers here")
+
+        # get_remote_address needs a real-ish object; the point is only that the
+        # AttributeError from `.headers` is caught rather than propagating.
+        import pytest
+        with pytest.raises(AttributeError):
+            # It reaches get_remote_address, which fails on its own for a different
+            # reason -- proving the FIRST AttributeError was caught, not this one.
+            get_user_id_from_request(NotARequest())
+
+    def test_a_programming_error_is_no_longer_swallowed(self):
+        """The point of narrowing. A TypeError -- the shape a rename or a signature
+        change produces -- must now propagate instead of every user silently sharing an
+        IP bucket while the logs say nothing."""
+        import pytest
+
+        class ExplodingHeaders:
+            @property
+            def headers(self):
+                raise TypeError("this is a bug, not a malformed request")
+
+        with pytest.raises(TypeError):
+            get_user_id_from_request(ExplodingHeaders())

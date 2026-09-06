@@ -42,10 +42,8 @@ import pathlib
 import pytest
 
 REPO = pathlib.Path(__file__).resolve().parents[2]
-ROOTS = (
-    REPO / "backend" / "app",
-    REPO / "edge-agent" / "opsgrid_agent",
-)
+# Derived from the one declaration (FS-982). See tests/_source_trees.py.
+from tests._source_trees import PACKAGE_ROOTS as ROOTS
 
 #: Hash algorithms that may be constructed. Everything else is a finding.
 APPROVED_HASHES = frozenset({"SHA256", "SHA384", "SHA512", "SHA3_256", "SHA3_384", "SHA3_512"})

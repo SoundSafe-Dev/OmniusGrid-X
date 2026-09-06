@@ -33,15 +33,40 @@ datasources:
           url: "/dashboard/asset/$$${__value.raw}"
 
   # TimescaleDB (PostgreSQL)
+  #
+  # FS-978. This datasource could never have worked, and the committed password was the
+  # least of it. Three things were wrong at once, and each alone was fatal:
+  #
+  #   database: opsgrid          -- compose creates `omniusgrid` (docker-compose.yml:47)
+  #   user: opsgrid_readonly     -- no CREATE ROLE for it exists in any migration or script
+  #   password: readonly_password -- set nowhere; the string appeared only on this line
+  #
+  # So the panel it feeds has been empty since it was written, and the plaintext secret in
+  # git was protecting nothing. That is this repository's recurring shape -- an alert that
+  # cannot fire, an SLI that reads 1.0 through an outage -- here as a datasource that
+  # cannot connect. `infrastructure/k8s/monitoring/grafana-datasource.yml` faced the same
+  # decision and chose to OMIT this datasource entirely, on the reasoning that "a secret in
+  # git is a worse problem than a missing panel". That reasoning was right; what it did not
+  # say is that the compose copy had already taken the worse option AND lost the panel.
+  #
+  # Fixed here rather than deleted, because compose is the local-dev stack where a working
+  # TimescaleDB panel earns its place: real database, real user, password read from the
+  # environment (Grafana expands `$VAR` in provisioning files at load) rather than committed.
+  #
+  # STILL OPEN, deliberately: this now authenticates as the application role, not a
+  # read-only one. `scripts/provision_app_role.py` already establishes how this codebase
+  # provisions a restricted role (NOSUPERUSER NOBYPASSRLS, explicit grants); a `grafana_ro`
+  # role belongs there, and until it exists this is dev-only convenience, not a pattern to
+  # copy into any cluster.
   - name: TimescaleDB
     type: postgres
     access: proxy
     url: timescaledb:5432
-    database: opsgrid
-    user: opsgrid_readonly
+    database: omniusgrid
+    user: omniusgrid
     editable: false
     jsonData:
       sslmode: "disable"
       timescaledb: true
     secureJsonData:
-      password: "readonly_password"
+      password: "$POSTGRES_PASSWORD"

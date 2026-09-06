@@ -383,6 +383,7 @@ class OPCUACollector:
             children = await node.get_children()
             
             nodes_info = []
+            skipped = 0
             for child in children:
                 try:
                     browse_name = await child.read_browse_name()
@@ -393,9 +394,36 @@ class OPCUACollector:
                         'browse_name': browse_name.Name,
                         'node_class': node_class.name,
                     })
-                except:
-                    pass
+                # FS-982. This was a BARE `except:`, which catches BaseException -- so it
+                # swallowed `asyncio.CancelledError` too. On a server with a wide address
+                # space this loop runs over many children, and a shutdown that cancels the
+                # task mid-browse had its cancellation absorbed here and kept going: the
+                # agent appeared to hang rather than stop. `except Exception` does not
+                # catch CancelledError (it inherits from BaseException since 3.8), which
+                # is the whole reason the bare form is the wrong spelling.
+                #
+                # Continuing is still right -- one node a server refuses to describe
+                # (BadUserAccessDenied on a restricted branch, BadNodeIdUnknown on a stale
+                # reference) must not fail the whole browse. What was wrong is doing it
+                # silently: a server that denies EVERY child returned an empty list that
+                # read identically to a server with nothing to browse.
+                except Exception as exc:
+                    logger.debug(
+                        "opcua_browse_child_skipped",
+                        node_id=str(getattr(child, "nodeid", "unknown")),
+                        error=str(exc),
+                    )
+                    skipped += 1
             
+            # A browse where every child was skipped is not an empty address space, and
+            # the two used to be indistinguishable from the outside.
+            if skipped:
+                logger.warning(
+                    "opcua_browse_children_skipped",
+                    skipped=skipped,
+                    returned=len(nodes_info),
+                    node_id=node_id or "objects",
+                )
             return nodes_info
             
         except Exception as e:

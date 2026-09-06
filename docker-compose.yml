@@ -580,6 +580,12 @@ services:
       - GF_SECURITY_ADMIN_USER=admin
       - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:-omniusgrid_admin}
       - GF_INSTALL_PLUGINS=grafana-lokiexplore-app
+      # FS-978. The TimescaleDB datasource reads `$POSTGRES_PASSWORD` at provisioning load
+      # instead of carrying a committed password. Without this line the substitution
+      # resolves to an empty string and the datasource fails to connect -- which is exactly
+      # the state it was already in for a different reason, so it must be passed here or
+      # the fix is cosmetic. Same default as the timescaledb service itself.
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-omniusgrid_dev_password}
     volumes:
       - grafana-data:/var/lib/grafana
       - ./infra/grafana/provisioning:/etc/grafana/provisioning

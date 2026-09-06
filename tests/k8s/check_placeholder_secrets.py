@@ -21,6 +21,7 @@ from __future__ import annotations
 import argparse
 import base64
 import binascii
+import os
 import subprocess
 import sys
 
@@ -178,7 +179,23 @@ def main() -> int:
     # workflow actually invokes it — a filter nobody calls is not enforcement.
     from strip_placeholder_secrets import is_placeholder
 
-    for path in ("infrastructure/k8s/monitoring", "infrastructure/k8s/database-ha"):
+    # THE PATHS ci-cd.yml ACTUALLY APPLIES, not the bases they wrap (FS-979). This used to
+    # check `infrastructure/k8s/{monitoring,database-ha}` -- the unwrapped bases -- while
+    # every apply in ci-cd.yml names `infrastructure/k8s/platform/<env>/<stack>` instead.
+    # The bases are included BY those platform stacks, so the check was a proxy and mostly
+    # agreed with reality; it stops agreeing the moment a platform overlay contributes a
+    # Secret of its own or patches one, which is exactly what an overlay exists to do. A
+    # guard that reads a different manifest set than the pipeline applies is the shape this
+    # file was written to catch, one directory up from where it was looking.
+    for stack in ("monitoring", "database-ha"):
+        path = f"infrastructure/k8s/platform/{env}/{stack}"
+        if not os.path.isdir(f"{REPO_ROOT}/{path}"):
+            # The DR site has neither stack: `platform/dr/` carries only the overlay.
+            # Skipping is correct -- there is nothing to strip in a stack that is never
+            # applied -- and saying so beats a kustomize error that reads like the checker
+            # itself is broken. A stack added later is picked up with no edit here.
+            print(f"skip: {path} (no such stack for {env})")
+            continue
         survivors = [d for d in build(path, True) if not is_placeholder(d)]
         problems += offenders(survivors, f"{path} (post-strip)")
 

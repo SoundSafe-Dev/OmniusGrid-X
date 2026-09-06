@@ -72,8 +72,34 @@ def get_user_id_from_request(request: Request) -> str:
             except jwt.PyJWTError:
                 pass
             return f"user:{hashlib.sha256(token.encode()).hexdigest()[:32]}"
-    except Exception:
-        pass
+    # FS-970, finishing what FS-910 started one nesting level in. The outer catch here was
+    # `except Exception: pass`, left alone by FS-910 as defence in depth.
+    #
+    # WHAT CAN ACTUALLY RAISE, checked rather than assumed -- and the first answer was
+    # wrong. The draft of this narrowing also caught `UnicodeError`, reasoning that a
+    # client could put a raw 0xE9 in the Authorization header, that Starlette decodes
+    # header bytes as latin-1, and that `token.encode()` in the hash fallback below would
+    # then fail on a lone surrogate. The test written for it failed: latin-1 maps every
+    # byte 0x00-0xFF to codepoint U+0000-U+00FF, all of which encode to UTF-8 perfectly
+    # well, so `b"Bearer abc\xe9def"` arrives as `'Bearer abcédef'` and hashes fine.
+    # Lone surrogates come from `errors="surrogateescape"`, which is not what Starlette
+    # does. **UnicodeEncodeError is not reachable here through a real request**, and
+    # claiming it in a catch tuple would have been a guess dressed as a precaution.
+    #
+    # What remains is AttributeError: this being handed something that is not a Request
+    # (a test double, a middleware ordering mistake). Everything else -- a TypeError from
+    # a rename, a KeyError from a refactor -- is a bug, and now propagates.
+    #
+    # AND IT IS LOGGED, because the fallback is not free. Every request landing here is
+    # bucketed by IP rather than by user, so a whole NAT or VPN egress shares one budget;
+    # if extraction broke for ALL requests, the per-user rate limit would silently become
+    # a per-IP one with nothing anywhere saying so.
+    except AttributeError as exc:
+        logger.warning(
+            "rate_limit_key_fell_back_to_ip",
+            error=str(exc),
+            error_type=type(exc).__name__,
+        )
 
     return f"ip:{get_remote_address(request)}"
 

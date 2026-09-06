@@ -125,7 +125,22 @@ class MuleSoftIntegrationService:
                     "data": data,
                     "status_code": response.status
                 }
-            except:
+            # FS-982. Was a bare `except:`, which catches BaseException -- so a
+            # `asyncio.CancelledError` raised while awaiting the body was absorbed and
+            # reported as a SUCCESS with no data, and the caller carried on inside a task
+            # that was supposed to be stopping. A 204 legitimately has no body and a
+            # non-JSON 200 is a real MuleSoft response shape, so returning success without
+            # `data` is correct for those; it is not correct for a cancellation.
+            #
+            # `aiohttp` raises ContentTypeError for a non-JSON content type and
+            # ValueError/JSONDecodeError for a malformed body; both are the intended case
+            # here, and both are Exception subclasses.
+            except (aiohttp.ContentTypeError, ValueError) as exc:
+                logger.debug(
+                    "mulesoft_response_had_no_json_body",
+                    status_code=response.status,
+                    error=str(exc),
+                )
                 return {
                     "status": "success",
                     "status_code": response.status

@@ -32,14 +32,9 @@ SWEEPS = _sweeps_document.INDEX
 #: Where an FS reference can legitimately live: source comments, guard docstrings, and the
 #: engineering documents. Deliberately not the delivery log alone — an item recorded only
 #: there is an item with no guard.
-SEARCH_ROOTS = (
-    ROOT / "backend" / "app",
-    ROOT / "backend" / "tests",
-    ROOT / "edge-agent" / "opsgrid_agent",
-    ROOT / "edge-agent" / "tests",
-    ROOT / "frontend" / "src",
-    ROOT / "docs",
-)
+# Derived from the one declaration (FS-982) -- the same six paths, previously written out
+# here and partially duplicated by three other guards. See tests/_source_trees.py.
+from tests._source_trees import ALL_ROOTS as SEARCH_ROOTS
 
 CLAIM = re.compile(r"\*\*FS-(\d+) to FS-(\d+) — ([a-z-]+) items, no gaps\*\*")
 

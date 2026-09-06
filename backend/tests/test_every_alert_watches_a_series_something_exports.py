@@ -29,7 +29,9 @@ import pytest
 
 REPO = pathlib.Path(__file__).resolve().parent.parent.parent
 ALERTS = REPO / "infra" / "prometheus" / "alerts.yml"
-CODE_ROOTS = [REPO / "backend" / "app", REPO / "edge-agent" / "opsgrid_agent"]
+# Derived from the one declaration (FS-982); was a private copy of the same two paths
+# three other guards also wrote out. See tests/_source_trees.py.
+from tests._source_trees import PACKAGE_ROOTS as CODE_ROOTS
 
 #: Metric families served by deployed exporters, not by code in this repository. Each
 #: entry is a claim that the named deployment exports that family — auditable against
