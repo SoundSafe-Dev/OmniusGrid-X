@@ -76,16 +76,49 @@ class NetSuiteConnector(ERPConnectorBase):
             "netsuite_connector_initialized",
             api_url=self.api_url,
             account_id=self.account_id,
-            realm=self.realm
+            realm=self.realm,
+            auth_mechanism="tba_oauth1" if self._uses_tba() else "oauth2",
         )
+        # SAY IT ONCE, AT STARTUP, WHERE SOMEBODY CAN ACT ON IT (FS-994). NetSuite's
+        # TBA retirement has real dates -- 2027.1 stops new TBA integrations being
+        # created, 2028.2 retires SOAP -- and the failure mode for a deadline nobody
+        # is reminded of is discovering it from a broken integration rather than from
+        # a plan. This is a warning rather than a refusal on purpose: TBA works today,
+        # and breaking a working ERP sync over a future date would be the worse bug.
+        if self._uses_tba():
+            logger.warning(
+                "netsuite_using_deprecated_tba_auth",
+                account_id=self.account_id,
+                detail=(
+                    "NetSuite Token-Based Auth (OAuth 1.0a) is on a retirement path: "
+                    "2026.1 expects new integrations on REST + OAuth 2.0, 2027.1 blocks "
+                    "creating new TBA-authenticated integrations. Add client_id and "
+                    "client_secret to auth_config to migrate -- this connector already "
+                    "supports OAuth 2.0 client credentials and will prefer them."
+                ),
+            )
     
     def _uses_tba(self) -> bool:
-        """TBA when OAuth 1.0a credentials are present.
+        """TBA only when OAuth 2.0 is NOT configured (FS-994).
 
-        TBA is NetSuite's normal server-to-server mechanism and needs no token
-        endpoint, so it is preferred whenever its four credentials exist.
+        TBA (Token-Based Auth — OAuth 1.0a) is still NetSuite's most common
+        server-to-server mechanism and needs no token endpoint, which is why it used
+        to be preferred whenever its four credentials existed. **That preference was a
+        migration trap.** NetSuite is retiring TBA: from 2026.1 new integrations are
+        expected on REST + OAuth 2.0, 2027.1 blocks creating new SOAP- or
+        TBA-authenticated integrations, and 2028.2 retires SOAP entirely. An account
+        migrating to OAuth 2.0 would add `client_id`/`client_secret`, redeploy, and
+        stay silently on TBA for as long as the old credentials were still sitting in
+        config — which is exactly how a migration gets declared done while nothing
+        moved.
+
+        OAuth 2.0 now wins when it is explicitly configured. TBA still works, still
+        needs no code change to keep using, and is still the fallback — but choosing
+        it is now something config does deliberately rather than by leftover.
         """
         auth = self.config.auth_config
+        if auth.get("client_id") and auth.get("client_secret"):
+            return False
         return all(
             auth.get(k)
             for k in ("consumer_key", "consumer_secret", "token_id", "token_secret")

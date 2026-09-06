@@ -29,6 +29,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.db.database import get_db
 from app.db.models import ERPIntegrationEvent, IntegrationConfiguration
 from app.services.erp_webhook_auth import authenticate_webhook
+from app.services.erp_webhook_payloads import normalise as normalise_webhook_payload
 
 logger = structlog.get_logger()
 
@@ -277,10 +278,26 @@ async def receive_erp_webhook(
             {"org_id": str(integration.organization_id)},
         )
 
-    event_type = x_event_type or event_data.get("event_type")
-    event_id = x_event_id or event_data.get("event_id")
+    # VENDOR SHAPE FIRST, THEN THE GENERIC ENVELOPE (FS-996). `event_type`/`event_id` is
+    # OmniusGrid's own envelope; no SaaS vendor sends it. Intuit authenticated fine here
+    # and was then rejected 400 for lacking fields it has never sent, so QuickBooks
+    # webhooks had never once been accepted. Explicit headers still win over everything —
+    # an operator who configures the sending side keeps full control.
+    vendor_fields, vendor_format = normalise_webhook_payload(erp_type, event_data)
+    if vendor_fields:
+        logger.info(
+            "erp_webhook_payload_normalised",
+            erp_type=erp_type,
+            payload_format=vendor_format,
+        )
+
+    event_type = x_event_type or event_data.get("event_type") or vendor_fields.get("event_type")
+    event_id = x_event_id or event_data.get("event_id") or vendor_fields.get("event_id")
     source_system = x_source_system or event_data.get("source_system") or erp_type
-    entity_type = event_data.get("entity_type", "unknown")
+    entity_type = (
+        event_data.get("entity_type") or vendor_fields.get("entity_type") or "unknown"
+    )
+    entity_id = event_data.get("entity_id") or vendor_fields.get("entity_id")
     if not event_type or not event_id:
         raise HTTPException(status_code=400, detail="missing event_type or event_id")
 
@@ -297,7 +314,7 @@ async def receive_erp_webhook(
         event_id=str(event_id),
         source_system=str(source_system),
         entity_type=str(entity_type),
-        entity_id=event_data.get("entity_id"),
+        entity_id=entity_id,
         event_data=event_data,
         processing_status="pending",
     ))

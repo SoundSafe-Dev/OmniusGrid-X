@@ -27,12 +27,48 @@ class GeoTabLiveModeNotConfigured(RuntimeError):
     """
 
 
+#: WHAT A LIVE MyGeotab CLIENT WILL HAVE TO GET RIGHT (FS-987..993, researched 2026-09-05).
+#:
+#: There is no live client today -- `_require_simulated` below refuses every live call --
+#: so none of the following is a defect in current code. They are recorded here, at the
+#: point where that client would be written, because each one is a fact about Geotab that
+#: cost a research pass to establish and would otherwise be rediscovered from a production
+#: incident:
+#:
+#:   * AUTH. MyGeotab is migrating to OAuth 2.0/CIAM, and API users were required to move
+#:     to a dedicated **Service Account** credential type (rollout from mid-2025). A plain
+#:     `GEOTAB_DATABASE/USERNAME/PASSWORD` triple -- what the message below still names --
+#:     is the credential shape being retired. Confirm the current requirement before
+#:     building against those three settings.
+#:   * RATE LIMITS. Limits are per (method, entity, user, database) and scale with fleet
+#:     size (x1 under 1,000 assets, x5 to 10,000, x15 to 25,000, x25 above). On breach the
+#:     API returns `OverLimitException` with `Retry-After` and `X-Rate-Limit-*` headers.
+#:     A client that blind-retries instead of reading those headers will be throttled
+#:     harder, not less.
+#:   * FEEDS, NOT WEBHOOKS. Geotab has no signed webhook: its "Web Request" rule template
+#:     POSTs `application/x-www-form-urlencoded` with no HMAC header and no mTLS, so a
+#:     receiver cannot authenticate the sender cryptographically. The supported
+#:     high-volume path is `GetFeed` polling with a continuation token -- capped at 50,000
+#:     records per call, with >=1010ms recommended between calls.
+#:   * HOS IS REGULATED DATA. `get_driver_hos` below returns invented figures behind
+#:     `_require_simulated` for exactly this reason. FMCSA is piloting additional
+#:     sleeper-berth splits (6/4 and 5/5, beyond the existing 8/2 and 7/3) and a split
+#:     duty period, so logic hardcoding only the two established splits will misclassify a
+#:     pilot-enrolled driver. A device delisted by FMCSA is treated as "no ELD" and
+#:     auto-generates a violation, which a client keying only on the device's own
+#:     self-reported malfunction codes will miss.
+#:   * NO SANDBOX. Geotab publishes no isolated sandbox for the MyGeotab API; a test
+#:     database is a real database and a write there is a real write. MyDemo (simulated
+#:     device data) and MyPreview (pre-release server) are the closest equivalents.
+
+
 def _require_simulated(feature: str) -> None:
     if not settings.GEOTAB_SIMULATED:
         raise GeoTabLiveModeNotConfigured(
             f"GeoTab '{feature}' has no live MyGeotab client wired yet. "
             f"Set GEOTAB_SIMULATED=true for demo data, or implement the live "
-            f"client (GEOTAB_DATABASE/USERNAME/PASSWORD)."
+            f"client (GEOTAB_DATABASE/USERNAME/PASSWORD) -- see the note above this "
+            f"function first: that credential shape is the one Geotab is retiring."
         )
 
 

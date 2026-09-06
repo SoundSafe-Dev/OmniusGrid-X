@@ -240,3 +240,62 @@ class TestOAuth2:
         conn = _connector()
         with pytest.raises(RuntimeError, match="TBA"):
             await conn.authenticate()
+
+
+class TestOauth2WinsOverLeftoverTbaCredentials:
+    """FS-994. Preferring TBA whenever its credentials existed was a migration trap.
+
+    NetSuite is retiring Token-Based Auth (OAuth 1.0a): 2026.1 expects new integrations
+    on REST + OAuth 2.0, 2027.1 blocks creating new TBA-authenticated ones, 2028.2
+    retires SOAP outright. The migration an account performs is "add client_id and
+    client_secret" -- and under the old preference order that changed nothing. The four
+    TBA credentials were still sitting in `auth_config`, TBA still won, and the
+    migration was complete on paper while every request went out signed the old way.
+
+    Nothing would have surfaced it: TBA requests keep succeeding right up until the day
+    they don't.
+    """
+
+    def test_oauth2_wins_when_both_are_configured(self):
+        connector = _connector({**TBA_AUTH, "client_id": "ci", "client_secret": "cs2"})
+        assert not connector._uses_tba(), (
+            "TBA was selected even though OAuth 2.0 credentials are present. An account "
+            "that migrated by adding client_id/client_secret would silently stay on the "
+            "mechanism NetSuite is retiring."
+        )
+
+    def test_tba_is_still_used_when_it_is_the_only_thing_configured(self):
+        """The other direction. TBA still works and must keep working -- breaking a live
+        ERP sync over a future deadline would be the worse bug."""
+        assert _connector(dict(TBA_AUTH))._uses_tba()
+
+    def test_partial_oauth2_credentials_do_not_disable_tba(self):
+        """A half-configured migration must not silently take out working auth. With only
+        a client_id, OAuth 2.0 cannot authenticate -- falling back to TBA is correct, and
+        the alternative is an outage caused by an incomplete config edit."""
+        assert _connector({**TBA_AUTH, "client_id": "ci"})._uses_tba()
+        assert _connector({**TBA_AUTH, "client_secret": "cs2"})._uses_tba()
+
+    async def test_the_request_header_follows_the_same_choice(self):
+        """`_uses_tba` is consulted twice -- once for the header, once for the startup
+        warning. This pins that the header actually follows it, so the preference is not
+        merely advisory."""
+        connector = _connector({**TBA_AUTH, "client_id": "ci", "client_secret": "cs2"})
+
+        async def _token():
+            return "tok"
+
+        connector.get_auth_token = _token  # type: ignore[assignment]
+        headers = await connector._request_headers("GET", "https://example.com/x")
+        assert headers["Authorization"] == "Bearer tok", (
+            f"expected a bearer token under OAuth 2.0, got {headers['Authorization'][:20]!r} "
+            "-- the header path and the preference disagree"
+        )
+
+    async def test_a_tba_only_config_still_signs_rather_than_bearers(self):
+        """The inverse, so the header check cannot pass by always returning a bearer."""
+        connector = _connector(dict(TBA_AUTH))
+        headers = await connector._request_headers("GET", "https://example.com/x")
+        assert headers["Authorization"].startswith("OAuth "), (
+            f"expected a signed TBA header, got {headers['Authorization'][:20]!r}"
+        )
