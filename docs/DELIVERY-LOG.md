@@ -16453,3 +16453,75 @@ The overlap guard immediately flagged the new shared file against all three — 
 reading: **a fifth copy that merely offers to be the single declaration is still a fifth
 copy.** All four are migrated, and each was verified by comparing its resolved paths as a
 set before and after rather than by trusting that the literals looked the same.
+
+### FS-987 → FS-1008 — Wave B: ERP and telematics integration, and a webhook that had never worked
+
+Wave A's lesson applied first: every vendor-derived premise checked against the connector
+before any work. The hit rate was similar — **most of this wave was already handled** — but
+the two that reproduced were worth the whole pass.
+
+**FS-996 — QuickBooks webhooks have never once been accepted.** `erp_webhook_auth.py` does
+careful, vendor-specific work for Intuit: base64 HMAC-SHA256 over the raw body in
+`intuit-signature`, marked *Verified*, with a docstring promising an operator "should need
+to supply the verifier token and nothing else". The route then asked the parsed body for
+`event_type` and `event_id` — an envelope of OmniusGrid's own invention that Intuit has
+never sent — and answered `HTTP 400 — missing event_type or event_id`.
+
+Reproduced end to end before fixing: a correctly-signed delivery in Intuit's real shape
+**passes authentication and is rejected anyway**. The signature layer and the payload layer
+were each built with care and nothing ever compared them. Same shape as FS-978's Grafana
+datasource and FS-787's Alertmanager config: configured, plausible, non-functional.
+
+Added `services/erp_webhook_payloads.py`, a vendor payload adapter, and wired it into the
+receiver *after* explicit headers so an operator who configures the sending side keeps
+control. It handles **both** Intuit formats: the current `eventNotifications` envelope and
+the **CloudEvents shape Intuit requires from 2026-05-15** — the migration absorbed now
+rather than becoming a second deadline the moment the first fix works.
+
+Idempotency was the subtle part. Intuit sends no event identifier and retries aggressively,
+so the id is derived deterministically from the realm, entity, operation and the vendor's
+own `lastUpdated`. A random id would have satisfied the receiver and silently defeated its
+`UNIQUE(source_system, event_id)` constraint — dedup that looks like it works. Verified in
+all three directions: a delivery is accepted, a retry of the same change dedups, a
+different change does not.
+
+**FS-994 — NetSuite's auth preference was a migration trap.** The connector already
+supports both TBA (OAuth 1.0a) and OAuth 2.0, and already uses SuiteTalk REST rather than
+SOAP, so the headline deadlines (2027.1 blocks new TBA integrations, 2028.2 retires SOAP)
+found the code mostly ready. What was not ready was the *preference*: `_uses_tba()` returned
+true whenever the four TBA credentials existed, unconditionally. An account migrating by
+adding `client_id`/`client_secret` would redeploy and stay on TBA for as long as the old
+credentials sat in config — the migration complete on paper while every request went out
+signed the old way, and nothing surfacing it because TBA keeps succeeding right up until it
+doesn't. OAuth 2.0 now wins when explicitly configured; TBA remains the fallback and still
+works; a partial OAuth2 config (id without secret) correctly does *not* disable working
+auth, because an incomplete config edit should not cause an outage. A startup warning names
+the retirement dates once, where an operator can act on it.
+
+**FS-987 → 993 are premature, all seven.** There is no live MyGeotab client:
+`_require_simulated` refuses every live call, and the whole GeoTab surface is
+`GEOTAB_SIMULATED`-gated demo data. The Service Account migration, the rate-limit headers,
+`GetFeed`'s 50,000-record cap, the FMCSA sleeper-berth pilots, ELD delisting, the absence of
+any signed webhook or real sandbox — none of it is a defect in code that does not exist.
+Recorded as a block comment directly above `_require_simulated`, where whoever writes that
+client will read it, rather than left in a plan nobody opens. The refusal message also
+stopped advertising `GEOTAB_DATABASE/USERNAME/PASSWORD` without qualification: that
+credential shape is the one Geotab is retiring.
+
+**Premises that did not reproduce:**
+
+| Item | Measured 2026-09-05 |
+|---|---|
+| FS-995 | `intuit_qbo.py:60` already pins `DEFAULT_MINOR_VERSION = "75"` — at or past the version Intuit enforced from 2025-08-01. |
+| FS-997 | No 100-day refresh assumption exists; rotation-on-every-refresh with a `refresh_token_sink` is already implemented. The `100`s in that file are QBO page sizes. |
+| FS-998 | `oracle_connector.py` authenticates with OAuth 2.0 client credentials, not the basic-auth service accounts Oracle's IDCS→OCI IAM migration affects. |
+| FS-1000 | `dynamics_connector.py` uses Entra ID's v2.0 client-credentials endpoint. No WS-Trust or Office365 auth path exists. The Azure AD → Entra rename is cosmetic. |
+| FS-1004/1005 | Epicor is on `/api/v1` and Infor targets its modern surface; neither vendor has published a dated sunset, so both stay registered rather than migrated on speculation. |
+
+**Registered, not migrated:** SAP is on OData V2 (`/sap/opu/odata/sap`), which remains
+supported for existing services — V4 is mandated for *new* API delivery, and no dated
+sunset applies to what this connector calls. No RFC/BAPI usage exists, so the Clean Core
+migration path does not apply either. Odoo defaults to `api_type="rest"` with XML-RPC only
+as an opt-in, so Odoo 19's XML-RPC deprecation reaches this codebase only for an operator
+who has explicitly selected it. Both are real future work and neither is safe to perform
+blind against a system this repository cannot exercise.
